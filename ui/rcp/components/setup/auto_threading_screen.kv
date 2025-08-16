@@ -1,0 +1,63 @@
+<AutoThreadingScreen>:
+  BoxLayout:
+    title: "Auto Threading Settings"
+    orientation: "vertical"
+    padding: 10
+    ScreenHeader:
+      text: "Auto Threading Settings"
+
+    ScrollView:
+      do_scroll_x: False
+      do_scroll_y: True
+      GridLayout:
+        id: grid_layout
+        cols: 1
+        spacing: 1
+        size_hint_y: None
+        height: self.minimum_height
+
+        TitleItem:
+          name: "Scales Settings"
+        DropDownItem:
+          id: saddle_dropdown
+          height: 60
+          name: "Saddle Scale"
+          options: root.get_saddle_scale_options()
+          value: root.get_label_for_scale_id(root.automaticThreadingBar.selected_saddle_scale_id) if root.automaticThreadingBar else ""
+          on_value: root.on_saddle_scale_selected(self.value)
+        DropDownItem:
+          id: cross_slide_dropdown
+          height: 60
+          name: "Cross Slide Scale"
+          options: root.get_cross_slide_scale_options()
+          value: root.get_label_for_scale_id(root.automaticThreadingBar.selected_cross_slide_scale_id) if root.automaticThreadingBar else ""
+          on_value: root.on_cross_slide_scale_selected(self.value)
+
+
+        BooleanItem:
+          name: "Cross Slide Diameter Mode"
+          value: root.automaticThreadingBar.cross_slide_diameter_mode
+          on_value: root.automaticThreadingBar.cross_slide_diameter_mode = self.value
+
+        TitleItem:
+          name: "Speeds and Distance Settings"
+        NumberItem:
+          name: "Reversing Speed (Steps/s)"
+          value: root.automaticThreadingBar.reversing_speed
+          on_value: root.set_reversing_speed(self.value)
+        BooleanItem:
+          name: "Metric Mode"
+          value: root.automaticThreadingBar.metric_mode
+          on_value: root.automaticThreadingBar.metric_mode = self.value
+        NumberItem:
+          name: "Saddle backlash retraction distance (MM)" if root.automaticThreadingBar.metric_mode else "Saddle backlash retraction distance (IN)"
+          value: root.automaticThreadingBar.backlash_retraction_distance
+          on_value: root.automaticThreadingBar.backlash_retraction_distance = int(self.value)
+        NumberItem:
+          name: "Saddle backlash cushion (MM)" if root.automaticThreadingBar.metric_mode else "Saddle backlash cushion (IN)"
+          value: root.automaticThreadingBar.backlash_cusion
+          on_value: root.automaticThreadingBar.backlash_cusion = int(self.value)
+        NumberItem:
+          name: "Cross Slide retraction distance (MM)" if root.automaticThreadingBar.metric_mode else "Cross Slide retraction distance (IN)"
+          value: root.automaticThreadingBar.cross_slide_retraction_distance
+          on_value: root.automaticThreadingBar.cross_slide_retraction_distance = int(self.value)

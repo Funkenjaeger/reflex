@@ -10,9 +10,11 @@ from kivy.properties import ObjectProperty, ConfigParserProperty, BooleanPropert
     StringProperty
 
 from rcp.components.appsettings import config
+from rcp.components.home.automatic_threading_bar import AutomaticThreadingBar
 from rcp.components.home.home_page import HomePage
 from rcp.components.home.coordbar import CoordBar
 from rcp.components.home.servobar import ServoBar
+from rcp.components.setup.auto_threading_screen import AutoThreadingScreen
 from rcp.components.setup.servo_screen import ServoScreen
 from rcp.components.setup.setup_screen import SetupScreen
 from rcp.components.setup.network_screen import NetworkScreen
@@ -56,6 +58,8 @@ class MainApp(App):
 
     servo: ServoBar = ObjectProperty()
     scales: List[CoordBar] = ListProperty()
+    automaticThreadingBar: AutomaticThreadingBar = ObjectProperty()
+    
     current_mode = ConfigParserProperty(
         defaultvalue=1, section="device", key="current_mode", config=config, val_type=int
     )
@@ -179,10 +183,10 @@ class MainApp(App):
 
         self.servo = ServoBar(
             id_override="0",
-        )
+        )        
         for i in range(4):
             self.scales.append(CoordBar(inputIndex=i, device=self.device, id_override=f"{i}"))
-
+        self.automaticThreadingBar = AutomaticThreadingBar(id_override="0")
         self.task_update = Clock.schedule_interval(self.update, 1.0 / 30)
         Clock.schedule_interval(self.blinker, 1.0 / 4)
         self.beep()
@@ -210,7 +214,10 @@ class MainApp(App):
         # Add screen for servo setup
         self.manager.add_widget(ServoScreen(name="servo", servo=self.servo))
 
-        # Add screen for servo setup
+        # Add screen for auto threading setup
+        self.manager.add_widget(AutoThreadingScreen(name="auto_threading", automaticThreadingBar=self.automaticThreadingBar, servo=self.servo, scales=self.scales))
+
+        # Add screen for update setup
         from rcp.components.setup.update_screen import UpdateScreen
         self.manager.add_widget(UpdateScreen(name="update"))
 
