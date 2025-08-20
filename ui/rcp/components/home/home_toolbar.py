@@ -22,6 +22,9 @@ class HomeToolbar(BoxLayout):
         self.app: MainApp = MainApp.get_running_app()
         super(HomeToolbar, self).__init__(**kv)
         self.app.bind(current_mode=self.update_current_mode)
+         
+        # Manually update the label on startup
+        self.update_current_mode(self.app, self.app.current_mode)
 
     # def popup_scene(self, *_):
     #     ScenePopup().open()

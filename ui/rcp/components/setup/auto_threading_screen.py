@@ -1,9 +1,8 @@
 import os
-from typing import List
 
 from kivy.lang import Builder
 from kivy.logger import Logger
-from kivy.properties import ObjectProperty, ListProperty, NumericProperty, BooleanProperty
+from kivy.properties import ObjectProperty, ListProperty
 from kivy.uix.screenmanager import Screen
 
 from rcp.components.home.automatic_threading_bar import AutomaticThreadingBar
@@ -49,7 +48,7 @@ class AutoThreadingScreen(Screen):
             Logger.warning(f"Selected label not found in mapping: {selected_label}")
 
         # Update the other dropdown options dynamically
-        cross_dropdown = self.ids.cross_slide_dropdown  # make sure you give an id in KV
+        cross_dropdown = self.ids.cross_slide_dropdown 
         cross_dropdown.options = self.get_cross_slide_scale_options()
 
     def on_cross_slide_scale_selected(self, selected_label):

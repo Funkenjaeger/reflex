@@ -79,6 +79,10 @@ class HomePage(Screen):
             self.bars_container: BoxLayout
             self.bars_container.remove_widget(self.bars_container.children[0])
             self.bars_container.add_widget(self.jog_bar)
+        if self.next_mode == 4: # AT
+            self.bars_container: BoxLayout
+            self.bars_container.remove_widget(self.bars_container.children[0])
+            self.bars_container.add_widget(self.app.automaticThreadingBar)
 
     def on_touch_down(self, touch):
         self.app.beep()
