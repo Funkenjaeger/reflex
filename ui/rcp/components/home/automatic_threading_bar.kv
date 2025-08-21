@@ -13,30 +13,38 @@
     on_release: root.toggle_is_running()
 
   BoxLayout:
+    id: wizard_area
     orientation: "vertical"
     size_hint_x: 0.8
+
+    # Default display when NOT running
     Label:
-      text: "Current"
+      id: label_instruction
+      text: root.label_text
       text_size: self.size
       size_hint_y: 0.15
       font_size: 16
       color: app.display_color
       halign: 'center'
       valign: 'top'
+
     Button:
+      id: btn_value
       size_hint_y: 0.30
       font_name: "fonts/iosevka-regular.ttf"
       font_size: self.height / 2
       font_style: "bold"
       background_color: [0.2, 0.2, 0.2, 1]
       color: app.formats.display_color
-      text: app.servo.formattedPosition
+      text: root.display_value
       text_size: self.size
       halign: 'center'
       valign: 'middle'
-      disabled: app.servo.disableControls
-      on_release: app.servo.update_current_position()
+      # disabled: app.servo.disableControls
+      # on_release: app.servo.update_current_position()
+
     ProgressBar:
+      id: progress_servo
       size_hint_y: 0.20
       max: int(app.servo.maxSpeed)
       value: int(abs(app.servo.speed))
@@ -45,9 +53,7 @@
     width: self.height
     size_hint_x: None
     font_name: "fonts/iosevka-regular.ttf" if root.is_running else "fonts/Font Awesome 6 Free-Solid-900.otf"
-    text: "Next" if root.is_running else "\uf013"
+    text: root.next_button_text if root.is_running else "\uf013"
     font_size: self.height / 4
     halign: "center"
-    on_release:
-      root.open_settings()
-      # root.open_settings() if root.is_running else root.open_settings()
+    on_release: root.on_wizard_button()
