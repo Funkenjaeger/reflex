@@ -25,6 +25,7 @@ class AssistedThreadingWizard:
         # Reset wizard_area to default content
         self.bar.label_text = ""
         self.bar.display_value = ""
+        self.bar.action_button_enabled = True
 
     def goto_step(self, index):
         self.current_step = index
@@ -39,12 +40,12 @@ class AssistedThreadingWizard:
             self._current_callback(*args)  
         self.goto_step(self.current_step + 1)
 
-    def set_instruction(self, label_text, next_button_text, next_button_callback, value_button_fn=None):
-        #TODO add option for disabling next button
+    def set_instruction(self, label_text, next_button_text, next_button_callback, value_button_fn=None, action_button_condition_fn=None):
         self.bar.label_text = label_text
         self.bar.next_button_text = next_button_text
         self._current_callback = next_button_callback
         self.bar.bind_to_value_button(value_button_fn)
+        self.bar.action_button_condition_fn = action_button_condition_fn
     
     # Instruction steps
     def _step_1_initial_position(self):
@@ -52,7 +53,8 @@ class AssistedThreadingWizard:
         self.bar.bind_to_scale(self.app.scales[self.bar.selected_saddle_scale_id])
 
     def _step_2_stop_position(self):
-        self.set_instruction("Go to stop Z and press Set", "Set", self._capture_stop_position, self._open_stop_position_keypad)
+        self.bar.action_button_enabled = False  # Disable until valid
+        self.set_instruction("Go to stop Z and press Set", "Set", self._capture_stop_position, self._open_stop_position_keypad, self._is_valid_stop_position)
         self.bar.bind_to_scale(self.app.scales[self.bar.selected_saddle_scale_id])
     
     # Step callbacks    
@@ -78,6 +80,16 @@ class AssistedThreadingWizard:
             self.bar.stop_position = scale.encoderCurrent
             log.info(f"Stop position set from scale: {self.bar.stop_position}"
                     f"(start={self.bar.start_position}, stop={self.bar.stop_position})")
+            
+    #Step Action button condition functions
+    #Step 2
+    def _is_valid_stop_position(self):
+        """Check if the stop position is valid given the start position and thread direction.
+         - For right-hand threads, stop must be less than start.
+         - For left-hand threads, stop must be greater than start."""
+        if self.bar.left_hand_thread:
+            return self.bar.start_position < self._get_stop_position_units(self.app.scales[self.bar.selected_saddle_scale_id])
+        return self.bar.start_position > self._get_stop_position_units(self.app.scales[self.bar.selected_saddle_scale_id])
 
     # Manual input handlers
     def _open_stop_position_keypad(self, *args):
@@ -93,9 +105,11 @@ class AssistedThreadingWizard:
                 self.manual_stop_length = float(value)
                 log.info(f"Manual stop length entered: {self.manual_stop_length}")
                 # Display this override until user moves scale again
-                self.bar.display_value = f"{self.manual_stop_length:.3f}"
+                self.bar.display_value = f"{self.manual_stop_length:.3f}" if is_metric else f"{self.manual_stop_length:.4f}"
             except ValueError:
                 log.warning(f"Invalid stop length input: {value}")
+            finally:
+                self.bar.update_action_button_state()
 
         keypad.show_with_callback(callback_fn=on_done,
                                 current_value=self.manual_stop_length or 0.0)
@@ -141,5 +155,10 @@ class AssistedThreadingWizard:
 
         return final_encoder_position
 
+    def _get_stop_position_units(self, scale: CoordBar) -> float:
+        scale = self.app.scales[self.bar.selected_saddle_scale_id]
+        if self.manual_stop_length is not None:
+            return self._convert_stop_position_units_to_encoder(scale, self.manual_stop_length)
+        return scale.encoderCurrent
 
 

@@ -50,10 +50,12 @@
       value: int(abs(app.servo.speed))
 
   Button:
+    id: btn_action
     width: self.height
     size_hint_x: None
     font_name: "fonts/iosevka-regular.ttf" if root.is_running else "fonts/Font Awesome 6 Free-Solid-900.otf"
     text: root.next_button_text if root.is_running else "\uf013"
     font_size: self.height / 4
     halign: "center"
-    on_release: root.on_wizard_button()
+    on_release: root.on_action_button_clicked()
+    disabled: not root.action_button_enabled

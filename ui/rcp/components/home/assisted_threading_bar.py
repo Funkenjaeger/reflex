@@ -36,6 +36,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     inner_thread = BooleanProperty(False)
     
     is_running = BooleanProperty(False)
+    action_button_enabled = BooleanProperty(True)
     label_text = StringProperty("")
     display_value = StringProperty("")
     next_button_text = StringProperty("")
@@ -43,6 +44,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     stop_position = NumericProperty(0)
     _skip_save = [
         "is_running",
+        "action_button_enabled",
         "label_text",
         "display_value",
         "start_position"
@@ -52,6 +54,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     def __init__(self, **kv):
         from rcp.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
+        self.action_button_condition_fn = None
         super().__init__(**kv)
         self.wizard = AssistedThreadingWizard(self)
     
@@ -63,7 +66,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         else:
             self.wizard.reset_ui()
 
-    def on_wizard_button(self):
+    def on_action_button_clicked(self):
         """Called when the right button is pressed."""
         if self.is_running:
             self.wizard.goto_next_step()
@@ -93,6 +96,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
                 self.wizard.manual_stop_length = None
             # Always update display to formattedPosition (not raw encoder!)
             self.display_value = instance.formattedPosition
+            self.update_action_button_state()
 
         # --- Format update handler ---
         def on_format_update(instance, value):
@@ -130,5 +134,14 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         # Bind the new function
         self.ids.btn_value.bind(on_release=on_release_fn)
 
+    def update_action_button_state(self):
+        """Evaluate whether the action button should be enabled."""
+        if self.action_button_condition_fn:
+            self.action_button_enabled = self.action_button_condition_fn()
+        else:
+            self.action_button_enabled = True
+
     def _update_display_value(self, instance, value):
         self.display_value = value
+        
+    
