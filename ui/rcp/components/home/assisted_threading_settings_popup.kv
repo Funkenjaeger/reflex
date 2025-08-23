@@ -1,5 +1,5 @@
-<AutomaticThreadingSettingsPopup>:
-    title: "Automatic Threading Settings"
+<AssistedThreadingSettingsPopup>:
+    title: "Assisted Threading Settings"
     size_hint: 0.8, 0.6
     auto_dismiss: True
 
@@ -15,23 +15,23 @@
 
             BooleanItem:
                 name: "Metric Mode"
-                value: root.automaticThreadingBar.metric_mode
+                value: root.assistedThreadingBar.metric_mode
                 on_value: root.on_metric_mode_changed(self.value)
 
             DropDownItem:
                 id: pitches_dropdown
                 height: 60
-                name: "Pitch in MM" if root.automaticThreadingBar.metric_mode else "Pitch in IN"
+                name: "Pitch in MM" if root.assistedThreadingBar.metric_mode else "Pitch in IN"
                 options: root.get_pitches()
-                value: str(root.automaticThreadingBar.selected_pitch) if root.automaticThreadingBar.selected_pitch is not None else ""
+                value: str(root.assistedThreadingBar.selected_pitch) if root.assistedThreadingBar.selected_pitch is not None else ""
                 on_value: root.on_pitch_selected(self.value)
 
             NumberItem:
                 name: "Thread Profile Angle"
-                value: root.automaticThreadingBar.thread_profile_angle
+                value: root.assistedThreadingBar.thread_profile_angle
                 on_value: root.set_thread_profile_angle(self.value)
 
             NumberItem:
-                name: "Shaft Diameter in MM" if root.automaticThreadingBar.metric_mode else "Shaft Diameter in IN"
-                value: root.automaticThreadingBar.shaft_diameter
+                name: "Shaft Diameter in MM" if root.assistedThreadingBar.metric_mode else "Shaft Diameter in IN"
+                value: root.assistedThreadingBar.shaft_diameter
                 on_value: root.set_shaft_diameter(self.value)

@@ -5,7 +5,7 @@ from kivy.logger import Logger
 from kivy.properties import ObjectProperty, ListProperty
 from kivy.uix.screenmanager import Screen
 
-from rcp.components.home.automatic_threading_bar import AutomaticThreadingBar
+from rcp.components.home.assisted_threading_bar import AssistedThreadingBar
 from rcp.components.home.coordbar import CoordBar
 
 log = Logger.getChild(__name__)
@@ -15,8 +15,8 @@ if os.path.exists(kv_file):
     Builder.load_file(kv_file)
 
 
-class AutoThreadingScreen(Screen):
-    automaticThreadingBar: AutomaticThreadingBar = ObjectProperty()
+class AssistedThreadingScreen(Screen):
+    assistedThreadingBar: AssistedThreadingBar = ObjectProperty()
     servo = ObjectProperty()
     scales = ListProperty()
     scales_labels = ListProperty()
@@ -24,7 +24,7 @@ class AutoThreadingScreen(Screen):
 
     def __init__(self, **kv):
         super().__init__(**kv)
-        Logger.info("AutoThreadingScreen initialized.")  # Log an info message
+        Logger.info("AssistedThreadingScreen initialized.")  # Log an info message
         self.update_scales_labels()
     
     def update_scales_labels(self):
@@ -42,8 +42,8 @@ class AutoThreadingScreen(Screen):
 
     def on_saddle_scale_selected(self, selected_label):
         if selected_label in self.scales_mapping:
-            self.automaticThreadingBar.selected_saddle_scale_id = self.scales_mapping[selected_label]
-            Logger.info(f"Selected saddle scale: {self.automaticThreadingBar.selected_saddle_scale_id}")
+            self.assistedThreadingBar.selected_saddle_scale_id = self.scales_mapping[selected_label]
+            Logger.info(f"Selected saddle scale: {self.assistedThreadingBar.selected_saddle_scale_id}")
         else:
             Logger.warning(f"Selected label not found in mapping: {selected_label}")
 
@@ -53,8 +53,8 @@ class AutoThreadingScreen(Screen):
 
     def on_cross_slide_scale_selected(self, selected_label):
         if selected_label in self.scales_mapping:
-            self.automaticThreadingBar.selected_cross_slide_scale_id = self.scales_mapping[selected_label]
-            Logger.info(f"Selected cross slide scale: {self.automaticThreadingBar.selected_cross_slide_scale_id}")
+            self.assistedThreadingBar.selected_cross_slide_scale_id = self.scales_mapping[selected_label]
+            Logger.info(f"Selected cross slide scale: {self.assistedThreadingBar.selected_cross_slide_scale_id}")
         else:
             Logger.warning(f"Selected label not found in mapping: {selected_label}")
 
@@ -65,7 +65,7 @@ class AutoThreadingScreen(Screen):
 
     def set_reversing_speed(self, val):
         try:
-            self.automaticThreadingBar.reversing_speed = min(int(val), self.servo.maxSpeed)
+            self.assistedThreadingBar.reversing_speed = min(int(val), self.servo.maxSpeed)
         except ValueError:
             pass
     
@@ -81,14 +81,14 @@ class AutoThreadingScreen(Screen):
         """Return available options for the Saddle Scale dropdown."""
         if not self.scales_labels:
             self.update_scales_labels()
-        cross_label = self.get_label_for_scale_id(self.automaticThreadingBar.selected_cross_slide_scale_id)
+        cross_label = self.get_label_for_scale_id(self.assistedThreadingBar.selected_cross_slide_scale_id)
         return [label for label in self.scales_labels if label != cross_label]
 
     def get_cross_slide_scale_options(self):
         """Return available options for the Cross Slide Scale dropdown."""
         if not self.scales_labels:
             self.update_scales_labels()
-        saddle_label = self.get_label_for_scale_id(self.automaticThreadingBar.selected_saddle_scale_id)
+        saddle_label = self.get_label_for_scale_id(self.assistedThreadingBar.selected_saddle_scale_id)
         return [label for label in self.scales_labels if label != saddle_label]
 
 

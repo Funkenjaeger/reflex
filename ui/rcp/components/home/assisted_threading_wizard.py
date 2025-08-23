@@ -2,7 +2,7 @@ from kivy.logger import Logger
 
 log = Logger.getChild(__name__)
 
-class AutomaticThreadingWizard:
+class AssistedThreadingWizard:
     def __init__(self, bar):
         self.bar = bar
         self.app = bar.app
@@ -46,13 +46,15 @@ class AutomaticThreadingWizard:
         self.bar.bind_to_scale(self.app.scales[self.bar.selected_saddle_scale_id])
 
     def step_2_stop_position(self):
-        self.set_instruction("Go to stop Z and press Set", "Set", None)
+        self.set_instruction("Go to stop Z and press Set", "Set", self._capture_stop_position)
         self.bar.bind_to_scale(self.app.scales[self.bar.selected_saddle_scale_id])
         
     def _capture_initial_position(self, *args):
-        self.bar.start_position = self.app.scales[self.bar.selected_saddle_scale_id].position
+        self.bar.start_position = self.app.scales[self.bar.selected_saddle_scale_id].encoderCurrent
+        log.info(f"Initial position set to: {self.bar.start_position}")
         
     def _capture_stop_position(self, *args):
-        self.bar.stop_position = self.app.scales[self.bar.selected_saddle_scale_id].position    
+        self.bar.stop_position = self.app.scales[self.bar.selected_saddle_scale_id].encoderCurrent    
+        log.info(f"Stop position set to: {self.bar.stop_position}")
     
         #self.bar.display_value = self.app.servo.formattedPosition

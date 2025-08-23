@@ -15,18 +15,18 @@ if os.path.exists(kv_file):
     Builder.load_file(kv_file)
 
 
-class AutomaticThreadingSettingsPopup(Popup):
-    automaticThreadingBar = ObjectProperty(None)
+class AssistedThreadingSettingsPopup(Popup):
+    assistedThreadingBar = ObjectProperty(None)
     
     def __init__(self, **kv):
         super().__init__(**kv)
         
     def get_pitches(self):
-        if not self.automaticThreadingBar:
+        if not self.assistedThreadingBar:
             return []
 
         # Choose the correct table based on metric_mode
-        if self.automaticThreadingBar.metric_mode:
+        if self.assistedThreadingBar.metric_mode:
             return [f.name for f in feeds.table["Thread MM"]]
         else:
             return [f.name for f in feeds.table["Thread IN"]]
@@ -41,23 +41,23 @@ class AutomaticThreadingSettingsPopup(Popup):
         if angle <= 0 or angle > 90:
             angle = 90
             
-        self.automaticThreadingBar.thread_profile_angle = angle
+        self.assistedThreadingBar.thread_profile_angle = angle
         
     def set_shaft_diameter(self, value):
         try:
             diameter = float(value) 
         except (ValueError, TypeError):
             diameter = 1
-        self.automaticThreadingBar.shaft_diameter = abs(diameter)
+        self.assistedThreadingBar.shaft_diameter = abs(diameter)
         
         
     def on_metric_mode_changed(self, value):
-        self.automaticThreadingBar.metric_mode = value
+        self.assistedThreadingBar.metric_mode = value
         pitches_dropdown = self.ids.pitches_dropdown
         pitches_dropdown.value = ""
         pitches_dropdown.options = self.get_pitches()
         log.info(f"Metric mode changed to: {value}")
         
     def on_pitch_selected(self, selected_pitch):
-        self.automaticThreadingBar.selected_pitch = selected_pitch
+        self.assistedThreadingBar.selected_pitch = selected_pitch
         log.info(f"Selected pitch: {selected_pitch}")

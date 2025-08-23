@@ -5,8 +5,8 @@ from kivy.logger import Logger
 from kivy.uix.boxlayout import BoxLayout
 from kivy.properties import NumericProperty, BooleanProperty, StringProperty
 
-from rcp.components.home.automatic_threading_settings_popup import AutomaticThreadingSettingsPopup
-from rcp.components.home.automatic_threading_wizard import AutomaticThreadingWizard
+from rcp.components.home.assisted_threading_settings_popup import AssistedThreadingSettingsPopup
+from rcp.components.home.assisted_threading_wizard import AssistedThreadingWizard
 from rcp.components.home.coordbar import CoordBar
 from rcp.dispatchers import SavingDispatcher
 
@@ -18,7 +18,7 @@ if os.path.exists(kv_file):
     Builder.load_file(kv_file)
 
 
-class AutomaticThreadingBar(BoxLayout, SavingDispatcher):    
+class AssistedThreadingBar(BoxLayout, SavingDispatcher):    
     selected_cross_slide_scale_id = NumericProperty(0)
     selected_saddle_scale_id = NumericProperty(1)
     cross_slide_diameter_mode = BooleanProperty(True)
@@ -51,7 +51,7 @@ class AutomaticThreadingBar(BoxLayout, SavingDispatcher):
         from rcp.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
         super().__init__(**kv)
-        self.wizard = AutomaticThreadingWizard(self)
+        self.wizard = AssistedThreadingWizard(self)
     
     def toggle_is_running(self):
         self.is_running = not self.is_running
@@ -69,7 +69,7 @@ class AutomaticThreadingBar(BoxLayout, SavingDispatcher):
             self.open_settings()
     
     def open_settings(self):
-        popup = AutomaticThreadingSettingsPopup(automaticThreadingBar=self)
+        popup = AssistedThreadingSettingsPopup(assistedThreadingBar=self)
         popup.open()
         
     def bind_to_scale(self, scale: CoordBar):
