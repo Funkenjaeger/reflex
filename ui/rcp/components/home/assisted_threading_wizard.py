@@ -26,6 +26,8 @@ class AssistedThreadingWizard:
         self.bar.label_text = ""
         self.bar.display_value = ""
         self.bar.action_button_enabled = True
+        self.bar.action_button_condition_fn = None
+        
 
     def goto_step(self, index):
         self.current_step = index
