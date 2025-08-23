@@ -34,6 +34,7 @@ class CoordBar(BoxLayout, SavingDispatcher):
     syncRatioDen = NumericProperty(100)
     syncEnable = BooleanProperty(False)
     position = NumericProperty(0)
+    encoderCurrent = NumericProperty(0)
 
     speed = NumericProperty(0)
     spindleMode = BooleanProperty(False)
@@ -85,7 +86,6 @@ class CoordBar(BoxLayout, SavingDispatcher):
 
         # Private variables that don't need dispatchers etc
         self.encoderPrevious = 0
-        self.encoderCurrent = 0
 
     def init_connection(self, *args, **kv):
         """
