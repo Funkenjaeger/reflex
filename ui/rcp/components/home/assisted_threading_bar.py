@@ -77,13 +77,11 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         popup = AssistedThreadingSettingsPopup(assistedThreadingBar=self)
         popup.open()
         
-    def bind_to_scale(self, scale: CoordBar):
+    def bind_display_value_to_scale(self, scale: CoordBar):
         """Bind display_value to a scale's encoderCurrent with strict keypad override support."""
 
-        # Unbind old scale if it exists
-        if hasattr(self, "_bound_scale") and self._bound_scale is not None:
-            self._bound_scale.unbind(encoderCurrent=self._on_encoder_update)
-            self._bound_scale.unbind(formattedPosition=self._on_format_update)
+        # Unbind any previous bindings
+        self._unbind_all_display_value()
 
         # Store the scale
         self._bound_scale = scale
@@ -115,8 +113,21 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         # Initial display
         self.display_value = scale.formattedPosition
 
+    def bind_display_value_to_servo_position(self):
+        """Bind display_value to the servo's formattedPosition."""
+        # Unbind any previous bindings
+        self._unbind_all_display_value()
+        self._bound_servo = self.app.servo
+        
+        def on_servo_position_update(instance, value):
+            self.display_value = value
+        
+        self._on_servo_position_update = on_servo_position_update
+        
+         # Bind to servo's formattedPosition
+        self.app.servo.bind(formattedPosition=on_servo_position_update)
 
-    def bind_to_value_button(self, on_release_fn):
+    def bind_btn_value_on_release(self, on_release_fn):
         """Bind the value button to a function."""
          # Unbind old function if it exists
         if hasattr(self, "_on_value_button_release") and self._on_value_button_release is not None:
@@ -140,8 +151,14 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
             self.action_button_enabled = self.action_button_condition_fn()
         else:
             self.action_button_enabled = True
-
-    def _update_display_value(self, instance, value):
-        self.display_value = value
+        
+    def _unbind_all_display_value(self):
+        if hasattr(self, "_bound_scale") and self._bound_scale is not None:
+            self._bound_scale.unbind(encoderCurrent=self._on_encoder_update)
+            self._bound_scale.unbind(formattedPosition=self._on_format_update)
+            self._bound_scale = None
+        if hasattr(self, "_bound_servo") and self._bound_servo is not None:
+            self._bound_servo.unbind(formattedPosition=self._on_servo_position_update)
+            self._bound_servo = None
         
     

@@ -119,7 +119,7 @@ class ServoBar(BoxLayout, SavingDispatcher):
                 self.encoderPrevious = self.app.fast_data_values['servoCurrent']
                 self.encoderCurrent = self.app.fast_data_values['servoCurrent']
                 self.servoEnable = self.app.fast_data_values['servoEnable']
-                self.app.device['servo']['maxSpeed'] = self.maxSpeed
+                self.set_max_speed(self.maxSpeed)
                 self.app.device['servo']['acceleration'] = self.acceleration
 
                 if self.servoEnable == 0:
@@ -177,6 +177,9 @@ class ServoBar(BoxLayout, SavingDispatcher):
         else:
             self.scaledPosition = float(self.position * ratio) * self.app.formats.factor
             self.formattedPosition = self.app.formats.position_format.format(self.scaledPosition)
+    
+    def set_max_speed(self, value):
+        self.app.device['servo']['maxSpeed'] = value
 
     def on_index(self, instance, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)
@@ -206,7 +209,7 @@ class ServoBar(BoxLayout, SavingDispatcher):
             self.oldOffset = value
 
     def on_maxSpeed(self, instance, value):
-        self.app.device['servo']['maxSpeed'] = self.maxSpeed
+        self.set_max_speed(self.maxSpeed)
 
     def on_jogSpeed(self, instance, value):
         self.app.device['servo']['jogSpeed'] = self.jogSpeed

@@ -1,3 +1,4 @@
+from fractions import Fraction
 from kivy.logger import Logger
 
 from rcp.components.home.coordbar import CoordBar
@@ -5,15 +6,21 @@ from rcp.components.home.coordbar import CoordBar
 log = Logger.getChild(__name__)
 
 class AssistedThreadingWizard:
+    @property
+    def saddle_scale(self) -> CoordBar:
+        return self.app.scales[self.bar.selected_saddle_scale_id]
+    
     def __init__(self, bar):
         self.bar = bar
         self.app = bar.app
+        self.servo = self.app.servo
         self.current_step = 0
         self._current_callback = None
         self.manual_stop_length = None  
         self._steps = [
             self._step_1_initial_position,
             self._step_2_stop_position,
+            self._step_3_go_to_start,
             # ... same steps as before ...
         ]
         
@@ -46,30 +53,34 @@ class AssistedThreadingWizard:
         self.bar.label_text = label_text
         self.bar.next_button_text = next_button_text
         self._current_callback = next_button_callback
-        self.bar.bind_to_value_button(value_button_fn)
+        self.bar.bind_btn_value_on_release(value_button_fn)
         self.bar.action_button_condition_fn = action_button_condition_fn
     
     # Instruction steps
     def _step_1_initial_position(self):
         self.set_instruction("Go to initial Z and press Set", "Set", self._capture_initial_position)
-        self.bar.bind_to_scale(self.app.scales[self.bar.selected_saddle_scale_id])
+        self.bar.bind_display_value_to_scale(self.saddle_scale)
 
     def _step_2_stop_position(self):
         self.bar.action_button_enabled = False  # Disable until valid
         self.set_instruction("Go to stop Z and press Set", "Set", self._capture_stop_position, self._open_stop_position_keypad, self._is_valid_stop_position)
-        self.bar.bind_to_scale(self.app.scales[self.bar.selected_saddle_scale_id])
+        self.bar.bind_display_value_to_scale(self.saddle_scale)
+        
+    def _step_3_go_to_start(self):
+        self.set_instruction("Engage half nut and press Go to return to start position", "Go", self._go_to_start)
+        
     
     # Step callbacks    
     # Step 1
     def _capture_initial_position(self, *args):
-        self.bar.start_position = self.app.scales[self.bar.selected_saddle_scale_id].encoderCurrent
+        self.bar.start_position = self.saddle_scale.encoderCurrent
         self._isStartPositionMetricMode = self.app.formats.current_format == "MM"
-        self._startScaledPosition = self.app.scales[self.bar.selected_saddle_scale_id].scaledPosition
+        self._startScaledPosition = self.saddle_scale.scaledPosition
         log.info(f"Initial position set to: {self.bar.start_position}")
         
     #Step 2
     def _capture_stop_position(self, *args): 
-        scale = self.app.scales[self.bar.selected_saddle_scale_id]
+        scale = self.saddle_scale
 
         if self.manual_stop_length is not None:
             # convert length into encoder stop position
@@ -82,6 +93,32 @@ class AssistedThreadingWizard:
             self.bar.stop_position = scale.encoderCurrent
             log.info(f"Stop position set from scale: {self.bar.stop_position}"
                     f"(start={self.bar.start_position}, stop={self.bar.stop_position})")
+    
+    #Step 3    
+    def _go_to_start(self, *args):
+        log.info(f"Moving to start position: {self.bar.start_position} + retraction")
+        
+        ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
+        
+        if self.bar.left_hand_thread:
+            target_scaled = self.bar.start_position - self._get_retraction_distance_encoder_steps()  # subtract retraction
+        else:        
+            target_scaled = self.bar.start_position + self._get_retraction_distance_encoder_steps()  # add retraction
+            
+        current_scaled = self.saddle_scale.encoderCurrent
+        delta_steps = int((target_scaled - current_scaled) / ratio)
+        log.info(f"Computed move delta: {delta_steps} steps (target_scaled={target_scaled}, current_scaled={current_scaled}, ratio={ratio})")
+        
+        if delta_steps == 0:
+            log.info("Already at start position")
+            self.goto_step(self.current_step + 1)
+            return
+        
+        self.bar.bind_display_value_to_servo_position() # bind to servo position
+        self.servo.set_max_speed(self.bar.reversing_speed)  # set to reversing speed
+        self.servo.servoEnable = 1  # enable
+        self.app.device['servo']['direction'] = delta_steps  # trigger move
+        self.app.bind(update_tick=self._check_servo_done)  # watch until done    
             
     #Step Action button condition functions
     #Step 2
@@ -90,8 +127,8 @@ class AssistedThreadingWizard:
          - For right-hand threads, stop must be less than start.
          - For left-hand threads, stop must be greater than start."""
         if self.bar.left_hand_thread:
-            return self.bar.start_position < self._get_stop_position_units(self.app.scales[self.bar.selected_saddle_scale_id])
-        return self.bar.start_position > self._get_stop_position_units(self.app.scales[self.bar.selected_saddle_scale_id])
+            return self.bar.start_position < self._get_stop_position_units(self.saddle_scale)
+        return self.bar.start_position > self._get_stop_position_units(self.saddle_scale)
 
     # Manual input handlers
     def _open_stop_position_keypad(self, *args):
@@ -158,9 +195,43 @@ class AssistedThreadingWizard:
         return final_encoder_position
 
     def _get_stop_position_units(self, scale: CoordBar) -> float:
-        scale = self.app.scales[self.bar.selected_saddle_scale_id]
+        scale = self.saddle_scale
         if self.manual_stop_length is not None:
             return self._convert_stop_position_units_to_encoder(scale, self.manual_stop_length)
         return scale.encoderCurrent
+    
+    def _convert_distance_units_to_encoder(self, scale: CoordBar, distance: float, is_metric: bool) -> int:
+        """
+        Convert a pure distance (mm or inch) into encoder counts.
+        """
+        encoder_factor = float(self.app.formats.MM_FRACTION if is_metric else self.app.formats.INCHES_FRACTION)
 
+        # Compute encoder counts using inverse of CoordBar.scaledPosition
+        encoder_counts = (
+            (distance / encoder_factor) - scale.offsets[self.app.currentOffset]
+        ) * (float(scale.ratioDen) / float(scale.ratioNum))
 
+        final_encoder_distance = int(round(encoder_counts))
+
+        log.info(
+            f"Converted distance to encoder counts: {final_encoder_distance} "
+            f"(input distance={distance}, encoder delta={encoder_counts})"
+        )
+
+        return final_encoder_distance
+
+    def _get_retraction_distance_encoder_steps(self) -> int:
+        """Get the retraction distance in encoder counts based on thread pitch and direction."""
+        return self._convert_distance_units_to_encoder(self.saddle_scale, self.bar.backlash_retraction_distance, self.bar.metric_distances)
+
+    def _check_servo_done(self, *args):
+        if self.app.fast_data_values['stepsToGo'] == 0:
+            log.info("Servo reached start position")
+            self.servo.servoEnable = 0  # disable
+            self.servo.set_max_speed(self.servo.maxSpeed)  # restore speed
+            
+            # Stop watching
+            self.app.unbind(update_tick=self._check_servo_done)
+
+            # Advance workflow (skip callback loop!)
+            self.goto_step(self.current_step + 1)
