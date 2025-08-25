@@ -10,6 +10,10 @@ class AssistedThreadingWizard:
     def saddle_scale(self) -> CoordBar:
         return self.app.scales[self.bar.selected_saddle_scale_id]
     
+    @property
+    def cross_slide_scale(self) -> CoordBar:
+        return self.app.scales[self.bar.selected_cross_slide_scale_id]
+    
     def __init__(self, bar):
         self.bar = bar
         self.app = bar.app
@@ -17,10 +21,13 @@ class AssistedThreadingWizard:
         self.current_step = 0
         self._current_callback = None
         self.manual_stop_length = None  
+        self.manual_cutting_depth = None
         self._steps = [
-            self._step_1_initial_position,
-            self._step_2_stop_position,
-            self._step_3_go_to_start,
+            self._step_set_initial_position,
+            self._step_set_stop_position,
+            self._step_set_material_width_position,
+            self._step_set_final_cutting_depth_position,
+            self._step_go_to_start,
             # ... same steps as before ...
         ]
         
@@ -57,18 +64,33 @@ class AssistedThreadingWizard:
         self.bar.action_button_condition_fn = action_button_condition_fn
     
     # Instruction steps
-    def _step_1_initial_position(self):
+    #Step 1
+    def _step_set_initial_position(self):
         self.set_instruction("Go to initial Z and press Set", "Set", self._capture_initial_position)
         self.bar.bind_display_value_to_scale(self.saddle_scale)
 
-    def _step_2_stop_position(self):
+    #Step 2
+    def _step_set_stop_position(self):
         self.bar.action_button_enabled = False  # Disable until valid
         self.set_instruction("Go to stop Z and press Set", "Set", self._capture_stop_position, self._open_stop_position_keypad, self._is_valid_stop_position)
         self.bar.bind_display_value_to_scale(self.saddle_scale)
+    
+    #Step 3
+    def _step_set_material_width_position(self):
+        self.set_instruction("Set material width and press Set", "Set", self._capture_material_width_position)
+        self.bar.bind_display_value_to_scale(self.cross_slide_scale)
         
-    def _step_3_go_to_start(self):
+    #Step 4
+    def _step_set_final_cutting_depth_position(self):
+        self.bar.action_button_enabled = False  # Disable until valid
+        self.set_instruction("Enter Final Cutting Depth", "Set", self._capture_final_cutting_depth_position, self._open_final_cutting_depth_position_keypad, self._is_valid_cutting_depth_position)
+        self.bar.unbind_all_display_value() 
+        self.bar.display_value = ""  # Clear display value since not bound to scale
+    
+    #Step 5        
+    def _step_go_to_start(self):
         self.set_instruction("Engage half nut and press Go to return to start position", "Go", self._go_to_start)
-        
+     
     
     # Step callbacks    
     # Step 1
@@ -79,22 +101,31 @@ class AssistedThreadingWizard:
         log.info(f"Initial position set to: {self.bar.start_position}")
         
     #Step 2
-    def _capture_stop_position(self, *args): 
-        scale = self.saddle_scale
-
-        if self.manual_stop_length is not None:
-            # convert length into encoder stop position
-            self.bar.stop_position = self._convert_stop_position_units_to_encoder(scale, self.manual_stop_length)
-            log.info(f"Stop position set manually: {self.manual_stop_length} "
-                    f"(start={self.bar.start_position}, stop={self.bar.stop_position})")
-            self.manual_stop_length = None  # reset for next run
-        else:
-            # default: take live encoder value
-            self.bar.stop_position = scale.encoderCurrent
-            log.info(f"Stop position set from scale: {self.bar.stop_position}"
-                    f"(start={self.bar.start_position}, stop={self.bar.stop_position})")
+    def _capture_stop_position(self, *args):         
+        self.bar.stop_position = self._get_stop_position_units()
+        self.manual_stop_length = None  # reset for next run
+        log.info(f"Stop position set - (start={self.bar.start_position}, stop={self.bar.stop_position})")
+            
+    #Step 3
+    def _capture_material_width_position(self, *args):
+        self.bar.material_width = self.cross_slide_scale.encoderCurrent
+        self._isMaterialWidthPositionMetricMode = self.app.formats.current_format == "MM"
+        self._materialWidthScaledPosition = self.cross_slide_scale.scaledPosition
+        log.info(f"Material width set to: {self.bar.material_width}")
     
-    #Step 3    
+    #Step 4
+    def _capture_final_cutting_depth_position(self, *args):         
+        # convert length into encoder stop position
+        self.bar.cutting_depth = self._convert_position_units_to_encoder(self.cross_slide_scale,
+                                                                         self.manual_cutting_depth,
+                                                                         self._isMaterialWidthPositionMetricMode,
+                                                                         self._materialWidthScaledPosition,
+                                                                         self.bar.material_width)
+        
+        log.info(f"Cutting depth set manually: {self.manual_cutting_depth} "
+                f"(start={self.bar.material_width}, stop={self.bar.cutting_depth})")        
+    
+    #Step 5    
     def _go_to_start(self, *args):
         log.info(f"Moving to start position: {self.bar.start_position} + retraction")
         
@@ -127,8 +158,25 @@ class AssistedThreadingWizard:
          - For right-hand threads, stop must be less than start.
          - For left-hand threads, stop must be greater than start."""
         if self.bar.left_hand_thread:
-            return self.bar.start_position < self._get_stop_position_units(self.saddle_scale)
-        return self.bar.start_position > self._get_stop_position_units(self.saddle_scale)
+            return self.bar.start_position < self._get_stop_position_units()
+        return self.bar.start_position > self._get_stop_position_units()
+    
+    #Step 4
+    def _is_valid_cutting_depth_position(self):
+        """Check if the cutting depth is valid given the material width position and if it's internal/external thread.
+        - For internal threads, cutting depth must be greater than material width.
+        - For external threads, cutting depth must be less than material width."""
+        if self.bar.inner_thread:
+            return self.bar.material_width < self._convert_position_units_to_encoder(self.cross_slide_scale,
+                                                                                     self.manual_cutting_depth,
+                                                                                     self._isMaterialWidthPositionMetricMode,
+                                                                                     self._materialWidthScaledPosition,
+                                                                                     self.bar.material_width)
+        return self.bar.material_width > self._convert_position_units_to_encoder(self.cross_slide_scale,
+                                                                                 self.manual_cutting_depth,
+                                                                                 self._isMaterialWidthPositionMetricMode,
+                                                                                 self._materialWidthScaledPosition,
+                                                                                 self.bar.material_width)
 
     # Manual input handlers
     def _open_stop_position_keypad(self, *args):
@@ -152,9 +200,35 @@ class AssistedThreadingWizard:
 
         keypad.show_with_callback(callback_fn=on_done,
                                 current_value=self.manual_stop_length or 0.0)
+    
+    def _open_final_cutting_depth_position_keypad(self, *args):
+        from rcp.components.keypad import Keypad
+        
+        is_metric = self.app.formats.current_format == "MM"
+        
+        keypad = Keypad(title="Enter Final Cutting Depth (" + ("mm" if is_metric else "in") + ")")
+        keypad.integer = False
+
+        def on_done(value):
+            try:
+                self.manual_cutting_depth = float(value)
+                log.info(f"Manual cutting depth entered: {self.manual_cutting_depth}")
+                self.bar.display_value = f"{self.manual_cutting_depth:.3f}" if is_metric else f"{self.manual_cutting_depth:.4f}"
+            except ValueError:
+                log.warning(f"Invalid cutting depth input: {value}")
+            finally:
+                self.bar.update_action_button_state()
+
+        keypad.show_with_callback(callback_fn=on_done,
+                                current_value=self.manual_cutting_depth or 0.0)
         
     # Utilities
-    def _convert_stop_position_units_to_encoder(self, scale: CoordBar, manual_position: float) -> int:
+    def _convert_position_units_to_encoder(self, 
+                                                scale: CoordBar, 
+                                                manual_position: float, 
+                                                is_original_position_metric_mode: bool,
+                                                original_scaled_position, 
+                                                start_encoder_units: int) -> int:
         """
         Convert a user-entered stop position (MM/IN) into encoder counts.
         Handles:
@@ -165,16 +239,16 @@ class AssistedThreadingWizard:
 
         # Determine factors
         current_factor = float(self.app.formats.factor)
-        factor_at_start_position = float(self.app.formats.MM_FRACTION if self._isStartPositionMetricMode else self.app.formats.INCHES_FRACTION)
+        factor_at_start_position = float(self.app.formats.MM_FRACTION if is_original_position_metric_mode else self.app.formats.INCHES_FRACTION)
 
         # Normalize manual input to the units used at start
         manual_in_start_units = manual_position * (factor_at_start_position / current_factor)
 
         # Compute delta relative to start scaled position
-        delta_in_start_units = manual_in_start_units - self._startScaledPosition
+        delta_in_start_units = manual_in_start_units - original_scaled_position
 
         log.info(
-            f"Manual stop input: {manual_position} "
+            f"Manual input: {manual_position} "
             f"(converted to start units: {manual_in_start_units}, "
             f"delta from start: {delta_in_start_units})"
         )
@@ -185,19 +259,29 @@ class AssistedThreadingWizard:
         ) * (float(scale.ratioDen) / float(scale.ratioNum))
 
         # Offset by the captured start position
-        final_encoder_position = int(round(self.bar.start_position + encoder_counts))
+        final_encoder_position = int(round(start_encoder_units + encoder_counts))
 
         log.info(
             f"Computed encoder counts: {final_encoder_position} "
-            f"(start_position={self.bar.start_position}, encoder delta={encoder_counts})"
+            f"(start_position={start_encoder_units}, encoder delta={encoder_counts})"
         )
 
         return final_encoder_position
 
-    def _get_stop_position_units(self, scale: CoordBar) -> float:
+    def _get_stop_position_units(self) -> float:
         scale = self.saddle_scale
         if self.manual_stop_length is not None:
-            return self._convert_stop_position_units_to_encoder(scale, self.manual_stop_length)
+            log.info(f"Using manual stop length: {self.manual_stop_length}")
+            result = self._convert_position_units_to_encoder(
+                scale,
+                self.manual_stop_length,
+                self._isStartPositionMetricMode,
+                self._startScaledPosition,
+                self.bar.start_position
+            )
+            log.info(f"Converted manual stop length to encoder units: {result}")
+            return result
+        log.info(f"Using live encoder value: {scale.encoderCurrent}")
         return scale.encoderCurrent
     
     def _convert_distance_units_to_encoder(self, scale: CoordBar, distance: float, is_metric: bool) -> int:

@@ -33,12 +33,6 @@
           value: root.get_label_for_scale_id(root.assistedThreadingBar.selected_cross_slide_scale_id) if root.assistedThreadingBar else ""
           on_value: root.on_cross_slide_scale_selected(self.value)
 
-
-        BooleanItem:
-          name: "Cross Slide Diameter Mode"
-          value: root.assistedThreadingBar.cross_slide_diameter_mode
-          on_value: root.assistedThreadingBar.cross_slide_diameter_mode = self.value
-
         TitleItem:
           name: "Speeds and Distance Settings"
         NumberItem:

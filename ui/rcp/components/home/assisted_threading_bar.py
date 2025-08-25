@@ -21,7 +21,6 @@ if os.path.exists(kv_file):
 class AssistedThreadingBar(BoxLayout, SavingDispatcher):    
     selected_cross_slide_scale_id = NumericProperty(0)
     selected_saddle_scale_id = NumericProperty(1)
-    cross_slide_diameter_mode = BooleanProperty(True)
     
     reversing_speed = NumericProperty(500)
     metric_distances = BooleanProperty(True) # This is for the UI in the setting screen
@@ -42,13 +41,17 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     next_button_text = StringProperty("")
     start_position = NumericProperty(0)
     stop_position = NumericProperty(0)
+    material_width = NumericProperty(0)
+    cutting_depth = NumericProperty(0)
     _skip_save = [
         "is_running",
         "action_button_enabled",
         "label_text",
         "display_value",
         "start_position"
-        "stop_position"
+        "stop_position",
+        "material_width",
+        "cutting_depth",
         ]
 
     def __init__(self, **kv):
@@ -81,7 +84,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         """Bind display_value to a scale's encoderCurrent with strict keypad override support."""
 
         # Unbind any previous bindings
-        self._unbind_all_display_value()
+        self.unbind_all_display_value()
 
         # Store the scale
         self._bound_scale = scale
@@ -116,7 +119,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     def bind_display_value_to_servo_position(self):
         """Bind display_value to the servo's formattedPosition."""
         # Unbind any previous bindings
-        self._unbind_all_display_value()
+        self.unbind_all_display_value()
         self._bound_servo = self.app.servo
         
         def on_servo_position_update(instance, value):
@@ -144,6 +147,15 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         self.ids.btn_value.disabled = False
         # Bind the new function
         self.ids.btn_value.bind(on_release=on_release_fn)
+    
+    def unbind_all_display_value(self):
+        if hasattr(self, "_bound_scale") and self._bound_scale is not None:
+            self._bound_scale.unbind(encoderCurrent=self._on_encoder_update)
+            self._bound_scale.unbind(formattedPosition=self._on_format_update)
+            self._bound_scale = None
+        if hasattr(self, "_bound_servo") and self._bound_servo is not None:
+            self._bound_servo.unbind(formattedPosition=self._on_servo_position_update)
+            self._bound_servo = None
 
     def update_action_button_state(self):
         """Evaluate whether the action button should be enabled."""
@@ -152,13 +164,5 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         else:
             self.action_button_enabled = True
         
-    def _unbind_all_display_value(self):
-        if hasattr(self, "_bound_scale") and self._bound_scale is not None:
-            self._bound_scale.unbind(encoderCurrent=self._on_encoder_update)
-            self._bound_scale.unbind(formattedPosition=self._on_format_update)
-            self._bound_scale = None
-        if hasattr(self, "_bound_servo") and self._bound_servo is not None:
-            self._bound_servo.unbind(formattedPosition=self._on_servo_position_update)
-            self._bound_servo = None
         
     
