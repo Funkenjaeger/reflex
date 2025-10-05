@@ -65,6 +65,14 @@ typedef struct {
   uint32_t cycles;
   uint32_t executionInterval;
   uint16_t servoEnable;
+  uint32_t threadDesiredSteps;
+  uint8_t threadRequest;
+  uint8_t threadReset;
+  uint16_t threadSpindleIndex;
+  uint32_t threadPhaseRef;
+  uint8_t threadHasPhase;
+  uint16_t threadEnabled;
+  uint16_t threadTolerance;
 } fastData_t;
 """
 

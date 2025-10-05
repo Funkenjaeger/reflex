@@ -23,9 +23,10 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     selected_saddle_scale_id = NumericProperty(1)
     
     reversing_speed = NumericProperty(500)
+    encoder_sync_tolerance = NumericProperty(5)
     metric_distances = BooleanProperty(True) # This is for the UI in the setting screen
     backlash_retraction_distance = NumericProperty(10)
-    backlash_cusion = NumericProperty(2)
+    backlash_cushion = NumericProperty(2)
     
     metric_mode = BooleanProperty(True) # This is for the actual threading logic
     selected_pitch = StringProperty("")
@@ -43,6 +44,8 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     stop_position = NumericProperty(0)
     material_width = NumericProperty(0)
     cutting_depth = NumericProperty(0)
+    last_cutting_depth = NumericProperty(0)
+    retract_button_visible = BooleanProperty(False)
     _skip_save = [
         "is_running",
         "action_button_enabled",
@@ -52,6 +55,8 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         "stop_position",
         "material_width",
         "cutting_depth",
+        "last_cutting_depth",
+        "retract_button_visible"
         ]
 
     def __init__(self, **kv):
@@ -69,6 +74,14 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         else:
             self.wizard.reset_ui()
 
+    def on_retract_button_pressed(self):
+        """Called when the retract button is pressed."""
+        self.wizard.start_retracting()
+        
+    def on_retract_button_released(self):
+        """Called when the retract button is released."""
+        self.wizard.stop_retracting()
+        
     def on_action_button_clicked(self):
         """Called when the right button is pressed."""
         if self.is_running:

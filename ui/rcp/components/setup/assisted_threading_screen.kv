@@ -39,6 +39,10 @@
           name: "Reversing Speed (Steps/s)"
           value: root.assistedThreadingBar.reversing_speed
           on_value: root.set_reversing_speed(self.value)
+        NumberItem:
+          name: "Encoder sync tolerance (Steps)"
+          value: root.assistedThreadingBar.encoder_sync_tolerance
+          on_value: root.assistedThreadingBar.encoder_sync_tolerance = self.value
         BooleanItem:
           name: "Metric Distances"
           value: root.assistedThreadingBar.metric_distances
@@ -49,5 +53,5 @@
           on_value: root.assistedThreadingBar.backlash_retraction_distance = int(self.value)
         NumberItem:
           name: "Saddle backlash cushion (MM)" if root.assistedThreadingBar.metric_distances else "Saddle backlash cushion (IN)"
-          value: root.assistedThreadingBar.backlash_cusion
-          on_value: root.assistedThreadingBar.backlash_cusion = int(self.value)
+          value: root.assistedThreadingBar.backlash_cushion
+          on_value: root.assistedThreadingBar.backlash_cushion = int(self.value)
