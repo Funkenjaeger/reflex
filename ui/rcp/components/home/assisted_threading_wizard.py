@@ -1,6 +1,7 @@
 from fractions import Fraction
 from kivy.logger import Logger
 
+from rcp.components.forms.custom_popup import CustomPopup
 from rcp.components.home.coordbar import CoordBar
 
 log = Logger.getChild(__name__)
@@ -20,6 +21,7 @@ class AssistedThreadingWizard:
         self.servo = self.app.servo
         self.current_step = 0
         self._current_callback = None
+        self._servo_watch_callback = None
         self.manual_stop_length = None  
         self.manual_cutting_depth = None
         self._steps = [
@@ -37,13 +39,21 @@ class AssistedThreadingWizard:
     def start(self):
         self.goto_step(0)
 
-    def reset_ui(self):
+    def stop(self):
         # Reset wizard_area to default content
+        log.info("Wizard finished")
+        self._current_callback = None
         self.bar.label_text = ""
         self.bar.display_value = ""
         self.bar.action_button_enabled = True
         self.bar.action_button_condition_fn = None
-        self.app.device['fastData']['threadReset'] = 1
+        self.bar.is_running = False
+        self.bar.retract_button_visible = False
+        self.bar.unbind_all_display_value() 
+        self.bar.display_value = ""
+        
+        if self.app.connected:
+            self.app.device['fastData']['threadReset'] = 1
         
 
     def goto_step(self, index):
@@ -51,13 +61,20 @@ class AssistedThreadingWizard:
         if 0 <= index < len(self._steps):
             self._steps[index]()
         else:
-            log.info("Wizard finished")
-            self.bar.is_running = False
+            self.stop()
     
     def goto_next_step(self, *args):
+        # call the callback; it may return False to tell us "do not auto-advance"
+        result = None
         if self._current_callback:
-            self._current_callback(*args)  
-        self.goto_step(self.current_step + 1)
+            result = self._current_callback(*args)
+
+        # If callback returned exactly False => callback will handle advancement later
+        if result is False:
+            return
+
+        if self.bar.is_running:  # check to ensure still running and we didn't stop in the callback
+            self.goto_step(self.current_step + 1)
 
     def set_instruction(self, label_text, next_button_text, next_button_callback, value_button_fn=None, action_button_condition_fn=None, retract_button_visible=False):
         self.bar.label_text = label_text
@@ -121,7 +138,7 @@ class AssistedThreadingWizard:
     
     #Step 8
     def _step_depth_reached(self):
-        self.set_instruction("Final depth reached. Cut more? Press Stop to quit.", "Cut", None, self._start_threading_operation, None, self._is_cross_slide_at_cutting_depth, True)
+        self.set_instruction("Final depth reached. Cut more? Press Stop to quit.", "Cut", self._start_threading_operation, None, self._is_cross_slide_at_cutting_depth, True)
     
     # Step callbacks    
     # Step 1
@@ -130,12 +147,14 @@ class AssistedThreadingWizard:
         self._isStartPositionMetricMode = self.app.formats.current_format == "MM"
         self._startScaledPosition = self.saddle_scale.scaledPosition
         log.info(f"Initial position set to: {self.bar.start_position}")
+        return True  # advance to next step
         
     #Step 2
     def _capture_stop_position(self, *args):         
         self.bar.stop_position = self._get_stop_position_units()
         self.manual_stop_length = None  # reset for next run
         log.info(f"Stop position set - (start={self.bar.start_position}, stop={self.bar.stop_position})")
+        return True  # advance to next step
             
     #Step 3
     def _capture_material_width_position(self, *args):
@@ -144,6 +163,7 @@ class AssistedThreadingWizard:
         self._isMaterialWidthPositionMetricMode = self.app.formats.current_format == "MM"
         self._materialWidthScaledPosition = self.cross_slide_scale.scaledPosition
         log.info(f"Material width set to: {self.bar.material_width}")
+        return True  # advance to next step
     
     #Step 4
     def _capture_final_cutting_depth_position(self, *args):         
@@ -155,12 +175,14 @@ class AssistedThreadingWizard:
                                                                          self.bar.material_width)
         
         log.info(f"Cutting depth set manually: {self.manual_cutting_depth} "
-                f"(start={self.bar.material_width}, stop={self.bar.cutting_depth})")        
+                f"(start={self.bar.material_width}, stop={self.bar.cutting_depth})")  
+        return True  # advance to next step      
     
     #Step 6 - TODO test this   
     def _go_to_start(self, *args):
         if not self.app.connected:
-            return
+            self.stop()
+            return False # tell goto_next_step not to advance immediately
         
         log.info(f"Moving to start position: {self.bar.start_position} + retraction")
 
@@ -174,7 +196,7 @@ class AssistedThreadingWizard:
             delta_steps += (self._get_retraction_distance_encoder_steps() * (1 if self.bar.left_hand_thread else -1))
             log.info("Taking out backlash by moving further than retracted start position")
             # If taking out backlash, we need to wait until the first move is done, then issue another move to go back to start position
-            _next_step = self.current_step # watch until done - then go to next step (which is this same step again)
+            _next_step = self.current_step # Use this same step again
         else:
             _next_step = self.current_step + 1 # Step 7
             # Check if at cutting depth
@@ -186,13 +208,16 @@ class AssistedThreadingWizard:
         self.servo.set_max_speed(self.bar.reversing_speed) # set to reversing speed
         self.servo.servoEnable = 1
         self.app.device['servo']['direction'] = delta_steps # trigger move        
-             
-        self.app.bind(update_tick=lambda *a: self._check_servo_done(_next_step, *a)) # watch until done - then go to next step  
+        
+        self._servo_watch_callback = lambda *a: self._check_servo_done(_next_step, *a) # watch until done - then go to next step  
+        self.app.bind(update_tick=self._servo_watch_callback) 
+        return False #tell goto_next_step not to advance immediately
      
     #Step 7 - TODO test
     def _start_threading_operation(self, *args):
         if not self.app.connected:
-            return
+            self.stop()
+            return False # tell goto_next_step not to advance immediately
         
         #check that current position is at proper start position including the backlash retraction distance within the bar.backlash_cushion
         retraction_distance = self._get_retraction_distance_encoder_steps()
@@ -201,10 +226,22 @@ class AssistedThreadingWizard:
         else:
             desired_position = self.bar.start_position - retraction_distance
         
+        log.info(f"Validating start position: current={self.saddle_scale.encoderCurrent}, desired={desired_position} (start={self.bar.start_position}, retraction={retraction_distance})")
         if (abs(self.saddle_scale.encoderCurrent - desired_position) > self.bar.backlash_cushion):
-            log.warning("Not at valid start position including backlash cushion. Aborting threading operation.")
-            #TODO show error message in UI
-            return
+            _warning = "Not at valid start position including backlash cushion. Aborting threading operation. Go back to start position."
+            log.warning(_warning)
+            
+            def _acknowledge_warning():
+                self.goto_step(5)  # go back to step 6 - Go to start
+            
+            popup = CustomPopup(
+                title="Warning",
+                message=_warning,
+                button_text="Got it",
+                on_dismiss_callback=_acknowledge_warning
+            )
+            popup.open()
+            return False  # tell goto_next_step not to advance immediately
         
         log.info("Starting threaded cut to stop position: %s", self.bar.stop_position)
         
@@ -228,7 +265,11 @@ class AssistedThreadingWizard:
         # Request latch+wait. Firmware will latch current spindle phase and wait until matched.
         dev['fastData']['threadRequest'] = 1
 
-        self.app.bind(update_tick=lambda *a: self._check_servo_done(5, *a)) # watch until done - then go to step 6 (go to start)
+
+        self._servo_watch_callback = lambda *a: self._check_servo_done(5, *a) # watch until done - then go to step 6 (go to start)
+        self.app.bind(update_tick=self._servo_watch_callback)
+        return False #tell goto_next_step not to advance immediately
+        
             
     #Step Action button condition functions
     #Step 2
@@ -420,9 +461,10 @@ class AssistedThreadingWizard:
             self.servo.set_max_speed(self.servo.maxSpeed)  # restore speed
             
             # Stop watching
-            self.app.unbind(update_tick=self._check_servo_done)
+            if self._servo_watch_callback:
+                self.app.unbind(update_tick=self._servo_watch_callback)
+                self._servo_watch_callback = None
 
-            # Advance workflow (skip callback loop!)
             self.goto_step(next_step)
         
     def _get_servo_delta_steps(self) -> int:

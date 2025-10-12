@@ -68,11 +68,10 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     
     def toggle_is_running(self):
         self.is_running = not self.is_running
-        self.app.servo.toggle_enable()
         if self.is_running:
             self.wizard.start()
         else:
-            self.wizard.reset_ui()
+            self.wizard.stop()
 
     def on_retract_button_pressed(self):
         """Called when the retract button is pressed."""
