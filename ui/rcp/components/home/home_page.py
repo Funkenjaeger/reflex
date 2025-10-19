@@ -69,14 +69,17 @@ class HomePage(Screen):
         # Visualize things properly
         if self.next_mode == 1: # IDX
             self.bars_container: BoxLayout
+            self.app.assistedThreadingBar.stop_wizard()
             self.bars_container.remove_widget(self.bars_container.children[0])
             self.bars_container.add_widget(self.app.servo)
         if self.next_mode == 2: # ELS
             self.bars_container: BoxLayout
+            self.app.assistedThreadingBar.stop_wizard()
             self.bars_container.remove_widget(self.bars_container.children[0])
             self.bars_container.add_widget(self.els_bar)
         if self.next_mode == 3: # JOG
             self.bars_container: BoxLayout
+            self.app.assistedThreadingBar.stop_wizard()
             self.bars_container.remove_widget(self.bars_container.children[0])
             self.bars_container.add_widget(self.jog_bar)
         if self.next_mode == 4: # AT

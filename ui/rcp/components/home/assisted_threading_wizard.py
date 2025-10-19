@@ -49,8 +49,8 @@ class AssistedThreadingWizard:
         self.bar.action_button_condition_fn = None
         self.bar.is_running = False
         self.bar.retract_button_visible = False
-        self.bar.unbind_all_display_value() 
-        self.bar.display_value = ""
+        self._clear_bar_display()
+        self._stop_servo()
         
         if self.app.connected:
             self.app.device['fastData']['threadReset'] = 1
@@ -84,19 +84,26 @@ class AssistedThreadingWizard:
         self.bar.action_button_condition_fn = action_button_condition_fn
         self.bar.retract_button_visible = retract_button_visible
         
-    def start_retracting(self):
-        if not self.app.connected:
-            return
-        
+    #TODO test this
+    def start_retracting(self):        
         log.info("Retract button pressed")
-        #TODO implement retract logic
-    
-    def stop_retracting(self):
+        self.bar.action_button_enabled = False  # disable action button while retracting
+        
         if not self.app.connected:
             return
-        
+        self.bar.bind_display_value_to_servo_position() # bind to servo position
+        self.servo.set_max_speed(self.bar.reversing_speed) # set to reversing speed
+        self.servo.servoEnable = 2
+    
+    #TODO test this
+    def stop_retracting(self):
         log.info("Retract button released")
-        #TODO implement retract logic
+        self.bar.action_button_enabled = True  # re-enable action button
+        self._clear_bar_display()
+        
+        if not self.app.connected:
+            return
+        self._stop_servo()
     
     # Instruction steps
     #Step 1
@@ -119,14 +126,12 @@ class AssistedThreadingWizard:
     def _step_set_final_cutting_depth_position(self):
         self.bar.action_button_enabled = False  # Disable until valid
         self.set_instruction("Enter Final Cutting Depth", "Set", self._capture_final_cutting_depth_position, self._open_final_cutting_depth_position_keypad, self._is_valid_cutting_depth_position)
-        self.bar.unbind_all_display_value() 
-        self.bar.display_value = ""  # Clear display value since not bound to scale
+        self._clear_bar_display()
     
     #Step 5
     def _step_engage_half_nut(self):
         self.set_instruction("Engage half nut and press Next", "Next", None)
-        self.bar.unbind_all_display_value() 
-        self.bar.display_value = "" 
+        self._clear_bar_display()
     
     #Step 6       
     def _step_go_to_start(self):
@@ -213,7 +218,7 @@ class AssistedThreadingWizard:
         self.app.bind(update_tick=self._servo_watch_callback) 
         return False #tell goto_next_step not to advance immediately
      
-    #Step 7 - TODO test
+    #Step 7 - TODO test this
     def _start_threading_operation(self, *args):
         if not self.app.connected:
             self.stop()
@@ -457,8 +462,7 @@ class AssistedThreadingWizard:
     def _check_servo_done(self, next_step: int, *args):
         if self.app.fast_data_values['stepsToGo'] == 0:
             log.info("Servo reached desired position")
-            self.servo.servoEnable = 0  # disable
-            self.servo.set_max_speed(self.servo.maxSpeed)  # restore speed
+            self._stop_servo()
             
             # Stop watching
             if self._servo_watch_callback:
@@ -500,3 +504,13 @@ class AssistedThreadingWizard:
         if self.bar.inner_thread:
             return self.cross_slide_scale.encoderCurrent >= self.bar.cutting_depth
         return self.cross_slide_scale.encoderCurrent <= self.bar.cutting_depth
+    
+    def _stop_servo(self):
+        if not self.app.connected:
+            return
+        self.servo.servoEnable = 0  # disable
+        self.servo.set_max_speed(self.servo.maxSpeed)  # restore speed
+        
+    def _clear_bar_display(self):
+        self.bar.unbind_all_display_value() 
+        self.bar.display_value = ""

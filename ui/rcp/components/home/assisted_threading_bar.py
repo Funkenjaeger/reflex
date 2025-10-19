@@ -5,6 +5,7 @@ from kivy.logger import Logger
 from kivy.uix.boxlayout import BoxLayout
 from kivy.properties import NumericProperty, BooleanProperty, StringProperty
 
+from rcp.components.forms.hold_button import HoldButton
 from rcp.components.home.assisted_threading_settings_popup import AssistedThreadingSettingsPopup
 from rcp.components.home.assisted_threading_wizard import AssistedThreadingWizard
 from rcp.components.home.coordbar import CoordBar
@@ -71,6 +72,9 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         if self.is_running:
             self.wizard.start()
         else:
+            self.stop_wizard()
+            
+    def stop_wizard(self):
             self.wizard.stop()
 
     def on_retract_button_pressed(self):
