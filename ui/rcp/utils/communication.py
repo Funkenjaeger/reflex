@@ -1,4 +1,6 @@
+from functools import wraps
 import logging
+import traceback
 from typing import Optional
 
 import minimalmodbus
@@ -6,6 +8,16 @@ from keke import ktrace
 
 log = logging.getLogger(__name__)
 
+def log_caller(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Get full stack trace (excluding this wrapper)
+        stack_trace = "".join(traceback.format_stack()[:-1])
+        log.info(f"Full stack trace for {func.__name__}:\n{stack_trace}")
+        
+        return func(*args, **kwargs)
+    
+    return wrapper
 
 class ConnectionManager:
     def __init__(
