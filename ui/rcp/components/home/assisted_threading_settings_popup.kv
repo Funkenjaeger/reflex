@@ -26,7 +26,7 @@
                 name: "Pitch in MM" if root.assistedThreadingBar.metric_mode else "Pitch in IN"
                 options: root.get_pitches()
                 value: str(root.assistedThreadingBar.selected_pitch) if root.assistedThreadingBar.selected_pitch is not None else ""
-                on_value: root.on_pitch_selected(self.value)
+                on_value: root.on_pitch_selected(self.selected_index, self.value)
 
             NumberItem:
                 name: "Thread Profile Angle"

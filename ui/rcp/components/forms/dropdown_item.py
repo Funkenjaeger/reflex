@@ -2,7 +2,7 @@ import os
 
 from kivy.lang import Builder
 from kivy.logger import Logger
-from kivy.properties import StringProperty, ListProperty, ObjectProperty
+from kivy.properties import StringProperty, ListProperty, ObjectProperty, NumericProperty
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.dropdown import DropDown
 from kivy.uix.button import Button
@@ -16,6 +16,7 @@ if os.path.exists(kv_file):
 
 
 class DropDownItem(BoxLayout):
+    selected_index = NumericProperty(-1)
     name = StringProperty("")
     value = StringProperty(False)
     options = ListProperty([])
@@ -36,11 +37,19 @@ class DropDownItem(BoxLayout):
         self.main_button.text = value
 
     def on_options(self, instance, value):
-        # Clean any existing
         self.delete_all_dropdown_options()
+        self._options = []
 
-        for item in self.options:
+        for index, item in enumerate(self.options):
             btn = Button(text=item, size_hint_y=None, height=44)
-            btn.bind(on_release=lambda btn: self.dropdown.select(btn.text))
+            btn.bind(
+                on_release=lambda btn, i=index: self._select(i)
+            )
             self.dropdown.add_widget(btn)
             self._options.append(btn)
+    
+    def _select(self, index):
+        self.selected_index = index
+        self.value = self.options[index]
+        self.dropdown.dismiss()
+

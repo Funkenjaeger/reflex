@@ -6,6 +6,7 @@ from kivy.uix.popup import Popup
 from kivy.properties import ObjectProperty
 
 from rcp import feeds
+from rcp.components.home.coordbar import CoordBar
 
 log = Logger.getChild(__name__)
 
@@ -27,9 +28,10 @@ class AssistedThreadingSettingsPopup(Popup):
 
         # Choose the correct table based on metric_mode
         if self.assistedThreadingBar.metric_mode:
-            return [f.name for f in feeds.table["Thread MM"]]
+            self.current_feeds_table = feeds.table["Thread MM"]
         else:
-            return [f.name for f in feeds.table["Thread IN"]]
+            self.current_feeds_table = feeds.table["Thread IN"]
+        return [f.name for f in self.current_feeds_table]
     
     def set_thread_profile_angle(self, value):
         try:
@@ -58,6 +60,15 @@ class AssistedThreadingSettingsPopup(Popup):
         pitches_dropdown.options = self.get_pitches()
         log.info(f"Metric mode changed to: {value}")
         
-    def on_pitch_selected(self, selected_pitch):
+    def on_pitch_selected(self, index, selected_pitch):
         self.assistedThreadingBar.selected_pitch = selected_pitch
+        self.update_feeds_ratio(index)
         log.info(f"Selected pitch: {selected_pitch}")
+        
+    def update_feeds_ratio(self, index):
+        ratio = self.current_feeds_table[index].ratio
+        spindle_scale: CoordBar = self.assistedThreadingBar.app.get_spindle_scale()
+        if spindle_scale is not None:
+            spindle_scale.syncRatioNum = ratio.numerator
+            spindle_scale.syncRatioDen = ratio.denominator
+        log.info(f"Configured ratio is: {ratio.numerator}/{ratio.denominator}")

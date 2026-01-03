@@ -21,6 +21,7 @@ class AssistedThreadingWizard:
         self.app = bar.app
         self.servo = self.app.servo
         self.current_step = 0
+        self._threading_started = False
         self._current_callback = None
         self._servo_watch_callback = None
         self.manual_stop_length = None  
@@ -38,12 +39,22 @@ class AssistedThreadingWizard:
         
 
     def start(self):
+        dev = self.app.device
+        dev['assistedThreadingData']['spindlePhaseTolerance'] = self.bar.encoder_sync_tolerance
+        
+        # Pick spindle index using get_spindle_scale
+        spindle_scale = self.app.get_spindle_scale()
+        if spindle_scale is not None:
+            dev['assistedThreadingData']['spindleCountsPerRev'] = spindle_scale.ratioDen
+            dev['assistedThreadingData']['spindleScaleIndex'] = spindle_scale.inputIndex
+        
         self.goto_step(0)
 
     def stop(self):
         # Reset wizard_area to default content
         log.info("Wizard finished")
         self._current_callback = None
+        self._threading_started = False
         self.bar.label_text = ""
         self.bar.display_value = ""
         self.bar.action_button_enabled = True
@@ -53,7 +64,7 @@ class AssistedThreadingWizard:
         self._clear_bar_display()
         
         if self.app.connected:
-            self.app.device['fastData']['threadReset'] = 1
+            self.app.device['assistedThreadingData']['threadReset'] = 1
         self._stop_servo()
         
 
@@ -238,10 +249,10 @@ class AssistedThreadingWizard:
         # --- Issue servo move ---
         self.bar.bind_display_value_to_servo_position()
         self.servo.set_max_speed(self.bar.reversing_speed)
-        self.servo.servoEnable = 1
         self.app.device['servo']['direction'] = delta_steps
+        self.servo.servoEnable = 1
 
-        self._servo_watch_callback = lambda *a: self._check_servo_done(_next_step, *a)
+        self._servo_watch_callback = lambda *a: self._check_servo_retract_done(_next_step, *a)
         self.app.bind(update_tick=self._servo_watch_callback)
 
         return False # tell goto_next_step not to advance immediately
@@ -291,29 +302,27 @@ class AssistedThreadingWizard:
 
         log.info("Starting threaded cut to stop position: %s", self.bar.stop_position)
         self.bar.last_cutting_depth = self.cross_slide_scale.encoderCurrent  # Update last cutting depth to current position
-        target_servo_counts = self._get_threading_servo_delta_steps()
 
-        # Pick spindle index using get_spindle_scale
-        spindle_scale = self.app.get_spindle_scale()
-        spindle_index = spindle_scale.inputIndex if spindle_scale is not None else 0
-
-        tolerance = self.bar.encoder_sync_tolerance
-
-        # Bind UI to servo position so progress/pos displays scaledPosition
-        self.bar.bind_display_value_to_servo_position()
+        self.bar.bind_display_value_to_servo_position() # Bind UI to servo position so progress/pos displays scaledPosition
+        self.bar.action_button_enabled = False  # Disable action button during threading
+        self.bar.retract_button_visible = False  # Hide retract button during threading
 
         self.servo.servoEnable = 1  # Enable servo if not already
+        
         # Write the fields into firmware via modbus/device wrapper
         dev = self.app.device
-        dev['fastData']['threadDesiredSteps'] = target_servo_counts
-        dev['fastData']['threadSpindleIndex'] = spindle_index
-        dev['fastData']['threadTolerance'] = tolerance
+        dev['assistedThreadingData']['threadDesiredSteps'] = self.app.fast_data_values['servoCurrent'] + self._get_threading_servo_delta_steps()        
 
         # Request latch+wait. Firmware will latch current spindle phase and wait until matched.
-        dev['fastData']['threadRequest'] = 1
-
+        if (self._threading_started is False):
+            # First time starting threading - latch phase and enable
+            self._threading_started = True
+            dev['assistedThreadingData']['threadRequest'] = 1
+        else:
+            dev['assistedThreadingData']['threadEnabled'] = 1 # Continue threading from previous state
+        
         # Watch until done - then go back to step 6 (Go to start)
-        self._servo_watch_callback = lambda *a: self._check_servo_done(5, *a)
+        self._servo_watch_callback = lambda *a: self._check_servo_threading_done(5, *a)
         self.app.bind(update_tick=self._servo_watch_callback)
 
         return False  # tell goto_next_step not to advance immediately
@@ -519,8 +528,65 @@ class AssistedThreadingWizard:
         """Get the backlash cushion distance in encoder counts."""
         return self._convert_distance_units_to_encoder(self.saddle_scale, self.bar.backlash_cushion, self.bar.metric_distances)
 
-    def _check_servo_done(self, next_step: int, *args):
+    def _check_servo_retract_done(self, next_step: int, *args):
+        dev = self.app.device
+        stepsToGo = dev['servo']['direction']
+        log.info(f"Checking servo retract done: stepsToGo={stepsToGo}")
+        
         if self.app.fast_data_values['stepsToGo'] == 0:
+            log.info("Servo reached desired start position")
+            self._stop_servo()
+            
+            # Stop watching
+            if self._servo_watch_callback:
+                self.app.unbind(update_tick=self._servo_watch_callback)
+                self._servo_watch_callback = None
+
+            self.goto_step(next_step)
+
+    def _check_servo_threading_done(self, next_step: int, *args):
+        #TODO remove debug logs when done testing
+        dev = self.app.device
+        dev['assistedThreadingData'].refresh()
+        threadRequest = dev['assistedThreadingData']['threadRequest']
+        threadReset = dev['assistedThreadingData']['threadReset']
+        threadPhaseActive = dev['assistedThreadingData']['threadPhaseActive']
+        threadEnabled = dev['assistedThreadingData']['threadEnabled']        
+        spindleScaleIndex = dev['assistedThreadingData']['spindleScaleIndex']
+        spindleCountsPerRev = dev['assistedThreadingData']['spindleCountsPerRev']
+        spindlePhaseTolerance = dev['assistedThreadingData']['spindlePhaseTolerance']        
+        threadDesiredSteps = dev['assistedThreadingData']['threadDesiredSteps']
+        threadPhaseRef = dev['assistedThreadingData']['threadPhaseRef']
+        currentThreadPhase = dev['assistedThreadingData']['currentThreadPhase']
+        desiredSteps = dev['servo']['desiredSteps']
+        currentSteps = dev['servo']['currentSteps']
+        stepsToGo = dev['servo']['direction']
+        syncEnable = dev['scales'][spindleScaleIndex]['syncEnable']
+        position = dev['scales'][spindleScaleIndex]['position']
+        
+        log.info(
+            f"Checking servo done: "
+            f"spindleScaleIndex={spindleScaleIndex}, "
+            f"spindleCountsPerRev={spindleCountsPerRev}, "
+            f"spindlePhaseTolerance={spindlePhaseTolerance}, "
+            
+            f"threadRequest={threadRequest}, "
+            f"threadReset={threadReset}, "
+            f"threadPhaseActive={threadPhaseActive}, "
+            f"threadEnabled={threadEnabled}, "
+            f"syncEnable={syncEnable}, "
+            
+            f"threadPhaseRef={threadPhaseRef}, "
+            f"currentThreadPhase={currentThreadPhase}, "
+            f"spindleEncoderposition={position}, "
+            
+            f"threadDesiredSteps={threadDesiredSteps}, "
+            f"desiredSteps={desiredSteps}, "
+            f"currentSteps={currentSteps}, "
+            f"stepsToGo={stepsToGo}, "
+        )
+        
+        if threadEnabled == 0 and threadPhaseActive == 0:
             log.info("Servo reached desired position")
             self._stop_servo()
             
@@ -530,7 +596,8 @@ class AssistedThreadingWizard:
                 self._servo_watch_callback = None
 
             self.goto_step(next_step)
-        
+    
+    #TODO fix using spindle encoder counts per rev    
     def _get_start_position_servo_delta_steps(self) -> int:
         """
         Compute the servo step delta needed to move the saddle
@@ -563,6 +630,7 @@ class AssistedThreadingWizard:
 
         return delta_steps
     
+    #TODO fix using spindle encoder counts per rev
     def _get_threading_servo_delta_steps(self) -> int:
         """
         Compute the servo step delta needed to move the saddle
@@ -575,8 +643,8 @@ class AssistedThreadingWizard:
         current_encoder = self.saddle_scale.encoderCurrent
         target_encoder = self.bar.stop_position
 
-        delta_enc = target_encoder - current_encoder
-        if delta_enc * effective_dir <= 0:
+        delta_enc = (target_encoder - current_encoder) * effective_dir
+        if delta_enc <= 0:
             log.warning(
                 "Threading delta is opposite to effective cutting direction "
                 f"(current={current_encoder}, stop={target_encoder}, "
