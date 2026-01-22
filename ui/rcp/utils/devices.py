@@ -78,7 +78,8 @@ typedef struct {
   uint16_t threadPhaseActive;
   uint16_t threadEnabled;
   uint16_t spindlePhaseTolerance;
-  uint32_t threadDesiredSteps;
+  int32_t threadRemainingSteps;
+  uint32_t threadStartSteps;
   uint32_t spindleCountsPerRev;
   int32_t threadPhaseRef;
   int32_t currentThreadPhase;
