@@ -120,6 +120,8 @@ class AssistedThreadingWizard:
         self.servo.jogSpeed = 0
         self.servo.set_max_speed(self.servo.maxSpeed)
         self.servo.servoEnable = 1  # back to normal servo mode
+        
+        self.goto_step(5)  # Go back to step 6 - Go to start position
     
     # Instruction steps
     #Step 1
@@ -153,7 +155,7 @@ class AssistedThreadingWizard:
     def _step_go_to_start(self):
         self.bar.action_button_enabled = False  # Disable until valid
         self.servo.servoEnable = 1  # Ensure servo enabled
-        self.set_instruction("Confirm cross slide retracted and press Go to return to start position", "Go", self._go_to_start, None, self._is_cross_slide_retracted)
+        self.set_instruction("Confirm cross slide retracted and press Go to return to start position", "Go", self._go_to_start, None, self._is_cross_slide_retracted, True)
         self.bar.bind_display_value_to_scale(self.cross_slide_scale)
         self.bar.update_action_button_state()
      
