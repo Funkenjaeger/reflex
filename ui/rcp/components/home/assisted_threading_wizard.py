@@ -27,6 +27,7 @@ class AssistedThreadingWizard:
         self._servo_watch_callback = None
         self.manual_stop_length = None  
         self.manual_cutting_depth = None
+        self._start_position_preloaded = False
         self._steps = [
             self._step_set_initial_position,                # Step 1
             self._step_set_stop_position,                   # Step 2
@@ -215,78 +216,48 @@ class AssistedThreadingWizard:
     def _go_to_start(self, *args):
         if not self.app.connected:
             self.stop()
-            return False # tell goto_next_step not to advance immediately
+            return False
 
-        log.info(f"Moving to start position: {self.bar.start_position} + retraction")
+        self._start_position_preloaded = False
+        self._goto_start_phase = GoToStartPhase.RETRACT
 
-        # --- Delta to move the servo ---
-        delta_steps = self._get_start_position_servo_delta_steps()
-        log.info(f"Calculated delta steps to start position: {delta_steps}")
-        
-        _next_step: int
-        # --- Direction model (same as servo delta) ---
         effective_dir = self._get_saddle_scale_effective_dir()
-        retraction_dir = - effective_dir  # retraction is opposite to cutting direction
 
-        retraction = abs(self._get_retraction_distance_encoder_steps())
+        retraction = abs(self._get_saddle_backlash_distance_encoder_steps()) * 1.5 # retract 1.5x backlash distance
+        retraction_dir = -effective_dir  # retract opposite to cutting direction
 
-        # Are we already beyond the retracted start?
-        already_retracted = (
-            (self.saddle_scale.encoderCurrent - self.bar.start_position)
-            * retraction_dir >= retraction
-        )
-        log.info(f"Already retracted check: current={self.saddle_scale.encoderCurrent}, start={self.bar.start_position}, retraction={retraction}, effective_dir={effective_dir}, retraction_dir={retraction_dir} => {already_retracted}")
+        retract_target = self.bar.start_position + retraction_dir * retraction
 
-        if already_retracted:
-            log.info("Saddle already beyond retracted start; taking out backlash")
+        self._command_move_to_encoder(retract_target, speed=self.bar.reversing_speed)
 
-            # Move further in SAME effective direction
-            delta_steps += int(
-                effective_dir * retraction
-                * Fraction(self.saddle_scale.ratioNum, self.saddle_scale.ratioDen)
-                / Fraction(self.servo.ratioNum, self.servo.ratioDen)
-            )
-
-            _next_step = self.current_step # Use this same step again
-        else:
-            _next_step = self.current_step + 1 # Step 7
-            # Check if at cutting depth
-            if self._is_cross_slide_at_final_cutting_depth():
-                _next_step += 1  # skip cutting step and go to step 8 (depth reached)
-        
-        # --- Issue servo move ---
-        self.bar.bind_display_value_to_servo_position()
-        self.servo.set_max_speed(self.bar.reversing_speed)
-        self.app.device['servo']['direction'] = delta_steps
-
-        self._servo_watch_callback = lambda *a: self._check_servo_retract_done(_next_step, *a)
+        self._servo_watch_callback = self._watch_go_to_start
         self.app.bind(update_tick=self._servo_watch_callback)
 
-        return False # tell goto_next_step not to advance immediately
+        return False
      
-    #Step 7 - TODO test this
+    #Step 7
     def _start_threading_operation(self, *args):
         if not self.app.connected:
             self.stop()
             return False # tell goto_next_step not to advance immediately
+        
+        if not self._start_position_preloaded:
+            log.warning("Threading requested without start preload")
+            self.goto_step(5)
+            return False
 
-        # --- Determine effective direction ---
-        effective_dir = self._get_saddle_scale_effective_dir()
-        retraction_dir = - effective_dir  # retraction is opposite to cutting direction
-        retraction_distance = abs(self._get_retraction_distance_encoder_steps())
+        # Below is a sanity check to make sure that we are at the correct start position including backlash cushion
+        # if for some reason the start_position_preloaded flag was bypassed or the saddle moved after preload.
         backlash_cushion = abs(self._get_backlash_cusion_encoder_steps())
-
-        # Compute the desired encoder position at start including retraction
-        desired_position = self.bar.start_position + retraction_dir * retraction_distance
 
         log.info(
             f"Validating start position: current={self.saddle_scale.encoderCurrent}, "
-            f"desired={desired_position} (start={self.bar.start_position}, retraction={retraction_distance}, "
-            f"backlash_cushion={backlash_cushion}, retraction_dir={retraction_dir})"
+            f"start={self.bar.start_position}, "
+            f"backlash_cushion={backlash_cushion}"
         )
 
-        lower_bound = desired_position - backlash_cushion
-        upper_bound = desired_position + backlash_cushion
+        lower_bound = self.bar.start_position - backlash_cushion
+        upper_bound = self.bar.start_position + backlash_cushion
         # Check if we are within backlash cushion
         if not (lower_bound <= self.saddle_scale.encoderCurrent <= upper_bound):
             _warning = (
@@ -343,13 +314,13 @@ class AssistedThreadingWizard:
         """Check if the stop position is valid given the start position and thread direction.
          - For right-hand threads, stop must be less than start.
          - For left-hand threads, stop must be greater than start.
-         - Stop position must be greater than the backlash retraction distance from start position so as to take out backlash when retracted further than start position
+         - Stop position must be greater than the backlash cushion distance from start position - if stop is too small, the saddle may not have enough room to cut properly.
          - Depending on sign of the scale ratioNum/ratioDen, this will also affect the calculation"""
         
         effective_dir = self._get_saddle_scale_effective_dir()
-        retraction = abs(self._get_retraction_distance_encoder_steps())
+        backlash_cushion = abs(self._get_backlash_cusion_encoder_steps())
         stop = self._get_stop_position_units()
-        min_stop = self.bar.start_position + effective_dir * retraction
+        min_stop = self.bar.start_position + effective_dir * backlash_cushion
         return (stop - min_stop) * effective_dir > 0
     
     #Step 4
@@ -388,7 +359,7 @@ class AssistedThreadingWizard:
         log.info("Saddle is beyond start position, checking cross slide retraction")
 
         # --- Cross-slide retraction check (X axis) ---
-        retract_dir = self._get_cross_slide_scale_effective_dir()
+        retract_dir = -self._get_cross_slide_scale_effective_dir() #TODO test this
 
         cross_delta = self.cross_slide_scale.encoderCurrent - self.bar.material_width
         return cross_delta * retract_dir > 0
@@ -529,9 +500,9 @@ class AssistedThreadingWizard:
 
         return final_encoder_distance
 
-    def _get_retraction_distance_encoder_steps(self) -> int:
+    def _get_saddle_backlash_distance_encoder_steps(self) -> int:
         """Get the retraction distance in encoder counts."""
-        return self._convert_distance_units_to_encoder(self.saddle_scale, self.bar.backlash_retraction_distance, self.bar.metric_distances)
+        return self._convert_distance_units_to_encoder(self.saddle_scale, self.bar.saddle_backlash_distance, self.bar.metric_distances)
     
     def _get_backlash_cusion_encoder_steps(self) -> int:
         """Get the backlash cushion distance in encoder counts."""
@@ -605,38 +576,6 @@ class AssistedThreadingWizard:
             self._reset_servo_watch_callback()
 
             self.goto_step(next_step)
-    
-    def _get_start_position_servo_delta_steps(self) -> int:
-        """
-        Compute the servo step delta needed to move the saddle
-        to the retracted start position, accounting for:
-        - thread handedness
-        - encoder direction
-        - backlash retraction
-        """
-
-        effective_dir = self._get_saddle_scale_effective_dir()
-        retraction_dir = - effective_dir  # retraction is opposite to cutting direction
-
-        retraction = abs(self._get_retraction_distance_encoder_steps())
-
-        target_encoder = self.bar.start_position + retraction_dir * retraction
-        current_encoder = self.saddle_scale.encoderCurrent
-
-        # Convert encoder delta → servo steps
-        scale_ratio = Fraction(abs(self.saddle_scale.ratioNum), abs(self.saddle_scale.ratioDen))
-        servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
-
-        delta_steps = int((target_encoder - current_encoder) * effective_dir * scale_ratio / servo_ratio)
-
-        log.info(
-            f"Computed servo delta: {delta_steps} steps "
-            f"(target_enc={target_encoder}, current_enc={current_encoder}, "
-            f"scale_ratio={scale_ratio}, servo_ratio={servo_ratio}, "
-            f"effective_dir={effective_dir}, retraction_dir={retraction_dir})"
-        )
-
-        return delta_steps
     
     def _get_threading_servo_delta_steps(self) -> int:
         """
@@ -716,3 +655,83 @@ class AssistedThreadingWizard:
         scale_dir = 1 if self.saddle_scale.ratioNum * self.saddle_scale.ratioDen > 0 else -1
         
         return thread_dir * scale_dir
+    
+    def _command_move_to_encoder(self, target_encoder, speed):
+        effective_dir = self._get_saddle_scale_effective_dir()
+        current_enc = self.saddle_scale.encoderCurrent
+
+        scale_ratio = Fraction(abs(self.saddle_scale.ratioNum), abs(self.saddle_scale.ratioDen))
+        servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
+
+        delta = int((target_encoder - current_enc) * effective_dir * scale_ratio / servo_ratio)
+
+        log.info(
+            f"Move to encoder: current={current_enc}, "
+            f"target={target_encoder}, delta={delta}"
+        )
+
+        self.bar.bind_display_value_to_servo_position()
+        self.servo.set_max_speed(speed)
+        self.app.device['servo']['direction'] = delta
+        
+    def _watch_go_to_start(self, *_):
+        if self.app.fast_data_values['stepsToGo'] != 0:
+            return
+
+        if self._goto_start_phase == GoToStartPhase.RETRACT:
+            self._start_preload_move()
+
+        elif self._goto_start_phase == GoToStartPhase.PRELOAD:
+            self._start_adjust_move()
+             
+        elif self._goto_start_phase == GoToStartPhase.ADJUST:
+            self._finish_go_to_start()
+        
+    def _start_preload_move(self):
+        self._reset_servo_watch_callback()
+        self._goto_start_phase = GoToStartPhase.PRELOAD
+
+        log.info("Retract complete, starting preload move")
+        backlash_preload_steps = abs(self._get_saddle_backlash_distance_encoder_steps()) * 1.25 # preload 1.25x backlash distance - before we retracted 1.5x so we have some cushion
+        preload_target = self.saddle_scale.encoderCurrent + self._get_saddle_scale_effective_dir() * backlash_preload_steps
+
+        self._command_move_to_encoder(
+            preload_target,
+            speed=self.servo.maxSpeed
+        )
+
+        self._servo_watch_callback = self._watch_go_to_start
+        self.app.bind(update_tick=self._servo_watch_callback)
+        
+    def _start_adjust_move(self):
+        self._reset_servo_watch_callback()
+        self._goto_start_phase = GoToStartPhase.ADJUST
+
+        log.info("Preload move complete, starting final adjust move")
+
+        self._command_move_to_encoder(
+            self.bar.start_position,
+            speed=self.servo.maxSpeed
+        )
+
+        self._servo_watch_callback = self._watch_go_to_start
+        self.app.bind(update_tick=self._servo_watch_callback)
+
+    def _finish_go_to_start(self):
+        self._reset_servo_watch_callback()
+
+        log.info("Start position reached with backlash preloaded")
+
+        self._start_position_preloaded = True
+
+        next_step = self.current_step + 1
+        if self._is_cross_slide_at_final_cutting_depth():
+            next_step += 1
+
+        self.goto_step(next_step)
+
+class GoToStartPhase:
+    IDLE = 0
+    RETRACT = 1
+    PRELOAD = 2
+    ADJUST = 3

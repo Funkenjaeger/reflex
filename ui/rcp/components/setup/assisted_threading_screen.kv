@@ -48,9 +48,9 @@
           value: root.assistedThreadingBar.metric_distances
           on_value: root.assistedThreadingBar.metric_distances = self.value
         NumberItem:
-          name: "Saddle backlash retraction distance (MM)" if root.assistedThreadingBar.metric_distances else "Saddle backlash retraction distance (IN)"
-          value: root.assistedThreadingBar.backlash_retraction_distance
-          on_value: root.assistedThreadingBar.backlash_retraction_distance = int(self.value)
+          name: "Saddle backlash distance (MM)" if root.assistedThreadingBar.metric_distances else "Saddle backlash distance (IN)"
+          value: root.assistedThreadingBar.saddle_backlash_distance
+          on_value: root.assistedThreadingBar.saddle_backlash_distance = int(self.value)
         NumberItem:
           name: "Saddle backlash cushion (MM)" if root.assistedThreadingBar.metric_distances else "Saddle backlash cushion (IN)"
           value: root.assistedThreadingBar.backlash_cushion
