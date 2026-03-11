@@ -27,6 +27,7 @@ class AssistedThreadingWizard:
         self._servo_watch_callback = None
         self.manual_stop_length = None  
         self.manual_cutting_depth = None
+        self._last_saddle_encoder_value = None
         self._start_position_preloaded = False
         self._steps = [
             self._step_set_initial_position,                # Step 1
@@ -42,7 +43,7 @@ class AssistedThreadingWizard:
 
     def start(self):
         dev = self.app.device
-        dev['assistedThreadingData']['spindlePhaseTolerance'] = self.bar.encoder_sync_tolerance
+        dev['assistedThreadingData']['spindlePhaseTolerance'] = self.bar.rotary_encoder_sync_tolerance
         
         # Pick spindle index using get_spindle_scale
         spindle_scale = self.app.get_spindle_scale()
@@ -65,6 +66,7 @@ class AssistedThreadingWizard:
         self.bar.retract_button_visible = False
         self._clear_bar_display()
         self._reset_servo_watch_callback()
+        self._reset_encoder_stability_check()
         
         if self.app.connected:
             self.app.device['assistedThreadingData']['threadReset'] = 1
@@ -223,7 +225,7 @@ class AssistedThreadingWizard:
 
         effective_dir = self._get_saddle_scale_effective_dir()
 
-        retraction = abs(self._get_saddle_backlash_distance_encoder_steps()) * 1.5 # retract 1.5x backlash distance
+        retraction = abs(self._get_saddle_backlash_distance_encoder_steps() * 1.5)  # retract 1.5x backlash distance
         retraction_dir = -effective_dir  # retract opposite to cutting direction
 
         retract_target = self.bar.start_position + retraction_dir * retraction
@@ -657,6 +659,8 @@ class AssistedThreadingWizard:
         return thread_dir * scale_dir
     
     def _command_move_to_encoder(self, target_encoder, speed):
+        self._reset_encoder_stability_check()
+        
         effective_dir = self._get_saddle_scale_effective_dir()
         current_enc = self.saddle_scale.encoderCurrent
 
@@ -675,7 +679,7 @@ class AssistedThreadingWizard:
         self.app.device['servo']['direction'] = delta
         
     def _watch_go_to_start(self, *_):
-        if self.app.fast_data_values['stepsToGo'] != 0:
+        if not self._motion_complete():
             return
 
         if self._goto_start_phase == GoToStartPhase.RETRACT:
@@ -686,18 +690,48 @@ class AssistedThreadingWizard:
              
         elif self._goto_start_phase == GoToStartPhase.ADJUST:
             self._finish_go_to_start()
+    
+    def _reset_encoder_stability_check(self):
+        self._last_saddle_encoder_value = None
+        self._stable_count = 0
+    
+    def _encoder_is_stable(self, tolerance, samples):
+        current = self.saddle_scale.encoderCurrent
+
+        if self._last_saddle_encoder_value is None:
+            self._last_saddle_encoder_value = current
+            self._stable_count = 0
+            return False
+
+        if abs(current - self._last_saddle_encoder_value) <= tolerance:
+            self._stable_count += 1
+        else:
+            self._stable_count = 0
+
+        self._last_saddle_encoder_value = current
+
+        return self._stable_count >= samples
+            
+    def _motion_complete(self):
+        if self.app.fast_data_values['stepsToGo'] != 0:
+            return False
+
+        if not self._encoder_is_stable(self.bar.saddle_encoder_stability_tolerance, self.bar.saddle_encoder_stability_samples):
+            return False
+
+        return True
         
     def _start_preload_move(self):
         self._reset_servo_watch_callback()
         self._goto_start_phase = GoToStartPhase.PRELOAD
 
         log.info("Retract complete, starting preload move")
-        backlash_preload_steps = abs(self._get_saddle_backlash_distance_encoder_steps()) * 1.25 # preload 1.25x backlash distance - before we retracted 1.5x so we have some cushion
+        backlash_preload_steps = int(abs(self._get_saddle_backlash_distance_encoder_steps()) * 1.25) # preload 1.25x backlash distance - before we retracted 1.5x so we have some cushion
         preload_target = self.saddle_scale.encoderCurrent + self._get_saddle_scale_effective_dir() * backlash_preload_steps
 
         self._command_move_to_encoder(
             preload_target,
-            speed=self.servo.maxSpeed
+            speed=self.bar.preload_adjust_speed
         )
 
         self._servo_watch_callback = self._watch_go_to_start
@@ -711,7 +745,7 @@ class AssistedThreadingWizard:
 
         self._command_move_to_encoder(
             self.bar.start_position,
-            speed=self.servo.maxSpeed
+            speed=self.bar.preload_adjust_speed
         )
 
         self._servo_watch_callback = self._watch_go_to_start

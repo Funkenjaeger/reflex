@@ -43,15 +43,7 @@ class AssistedThreadingSettingsPopup(Popup):
         if angle <= 0 or angle > 90:
             angle = 90
             
-        self.assistedThreadingBar.thread_profile_angle = angle
-        
-    def set_shaft_diameter(self, value):
-        try:
-            diameter = float(value) 
-        except (ValueError, TypeError):
-            diameter = 1
-        self.assistedThreadingBar.shaft_diameter = abs(diameter)
-        
+        self.assistedThreadingBar.thread_profile_angle = angle        
         
     def on_metric_mode_changed(self, value):
         self.assistedThreadingBar.metric_mode = value

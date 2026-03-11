@@ -24,10 +24,13 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     selected_saddle_scale_id = NumericProperty(1)
     
     reversing_speed = NumericProperty(500)
-    encoder_sync_tolerance = NumericProperty(5)
+    preload_adjust_speed = NumericProperty(500)
+    rotary_encoder_sync_tolerance = NumericProperty(5)
     metric_distances = BooleanProperty(True) # This is for the UI in the setting screen
     saddle_backlash_distance = NumericProperty(10)
     backlash_cushion = NumericProperty(2)
+    saddle_encoder_stability_tolerance = NumericProperty(1)
+    saddle_encoder_stability_samples = NumericProperty(3)
     
     metric_mode = BooleanProperty(True) # This is for the actual threading logic
     selected_pitch = StringProperty("")

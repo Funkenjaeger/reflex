@@ -40,9 +40,21 @@
           value: root.assistedThreadingBar.reversing_speed
           on_value: root.set_reversing_speed(self.value)
         NumberItem:
-          name: "Encoder sync tolerance (Steps)"
-          value: root.assistedThreadingBar.encoder_sync_tolerance
-          on_value: root.assistedThreadingBar.encoder_sync_tolerance = self.value
+          name: "Preload/Adjust Speed (Steps/s)"
+          value: root.assistedThreadingBar.preload_adjust_speed
+          on_value: root.set_preload_adjust_speed(self.value)
+        NumberItem:
+          name: "Rotary Encoder sync tolerance (Steps)"
+          value: root.assistedThreadingBar.rotary_encoder_sync_tolerance
+          on_value: root.assistedThreadingBar.rotary_encoder_sync_tolerance = self.value
+        NumberItem:
+          name: "Saddle Encoder stability tolerance (Steps)"
+          value: root.assistedThreadingBar.saddle_encoder_stability_tolerance
+          on_value: root.assistedThreadingBar.saddle_encoder_stability_tolerance = int(self.value)
+        NumberItem:
+          name: "Saddle Encoder stability samples"
+          value: root.assistedThreadingBar.saddle_encoder_stability_samples
+          on_value: root.assistedThreadingBar.saddle_encoder_stability_samples = int(self.value)
         BooleanItem:
           name: "Metric Distances"
           value: root.assistedThreadingBar.metric_distances

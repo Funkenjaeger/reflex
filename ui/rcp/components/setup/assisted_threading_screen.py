@@ -69,6 +69,12 @@ class AssistedThreadingScreen(Screen):
         except ValueError:
             pass
     
+    def set_preload_adjust_speed(self, val):
+        try:
+            self.assistedThreadingBar.preload_adjust_speed = min(int(val), self.servo.maxSpeed)
+        except ValueError:
+            pass
+    
     def get_label_for_scale_id(self, scale_id):
         if not self.scales_mapping:
             self.update_scales_labels()

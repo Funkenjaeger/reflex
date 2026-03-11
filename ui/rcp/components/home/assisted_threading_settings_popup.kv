@@ -33,11 +33,6 @@
                 value: root.assistedThreadingBar.thread_profile_angle
                 on_value: root.set_thread_profile_angle(self.value)
 
-            NumberItem:
-                name: "Shaft Diameter in MM" if root.assistedThreadingBar.metric_mode else "Shaft Diameter in IN"
-                value: root.assistedThreadingBar.shaft_diameter
-                on_value: root.set_shaft_diameter(self.value)
-
             BooleanItem:
                 name: "Left Hand Thread"
                 value: root.assistedThreadingBar.left_hand_thread
