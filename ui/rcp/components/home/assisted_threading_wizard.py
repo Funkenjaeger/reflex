@@ -662,8 +662,8 @@ class AssistedThreadingWizard:
             return None
         
         # Determine thread profile and calculate radial depth
-        thread_type = self.bar.thread_profile_type
-        
+        thread_type = ThreadType(self.bar.thread_profile_type)
+
         if thread_type == ThreadType.ISO_METRIC:
             depth = 0.61343 * pitch
         elif thread_type == ThreadType.UNIFIED:

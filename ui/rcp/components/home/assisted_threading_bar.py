@@ -33,7 +33,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     
     metric_mode = BooleanProperty(True) # This is for the actual threading logic
     selected_pitch = StringProperty("")
-    thread_profile_type = StringProperty(None)
+    thread_profile_type = StringProperty("ISO_METRIC")
     cross_slide_diameter_mode = BooleanProperty(False)
     shaft_diameter = NumericProperty(1)
     left_hand_thread = BooleanProperty(False)
@@ -70,7 +70,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         super().__init__(**kv)
         # Initialize with default thread type if not set
         if not self.thread_profile_type:
-            self.thread_profile_type = ThreadType.ISO_METRIC
+            self.thread_profile_type = ThreadType.ISO_METRIC.value
         self.wizard = AssistedThreadingWizard(self)
     
     def toggle_is_running(self):

@@ -53,7 +53,7 @@ class AssistedThreadingSettingsPopup(Popup):
         # Reset to first available type
         first_type = self.get_thread_types()[0] if self.get_thread_types() else ThreadType.ISO_METRIC.value
         thread_type_dropdown.value = first_type
-        self.assistedThreadingBar.thread_profile_type = ThreadType(first_type)
+        self.assistedThreadingBar.thread_profile_type = ThreadType(first_type).value
         
         log.info(f"Metric mode changed to: {value}")
         
@@ -67,7 +67,7 @@ class AssistedThreadingSettingsPopup(Popup):
         try:
             # Convert string value back to ThreadType enum
             thread_type = ThreadType(value)
-            self.assistedThreadingBar.thread_profile_type = thread_type
+            self.assistedThreadingBar.thread_profile_type = thread_type.value
             log.info(f"Selected thread type: {thread_type}")
         except ValueError:
             log.warning(f"Invalid thread type value: {value}")
