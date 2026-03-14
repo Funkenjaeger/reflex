@@ -19,6 +19,15 @@ if os.path.exists(kv_file):
     Builder.load_file(kv_file)
 
 
+from enum import StrEnum
+
+class ThreadType(StrEnum):
+    """Thread profile types with their calculation formulas."""
+    ISO_METRIC = "ISO Metric"
+    UNIFIED = "Unified"
+    WHITWORTH = "Whitworth"
+    ACME = "ACME"
+
 class AssistedThreadingBar(BoxLayout, SavingDispatcher):    
     selected_cross_slide_scale_id = NumericProperty(0)
     selected_saddle_scale_id = NumericProperty(1)
@@ -34,7 +43,8 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     
     metric_mode = BooleanProperty(True) # This is for the actual threading logic
     selected_pitch = StringProperty("")
-    thread_profile_angle = NumericProperty(60)
+    thread_profile_type = StringProperty(None)
+    cross_slide_diameter_mode = BooleanProperty(False)
     shaft_diameter = NumericProperty(1)
     left_hand_thread = BooleanProperty(False)
     inner_thread = BooleanProperty(False)
@@ -55,19 +65,23 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         "action_button_enabled",
         "label_text",
         "display_value",
-        "start_position"
+        "start_position",
         "stop_position",
         "material_width",
         "cutting_depth",
         "last_cutting_depth",
         "retract_button_visible"
-        ]
+    ]
 
     def __init__(self, **kv):
         from rcp.app import MainApp
+        from rcp.components.home.assisted_threading_wizard import ThreadType
         self.app: MainApp = MainApp.get_running_app()
         self.action_button_condition_fn = None
         super().__init__(**kv)
+        # Initialize with default thread type if not set
+        if not self.thread_profile_type:
+            self.thread_profile_type = ThreadType.ISO_METRIC
         self.wizard = AssistedThreadingWizard(self)
     
     def toggle_is_running(self):
@@ -175,6 +189,11 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         if hasattr(self, "_bound_servo") and self._bound_servo is not None:
             self._bound_servo.unbind(formattedPosition=self._on_servo_position_update)
             self._bound_servo = None
+        # Unbind threading progress display if it was bound
+        if hasattr(self.wizard, "_progress_display_scale") and self.wizard._progress_display_scale is not None:
+            if hasattr(self.wizard, "_on_threading_progress_update"):
+                self.wizard._progress_display_scale.unbind(encoderCurrent=self.wizard._on_threading_progress_update)
+            self.wizard._progress_display_scale = None
 
     def update_action_button_state(self):
         """Evaluate whether the action button should be enabled."""

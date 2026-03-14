@@ -7,6 +7,7 @@ from kivy.properties import ObjectProperty
 
 from rcp import feeds
 from rcp.components.home.coordbar import CoordBar
+from rcp.components.home.assisted_threading_bar import ThreadType
 
 log = Logger.getChild(__name__)
 
@@ -33,29 +34,43 @@ class AssistedThreadingSettingsPopup(Popup):
             self.current_feeds_table = feeds.table["Thread IN"]
         return [f.name for f in self.current_feeds_table]
     
-    def set_thread_profile_angle(self, value):
-        try:
-            angle = float(value) 
-        except (ValueError, TypeError):
-            angle = 1
-            
-        angle = abs(angle)
-        if angle <= 0 or angle > 90:
-            angle = 90
-            
-        self.assistedThreadingBar.thread_profile_angle = angle        
-        
+    def get_thread_types(self):
+        """Get available thread types based on metric mode."""
+        if self.assistedThreadingBar.metric_mode:
+            return [ThreadType.ISO_METRIC.value, ThreadType.ACME.value]
+        else:
+            return [ThreadType.UNIFIED.value, ThreadType.WHITWORTH.value, ThreadType.ACME.value]
+    
     def on_metric_mode_changed(self, value):
         self.assistedThreadingBar.metric_mode = value
         pitches_dropdown = self.ids.pitches_dropdown
         pitches_dropdown.value = ""
         pitches_dropdown.options = self.get_pitches()
+        
+        # Update thread type options based on metric mode
+        thread_type_dropdown = self.ids.thread_type_dropdown
+        thread_type_dropdown.options = self.get_thread_types()
+        # Reset to first available type
+        first_type = self.get_thread_types()[0] if self.get_thread_types() else ThreadType.ISO_METRIC.value
+        thread_type_dropdown.value = first_type
+        self.assistedThreadingBar.thread_profile_type = ThreadType(first_type)
+        
         log.info(f"Metric mode changed to: {value}")
         
     def on_pitch_selected(self, index, selected_pitch):
         self.assistedThreadingBar.selected_pitch = selected_pitch
         self.update_feeds_ratio(index)
         log.info(f"Selected pitch: {selected_pitch}")
+    
+    def on_thread_type_selected(self, value):
+        """Handle thread type selection."""
+        try:
+            # Convert string value back to ThreadType enum
+            thread_type = ThreadType(value)
+            self.assistedThreadingBar.thread_profile_type = thread_type
+            log.info(f"Selected thread type: {thread_type}")
+        except ValueError:
+            log.warning(f"Invalid thread type value: {value}")
         
     def update_feeds_ratio(self, index):
         ratio = self.current_feeds_table[index].ratio

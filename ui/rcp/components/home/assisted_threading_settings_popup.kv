@@ -28,10 +28,18 @@
                 value: str(root.assistedThreadingBar.selected_pitch) if root.assistedThreadingBar.selected_pitch is not None else ""
                 on_value: root.on_pitch_selected(self.selected_index, self.value)
 
-            NumberItem:
-                name: "Thread Profile Angle"
-                value: root.assistedThreadingBar.thread_profile_angle
-                on_value: root.set_thread_profile_angle(self.value)
+            DropDownItem:
+                id: thread_type_dropdown
+                height: 60
+                name: "Thread Type"
+                options: root.get_thread_types()
+                value: root.assistedThreadingBar.thread_profile_type
+                on_value: root.on_thread_type_selected(self.value)
+
+            BooleanItem:
+                name: "Cross Slide Diameter Mode"
+                value: root.assistedThreadingBar.cross_slide_diameter_mode
+                on_value: root.assistedThreadingBar.cross_slide_diameter_mode = self.value
 
             BooleanItem:
                 name: "Left Hand Thread"

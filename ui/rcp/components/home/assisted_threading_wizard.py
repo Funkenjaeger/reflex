@@ -5,7 +5,6 @@ from rcp.components.forms.custom_popup import CustomPopup
 from rcp.components.home.coordbar import CoordBar
 
 log = Logger.getChild(__name__)
-
 class AssistedThreadingWizard:
     @property
     def saddle_scale(self) -> CoordBar:
@@ -100,7 +99,7 @@ class AssistedThreadingWizard:
         self.bar.bind_btn_value_on_release(value_button_fn)
         self.bar.action_button_condition_fn = action_button_condition_fn
         self.bar.retract_button_visible = retract_button_visible
-        
+      
     def start_retracting(self):        
         log.info("Retract button pressed")
         self.bar.action_button_enabled = False  # disable action button while retracting
@@ -283,7 +282,7 @@ class AssistedThreadingWizard:
         log.info("Starting threaded cut to stop position: %s", self.bar.stop_position)
         self.bar.last_cutting_depth = self.cross_slide_scale.encoderCurrent  # Update last cutting depth to current position
 
-        self.bar.bind_display_value_to_servo_position() # Bind UI to servo position so progress/pos displays scaledPosition
+        self._bind_threading_progress_display()  # Bind to progress display instead of servo position
         self.bar.action_button_enabled = False  # Disable action button during threading
         self.bar.retract_button_visible = False  # Hide retract button during threading
         
@@ -404,7 +403,12 @@ class AssistedThreadingWizard:
         
         is_metric = self.app.formats.current_format == "MM"
         
-        keypad = Keypad(title="Enter Final Cutting Depth (" + ("mm" if is_metric else "in") + ")")
+        # Calculate default depth
+        calculated_depth = self._calculate_thread_depth()
+        default_value = calculated_depth if calculated_depth is not None else 0.0
+        
+        depth_unit = "mm" if is_metric else "in"
+        keypad = Keypad(title=f"Enter Final Cutting Depth ({depth_unit})")
         keypad.integer = False
 
         def on_done(value):
@@ -417,8 +421,9 @@ class AssistedThreadingWizard:
             finally:
                 self.bar.update_action_button_state()
 
+        log.info(f"Opening cutting depth keypad with calculated default: {default_value:.4f}")
         keypad.show_with_callback(callback_fn=on_done,
-                                current_value=self.manual_cutting_depth or 0.0)
+                                current_value=self.manual_cutting_depth or default_value)
         
     # Utilities
     def _convert_position_units_to_encoder(self, 
@@ -615,6 +620,71 @@ class AssistedThreadingWizard:
 
         return delta_steps
     
+    def _calculate_thread_depth(self):
+        """
+        Calculate thread depth based on selected pitch and thread profile type.
+        
+        Uses metric_mode to determine if selected_pitch is in mm or TPI.
+        Formulas provided are for radial depth; multiply by 2 if diameter mode is enabled.
+        
+        Returns:
+            Thread depth in the selected units (mm or inches), or None if invalid
+        """
+        if not self.bar.selected_pitch:
+            log.warning("No pitch selected for depth calculation")
+            return None
+        
+        # Determine effective pitch based on metric_mode
+        try:
+            if self.bar.metric_mode:
+                # In metric mode, selected_pitch is the pitch in mm
+                pitch = float(self.bar.selected_pitch)
+            else:
+                # In imperial mode, selected_pitch is TPI (threads per inch)
+                # Convert TPI to pitch in inches
+                tpi = float(self.bar.selected_pitch)
+                pitch = 25.4 / tpi
+        except (ValueError, TypeError):
+            log.warning(f"Could not parse pitch from: {self.bar.selected_pitch}")
+            return None
+        
+        if pitch <= 0:
+            log.warning(f"Invalid pitch value: {pitch}")
+            return None
+        
+        # Determine thread profile and calculate radial depth
+        thread_type = self.bar.thread_profile_type
+        
+        if thread_type == ThreadType.ISO_METRIC:
+            depth = 0.61343 * pitch
+        elif thread_type == ThreadType.UNIFIED:
+            depth = 0.64952 * pitch
+        elif thread_type == ThreadType.WHITWORTH:
+            depth = 0.6403 * pitch
+        elif thread_type == ThreadType.ACME:
+            depth = 0.5 * pitch
+        else:
+            log.warning(f"Unknown thread profile: {thread_type}")
+            return None
+        
+        # Account for cross-slide diameter mode
+        # Formulas are for radial depth; in diameter mode multiply by 2
+        if self.bar.cross_slide_diameter_mode:
+            depth = depth * 2
+        
+        # Convert depth to match current display format if needed
+        is_current_format_metric = self.app.formats.current_format == "MM"
+        if self.bar.metric_mode and not is_current_format_metric:
+            # Calculated in mm but displaying in inches
+            depth = depth / 25.4
+        elif not self.bar.metric_mode and is_current_format_metric:
+            # Calculated in inches but displaying in mm
+            depth = depth * 25.4
+        
+        log.info(f"Calculated thread depth: {depth:.4f} (pitch={pitch:.4f}, type={thread_type}, metric_mode={self.bar.metric_mode}, current_format={'MM' if is_current_format_metric else 'IN'}, diameter_mode={self.bar.cross_slide_diameter_mode})")
+        return depth
+      
+
     def _is_cross_slide_at_final_cutting_depth(self):
         """Check if the cross slide is at or more than the final cutting depth position."""
         if self.bar.inner_thread:
@@ -635,6 +705,40 @@ class AssistedThreadingWizard:
     def _clear_bar_display(self):
         self.bar.unbind_all_display_value() 
         self.bar.display_value = ""
+    
+    def _bind_threading_progress_display(self):
+        """
+        Bind display to show threading progress: "Last: <incremental_cut> | Rem: <remaining>"
+        where:
+        - Last = incremental cut since last_cutting_depth
+        - Rem = remaining distance until final thread depth
+        """
+        self.bar.unbind_all_display_value()
+        self._progress_display_scale = self.cross_slide_scale
+        def on_cross_slide_update(instance, value):
+            try:
+                is_metric = self.app.formats.current_format == "MM"
+                effective_dir = self._get_cross_slide_scale_effective_dir()
+                current_encoder = self.cross_slide_scale.encoderCurrent
+                last_cutting_depth_encoder = self.bar.last_cutting_depth
+                # Calculate incremental cut depth in encoder units
+                incremental_cut_encoder = abs(current_encoder - last_cutting_depth_encoder)
+                factor = float(self.app.formats.factor)
+                incremental_cut_display = incremental_cut_encoder / factor if factor != 0 else 0
+                # Calculate remaining depth
+                final_depth_encoder = abs(self.bar.cutting_depth - current_encoder)
+                remaining_display = final_depth_encoder / factor if factor != 0 else 0
+            
+                if is_metric:
+                    self.bar.display_value = f"Last: {incremental_cut_display:.3f} | Rem: {remaining_display:.3f}"
+                else:
+                    self.bar.display_value = f"Last: {incremental_cut_display:.4f} | Rem: {remaining_display:.4f}"
+                log.info(f"Threading progress: incremental_cut={incremental_cut_display:.4f}, remaining={remaining_display:.4f}")
+            except Exception as e:
+                log.error(f"Error updating threading progress display: {e}")
+        self._on_threading_progress_update = on_cross_slide_update
+        self.cross_slide_scale.bind(encoderCurrent=on_cross_slide_update)
+        on_cross_slide_update(self.cross_slide_scale, self.cross_slide_scale.encoderCurrent)
         
     def _get_cross_slide_scale_effective_dir(self) -> int:
         """Get the cross slide effective direction, considering thread type (internal/external) and scale direction."""
