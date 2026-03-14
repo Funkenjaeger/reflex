@@ -7,7 +7,7 @@ from kivy.properties import ObjectProperty
 
 from rcp import feeds
 from rcp.components.home.coordbar import CoordBar
-from rcp.components.home.assisted_threading_bar import ThreadType
+from rcp.components.home.thread_type import ThreadType
 
 log = Logger.getChild(__name__)
 

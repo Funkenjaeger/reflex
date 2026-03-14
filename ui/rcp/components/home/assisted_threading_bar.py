@@ -6,9 +6,9 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.properties import NumericProperty, BooleanProperty, StringProperty
 
 from rcp.components.forms.hold_button import HoldButton
-from rcp.components.home.assisted_threading_settings_popup import AssistedThreadingSettingsPopup
 from rcp.components.home.assisted_threading_wizard import AssistedThreadingWizard
 from rcp.components.home.coordbar import CoordBar
+from rcp.components.home.thread_type import ThreadType
 from rcp.dispatchers import SavingDispatcher
 
 log = Logger.getChild(__name__)
@@ -17,16 +17,6 @@ kv_file = os.path.join(os.path.dirname(__file__), __file__.replace(".py", ".kv")
 if os.path.exists(kv_file):
     log.info(f"Loading KV file: {kv_file}")
     Builder.load_file(kv_file)
-
-
-from enum import StrEnum
-
-class ThreadType(StrEnum):
-    """Thread profile types with their calculation formulas."""
-    ISO_METRIC = "ISO Metric"
-    UNIFIED = "Unified"
-    WHITWORTH = "Whitworth"
-    ACME = "ACME"
 
 class AssistedThreadingBar(BoxLayout, SavingDispatcher):    
     selected_cross_slide_scale_id = NumericProperty(0)
@@ -75,7 +65,6 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
 
     def __init__(self, **kv):
         from rcp.app import MainApp
-        from rcp.components.home.assisted_threading_wizard import ThreadType
         self.app: MainApp = MainApp.get_running_app()
         self.action_button_condition_fn = None
         super().__init__(**kv)
@@ -110,6 +99,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
             self.open_settings()
     
     def open_settings(self):
+        from rcp.components.home.assisted_threading_settings_popup import AssistedThreadingSettingsPopup
         popup = AssistedThreadingSettingsPopup(assistedThreadingBar=self)
         popup.open()
         

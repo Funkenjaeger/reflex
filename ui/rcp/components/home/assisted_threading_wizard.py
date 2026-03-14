@@ -3,6 +3,7 @@ from kivy.logger import Logger
 
 from rcp.components.forms.custom_popup import CustomPopup
 from rcp.components.home.coordbar import CoordBar
+from rcp.components.home.thread_type import ThreadType
 
 log = Logger.getChild(__name__)
 class AssistedThreadingWizard:
@@ -28,6 +29,7 @@ class AssistedThreadingWizard:
         self.manual_cutting_depth = None
         self._last_saddle_encoder_value = None
         self._start_position_preloaded = False
+        self._retracting = False
         self._steps = [
             self._step_set_initial_position,                # Step 1
             self._step_set_stop_position,                   # Step 2
@@ -63,6 +65,7 @@ class AssistedThreadingWizard:
         self.bar.action_button_condition_fn = None
         self.bar.is_running = False
         self.bar.retract_button_visible = False
+        self._retracting = False
         self._clear_bar_display()
         self._reset_servo_watch_callback()
         self._reset_encoder_stability_check()
@@ -104,6 +107,11 @@ class AssistedThreadingWizard:
         log.info("Retract button pressed")
         self.bar.action_button_enabled = False  # disable action button while retracting
         
+        if self._retracting:
+            log.info("Already retracting, ignoring additional press")
+            return
+        
+        self._retracting = True
         if not self.app.connected:
             return
         self.bar.bind_display_value_to_servo_position() # bind to servo position
@@ -116,6 +124,7 @@ class AssistedThreadingWizard:
         self.bar.action_button_enabled = True  # re-enable action button
         self.bar.bind_display_value_to_scale(self.cross_slide_scale)
         self.bar.update_action_button_state()
+        self._retracting = False
         
         if not self.app.connected:
             return
