@@ -154,7 +154,21 @@ class AssistedThreadingWizard:
     #Step 4
     def _step_set_final_cutting_depth_position(self):
         self.bar.action_button_enabled = False  # Disable until valid
-        self.set_instruction("Enter Final Cutting Depth", "Set", self._capture_final_cutting_depth_position, self._open_final_cutting_depth_position_keypad, self._is_valid_cutting_depth_position)
+        # Calculate thread depth and show immediately
+        calculated_depth = self._calculate_thread_depth()
+        self.manual_cutting_depth = None  # Reset manual override
+        if calculated_depth is not None:
+            is_metric = self.app.formats.current_format == "MM"
+            self.bar.display_value = f"{calculated_depth:.3f}" if is_metric else f"{calculated_depth:.4f}"
+        else:
+            self.bar.display_value = ""
+        self.set_instruction(
+            "Enter Final Cutting Depth (auto-calculated shown, tap to override)",
+            "Set",
+            self._capture_final_cutting_depth_position,
+            self._open_final_cutting_depth_position_keypad
+        )
+        # No scale binding, just show calculated value
         self._clear_bar_display()
     
     #Step 5
@@ -210,17 +224,14 @@ class AssistedThreadingWizard:
         return True  # advance to next step
     
     #Step 4
-    def _capture_final_cutting_depth_position(self, *args):         
-        # convert length into encoder stop position
-        self.bar.cutting_depth = self._convert_position_units_to_encoder(self.cross_slide_scale,
-                                                                         self.manual_cutting_depth,
-                                                                         self._isMaterialWidthPositionMetricMode,
-                                                                         self._materialWidthScaledPosition,
-                                                                         self.bar.material_width)
-        
-        log.info(f"Cutting depth set manually: {self.manual_cutting_depth} "
-                f"(start={self.bar.material_width}, stop={self.bar.cutting_depth})")  
-        return True  # advance to next step      
+    def _capture_final_cutting_depth_position(self, *args):
+        # Use manual override if set, otherwise use calculated depth
+        depth = self.manual_cutting_depth if self.manual_cutting_depth is not None else self._calculate_thread_depth()
+        self.bar.cutting_depth = depth
+        is_metric = self.app.formats.current_format == "MM"
+        log.info(f"Cutting depth set: {depth} (manual_override={self.manual_cutting_depth is not None})")
+        self.bar.display_value = f"{depth:.3f}" if is_metric else f"{depth:.4f}"
+        return True  # advance to next step
     
     #Step 6
     def _go_to_start(self, *args):
@@ -333,21 +344,6 @@ class AssistedThreadingWizard:
         min_stop = self.bar.start_position + effective_dir * backlash_cushion
         return (stop - min_stop) * effective_dir > 0
     
-    #Step 4
-    def _is_valid_cutting_depth_position(self):
-        """Check if the cutting depth is valid given the material width position and if it's internal/external thread.
-        - For internal threads, cutting depth must be greater than material width.
-        - For external threads, cutting depth must be less than material width."""
-        # Physical cutting direction
-        effective_dir = self._get_cross_slide_scale_effective_dir()
-        target_depth = self._convert_position_units_to_encoder(
-            self.cross_slide_scale,
-            self.manual_cutting_depth,
-            self._isMaterialWidthPositionMetricMode,
-            self._materialWidthScaledPosition,
-            self.bar.material_width
-        )
-        return (target_depth - self.bar.material_width) * effective_dir > 0
 
     #Step 6
     def _is_cross_slide_retracted(self):
@@ -409,17 +405,13 @@ class AssistedThreadingWizard:
     
     def _open_final_cutting_depth_position_keypad(self, *args):
         from rcp.components.keypad import Keypad
-        
         is_metric = self.app.formats.current_format == "MM"
-        
-        # Calculate default depth
+        # Always use calculated depth as default
         calculated_depth = self._calculate_thread_depth()
         default_value = calculated_depth if calculated_depth is not None else 0.0
-        
         depth_unit = "mm" if is_metric else "in"
         keypad = Keypad(title=f"Enter Final Cutting Depth ({depth_unit})")
         keypad.integer = False
-
         def on_done(value):
             try:
                 self.manual_cutting_depth = float(value)
@@ -429,10 +421,9 @@ class AssistedThreadingWizard:
                 log.warning(f"Invalid cutting depth input: {value}")
             finally:
                 self.bar.update_action_button_state()
-
         log.info(f"Opening cutting depth keypad with calculated default: {default_value:.4f}")
         keypad.show_with_callback(callback_fn=on_done,
-                                current_value=self.manual_cutting_depth or default_value)
+                                current_value=self.manual_cutting_depth if self.manual_cutting_depth is not None else default_value)
         
     # Utilities
     def _convert_position_units_to_encoder(self, 
