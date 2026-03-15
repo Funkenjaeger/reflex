@@ -39,7 +39,7 @@
           on_value: root.assistedThreadingBar.cross_slide_diameter_mode = self.value
 
         TitleItem:
-          name: "Speeds and Distance Settings"
+          name: "Speed Settings"
         NumberItem:
           name: "Reversing Speed (Steps/s)"
           value: root.assistedThreadingBar.reversing_speed
@@ -48,6 +48,21 @@
           name: "Preload/Adjust Speed (Steps/s)"
           value: root.assistedThreadingBar.preload_adjust_speed
           on_value: root.set_preload_adjust_speed(self.value)
+        NumberItem:
+          name: "Threading Max Speed (Steps/s)"
+          value: root.assistedThreadingBar.threading_max_speed
+          on_value: root.set_threading_max_speed(self.value)
+        NumberItem:
+          name: "Reversing/Adjusting Acceleration (Steps/s^2)"
+          value: root.assistedThreadingBar.reversing_adjusting_acceleration
+          on_value: root.set_reversing_adjusting_acceleration(self.value)
+        NumberItem:
+          name: "Threading Acceleration (Steps/s^2)"
+          value: root.assistedThreadingBar.threading_acceleration
+          on_value: root.set_threading_acceleration(self.value)
+
+        TitleItem:
+          name: "Distance and Tolerance Settings"
         NumberItem:
           name: "Rotary Encoder sync tolerance (Steps)"
           value: root.assistedThreadingBar.rotary_encoder_sync_tolerance

@@ -24,6 +24,9 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     
     reversing_speed = NumericProperty(500)
     preload_adjust_speed = NumericProperty(500)
+    threading_max_speed = NumericProperty(2000)
+    reversing_adjusting_acceleration = NumericProperty(1000)
+    threading_acceleration = NumericProperty(1000)
     rotary_encoder_sync_tolerance = NumericProperty(5)
     metric_distances = BooleanProperty(True) # This is for the UI in the setting screen
     saddle_backlash_distance = NumericProperty(10)

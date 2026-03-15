@@ -29,7 +29,6 @@ class AssistedThreadingWizard:
         self.manual_cutting_depth = None
         self._last_saddle_encoder_value = None
         self._start_position_preloaded = False
-        self._retracting = False
         self._steps = [
             self._step_set_initial_position,                # Step 1
             self._step_set_stop_position,                   # Step 2
@@ -65,14 +64,13 @@ class AssistedThreadingWizard:
         self.bar.action_button_condition_fn = None
         self.bar.is_running = False
         self.bar.retract_button_visible = False
-        self._retracting = False
         self._clear_bar_display()
         self._reset_servo_watch_callback()
         self._reset_encoder_stability_check()
         
         if self.app.connected:
             self.app.device['assistedThreadingData']['threadReset'] = 1
-        self._stop_servo()
+            self._stop_servo()
         
 
     def goto_step(self, index):
@@ -107,14 +105,10 @@ class AssistedThreadingWizard:
         log.info("Retract button pressed")
         self.bar.action_button_enabled = False  # disable action button while retracting
         
-        if self._retracting:
-            log.info("Already retracting, ignoring additional press")
-            return
-        
-        self._retracting = True
         if not self.app.connected:
             return
         self.bar.bind_display_value_to_servo_position() # bind to servo position
+        self._apply_reversing_adjusting_acceleration()
         servo_direction = 1 if self.servo.ratioNum * self.servo.ratioDen > 0 else -1
         self.servo.jogSpeed = - servo_direction * self.bar.reversing_speed # set to reversing speed
         self.servo.servoEnable = 2
@@ -124,7 +118,6 @@ class AssistedThreadingWizard:
         self.bar.action_button_enabled = True  # re-enable action button
         self.bar.bind_display_value_to_scale(self.cross_slide_scale)
         self.bar.update_action_button_state()
-        self._retracting = False
         
         if not self.app.connected:
             return
@@ -153,7 +146,8 @@ class AssistedThreadingWizard:
         
     #Step 4
     def _step_set_final_cutting_depth_position(self):
-        self.bar.action_button_enabled = False  # Disable until valid
+        self._clear_bar_display()
+        
         # Calculate thread depth and show immediately
         calculated_depth = self._calculate_thread_depth()
         self.manual_cutting_depth = None  # Reset manual override
@@ -162,14 +156,13 @@ class AssistedThreadingWizard:
             self.bar.display_value = f"{calculated_depth:.3f}" if is_metric else f"{calculated_depth:.4f}"
         else:
             self.bar.display_value = ""
+            
         self.set_instruction(
             "Enter Final Cutting Depth (auto-calculated shown, tap to override)",
             "Set",
             self._capture_final_cutting_depth_position,
             self._open_final_cutting_depth_position_keypad
         )
-        # No scale binding, just show calculated value
-        self._clear_bar_display()
     
     #Step 5
     def _step_engage_half_nut(self):
@@ -180,7 +173,7 @@ class AssistedThreadingWizard:
     def _step_go_to_start(self):
         self.bar.action_button_enabled = False  # Disable until valid
         self.servo.servoEnable = 1  # Ensure servo enabled
-        self.set_instruction("Confirm cross slide retracted and press Go to return to start position", "Go", self._go_to_start, None, self._is_cross_slide_retracted, True)
+        self.set_instruction("Confirm cross slide retracted and press Go to return to start position", "Go", self._go_to_start, None, self._is_cross_slide_retracted)
         self.bar.bind_display_value_to_scale(self.cross_slide_scale)
         self.bar.update_action_button_state()
      
@@ -188,14 +181,14 @@ class AssistedThreadingWizard:
     def _step_cut_thread(self):
         self.bar.action_button_enabled = False  # Disable until valid
         self.set_instruction("Go to cutting depth and press Cut to start threading operation", "Cut", self._start_threading_operation, None, self._is_cross_slide_at_cutting_depth, True)
-        self.bar.bind_display_value_to_scale(self.cross_slide_scale)
+        self._bind_threading_progress_display()  # Bind to progress display
         self.bar.update_action_button_state()
     
     #Step 8
     def _step_depth_reached(self):
         self.bar.action_button_enabled = False  # Disable until valid
         self.set_instruction("Final depth reached. Cut more? Press Stop to quit.", "Cut", self._start_threading_operation, None, self._is_cross_slide_at_cutting_depth, True)
-        self.bar.bind_display_value_to_scale(self.cross_slide_scale)
+        self._bind_threading_progress_display()  # Bind to progress display
         self.bar.update_action_button_state()
     
     # Step callbacks    
@@ -239,6 +232,7 @@ class AssistedThreadingWizard:
             self.stop()
             return False
 
+        self._apply_reversing_adjusting_acceleration()
         self._start_position_preloaded = False
         self._goto_start_phase = GoToStartPhase.RETRACT
 
@@ -277,10 +271,9 @@ class AssistedThreadingWizard:
             f"backlash_cushion={backlash_cushion}"
         )
 
-        lower_bound = self.bar.start_position - backlash_cushion
-        upper_bound = self.bar.start_position + backlash_cushion
-        # Check if we are within backlash cushion
-        if not (lower_bound <= self.saddle_scale.encoderCurrent <= upper_bound):
+        delta = abs(self.saddle_scale.encoderCurrent - self.bar.start_position)
+        # Check if we are within backlash cushion distance from the start position. If not, warn the user and go back to step 6 to return to start position.
+        if delta > backlash_cushion:
             _warning = (
                 "Not at valid start position including backlash cushion. "
                 "Aborting threading operation. Go back to start position."
@@ -302,7 +295,9 @@ class AssistedThreadingWizard:
         log.info("Starting threaded cut to stop position: %s", self.bar.stop_position)
         self.bar.last_cutting_depth = self.cross_slide_scale.encoderCurrent  # Update last cutting depth to current position
 
-        self._bind_threading_progress_display()  # Bind to progress display instead of servo position
+        self._apply_threading_acceleration()
+        self._apply_threading_max_speed()
+        self.bar.bind_display_value_to_servo_position() # Bind UI to servo position so progress/pos displays scaledPosition
         self.bar.action_button_enabled = False  # Disable action button during threading
         self.bar.retract_button_visible = False  # Hide retract button during threading
         
@@ -378,7 +373,7 @@ class AssistedThreadingWizard:
         log.info(f"Checking if cross slide reached cutting depth: current={self.cross_slide_scale.encoderCurrent}, target={self.bar.cutting_depth}, effective_dir={effective_dir}")
         
         # Check: has cross slide reached or passed the target depth?
-        return (self.cross_slide_scale.encoderCurrent - self.bar.last_cutting_depth) * effective_dir >= 0
+        return (self.cross_slide_scale.encoderCurrent - self.bar.cutting_depth) * effective_dir >= 0
 
     # Manual input handlers
     def _open_stop_position_keypad(self, *args):
@@ -414,13 +409,14 @@ class AssistedThreadingWizard:
         keypad.integer = False
         def on_done(value):
             try:
-                self.manual_cutting_depth = float(value)
+                self.manual_cutting_depth = abs(float(value))
                 log.info(f"Manual cutting depth entered: {self.manual_cutting_depth}")
                 self.bar.display_value = f"{self.manual_cutting_depth:.3f}" if is_metric else f"{self.manual_cutting_depth:.4f}"
+                self.bar.action_button_enabled = True
             except ValueError:
-                log.warning(f"Invalid cutting depth input: {value}")
-            finally:
-                self.bar.update_action_button_state()
+                log.warning(f"Invalid cutting depth input: {value}")                
+                self.bar.action_button_enabled = False
+
         log.info(f"Opening cutting depth keypad with calculated default: {default_value:.4f}")
         keypad.show_with_callback(callback_fn=on_done,
                                 current_value=self.manual_cutting_depth if self.manual_cutting_depth is not None else default_value)
@@ -514,23 +510,6 @@ class AssistedThreadingWizard:
     def _get_backlash_cusion_encoder_steps(self) -> int:
         """Get the backlash cushion distance in encoder counts."""
         return self._convert_distance_units_to_encoder(self.saddle_scale, self.bar.backlash_cushion, self.bar.metric_distances)
-
-    def _check_servo_retract_done(self, next_step: int, *args):
-        dev = self.app.device
-        desiredSteps = dev['servo']['desiredSteps']
-        currentSteps = dev['servo']['currentSteps']
-        servoCurrent = self.app.fast_data_values['servoCurrent']
-        stepsToGo = dev['servo']['direction']
-        log.info(f"Checking servo retract done: stepsToGo={stepsToGo}, desiredSteps={desiredSteps}, currentSteps={currentSteps}, servoCurrent={servoCurrent}")
-        
-        if self.app.fast_data_values['stepsToGo'] == 0:
-            log.info("Servo reached desired start position")
-            self.servo.set_max_speed(self.servo.maxSpeed)
-            
-            # Stop watching
-            self._reset_servo_watch_callback()
-
-            self.goto_step(next_step)
 
     def _check_servo_threading_done(self, next_step: int, *args):
         #TODO remove debug logs when done testing
@@ -696,6 +675,7 @@ class AssistedThreadingWizard:
             return
         self.servo.set_max_speed(self.servo.maxSpeed)  # restore speed
         self.servo.servoEnable = 0  # disable
+        self._apply_original_servo_acceleration()  # restore original acceleration if it was changed
     
     def _reset_servo_watch_callback(self):
         if self._servo_watch_callback:
@@ -705,7 +685,31 @@ class AssistedThreadingWizard:
     def _clear_bar_display(self):
         self.bar.unbind_all_display_value() 
         self.bar.display_value = ""
-    
+        
+    def _apply_original_servo_acceleration(self):
+        self.app.device['servo']['acceleration'] = self.servo.acceleration
+
+    def _apply_reversing_adjusting_acceleration(self):
+        rate = self.bar.reversing_adjusting_acceleration
+        if rate and rate > 0:
+            self.app.device['servo']['acceleration'] = rate
+        else:
+            self._apply_original_servo_acceleration()
+
+    def _apply_threading_acceleration(self):
+        rate = self.bar.threading_acceleration
+        if rate and rate > 0:
+            self.app.device['servo']['acceleration'] = rate
+        else:
+            self._apply_original_servo_acceleration()
+
+    def _apply_threading_max_speed(self):
+        target_speed = self.bar.threading_max_speed
+        if target_speed and target_speed > 0:
+            self.servo.set_max_speed(target_speed)
+        else:
+            self.servo.set_max_speed(self.servo.maxSpeed)
+
     def _bind_threading_progress_display(self):
         """
         Bind display to show threading progress: "Last: <incremental_cut> | Rem: <remaining>"
@@ -718,7 +722,6 @@ class AssistedThreadingWizard:
         def on_cross_slide_update(instance, value):
             try:
                 is_metric = self.app.formats.current_format == "MM"
-                effective_dir = self._get_cross_slide_scale_effective_dir()
                 current_encoder = self.cross_slide_scale.encoderCurrent
                 last_cutting_depth_encoder = self.bar.last_cutting_depth
                 # Calculate incremental cut depth in encoder units
@@ -833,6 +836,7 @@ class AssistedThreadingWizard:
         backlash_preload_steps = int(abs(self._get_saddle_backlash_distance_encoder_steps()) * 1.25) # preload 1.25x backlash distance - before we retracted 1.5x so we have some cushion
         preload_target = self.saddle_scale.encoderCurrent + self._get_saddle_scale_effective_dir() * backlash_preload_steps
 
+        self._apply_reversing_adjusting_acceleration()
         self._command_move_to_encoder(
             preload_target,
             speed=self.bar.preload_adjust_speed
@@ -847,6 +851,7 @@ class AssistedThreadingWizard:
 
         log.info("Preload move complete, starting final adjust move")
 
+        self._apply_reversing_adjusting_acceleration()
         self._command_move_to_encoder(
             self.bar.start_position,
             speed=self.bar.preload_adjust_speed
