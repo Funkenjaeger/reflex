@@ -173,7 +173,7 @@ class AssistedThreadingWizard:
     def _step_go_to_start(self):
         self.bar.action_button_enabled = False  # Disable until valid
         self.servo.servoEnable = 1  # Ensure servo enabled
-        self.set_instruction("Confirm cross slide retracted and press Go to return to start position", "Go", self._go_to_start, None, self._is_cross_slide_retracted)
+        self.set_instruction("Confirm cross slide retracted and press Go to return to start position", "Go", self._go_to_start, None, self._is_cross_slide_retracted, True)
         self.bar.bind_display_value_to_scale(self.cross_slide_scale)
         self.bar.update_action_button_state()
      
@@ -219,9 +219,13 @@ class AssistedThreadingWizard:
     #Step 4
     def _capture_final_cutting_depth_position(self, *args):
         # Use manual override if set, otherwise use calculated depth
-        depth = self.manual_cutting_depth if self.manual_cutting_depth is not None else self._calculate_thread_depth()
-        self.bar.cutting_depth = depth
         is_metric = self.app.formats.current_format == "MM"
+        depth = self.manual_cutting_depth if self.manual_cutting_depth is not None else self._calculate_thread_depth()
+        encoder_cutting_depth = self._convert_distance_units_to_encoder(self.cross_slide_scale, depth, is_metric)
+        
+        self.bar.cutting_depth = self.cross_slide_scale.encoderCurrent + (encoder_cutting_depth * self._get_cross_slide_scale_effective_dir())
+        
+        
         log.info(f"Cutting depth set: {depth} (manual_override={self.manual_cutting_depth is not None})")
         self.bar.display_value = f"{depth:.3f}" if is_metric else f"{depth:.4f}"
         return True  # advance to next step
@@ -724,13 +728,17 @@ class AssistedThreadingWizard:
                 is_metric = self.app.formats.current_format == "MM"
                 current_encoder = self.cross_slide_scale.encoderCurrent
                 last_cutting_depth_encoder = self.bar.last_cutting_depth
+                factor = float(self.app.formats.factor)
+                
+                scale_ratio = Fraction(self.cross_slide_scale.ratioNum, self.cross_slide_scale.ratioDen) * factor
+                
                 # Calculate incremental cut depth in encoder units
                 incremental_cut_encoder = abs(current_encoder - last_cutting_depth_encoder)
-                factor = float(self.app.formats.factor)
-                incremental_cut_display = incremental_cut_encoder / factor if factor != 0 else 0
+            
+                incremental_cut_display = incremental_cut_encoder * scale_ratio
                 # Calculate remaining depth
                 final_depth_encoder = abs(self.bar.cutting_depth - current_encoder)
-                remaining_display = final_depth_encoder / factor if factor != 0 else 0
+                remaining_display = final_depth_encoder * scale_ratio
             
                 if is_metric:
                     self.bar.display_value = f"Last: {incremental_cut_display:.3f} | Rem: {remaining_display:.3f}"
