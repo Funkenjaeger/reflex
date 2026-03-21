@@ -22,6 +22,7 @@ class AssistedThreadingWizard:
         self.servo = self.app.servo
         self.current_step = 0
         self._threading_started = False
+        self._threading_active_confirmed = False
         self._calculated_threading_delta_steps = 0
         self._current_callback = None
         self._servo_watch_callback = None
@@ -58,6 +59,7 @@ class AssistedThreadingWizard:
         log.info("Wizard finished")
         self._current_callback = None
         self._threading_started = False
+        self._threading_active_confirmed = False
         self.bar.label_text = ""
         self.bar.display_value = ""
         self.bar.action_button_enabled = True
@@ -322,6 +324,7 @@ class AssistedThreadingWizard:
         if (self._threading_started is False):
             # First time starting threading - latch phase and enable
             self._threading_started = True
+            self._threading_active_confirmed = False
             self._calculated_threading_delta_steps = self._get_threading_servo_delta_steps() # Calculate threading delta steps - we only calculate it once including backlash
             dev['assistedThreadingData']['threadRemainingSteps'] = self._calculated_threading_delta_steps
             dev['assistedThreadingData']['threadRequest'] = 1
@@ -560,7 +563,10 @@ class AssistedThreadingWizard:
         #     f"stepsToGo={stepsToGo}, "
         # )
         
-        if threadEnabled == 0 and threadPhaseActive == 0:
+        if threadEnabled == 1 or threadPhaseActive == 1:
+            self._threading_active_confirmed = True
+
+        if self._threading_active_confirmed and threadEnabled == 0 and threadPhaseActive == 0:
             log.info("Servo reached desired position")
             
             # Stop watching
