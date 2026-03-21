@@ -114,6 +114,7 @@ class AssistedThreadingWizard:
         servo_direction = 1 if self.servo.ratioNum * self.servo.ratioDen > 0 else -1
         self.servo.jogSpeed = - servo_direction * self.bar.reversing_speed # set to reversing speed
         self._apply_reversing_adjusting_acceleration()
+        self.servo.set_max_speed(self.bar.reversing_speed)  # ensure step rate supports jog speed
         self.servo.servoEnable = 2
     
     def stop_retracting(self):
@@ -128,10 +129,6 @@ class AssistedThreadingWizard:
         
         self._servo_watch_callback = self._watch_retracting_stopped
         self.app.bind(update_tick=self._servo_watch_callback)
-        # self.servo.set_max_speed(self.servo.maxSpeed)
-        # self.servo.servoEnable = 1  # back to normal servo mode
-        
-        # self.goto_step(5)  # Go back to step 6 - Go to start position
     
     # Instruction steps
     #Step 1
