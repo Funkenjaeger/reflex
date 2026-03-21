@@ -329,6 +329,7 @@ class AssistedThreadingWizard:
             dev['assistedThreadingData']['threadRemainingSteps'] = self._calculated_threading_delta_steps
             dev['assistedThreadingData']['threadRequest'] = 1
         else:
+            self._threading_active_confirmed = False
             dev['assistedThreadingData']['threadRemainingSteps'] = self._calculated_threading_delta_steps
             dev['assistedThreadingData']['threadEnabled'] = 1 # Continue threading from previous state
         
