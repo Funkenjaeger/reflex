@@ -180,14 +180,14 @@ class AssistedThreadingWizard:
     #Step 7
     def _step_cut_thread(self):
         self.bar.action_button_enabled = False  # Disable until valid
-        self.set_instruction("Go to cutting depth and press Cut to start threading operation", "Cut", self._start_threading_operation, None, self._is_cross_slide_at_cutting_depth, True)
+        self.set_instruction("Go to cutting depth and press Cut to start threading operation", "Cut", self._start_threading_operation, None, None, True)
         self._bind_threading_progress_display()  # Bind to progress display
         self.bar.update_action_button_state()
     
     #Step 8
     def _step_depth_reached(self):
         self.bar.action_button_enabled = False  # Disable until valid
-        self.set_instruction("Final depth reached. Cut more? Press Stop to quit.", "Cut", self._start_threading_operation, None, self._is_cross_slide_at_cutting_depth, True)
+        self.set_instruction("Final depth reached. Cut more? Press Stop to quit.", "Cut", self._start_threading_operation, None, None, True)
         self._bind_threading_progress_display()  # Bind to progress display
         self.bar.update_action_button_state()
     
@@ -223,7 +223,7 @@ class AssistedThreadingWizard:
         depth = self.manual_cutting_depth if self.manual_cutting_depth is not None else self._calculate_thread_depth()
         encoder_cutting_depth = self._convert_distance_units_to_encoder(self.cross_slide_scale, depth, is_metric)
         
-        self.bar.cutting_depth = self.cross_slide_scale.encoderCurrent + (encoder_cutting_depth * self._get_cross_slide_scale_effective_dir())
+        self.bar.cutting_depth = self.cross_slide_scale.encoderCurrent - (encoder_cutting_depth * self._get_cross_slide_scale_effective_dir())
         
         
         log.info(f"Cutting depth set: {depth} (manual_override={self.manual_cutting_depth is not None})")
@@ -368,16 +368,6 @@ class AssistedThreadingWizard:
 
         cross_delta = self.cross_slide_scale.encoderCurrent - self.bar.material_width
         return cross_delta * retract_dir > 0
-
-    
-    #Step 7
-    def _is_cross_slide_at_cutting_depth(self):
-        """Check if the cross slide is at the cutting depth position, considering thread type and scale direction."""
-        effective_dir = self._get_cross_slide_scale_effective_dir()
-        log.info(f"Checking if cross slide reached cutting depth: current={self.cross_slide_scale.encoderCurrent}, target={self.bar.cutting_depth}, effective_dir={effective_dir}")
-        
-        # Check: has cross slide reached or passed the target depth?
-        return (self.cross_slide_scale.encoderCurrent - self.bar.cutting_depth) * effective_dir >= 0
 
     # Manual input handlers
     def _open_stop_position_keypad(self, *args):
@@ -669,10 +659,11 @@ class AssistedThreadingWizard:
       
 
     def _is_cross_slide_at_final_cutting_depth(self):
+        #TODO check if this is working correctly with reversed scales and inner vs outer threads
         """Check if the cross slide is at or more than the final cutting depth position."""
-        if self.bar.inner_thread:
-            return self.cross_slide_scale.encoderCurrent >= self.bar.cutting_depth
-        return self.cross_slide_scale.encoderCurrent <= self.bar.cutting_depth
+        effective_dir = self._get_cross_slide_scale_effective_dir()
+        current = self.cross_slide_scale.encoderCurrent
+        return (current - self.bar.cutting_depth) * effective_dir >= 0
     
     def _stop_servo(self):
         if not self.app.connected:
@@ -730,14 +721,14 @@ class AssistedThreadingWizard:
                 last_cutting_depth_encoder = self.bar.last_cutting_depth
                 factor = float(self.app.formats.factor)
                 
-                scale_ratio = Fraction(self.cross_slide_scale.ratioNum, self.cross_slide_scale.ratioDen) * factor
+                scale_ratio = abs(Fraction(self.cross_slide_scale.ratioNum, self.cross_slide_scale.ratioDen) * factor)
                 
                 # Calculate incremental cut depth in encoder units
-                incremental_cut_encoder = abs(current_encoder - last_cutting_depth_encoder)
+                incremental_cut_encoder = last_cutting_depth_encoder - current_encoder if self.bar.inner_thread else current_encoder - last_cutting_depth_encoder
             
                 incremental_cut_display = incremental_cut_encoder * scale_ratio
                 # Calculate remaining depth
-                final_depth_encoder = abs(self.bar.cutting_depth - current_encoder)
+                final_depth_encoder =  current_encoder - self.bar.cutting_depth if self.bar.inner_thread else self.bar.cutting_depth - current_encoder
                 remaining_display = final_depth_encoder * scale_ratio
             
                 if is_metric:
