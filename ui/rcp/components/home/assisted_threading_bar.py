@@ -55,6 +55,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     cutting_depth = NumericProperty(0)
     last_cutting_depth = NumericProperty(0)
     retract_button_visible = BooleanProperty(False)
+    retract_button_enabled = BooleanProperty(True)
     _skip_save = [
         "is_running",
         "action_button_enabled",
@@ -65,13 +66,15 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         "material_width",
         "cutting_depth",
         "last_cutting_depth",
-        "retract_button_visible"
+        "retract_button_visible",
+        "retract_button_enabled"
     ]
 
     def __init__(self, **kv):
         from rcp.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
         self.action_button_condition_fn = None
+        self.retract_button_condition_fn = None
         super().__init__(**kv)
         
         if self.metric_mode:
@@ -104,10 +107,14 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
 
     def on_retract_button_pressed(self):
         """Called when the retract button is pressed."""
+        if not self.retract_button_enabled:
+            return
         self.wizard.start_retracting()
         
     def on_retract_button_released(self):
         """Called when the retract button is released."""
+        if not self.retract_button_enabled:
+            return
         self.wizard.stop_retracting()
         
     def on_action_button_clicked(self):
@@ -150,7 +157,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
                 self.wizard.manual_stop_length = None
             # Always update display to formattedPosition (not raw encoder!)
             self.display_value = instance.formattedPosition
-            self.update_action_button_state()
+            self.update_buttons_state()
 
         # --- Format update handler ---
         def on_format_update(instance, value):
@@ -215,12 +222,17 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
                 self.wizard._progress_display_scale.unbind(encoderCurrent=self.wizard._on_threading_progress_update)
             self.wizard._progress_display_scale = None
 
-    def update_action_button_state(self):
-        """Evaluate whether the action button should be enabled."""
+    def update_buttons_state(self):
+        """Evaluate whether the action/retract buttons should be enabled."""
         if self.action_button_condition_fn:
             self.action_button_enabled = self.action_button_condition_fn()
         else:
             self.action_button_enabled = True
+            
+        if self.retract_button_condition_fn:
+            self.retract_button_enabled = self.retract_button_condition_fn()
+        else:
+            self.retract_button_enabled = True
         
         
     
