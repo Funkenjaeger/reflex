@@ -27,12 +27,7 @@ class AssistedThreadingSettingsPopup(Popup):
         if not self.assistedThreadingBar:
             return []
 
-        # Choose the correct table based on metric_mode
-        if self.assistedThreadingBar.metric_mode:
-            self.current_feeds_table = feeds.table["Thread MM"]
-        else:
-            self.current_feeds_table = feeds.table["Thread IN"]
-        return [f.name for f in self.current_feeds_table]
+        return [f.name for f in self.assistedThreadingBar.current_feeds_table]
     
     def get_thread_types(self):
         """Get available thread types based on metric mode."""
@@ -59,7 +54,8 @@ class AssistedThreadingSettingsPopup(Popup):
         
     def on_pitch_selected(self, index, selected_pitch):
         self.assistedThreadingBar.selected_pitch = selected_pitch
-        self.update_feeds_ratio(index)
+        self.assistedThreadingBar.current_feeds_index = index
+        self.assistedThreadingBar.update_feeds_ratio(None,None)
         log.info(f"Selected pitch: {selected_pitch}")
     
     def on_thread_type_selected(self, value):
@@ -71,11 +67,3 @@ class AssistedThreadingSettingsPopup(Popup):
             log.info(f"Selected thread type: {thread_type}")
         except ValueError:
             log.warning(f"Invalid thread type value: {value}")
-        
-    def update_feeds_ratio(self, index):
-        ratio = self.current_feeds_table[index].ratio
-        spindle_scale: CoordBar = self.assistedThreadingBar.app.get_spindle_scale()
-        if spindle_scale is not None:
-            spindle_scale.syncRatioNum = ratio.numerator
-            spindle_scale.syncRatioDen = ratio.denominator
-        log.info(f"Configured ratio is: {ratio.numerator}/{ratio.denominator}")

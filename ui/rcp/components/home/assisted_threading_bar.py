@@ -5,6 +5,7 @@ from kivy.logger import Logger
 from kivy.uix.boxlayout import BoxLayout
 from kivy.properties import NumericProperty, BooleanProperty, StringProperty
 
+from rcp import feeds
 from rcp.components.forms.hold_button import HoldButton
 from rcp.components.home.assisted_threading_wizard import AssistedThreadingWizard
 from rcp.components.home.coordbar import CoordBar
@@ -36,6 +37,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     
     metric_mode = BooleanProperty(True) # This is for the actual threading logic
     selected_pitch = StringProperty("")
+    current_feeds_index = NumericProperty(0)
     thread_profile_type = StringProperty("ISO_METRIC")
     cross_slide_diameter_mode = BooleanProperty(False)
     shaft_diameter = NumericProperty(1)
@@ -71,10 +73,20 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         self.app: MainApp = MainApp.get_running_app()
         self.action_button_condition_fn = None
         super().__init__(**kv)
+        
+        if self.metric_mode:
+            self.current_feeds_table = feeds.table["Thread MM"]
+        else:
+            self.current_feeds_table = feeds.table["Thread IN"]
+        
+        self.update_feeds_ratio(self, None)
+        
         # Initialize with default thread type if not set
         if not self.thread_profile_type:
             self.thread_profile_type = ThreadType.ISO_METRIC.value
         self.wizard = AssistedThreadingWizard(self)
+        
+        self.app.bind(current_mode=self.on_mode_change)
     
     def toggle_is_running(self):
         self.is_running = not self.is_running
@@ -85,6 +97,10 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
             
     def stop_wizard(self):
             self.wizard.stop()
+            
+    def on_mode_change(self, instance, mode):
+        if mode == 4: # AT mode
+            self.update_feeds_ratio(None, None)
 
     def on_retract_button_pressed(self):
         """Called when the retract button is pressed."""
@@ -100,6 +116,17 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
             self.wizard.goto_next_step()
         else:
             self.open_settings()
+            
+    def update_feeds_ratio(self, instance, value):
+        if self.app.current_mode != 4:
+            return  # only sync in AT mode
+        
+        ratio = self.current_feeds_table[self.current_feeds_index].ratio
+        spindle_scale: CoordBar = self.app.get_spindle_scale()
+        if spindle_scale is not None:
+            spindle_scale.syncRatioNum = ratio.numerator
+            spindle_scale.syncRatioDen = ratio.denominator
+        log.info(f"Configured ratio is: {ratio.numerator}/{ratio.denominator}")
     
     def open_settings(self):
         from rcp.components.home.assisted_threading_settings_popup import AssistedThreadingSettingsPopup

@@ -506,48 +506,48 @@ class AssistedThreadingWizard:
         return self._convert_distance_units_to_encoder(self.saddle_scale, self.bar.backlash_cushion, self.bar.metric_distances)
 
     def _check_servo_threading_done(self, next_step: int, *args):
-        #TODO remove debug logs when done testing
-        dev = self.app.device
-        dev['assistedThreadingData'].refresh()
-        threadRequest = dev['assistedThreadingData']['threadRequest']
-        threadReset = dev['assistedThreadingData']['threadReset']
+        dev = self.app.device        
         threadPhaseActive = dev['assistedThreadingData']['threadPhaseActive']
-        threadEnabled = dev['assistedThreadingData']['threadEnabled']        
-        spindleScaleIndex = dev['assistedThreadingData']['spindleScaleIndex']
-        spindleCountsPerRev = dev['assistedThreadingData']['spindleCountsPerRev']
-        spindlePhaseTolerance = dev['assistedThreadingData']['spindlePhaseTolerance']        
-        threadRemainingSteps = dev['assistedThreadingData']['threadRemainingSteps']
-        threadStartSteps = dev['assistedThreadingData']['threadStartSteps']
-        threadPhaseRef = dev['assistedThreadingData']['threadPhaseRef']
-        currentThreadPhase = dev['assistedThreadingData']['currentThreadPhase']
-        desiredSteps = dev['servo']['desiredSteps']
-        currentSteps = dev['servo']['currentSteps']
-        stepsToGo = dev['servo']['direction']
-        syncEnable = dev['scales'][spindleScaleIndex]['syncEnable']
-        position = dev['scales'][spindleScaleIndex]['position']
+        threadEnabled = dev['assistedThreadingData']['threadEnabled']     
         
-        log.info(
-            f"Checking servo done: "
-            f"spindleScaleIndex={spindleScaleIndex}, "
-            f"spindleCountsPerRev={spindleCountsPerRev}, "
-            f"spindlePhaseTolerance={spindlePhaseTolerance}, "
+        # dev['assistedThreadingData'].refresh()
+        # threadRequest = dev['assistedThreadingData']['threadRequest']
+        # threadReset = dev['assistedThreadingData']['threadReset']   
+        # spindleScaleIndex = dev['assistedThreadingData']['spindleScaleIndex']
+        # spindleCountsPerRev = dev['assistedThreadingData']['spindleCountsPerRev']
+        # spindlePhaseTolerance = dev['assistedThreadingData']['spindlePhaseTolerance']        
+        # threadRemainingSteps = dev['assistedThreadingData']['threadRemainingSteps']
+        # threadStartSteps = dev['assistedThreadingData']['threadStartSteps']
+        # threadPhaseRef = dev['assistedThreadingData']['threadPhaseRef']
+        # currentThreadPhase = dev['assistedThreadingData']['currentThreadPhase']
+        # desiredSteps = dev['servo']['desiredSteps']
+        # currentSteps = dev['servo']['currentSteps']
+        # stepsToGo = dev['servo']['direction']
+        # syncEnable = dev['scales'][spindleScaleIndex]['syncEnable']
+        # position = dev['scales'][spindleScaleIndex]['position']
+        
+        # log.info(
+        #     f"Checking servo done: "
+        #     f"spindleScaleIndex={spindleScaleIndex}, "
+        #     f"spindleCountsPerRev={spindleCountsPerRev}, "
+        #     f"spindlePhaseTolerance={spindlePhaseTolerance}, "
             
-            f"threadRequest={threadRequest}, "
-            f"threadReset={threadReset}, "
-            f"threadPhaseActive={threadPhaseActive}, "
-            f"threadEnabled={threadEnabled}, "
-            f"syncEnable={syncEnable}, "
+        #     f"threadRequest={threadRequest}, "
+        #     f"threadReset={threadReset}, "
+        #     f"threadPhaseActive={threadPhaseActive}, "
+        #     f"threadEnabled={threadEnabled}, "
+        #     f"syncEnable={syncEnable}, "
             
-            f"threadPhaseRef={threadPhaseRef}, "
-            f"currentThreadPhase={currentThreadPhase}, "
-            f"spindleEncoderposition={position}, "
+        #     f"threadPhaseRef={threadPhaseRef}, "
+        #     f"currentThreadPhase={currentThreadPhase}, "
+        #     f"spindleEncoderposition={position}, "
             
-            f"threadRemainingSteps={threadRemainingSteps}, "
-            f"threadStartSteps={threadStartSteps}, "
-            f"desiredSteps={desiredSteps}, "
-            f"currentSteps={currentSteps}, "
-            f"stepsToGo={stepsToGo}, "
-        )
+        #     f"threadRemainingSteps={threadRemainingSteps}, "
+        #     f"threadStartSteps={threadStartSteps}, "
+        #     f"desiredSteps={desiredSteps}, "
+        #     f"currentSteps={currentSteps}, "
+        #     f"stepsToGo={stepsToGo}, "
+        # )
         
         if threadEnabled == 0 and threadPhaseActive == 0:
             log.info("Servo reached desired position")
