@@ -23,7 +23,7 @@ class CustomPopup(BoxLayout):
         self._popup = Popup(
             title=self.title,
             content=self,
-            size_hint=(0.6, 0.4),
+            size_hint=(0.6, 0.5),
             auto_dismiss=False,
         )
 
