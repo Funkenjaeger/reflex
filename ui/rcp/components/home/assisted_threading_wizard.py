@@ -4,6 +4,7 @@ from kivy.logger import Logger
 from rcp.components.forms.custom_popup import CustomPopup
 from rcp.components.home.coordbar import CoordBar
 from rcp.components.home.thread_type import ThreadType
+from rcp.utils.devices import SCALES_COUNT
 
 log = Logger.getChild(__name__)
 class AssistedThreadingWizard:
@@ -268,42 +269,17 @@ class AssistedThreadingWizard:
         if not self.app.connected:
             self.stop()
             return False # tell goto_next_step not to advance immediately
-        
+
         if not self._start_position_preloaded:
             log.warning("Threading requested without start preload")
             self.goto_step(5)
             return False
 
-        # Below is a sanity check to make sure that we are at the correct start position including backlash cushion
-        # if for some reason the start_position_preloaded flag was bypassed or the saddle moved after preload.
-        backlash_cushion = abs(self._get_backlash_cusion_encoder_steps())
+        if not self._check_valid_start_position():
+            return False
 
-        log.info(
-            f"Validating start position: current={self.saddle_scale.encoderCurrent}, "
-            f"start={self.bar.start_position}, "
-            f"backlash_cushion={backlash_cushion}"
-        )
-
-        delta = abs(self.saddle_scale.encoderCurrent - self.bar.start_position)
-        # Check if we are within backlash cushion distance from the start position. If not, warn the user and go back to step 6 to return to start position.
-        if delta > backlash_cushion:
-            _warning = (
-                "Not at valid start position including backlash cushion. "
-                "Aborting threading operation. Go back to start position."
-            )
-            log.warning(_warning)
-
-            def _acknowledge_warning():
-                self.goto_step(5)  # go back to Step 6 - Go to start
-
-            popup = CustomPopup(
-                title="Warning",
-                message=_warning,
-                button_text="Got it",
-                on_dismiss_callback=_acknowledge_warning
-            )
-            popup.open()
-            return False  # tell goto_next_step not to advance immediately
+        if not self._check_spindle_turning_forward():
+            return False
 
         log.info("Starting threaded cut to stop position: %s", self.bar.stop_position)
         self.bar.last_cutting_depth = self.cross_slide_scale.encoderCurrent  # Update last cutting depth to current position
@@ -337,8 +313,8 @@ class AssistedThreadingWizard:
         self.app.bind(update_tick=self._servo_watch_callback)
 
         return False  # tell goto_next_step not to advance immediately
-        
-            
+    
+
     #Step Action button condition functions
     #Step 2
     def _is_valid_stop_position(self):
@@ -898,6 +874,64 @@ class AssistedThreadingWizard:
             next_step += 1
 
         self.goto_step(next_step)
+    
+    def _check_valid_start_position(self) -> bool:
+        """Return True if the saddle is within the backlash cushion of the start position.
+        Shows a warning popup and redirects to step 6 if not. Sanity check in case the
+        start_position_preloaded flag was bypassed or the saddle moved after preload."""
+        backlash_cushion = abs(self._get_backlash_cusion_encoder_steps())
+        log.info(
+            f"Validating start position: current={self.saddle_scale.encoderCurrent}, "
+            f"start={self.bar.start_position}, "
+            f"backlash_cushion={backlash_cushion}"
+        )
+        delta = abs(self.saddle_scale.encoderCurrent - self.bar.start_position)
+        if delta > backlash_cushion:
+            message = (
+                "Not at valid start position including backlash cushion. "
+                "Aborting threading operation. Go back to start position."
+            )
+            log.warning(message)
+            CustomPopup(
+                title="Warning",
+                message=message,
+                button_text="Got it",
+                on_dismiss_callback=lambda: self.goto_step(5),
+            ).open()
+            return False
+        return True
+
+    def _check_spindle_turning_forward(self) -> bool:
+        """Return True if the spindle scale exists and is turning in the right/positive/CCW direction.
+        Shows a warning popup and redirects to step 6 if not."""
+        spindle_scale = self.app.get_spindle_scale()
+        if spindle_scale is None:
+            log.warning("No spindle scale configured — cannot verify spindle direction")
+            CustomPopup(
+                title="Warning",
+                message="No spindle scale configured. Cannot verify spindle is turning.",
+                button_text="Got it",
+                on_dismiss_callback=lambda: self.goto_step(5),
+            ).open()
+            return False
+
+        spindle_speed = self.app.fast_data_values.get('scaleSpeed', [0] * SCALES_COUNT)[spindle_scale.inputIndex]
+        log.info(f"Validating spindle direction: scaleSpeed[{spindle_scale.inputIndex}]={spindle_speed}")
+
+        if spindle_speed <= 0:
+            message = (
+                "Spindle is not turning in the right/positive/CCW direction. "
+                "Ensure the spindle is running forward before starting the threading operation."
+            )
+            log.warning(message)
+            CustomPopup(
+                title="Warning",
+                message=message,
+                button_text="Got it",
+                on_dismiss_callback=lambda: self.goto_step(5),
+            ).open()
+            return False
+        return True
 
 class GoToStartPhase:
     IDLE = 0
