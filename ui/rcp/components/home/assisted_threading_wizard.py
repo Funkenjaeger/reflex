@@ -281,6 +281,9 @@ class AssistedThreadingWizard:
         if not self._check_spindle_turning_forward():
             return False
 
+        if not self._check_spindle_speed_for_pitch():
+            return False
+
         log.info("Starting threaded cut to stop position: %s", self.bar.stop_position)
         self.bar.last_cutting_depth = self.cross_slide_scale.encoderCurrent  # Update last cutting depth to current position
 
@@ -922,6 +925,64 @@ class AssistedThreadingWizard:
             message = (
                 "Spindle is not turning in the right/positive/CCW direction. "
                 "Ensure the spindle is running forward before starting the threading operation."
+            )
+            log.warning(message)
+            CustomPopup(
+                title="Warning",
+                message=message,
+                button_text="Got it",
+                on_dismiss_callback=lambda: self.goto_step(5),
+            ).open()
+            return False
+        return True
+
+    def _check_spindle_speed_for_pitch(self) -> bool:
+        """Return True if the current spindle RPM is within the servo's speed limit
+        for the selected pitch. Shows a warning popup and redirects to step 6 if not."""
+        spindle_scale = self.app.get_spindle_scale()
+        if spindle_scale is None:
+            return True  # already caught by _check_spindle_turning_forward
+
+        spindle_steps_per_sec = self.app.fast_data_values.get('scaleSpeed', [0] * SCALES_COUNT)[spindle_scale.inputIndex]
+
+        try:
+            pitch_str = self.bar.selected_pitch.strip()
+            if not pitch_str:
+                return True  # no pitch selected yet — skip
+            pitch_val = float(pitch_str)
+        except ValueError:
+            log.warning(f"Cannot parse selected_pitch={self.bar.selected_pitch!r} — skipping speed check")
+            return True
+
+        if self.bar.metric_mode:
+            pitch_mm = pitch_val
+        else:
+            if pitch_val == 0:
+                return True
+            pitch_mm = 25.4 / pitch_val  # TPI → mm/rev
+
+        spindle_rev_per_sec = spindle_steps_per_sec / spindle_scale.ratioDen
+        feed_mm_per_sec = spindle_rev_per_sec * pitch_mm
+        encoder_steps_per_sec = feed_mm_per_sec * self.saddle_scale.stepsPerMM
+
+        scale_ratio = Fraction(abs(self.saddle_scale.ratioNum), abs(self.saddle_scale.ratioDen))
+        servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
+        required = float(encoder_steps_per_sec * scale_ratio / servo_ratio)
+
+        log.info(
+            f"Spindle speed check: spindle={spindle_steps_per_sec} steps/s, "
+            f"pitch={pitch_mm:.4f} mm, feed={feed_mm_per_sec:.4f} mm/s, "
+            f"required_servo={required:.1f} steps/s, max={self.bar.threading_max_speed}"
+        )
+
+        if required > self.bar.threading_max_speed:
+            spindle_rpm = spindle_rev_per_sec * 60
+            pitch_label = f"{pitch_mm:.3g} mm" if self.bar.metric_mode else f"{self.bar.selected_pitch} TPI"
+            message = (
+                f"Spindle speed ({spindle_rpm:.0f} RPM) is too fast for {pitch_label} pitch. "
+                f"Required servo speed ({required:.0f} steps/s) exceeds the threading limit "
+                f"({self.bar.threading_max_speed} steps/s). "
+                "Reduce spindle speed or increase the threading max speed limit."
             )
             log.warning(message)
             CustomPopup(
