@@ -966,13 +966,14 @@ class AssistedThreadingWizard:
         encoder_steps_per_sec = feed_mm_per_sec * self.saddle_scale.stepsPerMM
 
         scale_ratio = Fraction(abs(self.saddle_scale.ratioNum), abs(self.saddle_scale.ratioDen))
-        servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
+        servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
         required = float(encoder_steps_per_sec * scale_ratio / servo_ratio)
 
         log.info(
             f"Spindle speed check: spindle={spindle_steps_per_sec} steps/s, "
             f"pitch={pitch_mm:.4f} mm, feed={feed_mm_per_sec:.4f} mm/s, "
-            f"required_servo={required:.1f} steps/s, max={self.bar.threading_max_speed}"
+            f"required_servo={required:.1f} steps/s, max={self.bar.threading_max_speed}, "
+            f"greater={required > self.bar.threading_max_speed}"
         )
 
         if required > self.bar.threading_max_speed:
