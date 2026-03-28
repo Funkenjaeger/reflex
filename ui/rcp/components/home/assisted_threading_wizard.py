@@ -968,11 +968,14 @@ class AssistedThreadingWizard:
         servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
         required = float(encoder_steps_per_sec * scale_ratio / servo_ratio)
 
+        steps_per_mm_per_rev = pitch_mm * self.saddle_scale.stepsPerMM * float(scale_ratio / servo_ratio)
+        max_rpm = (self.bar.threading_max_speed / steps_per_mm_per_rev) * 60 if steps_per_mm_per_rev > 0 else 0
+
         log.info(
             f"Spindle speed check: spindle={spindle_steps_per_sec} steps/s, "
             f"pitch={pitch_mm:.4f} mm, feed={feed_mm_per_sec:.4f} mm/s, "
             f"required_servo={required:.1f} steps/s, max={self.bar.threading_max_speed}, "
-            f"greater={required > self.bar.threading_max_speed}"
+            f"max_rpm={max_rpm:.1f}, greater={required > self.bar.threading_max_speed}"
         )
 
         if required > self.bar.threading_max_speed:
@@ -982,6 +985,7 @@ class AssistedThreadingWizard:
                 f"Spindle speed ({spindle_rpm:.0f} RPM) is too fast for {pitch_label} pitch. "
                 f"Required servo speed ({required:.0f} steps/s) exceeds the threading limit "
                 f"({self.bar.threading_max_speed} steps/s). "
+                f"Max allowed spindle speed for this pitch is {max_rpm:.0f} RPM. "
                 "Reduce spindle speed or increase the threading max speed limit."
             )
             log.warning(message)
