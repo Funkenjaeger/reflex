@@ -83,13 +83,14 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
             self.current_feeds_table = feeds.table["Thread IN"]
         
         self.update_feeds_ratio(self, None)
-        
+
         # Initialize with default thread type if not set
         if not self.thread_profile_type:
             self.thread_profile_type = ThreadType.ISO_METRIC.value
         self.wizard = AssistedThreadingWizard(self)
-        
+
         self.app.bind(current_mode=self.on_mode_change)
+        self.bind(left_hand_thread=self.update_feeds_ratio)
     
     def toggle_is_running(self):
         self.is_running = not self.is_running
@@ -131,9 +132,10 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         ratio = self.current_feeds_table[self.current_feeds_index].ratio
         spindle_scale: CoordBar = self.app.get_spindle_scale()
         if spindle_scale is not None:
-            spindle_scale.syncRatioNum = ratio.numerator
+            direction = -1 if self.left_hand_thread else 1
+            spindle_scale.syncRatioNum = ratio.numerator * direction
             spindle_scale.syncRatioDen = ratio.denominator
-        log.info(f"Configured ratio is: {ratio.numerator}/{ratio.denominator}")
+        log.info(f"Configured ratio is: {ratio.numerator}/{ratio.denominator}, left_hand_thread={self.left_hand_thread}")
     
     def open_settings(self):
         from rcp.components.home.assisted_threading_settings_popup import AssistedThreadingSettingsPopup
@@ -233,6 +235,3 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
             self.retract_button_enabled = self.retract_button_condition_fn()
         else:
             self.retract_button_enabled = True
-        
-        
-    
