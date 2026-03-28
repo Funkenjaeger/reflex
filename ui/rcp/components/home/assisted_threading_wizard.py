@@ -254,7 +254,7 @@ class AssistedThreadingWizard:
 
         retraction = abs(self._get_saddle_backlash_distance_encoder_steps() * 1.5)  # retract 1.5x backlash distance
         retraction_dir = -effective_dir  # retract opposite to cutting direction
-
+        log.info(f"Starting retract to go to start: effective_dir={effective_dir}, retraction={retraction}, retraction_dir={retraction_dir}")
         retract_target = self.bar.start_position + retraction_dir * retraction
 
         self._command_move_to_encoder(retract_target, speed=self.bar.reversing_speed)
