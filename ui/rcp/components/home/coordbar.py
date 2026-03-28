@@ -70,6 +70,7 @@ class CoordBar(BoxLayout, SavingDispatcher):
         self.speed_history = collections.deque(maxlen=25)
         self.previous_position = 0
         self.motion_detected = True
+        self._updating_scaled_position = False
         self.previous_axis_time: float = 0
         self.previous_axis_pos: Decimal = Decimal(0)
         self.app.bind(currentOffset=self.update_scaledPosition)
@@ -150,6 +151,15 @@ class CoordBar(BoxLayout, SavingDispatcher):
         self.set_sync_ratio()
 
     def update_scaledPosition(self, instance=None, value=None):
+        if self._updating_scaled_position:
+            return
+        self._updating_scaled_position = True
+        try:
+            self._do_update_scaledPosition()
+        finally:
+            self._updating_scaled_position = False
+
+    def _do_update_scaledPosition(self):
         if self.spindleMode:
             # When working in spindle mode we report the position in degrees
             self.scaledPosition = float(
