@@ -1,31 +1,30 @@
 <LogsPanel>:
   orientation: "vertical"
+
   BoxLayout:
     orientation: "horizontal"
     size_hint_y: None
-    height: 32
+    height: 48
     Label:
-      size_hint_y: 1
-      font_size: self.height * 0.75
-      text: "Application Logs"
+      text: "Select a log file"
+      font_size: 16
+      text_size: self.size
+      halign: "left"
+      valign: "middle"
     Button:
       size_hint_x: None
       width: 200
       text: "Refresh"
+      font_size: app.formats.font_size
       on_release: root.refresh_logs()
 
   ScrollView:
     do_scroll_x: False
     do_scroll_y: True
-    Label:
-      id: log_text_area
+    BoxLayout:
+      id: file_list
+      orientation: "vertical"
       size_hint_y: None
-      height: self.texture_size[1]
-      text_size: self.width, None
-      padding: 10, 10
-
-#  Button:
-#    size_hint_y: None
-#    height: 32
-#    text: "Back"
-#    on_release: root.parent.parent.current = "menu"
+      height: self.minimum_height
+      spacing: 4
+      padding: 10

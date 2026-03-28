@@ -1,6 +1,7 @@
 #: import ToolbarButton components.toolbars.toolbar_button
 #: import Factory kivy.factory.Factory
-#: import Keypad components.keypad
+#: import Keypad rcp.components.popups.keypad
+#: import ModePopup rcp.components.popups.mode_popup
 
 <HomeToolbar>:
   orientation: "vertical"
@@ -20,9 +21,15 @@
 
   ToolbarButton:
     width: root.width
+    text: "ABS" if app.abs_mode else "INC"
+    background_color: (list(app.formats.color_on) if app.board.blink else [1, 1, 1, 1]) if app.abs_mode else [1, 1, 1, 1]
+    on_release: app.abs_mode = not app.abs_mode
+
+  ToolbarButton:
+    width: root.width
     font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
     text: "\ue2ca"
-    on_press: app.goto("plot")
+    on_press: app.manager.goto("plot")
 
   ToolbarButton:
     width: root.width
@@ -34,7 +41,7 @@
     width: root.width
     font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
     text: "\uf085"
-    on_press: app.goto("setup_screen")
+    on_press: app.manager.goto("setup_screen")
 
   Widget:
     size_hint_y: 1

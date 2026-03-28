@@ -2,12 +2,10 @@ import struct
 from typing import Optional, List, Any
 
 from keke import ktrace, kev
-from rcp.utils import communication
 
-import logging
 from pydantic import BaseModel
-
-log = logging.getLogger(__name__)
+from kivy.logger import Logger
+log = Logger.getChild(__name__)
 
 
 class TypeDefinition(BaseModel):
@@ -25,63 +23,11 @@ class VariableDefinition(BaseModel):
     count: int = 1
 
 
-variable_definitions = [
-    TypeDefinition(
-        name="TIM_HandleTypeDef",
-        length=2,
-        struct_unpack_string="L",
-        read_function=communication.read_long,
-        write_function=communication.write_long
-    ),
-    TypeDefinition(
-        name="int16_t",
-        length=1,
-        struct_unpack_string="H",
-        read_function=communication.read_long,
-        write_function=communication.write_long
-    ),
-    TypeDefinition(
-        name="uint16_t",
-        length=1,
-        struct_unpack_string="h",
-        read_function=communication.read_unsigned,
-        write_function=communication.write_unsigned
-    ),
-    TypeDefinition(
-        name="bool",
-        length=1,
-        struct_unpack_string="h",
-        read_function=communication.read_unsigned,
-        write_function=communication.write_unsigned
-    ),
-    TypeDefinition(
-        name="uint32_t",
-        length=2,
-        struct_unpack_string="L",
-        read_function=communication.read_long,
-        write_function=communication.write_long
-    ),
-    TypeDefinition(
-        name="int32_t",
-        length=2,
-        struct_unpack_string="l",
-        read_function=communication.read_long,
-        write_function=communication.write_long
-    ),
-    TypeDefinition(
-        name="float",
-        length=2,
-        struct_unpack_string="f",
-        read_function=communication.read_float,
-        write_function=communication.write_float
-    ),
-]
-
-
 class BaseDevice:
     definition = ""
+    root_structure = False
 
-    def __init__(self, connection_manager, base_address):
+    def __init__(self, connection_manager, base_address=0):
         from rcp.utils.communication import ConnectionManager
         self.base_address = base_address
         self.size = 0
@@ -89,13 +35,12 @@ class BaseDevice:
         self.fast_data = dict()
         self.dm: ConnectionManager = connection_manager
         self.variables: List[VariableDefinition or BaseDevice] = []
+        self._variable_index: dict[str, VariableDefinition] = {}
+        self._sub_device_cache: dict[tuple, "BaseDevice"] = {}
         self.parse_addresses_from_definition()
 
     def __getitem__(self, key):
-        try:
-            var: VariableDefinition = [item for item in self.variables if item.name == key][0]
-        except Exception as e:
-            raise Exception(f"Variable with name: {key} not found ({e.__str__()})")
+        var = self._variable_index[key]
 
         if var.count > 1:
             list_type = list()
@@ -108,16 +53,12 @@ class BaseDevice:
             return var.type.read_function(self.dm, var.address + self.base_address)
 
     def __setitem__(self, key, value):
-        try:
-            var = [item for item in self.variables if item.name == key][0]
-        except Exception as e:
-            raise Exception(f"Variable with name: {key} not found ({e.__str__()})")
-
+        var = self._variable_index[key]
         var.type.write_function(self.dm, var.address + self.base_address, value, key)
         return
 
     @classmethod
-    def register_type(cls) -> TypeDefinition:
+    def register_type(cls, variable_definitions) -> TypeDefinition:
         current_address = 0
         size = 0
         name = None
@@ -139,43 +80,39 @@ class BaseDevice:
                 continue
 
             # Find type match
-            try:
-                identified_type = tokens[0]
-                identified_name = "".join(tokens[1:])
+            identified_type = tokens[0]
+            identified_name = "".join(tokens[1:])
 
-                matching_type = [
-                    item
-                    for item in variable_definitions
-                    if item.name == identified_type
-                ][0]
+            matching_type = [
+                item
+                for item in variable_definitions
+                if item.name == identified_type
+            ][0]
 
-                # Handle multi var definition separated by comma
-                if "," in identified_name:
-                    for name in identified_name.replace(" ", "").split(","):
-                        current_address = current_address + matching_type.length
-                        struct_unpack_string += matching_type.struct_unpack_string
-                        # size = current_address
-                    continue
+            # Handle multi var definition separated by comma
+            if "," in identified_name:
+                for name in identified_name.replace(" ", "").split(","):
+                    current_address = current_address + matching_type.length
+                    struct_unpack_string += matching_type.struct_unpack_string
+                    # size = current_address
+                continue
 
-                # Handle array definition
-                if "[" in identified_name:
-                    name, count = identified_name.split("[")
-                    count, _ = count.split("]")
-                    count = int(count)
+            # Handle array definition
+            if "[" in identified_name:
+                name, count = identified_name.split("[")
+                count, _ = count.split("]")
+                count = int(count)
 
-                    current_address += matching_type.length * count
-                    struct_unpack_string += matching_type.struct_unpack_string * count
-                    continue
+                current_address += matching_type.length * count
+                struct_unpack_string += matching_type.struct_unpack_string * count
+                continue
 
-                current_address = current_address + matching_type.length
-                struct_unpack_string += matching_type.struct_unpack_string
-            except Exception as e:
-                raise Exception(f"Unable to find a matching type for: {tokens[0]} ({e.__str__()})")
-
+            current_address = current_address + matching_type.length
+            struct_unpack_string += matching_type.struct_unpack_string
             size = current_address
 
         if name is None:
-            raise "Unable to identify the typedef name from the provided definition"
+            raise ValueError("Unable to identify the typedef name from the provided definition")
 
         return TypeDefinition(
             name=name,
@@ -211,7 +148,7 @@ class BaseDevice:
 
                 matching_type = [
                     item
-                    for item in variable_definitions
+                    for item in self.dm.definitions
                     if item.name == identified_type
                 ][0]
 
@@ -252,9 +189,16 @@ class BaseDevice:
                 self.struct_unpack_string += matching_type.struct_unpack_string
 
             except Exception as e:
-                raise Exception(f"Unable to find a matching type for: {tokens[0]}: {e.__str__()}")
+                raise ValueError(f"Unable to find a matching type for: {tokens[0]}: {str(e)}") from e
 
+        self._variable_index = {v.name: v for v in self.variables}
         self.size = current_address
+
+    def _get_sub_device(self, device_class, address: int) -> "BaseDevice":
+        cache_key = (device_class, address)
+        if cache_key not in self._sub_device_cache:
+            self._sub_device_cache[cache_key] = device_class(self.dm, address)
+        return self._sub_device_cache[cache_key]
 
     def set_fast_data(self, values: List):
         self.fast_data = dict()
@@ -264,12 +208,12 @@ class BaseDevice:
                 if item.count > 1:
                     fd_list = list()
                     for i in range(item.count):
-                        fd_list.append(
-                            item.type.read_function(self.dm, item.address + item.type.length * i).set_fast_data(values)
-                        )
+                        sub = self._get_sub_device(item.type.read_function, item.address + item.type.length * i)
+                        fd_list.append(sub.set_fast_data(values))
                     self.fast_data[item.name] = fd_list
                 else:
-                    self.fast_data[item.name] = item.type.read_function(self.dm, item.address).set_fast_data(values)
+                    sub = self._get_sub_device(item.type.read_function, item.address)
+                    self.fast_data[item.name] = sub.set_fast_data(values)
             else:
                 if item.count > 1:
                     fd_list = list()
@@ -289,29 +233,22 @@ class BaseDevice:
         raw_data = []
         remaining_address = self.base_address
         with kev("read_registers"):
-            try:
-                while remaining_size > max_size:
-                    part_data = self.dm.device.read_registers(
-                        registeraddress=remaining_address,
-                        number_of_registers=max_size
-                    )
-                    remaining_size -= max_size
-                    remaining_address += max_size
-                    raw_data += part_data
+            while remaining_size > max_size:
+                part_data = self.dm.device.read_registers(
+                    registeraddress=remaining_address,
+                    number_of_registers=max_size
+                )
+                remaining_size -= max_size
+                remaining_address += max_size
+                raw_data += part_data
 
-                if remaining_size > 0:
-                    part_data = self.dm.device.read_registers(
-                        registeraddress=remaining_address,
-                        number_of_registers=remaining_size
-                    )
-                    remaining_address += remaining_size
-                    raw_data += part_data
-
-                self.dm.connected = True
-            except Exception as e:
-                # log.debug(e.__str__())
-                self.dm.connected = False
-                return
+            if remaining_size > 0:
+                part_data = self.dm.device.read_registers(
+                    registeraddress=remaining_address,
+                    number_of_registers=remaining_size
+                )
+                remaining_address += remaining_size
+                raw_data += part_data
 
         with kev("struct"):
             raw_bytes = struct.pack("<" + "H" * self.size, *raw_data)

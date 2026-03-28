@@ -6,7 +6,7 @@ from kivy.properties import (
     StringProperty, ListProperty, ObjectProperty, ColorProperty, BooleanProperty,
 )
 
-from rcp.dispatchers import SavingDispatcher
+from rcp.dispatchers.saving_dispatcher import SavingDispatcher
 
 log = Logger.getChild(__name__)
 
@@ -33,6 +33,7 @@ class FormatsDispatcher(SavingDispatcher):
     angle_speed_format = StringProperty("{:+0.1f}")
 
     font_size = NumericProperty(24)
+    font_name = StringProperty("fonts/iosevka-regular.ttf")
 
     current_format = StringProperty("MM")
     speed_format = StringProperty()
@@ -48,6 +49,10 @@ class FormatsDispatcher(SavingDispatcher):
     volume = NumericProperty(0.2)
 
     disable_error_reporting = BooleanProperty(False)
+
+    position_tolerance = NumericProperty(0.05)
+
+    hide_mouse_cursor = BooleanProperty(False)
 
     def __init__(self, **kv):
         super().__init__(**kv)

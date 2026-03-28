@@ -1,19 +1,27 @@
-import os
+import math
 
-from kivy import Logger
-from kivy.lang import Builder
+from kivy.logger import Logger
 from kivy.uix.floatlayout import FloatLayout
-from kivy.properties import NumericProperty, ListProperty
-from kivy.graphics import Color, Line, Ellipse
+from kivy.properties import BooleanProperty, NumericProperty, ListProperty
+from kivy.graphics import Color, Line, Ellipse, Rectangle, InstructionGroup
 from kivy.uix.stencilview import StencilView
 
-# from rcp.components.plot.point_widget import PointWidget
+from rcp.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
-kv_file = os.path.join(os.path.dirname(__file__), __file__.replace(".py", ".kv"))
-if os.path.exists(kv_file):
-    log.info(f"Loading KV file: {kv_file}")
-    Builder.load_file(kv_file)
+load_kv(__file__)
+
+# CNC Dark color theme
+BG_COLOR = (0.102, 0.102, 0.180, 1)          # #1a1a2e
+GRID_COLOR = (0.165, 0.165, 0.243, 1)        # #2a2a3e
+AXIS_COLOR = (0.306, 0.804, 0.769, 1)        # #4ecdc4
+ORIGIN_COLOR = (0.306, 0.804, 0.769, 1)      # #4ecdc4
+SELECTED_COLOR = (1.0, 0.8, 0.208, 1)        # #ffcc35
+UNSELECTED_COLOR = (0.306, 0.804, 0.769, 0.4)  # #4ecdc4 @ 40%
+TOOL_COLOR = (1.0, 0.42, 0.42, 1)            # #ff6b6b
+AT_POSITION_COLOR = (0.2, 1.0, 0.2, 1)      # bright green
+
+GRID_SPACING = 50  # world-space mm
 
 
 class Scene(FloatLayout, StencilView):
@@ -24,20 +32,28 @@ class Scene(FloatLayout, StencilView):
     dot_size = NumericProperty(20)
     tool_x = NumericProperty(0.0)
     tool_y = NumericProperty(0.0)
+    at_position = BooleanProperty(False)
 
     def __init__(self, **kwargs):
         from rcp.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
+        self._static_group = InstructionGroup()
+        self._tool_group = InstructionGroup()
         super(Scene, self).__init__(**kwargs)
-        # self.bind(pos=self.update_canvas)
-        self.bind(size=self.update_points)
-        self.bind(zoom=self.update_points)
-        self.bind(points=self.update_points)
-        self.bind(tool_x=self.update_points)
-        self.bind(tool_y=self.update_points)
-        self.bind(selected_point=self.update_points)
+        self.canvas.add(self._static_group)
+        self.canvas.add(self._tool_group)
+        self.bind(size=self._update_static)
+        self.bind(zoom=self._update_static)
+        self.bind(points=self._update_static)
+        self.bind(selected_point=self._update_static)
+        self.bind(at_position=self._update_static)
+        self.bind(size=self._update_tool)
+        self.bind(zoom=self._update_tool)
+        self.bind(tool_x=self._update_tool)
+        self.bind(tool_y=self._update_tool)
+        self.bind(at_position=self._update_tool)
 
-    def update_points(self, *args):
+    def _update_static(self, *args):
         self.scaled_points = [
             [
                 item[0] * self.zoom,
@@ -45,49 +61,94 @@ class Scene(FloatLayout, StencilView):
             ] for item in self.points
         ]
 
-        self.canvas.clear()
-        with self.canvas:
-            Color(0, 1, 0, 1)
-            Line(rectangle=(-10 + self.width/2, -10 + self.height/2, 20, 20), width=1)
+        cx = self.width / 2
+        cy = self.height / 2
 
-            Color(0.5, 1, 0.5, 1)
-            Line(points=[self.width/2, 0, self.width/2, self.height], width=1)
-            Line(points=[0, self.height/2, self.width,  self.height/2], width=1)
+        self._static_group.clear()
 
-            for i, p in enumerate(self.scaled_points):
-                if i == self.selected_point:
-                    Color(0.8, 1, 0.8, 1)
-                else:
-                    Color(0.8, 1, 0.8, 0.2)
+        # 1. Background fill
+        self._static_group.add(Color(*BG_COLOR))
+        self._static_group.add(Rectangle(pos=(0, 0), size=(self.width, self.height)))
 
-                Ellipse(
-                    pos=(
-                        p[0] + self.width / 2 - self.dot_size/2,
-                        p[1] + self.height / 2 - self.dot_size/2
-                    ),
-                    size=(self.dot_size, self.dot_size),
-                    angle_start=0,
-                    angle_end=360
-                )
+        # 2. Grid lines at GRID_SPACING world-space intervals
+        self._static_group.add(Color(*GRID_COLOR))
+        spacing = GRID_SPACING * self.zoom
+        if spacing > 2:  # skip grid when zoomed out too far
+            # Vertical grid lines
+            n_left = math.ceil(-cx / spacing)
+            n_right = math.floor((self.width - cx) / spacing)
+            for n in range(n_left, n_right + 1):
+                if n == 0:
+                    continue  # axis drawn separately
+                x = n * spacing + cx
+                self._static_group.add(Line(points=[x, 0, x, self.height], width=1))
 
-            Color(0.5, 1, 0.5, 1)
-            Ellipse(
-                pos=(
-                    self.tool_x * self.zoom + self.width / 2 - self.dot_size / 2,
-                    self.tool_y * self.zoom + self.height / 2 - self.dot_size / 2
-                ),
-                size=(self.dot_size, self.dot_size),
-                angle_start=0,
-                angle_end=360
-            )
+            # Horizontal grid lines
+            n_bottom = math.ceil(-cy / spacing)
+            n_top = math.floor((self.height - cy) / spacing)
+            for n in range(n_bottom, n_top + 1):
+                if n == 0:
+                    continue
+                y = n * spacing + cy
+                self._static_group.add(Line(points=[0, y, self.width, y], width=1))
+
+        # 3. Axes — teal, full widget span
+        self._static_group.add(Color(*AXIS_COLOR))
+        self._static_group.add(Line(points=[cx, 0, cx, self.height], width=1))
+        self._static_group.add(Line(points=[0, cy, self.width, cy], width=1))
+
+        # 4. Origin marker — teal cross (±15px)
+        self._static_group.add(Color(*ORIGIN_COLOR))
+        arm = 15
+        self._static_group.add(Line(points=[cx - arm, cy, cx + arm, cy], width=1.5))
+        self._static_group.add(Line(points=[cx, cy - arm, cx, cy + arm], width=1.5))
+
+        # 5. Pattern points — crosshair + dot markers
+        for i, p in enumerate(self.scaled_points):
+            px = p[0] + cx
+            py = p[1] + cy
+            if i == self.selected_point:
+                self._static_group.add(Color(*SELECTED_COLOR))
+                arm = 12
+                w = 1.5
+            else:
+                self._static_group.add(Color(*UNSELECTED_COLOR))
+                arm = 8
+                w = 1
+            # Center dot
+            self._static_group.add(Ellipse(pos=(px - 3, py - 3), size=(6, 6)))
+            # Horizontal arm
+            self._static_group.add(Line(points=[px - arm, py, px + arm, py], width=w))
+            # Vertical arm
+            self._static_group.add(Line(points=[px, py - arm, px, py + arm], width=w))
+
+    def _update_tool(self, *args):
+        cx = self.width / 2
+        cy = self.height / 2
+
+        self._tool_group.clear()
+
+        # 6. Tool position — diamond (green when at position, coral red otherwise)
+        self._tool_group.add(Color(*(AT_POSITION_COLOR if self.at_position else TOOL_COLOR)))
+        tx = self.tool_x * self.zoom + cx
+        ty = self.tool_y * self.zoom + cy
+        r = self.dot_size * 0.7  # diamond half-size
+        self._tool_group.add(Line(
+            points=[
+                tx, ty + r,       # top
+                tx + r, ty,       # right
+                tx, ty - r,       # bottom
+                tx - r, ty,       # left
+            ],
+            close=True,
+            width=1.5,
+        ))
 
     def on_touch_up(self, touch):
-        touch_x = touch.x - self.width/2
-        touch_y = touch.y - self.height/2
+        touch_x = touch.x - self.width / 2
+        touch_y = touch.y - self.height / 2
 
         for i, p in enumerate(self.scaled_points):
             if p[0] - self.dot_size < touch_x < p[0] + self.dot_size and p[1] - self.dot_size < touch_y < p[1] + self.dot_size:
                 self.selected_point = i
                 break
-
-        # self.update_points()

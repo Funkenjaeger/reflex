@@ -1,18 +1,12 @@
-import os
-
 from kivy.logger import Logger
 from kivy.properties import StringProperty
 from kivy.uix.boxlayout import BoxLayout
-from kivy.lang import Builder
 
-from rcp.components.home.mode_popup import ModePopup
+from rcp.components.popups.mode_popup import ModePopup
+from rcp.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
-
-kv_file = os.path.join(os.path.dirname(__file__), __file__.replace(".py", ".kv"))
-if os.path.exists(kv_file):
-    log.info(f"Loading KV file: {kv_file}")
-    Builder.load_file(kv_file)
+load_kv(__file__)
 
 class HomeToolbar(BoxLayout):
     current_mode_desc = StringProperty("IDX")
@@ -22,9 +16,7 @@ class HomeToolbar(BoxLayout):
         self.app: MainApp = MainApp.get_running_app()
         super(HomeToolbar, self).__init__(**kv)
         self.app.bind(current_mode=self.update_current_mode)
-         
-        # Manually update the label on startup
-        self.update_current_mode(self.app, self.app.current_mode)
+        self.update_current_mode(None, self.app.current_mode)
 
     # def popup_scene(self, *_):
     #     ScenePopup().open()
@@ -37,6 +29,8 @@ class HomeToolbar(BoxLayout):
         if self.app.current_mode == 3:
             self.current_mode_desc = "JOG"
         if self.app.current_mode == 4:
+            self.current_mode_desc = "DRO"
+        if self.app.current_mode == 5:
             self.current_mode_desc = "AT"
 
     def popup_mode(self, *_):
