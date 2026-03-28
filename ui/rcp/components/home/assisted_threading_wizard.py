@@ -761,14 +761,13 @@ class AssistedThreadingWizard:
     
     def _command_move_to_encoder(self, target_encoder, speed):
         self._reset_encoder_stability_check()
-        
-        effective_dir = self._get_saddle_scale_effective_dir()
+
         current_enc = self.saddle_scale.encoderCurrent
 
         scale_ratio = Fraction(abs(self.saddle_scale.ratioNum), abs(self.saddle_scale.ratioDen))
-        servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
+        servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
 
-        delta = int((target_encoder - current_enc) * effective_dir * scale_ratio / servo_ratio)
+        delta = int((target_encoder - current_enc) * scale_ratio / servo_ratio)
 
         log.info(
             f"Move to encoder: current={current_enc}, "
