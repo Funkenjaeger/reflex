@@ -563,8 +563,8 @@ class AssistedThreadingWizard:
         current_encoder = self.saddle_scale.encoderCurrent
         target_encoder = self.bar.stop_position
 
-        delta_enc = (target_encoder - current_encoder) * effective_dir
-        if delta_enc <= 0:
+        delta_enc = target_encoder - current_encoder
+        if delta_enc * effective_dir <= 0:
             log.warning(
                 "Threading delta is opposite to effective cutting direction "
                 f"(current={current_encoder}, stop={target_encoder}, "
@@ -573,7 +573,7 @@ class AssistedThreadingWizard:
 
         # Convert encoder delta → servo steps
         scale_ratio = Fraction(abs(self.saddle_scale.ratioNum), abs(self.saddle_scale.ratioDen))
-        servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
+        servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
 
         delta_steps = int(delta_enc * scale_ratio / servo_ratio)
 
