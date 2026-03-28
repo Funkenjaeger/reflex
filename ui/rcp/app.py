@@ -17,25 +17,11 @@ from rcp.dispatchers.servo import ServoDispatcher
 
 
 class MainApp(App):
-    display_color = ConfigParserProperty(
-        defaultvalue="#ffffffff",
-        section="formatting",
-        key="display_color",
-        config=config,
-    )
-
     formats = ObjectProperty()
-    abs_inc = ConfigParserProperty(
-        defaultvalue="ABS", section="global", key="abs_inc", config=config, val_type=str
-    )
     currentOffset = NumericProperty(0)
     abs_mode = BooleanProperty(False)
 
-    tool = NumericProperty(0)
-
     board = ObjectProperty()
-
-    home = ObjectProperty()
 
     servo: ServoDispatcher = ObjectProperty()
 
@@ -50,10 +36,6 @@ class MainApp(App):
 
     current_mode = ConfigParserProperty(
         defaultvalue=1, section="device", key="current_mode", config=config, val_type=int
-    )
-
-    scales_count = ConfigParserProperty(
-        defaultvalue=4, section="device", key="scales_count", config=config, val_type=int
     )
 
     manager = ObjectProperty()
