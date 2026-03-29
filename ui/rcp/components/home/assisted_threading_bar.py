@@ -3,6 +3,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.properties import NumericProperty, BooleanProperty, StringProperty
 
 from rcp import feeds
+from rcp.components.widgets.custom_popup import CustomPopup
 from rcp.components.widgets.hold_button import HoldButton
 from rcp.components.home.assisted_threading_wizard import AssistedThreadingWizard
 from rcp.components.home.thread_type import ThreadType
@@ -68,6 +69,21 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         self.bind(left_hand_thread=self.update_feeds_ratio)
     
     def toggle_is_running(self):
+        if not self.is_running:
+            missing = []
+            if self.app.els.get_spindle_axis() is None:
+                missing.append("Spindle")
+            if self.app.els.get_z_axis() is None:
+                missing.append("Saddle (Z)")
+            if self.app.els.get_x_axis() is None:
+                missing.append("Cross-slide (X)")
+            if missing:
+                CustomPopup(
+                    title="Axes Not Configured",
+                    message=f"The following axes are not set in ELS: {', '.join(missing)}. Please configure them in Settings.",
+                    button_text="OK",
+                ).open()
+                return
         self.is_running = not self.is_running
         if self.is_running:
             self.wizard.start()
