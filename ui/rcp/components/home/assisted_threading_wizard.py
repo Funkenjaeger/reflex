@@ -1,7 +1,7 @@
 from fractions import Fraction
 from kivy.logger import Logger
 
-from rcp.components.forms.custom_popup import CustomPopup
+from rcp.components.widgets.custom_popup import CustomPopup
 from rcp.components.home.coordbar import CoordBar
 from rcp.components.home.thread_type import ThreadType
 from rcp.utils.devices import SCALES_COUNT

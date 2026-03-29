@@ -6,7 +6,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.properties import NumericProperty, BooleanProperty, StringProperty
 
 from rcp import feeds
-from rcp.components.forms.hold_button import HoldButton
+from rcp.components.widgets.hold_button import HoldButton
 from rcp.components.home.assisted_threading_wizard import AssistedThreadingWizard
 from rcp.components.home.coordbar import CoordBar
 from rcp.components.home.thread_type import ThreadType

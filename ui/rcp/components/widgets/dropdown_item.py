@@ -54,7 +54,7 @@ class DropDownItem(BoxLayout):
         app = MainApp.get_running_app()
         font_size = app.formats.font_size if app else 24
 
-        for item in self.options:
+        for index, item in enumerate(self.options):
             btn = Button(
                 text=item, size_hint_y=None, height=60,
                 font_size=font_size, background_color=DROPDOWN_OPTION_COLOR,
