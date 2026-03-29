@@ -1,20 +1,13 @@
-import os
-
-from kivy.lang import Builder
 from kivy.logger import Logger
 from kivy.uix.popup import Popup
 from kivy.properties import ObjectProperty
 
-from rcp import feeds
-from rcp.components.home.coordbar import CoordBar
 from rcp.components.home.thread_type import ThreadType
+from rcp.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
 
-kv_file = os.path.join(os.path.dirname(__file__), __file__.replace(".py", ".kv"))
-if os.path.exists(kv_file):
-    log.info(f"Loading KV file: {kv_file}")
-    Builder.load_file(kv_file)
+load_kv(__file__)
 
 
 class AssistedThreadingSettingsPopup(Popup):

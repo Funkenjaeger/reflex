@@ -1,4 +1,6 @@
+import logging
 from fractions import Fraction
+
 from kivy.logger import Logger
 
 from rcp.components.widgets.custom_popup import CustomPopup
@@ -6,6 +8,17 @@ from rcp.components.home.thread_type import ThreadType
 from rcp.utils.devices import SCALES_COUNT
 
 log = Logger.getChild(__name__)
+
+MM_PER_INCH = 25.4
+
+
+class GoToStartPhase:
+    IDLE = 0
+    RETRACT = 1
+    PRELOAD = 2
+    ADJUST = 3
+
+
 class AssistedThreadingWizard:
     @property
     def saddle_scale(self):
@@ -354,7 +367,7 @@ class AssistedThreadingWizard:
         """
         Check if the cross slide is safely retracted when the saddle has moved beyond the threading start position.
         """
-        log.info("Checking if cross slide is retracted for threading start...")
+        log.debug("Checking if cross slide is retracted for threading start...")
 
         # --- Saddle direction check (Z axis) ---
         saddle_dir = self._get_saddle_scale_effective_dir()
@@ -363,13 +376,13 @@ class AssistedThreadingWizard:
         saddle_beyond_start = saddle_delta * saddle_dir > 0
 
         if not saddle_beyond_start:
-            log.info("Saddle is not beyond start position, no need to check cross slide")
+            log.debug("Saddle is not beyond start position, no need to check cross slide")
             return True
 
-        log.info("Saddle is beyond start position, checking cross slide retraction")
+        log.debug("Saddle is beyond start position, checking cross slide retraction")
 
         # --- Cross-slide retraction check (X axis) ---
-        retract_dir = -self._get_cross_slide_scale_effective_dir() #TODO test this
+        retract_dir = -self._get_cross_slide_scale_effective_dir()
 
         cross_delta = self.cross_slide_input.encoderCurrent - self.bar.material_width
         return cross_delta * retract_dir > 0
@@ -519,44 +532,26 @@ class AssistedThreadingWizard:
         threadPhaseActive = dev['assistedThreadingData']['threadPhaseActive']
         threadEnabled = dev['assistedThreadingData']['threadEnabled']     
         
-        # dev['assistedThreadingData'].refresh()
-        # threadRequest = dev['assistedThreadingData']['threadRequest']
-        # threadReset = dev['assistedThreadingData']['threadReset']   
-        # spindleScaleIndex = dev['assistedThreadingData']['spindleScaleIndex']
-        # spindleCountsPerRev = dev['assistedThreadingData']['spindleCountsPerRev']
-        # spindlePhaseTolerance = dev['assistedThreadingData']['spindlePhaseTolerance']        
-        # threadRemainingSteps = dev['assistedThreadingData']['threadRemainingSteps']
-        # threadStartSteps = dev['assistedThreadingData']['threadStartSteps']
-        # threadPhaseRef = dev['assistedThreadingData']['threadPhaseRef']
-        # currentThreadPhase = dev['assistedThreadingData']['currentThreadPhase']
-        # desiredSteps = dev['servo']['desiredSteps']
-        # currentSteps = dev['servo']['currentSteps']
-        # stepsToGo = dev['servo']['direction']
-        # syncEnable = dev['scales'][spindleScaleIndex]['syncEnable']
-        # position = dev['scales'][spindleScaleIndex]['position']
-        
-        # log.info(
-        #     f"Checking servo done: "
-        #     f"spindleScaleIndex={spindleScaleIndex}, "
-        #     f"spindleCountsPerRev={spindleCountsPerRev}, "
-        #     f"spindlePhaseTolerance={spindlePhaseTolerance}, "
-            
-        #     f"threadRequest={threadRequest}, "
-        #     f"threadReset={threadReset}, "
-        #     f"threadPhaseActive={threadPhaseActive}, "
-        #     f"threadEnabled={threadEnabled}, "
-        #     f"syncEnable={syncEnable}, "
-            
-        #     f"threadPhaseRef={threadPhaseRef}, "
-        #     f"currentThreadPhase={currentThreadPhase}, "
-        #     f"spindleEncoderposition={position}, "
-            
-        #     f"threadRemainingSteps={threadRemainingSteps}, "
-        #     f"threadStartSteps={threadStartSteps}, "
-        #     f"desiredSteps={desiredSteps}, "
-        #     f"currentSteps={currentSteps}, "
-        #     f"stepsToGo={stepsToGo}, "
-        # )
+        if log.isEnabledFor(logging.DEBUG):
+            spindleScaleIndex = dev['assistedThreadingData']['spindleScaleIndex']
+            log.debug(
+                f"Checking servo done: "
+                f"spindleScaleIndex={spindleScaleIndex}, "
+                f"spindleCountsPerRev={dev['assistedThreadingData']['spindleCountsPerRev']}, "
+                f"spindlePhaseTolerance={dev['assistedThreadingData']['spindlePhaseTolerance']}, "
+                f"threadRequest={dev['assistedThreadingData']['threadRequest']}, "
+                f"threadReset={dev['assistedThreadingData']['threadReset']}, "
+                f"threadPhaseActive={threadPhaseActive}, "
+                f"threadEnabled={threadEnabled}, "
+                f"syncEnable={dev['scales'][spindleScaleIndex]['syncEnable']}, "
+                f"threadPhaseRef={dev['assistedThreadingData']['threadPhaseRef']}, "
+                f"currentThreadPhase={dev['assistedThreadingData']['currentThreadPhase']}, "
+                f"spindleEncoderPosition={dev['scales'][spindleScaleIndex]['position']}, "
+                f"threadRemainingSteps={dev['assistedThreadingData']['threadRemainingSteps']}, "
+                f"threadStartSteps={dev['assistedThreadingData']['threadStartSteps']}, "
+                f"desiredSteps={dev['servo']['desiredSteps']}, "
+                f"currentSteps={dev['servo']['currentSteps']}, "
+            )
         
         if threadEnabled == 1 or threadPhaseActive == 1:
             self._threading_active_confirmed = True
@@ -628,7 +623,7 @@ class AssistedThreadingWizard:
                 # In imperial mode, selected_pitch is TPI (threads per inch)
                 # Convert TPI to pitch in inches
                 tpi = float(self.bar.selected_pitch)
-                pitch = 25.4 / tpi
+                pitch = MM_PER_INCH / tpi
         except (ValueError, TypeError):
             log.warning(f"Could not parse pitch from: {self.bar.selected_pitch}")
             return None
@@ -661,17 +656,16 @@ class AssistedThreadingWizard:
         is_current_format_metric = self.app.formats.current_format == "MM"
         if self.bar.metric_mode and not is_current_format_metric:
             # Calculated in mm but displaying in inches
-            depth = depth / 25.4
+            depth = depth / MM_PER_INCH
         elif not self.bar.metric_mode and is_current_format_metric:
             # Calculated in inches but displaying in mm
-            depth = depth * 25.4
+            depth = depth * MM_PER_INCH
         
         log.info(f"Calculated thread depth: {depth:.4f} (pitch={pitch:.4f}, type={thread_type}, metric_mode={self.bar.metric_mode}, current_format={'MM' if is_current_format_metric else 'IN'}, diameter_mode={self.app.els.at_cross_slide_diameter_mode})")
         return depth
       
 
     def _is_cross_slide_at_final_cutting_depth(self):
-        #TODO check if this is working correctly with reversed scales and inner vs outer threads
         """Check if the cross slide is at or more than the final cutting depth position."""
         effective_dir = self._get_cross_slide_scale_effective_dir()
         current = self.cross_slide_input.encoderCurrent
@@ -748,7 +742,7 @@ class AssistedThreadingWizard:
                     self.bar.display_value = f"Last: {incremental_cut_display:.3f} | Rem: {remaining_display:.3f}"
                 else:
                     self.bar.display_value = f"Last: {incremental_cut_display:.4f} | Rem: {remaining_display:.4f}"
-                log.info(f"Threading progress: incremental_cut={incremental_cut_display:.4f}, remaining={remaining_display:.4f}")
+                log.debug(f"Threading progress: incremental_cut={incremental_cut_display:.4f}, remaining={remaining_display:.4f}")
             except Exception as e:
                 log.error(f"Error updating threading progress display: {e}")
         self._on_threading_progress_update = on_cross_slide_update
@@ -978,7 +972,7 @@ class AssistedThreadingWizard:
         else:
             if pitch_val == 0:
                 return True
-            pitch_mm = 25.4 / pitch_val  # TPI → mm/rev
+            pitch_mm = MM_PER_INCH / pitch_val  # TPI → mm/rev
 
         spindle_rev_per_sec = spindle_steps_per_sec / spindle_inp.ratioDen
         feed_mm_per_sec = spindle_rev_per_sec * pitch_mm
@@ -1017,9 +1011,3 @@ class AssistedThreadingWizard:
             ).open()
             return False
         return True
-
-class GoToStartPhase:
-    IDLE = 0
-    RETRACT = 1
-    PRELOAD = 2
-    ADJUST = 3
