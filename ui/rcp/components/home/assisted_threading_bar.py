@@ -103,7 +103,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
             self.wizard.stop()
             
     def on_mode_change(self, instance, mode):
-        if mode == 4: # AT mode
+        if mode == 5: # AT mode
             self.update_feeds_ratio(None, None)
 
     def on_retract_button_pressed(self):
