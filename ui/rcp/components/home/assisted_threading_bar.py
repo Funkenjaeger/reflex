@@ -10,7 +10,7 @@ from rcp.components.widgets.hold_button import HoldButton
 from rcp.components.home.assisted_threading_wizard import AssistedThreadingWizard
 from rcp.components.home.coordbar import CoordBar
 from rcp.components.home.thread_type import ThreadType
-from rcp.dispatchers import SavingDispatcher
+from rcp.dispatchers.saving_dispatcher import SavingDispatcher
 
 log = Logger.getChild(__name__)
 
