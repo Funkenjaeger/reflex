@@ -2,24 +2,38 @@ from fractions import Fraction
 from kivy.logger import Logger
 
 from rcp.components.widgets.custom_popup import CustomPopup
-from rcp.components.home.coordbar import CoordBar
 from rcp.components.home.thread_type import ThreadType
 from rcp.utils.devices import SCALES_COUNT
 
 log = Logger.getChild(__name__)
 class AssistedThreadingWizard:
     @property
-    def saddle_scale(self) -> CoordBar:
-        return self.app.scales[self.bar.selected_saddle_scale_id]
-    
+    def saddle_scale(self):
+        """Returns the AxisDispatcher for the saddle (Z) axis."""
+        return self.app.els.get_z_axis()
+
     @property
-    def cross_slide_scale(self) -> CoordBar:
-        return self.app.scales[self.bar.selected_cross_slide_scale_id]
-    
+    def cross_slide_scale(self):
+        """Returns the AxisDispatcher for the cross-slide (X) axis."""
+        return self.app.els.get_x_axis()
+
+    @property
+    def saddle_input(self):
+        """Returns the InputDispatcher (raw encoder) for the saddle axis."""
+        axis = self.saddle_scale
+        return axis._primary_input() if axis is not None else None
+
+    @property
+    def cross_slide_input(self):
+        """Returns the InputDispatcher (raw encoder) for the cross-slide axis."""
+        axis = self.cross_slide_scale
+        return axis._primary_input() if axis is not None else None
+
     def __init__(self, bar):
+        from rcp.app import MainApp
         log.info("Initializing AssistedThreadingWizard")
         self.bar = bar
-        self.app = bar.app
+        self.app: MainApp = MainApp.get_running_app()
         self.servo = self.app.servo
         self.current_step = 0
         self._threading_started = False
@@ -44,14 +58,15 @@ class AssistedThreadingWizard:
         
 
     def start(self):
-        dev = self.app.device
-        dev['assistedThreadingData']['spindlePhaseTolerance'] = self.bar.rotary_encoder_sync_tolerance
+        dev = self.app.board.device
+        dev['assistedThreadingData']['spindlePhaseTolerance'] = self.app.els.at_rotary_encoder_sync_tolerance
         
-        # Pick spindle index using get_spindle_scale
-        spindle_scale = self.app.get_spindle_scale()
-        if spindle_scale is not None:
-            dev['assistedThreadingData']['spindleCountsPerRev'] = spindle_scale.ratioDen
-            dev['assistedThreadingData']['spindleScaleIndex'] = spindle_scale.inputIndex
+        spindle_axis = self.app.els.get_spindle_axis()
+        if spindle_axis is not None:
+            inp = spindle_axis._primary_input()
+            if inp is not None:
+                dev['assistedThreadingData']['spindleCountsPerRev'] = inp.ratioDen
+                dev['assistedThreadingData']['spindleScaleIndex'] = inp.inputIndex
         
         self.goto_step(0)
 
@@ -71,8 +86,8 @@ class AssistedThreadingWizard:
         self._reset_servo_watch_callback()
         self._reset_encoder_stability_check()
         
-        if self.app.connected:
-            self.app.device['assistedThreadingData']['threadReset'] = 1
+        if self.app.board.connected:
+            self.app.board.device['assistedThreadingData']['threadReset'] = 1
             self._stop_servo()
         
 
@@ -109,13 +124,13 @@ class AssistedThreadingWizard:
         log.info("Retract button pressed")
         self.bar.action_button_enabled = False  # disable action button while retracting
         
-        if not self.app.connected:
+        if not self.app.board.connected:
             return
         self.bar.bind_display_value_to_servo_position() # bind to servo position
         servo_direction = 1 if self.servo.ratioNum * self.servo.ratioDen > 0 else -1
-        self.servo.jogSpeed = - servo_direction * self.bar.reversing_speed # set to reversing speed
+        self.servo.jogSpeed = - servo_direction * self.app.els.at_reversing_speed # set to reversing speed
         self._apply_reversing_adjusting_acceleration()
-        self.servo.set_max_speed(self.bar.reversing_speed)  # ensure step rate supports jog speed
+        self.servo.set_max_speed(self.app.els.at_reversing_speed)  # ensure step rate supports jog speed
         self.servo.servoEnable = 2
     
     def stop_retracting(self):
@@ -124,7 +139,7 @@ class AssistedThreadingWizard:
         self.bar.bind_display_value_to_scale(self.cross_slide_scale)
         self.bar.update_buttons_state()
         
-        if not self.app.connected:
+        if not self.app.board.connected:
             return
         self.servo.jogSpeed = 0
         
@@ -201,7 +216,7 @@ class AssistedThreadingWizard:
     # Step callbacks    
     # Step 1
     def _capture_initial_position(self, *args):
-        self.bar.start_position = self.saddle_scale.encoderCurrent
+        self.bar.start_position = self.saddle_input.encoderCurrent
         self._isStartPositionMetricMode = self.app.formats.current_format == "MM"
         self._startScaledPosition = self.saddle_scale.scaledPosition
         log.info(f"Initial position set to: {self.bar.start_position}")
@@ -216,7 +231,7 @@ class AssistedThreadingWizard:
             
     #Step 3
     def _capture_material_width_position(self, *args):
-        self.bar.material_width = self.cross_slide_scale.encoderCurrent
+        self.bar.material_width = self.cross_slide_input.encoderCurrent
         self.bar.last_cutting_depth = self.bar.material_width  # Initialize last_cutting_depth to material_width
         self._isMaterialWidthPositionMetricMode = self.app.formats.current_format == "MM"
         self._materialWidthScaledPosition = self.cross_slide_scale.scaledPosition
@@ -230,7 +245,7 @@ class AssistedThreadingWizard:
         depth = self.manual_cutting_depth if self.manual_cutting_depth is not None else self._calculate_thread_depth()
         encoder_cutting_depth = self._convert_distance_units_to_encoder(self.cross_slide_scale, depth, is_metric)
         
-        self.bar.cutting_depth = self.cross_slide_scale.encoderCurrent - (encoder_cutting_depth * self._get_cross_slide_scale_effective_dir())
+        self.bar.cutting_depth = self.cross_slide_input.encoderCurrent - (encoder_cutting_depth * self._get_cross_slide_scale_effective_dir())
         
         
         log.info(f"Cutting depth set: {depth} (manual_override={self.manual_cutting_depth is not None})")
@@ -239,7 +254,7 @@ class AssistedThreadingWizard:
     
     #Step 6
     def _go_to_start(self, *args):
-        if not self.app.connected:
+        if not self.app.board.connected:
             self.stop()
             return False
         
@@ -257,7 +272,7 @@ class AssistedThreadingWizard:
         log.info(f"Starting retract to go to start: effective_dir={effective_dir}, retraction={retraction}, retraction_dir={retraction_dir}")
         retract_target = self.bar.start_position + retraction_dir * retraction
 
-        self._command_move_to_encoder(retract_target, speed=self.bar.reversing_speed)
+        self._command_move_to_encoder(retract_target, speed=self.app.els.at_reversing_speed)
 
         self._servo_watch_callback = self._watch_go_to_start
         self.app.bind(update_tick=self._servo_watch_callback)
@@ -266,7 +281,7 @@ class AssistedThreadingWizard:
      
     #Step 7
     def _start_threading_operation(self, *args):
-        if not self.app.connected:
+        if not self.app.board.connected:
             self.stop()
             return False # tell goto_next_step not to advance immediately
 
@@ -285,7 +300,7 @@ class AssistedThreadingWizard:
             return False
 
         log.info("Starting threaded cut to stop position: %s", self.bar.stop_position)
-        self.bar.last_cutting_depth = self.cross_slide_scale.encoderCurrent  # Update last cutting depth to current position
+        self.bar.last_cutting_depth = self.cross_slide_input.encoderCurrent  # Update last cutting depth to current position
 
         self._apply_threading_acceleration()
         self._apply_threading_max_speed()
@@ -294,7 +309,7 @@ class AssistedThreadingWizard:
         self.bar.retract_button_visible = False  # Hide retract button during threading
         
         # Write the fields into firmware via modbus/device wrapper
-        dev = self.app.device
+        dev = self.app.board.device
         
         # Request latch+wait. Firmware will latch current spindle phase and wait until matched.
         if (self._threading_started is False):
@@ -344,7 +359,7 @@ class AssistedThreadingWizard:
         # --- Saddle direction check (Z axis) ---
         saddle_dir = self._get_saddle_scale_effective_dir()
 
-        saddle_delta = self.saddle_scale.encoderCurrent - self.bar.start_position
+        saddle_delta = self.saddle_input.encoderCurrent - self.bar.start_position
         saddle_beyond_start = saddle_delta * saddle_dir > 0
 
         if not saddle_beyond_start:
@@ -356,12 +371,12 @@ class AssistedThreadingWizard:
         # --- Cross-slide retraction check (X axis) ---
         retract_dir = -self._get_cross_slide_scale_effective_dir() #TODO test this
 
-        cross_delta = self.cross_slide_scale.encoderCurrent - self.bar.material_width
+        cross_delta = self.cross_slide_input.encoderCurrent - self.bar.material_width
         return cross_delta * retract_dir > 0
 
     # Manual input handlers
     def _open_stop_position_keypad(self, *args):
-        from rcp.components.keypad import Keypad
+        from rcp.components.popups.keypad import Keypad
         
         is_metric = self.app.formats.current_format == "MM"
         
@@ -383,7 +398,7 @@ class AssistedThreadingWizard:
                                 current_value=self.manual_stop_length or 0.0)
     
     def _open_final_cutting_depth_position_keypad(self, *args):
-        from rcp.components.keypad import Keypad
+        from rcp.components.popups.keypad import Keypad
         is_metric = self.app.formats.current_format == "MM"
         # Always use calculated depth as default
         calculated_depth = self._calculate_thread_depth()
@@ -406,11 +421,11 @@ class AssistedThreadingWizard:
                                 current_value=self.manual_cutting_depth if self.manual_cutting_depth is not None else default_value)
         
     # Utilities
-    def _convert_position_units_to_encoder(self, 
-                                                scale: CoordBar, 
-                                                manual_position: float, 
+    def _convert_position_units_to_encoder(self,
+                                                scale,
+                                                manual_position: float,
                                                 is_original_position_metric_mode: bool,
-                                                original_scaled_position, 
+                                                original_scaled_position,
                                                 start_encoder_units: int) -> int:
         """
         Convert a user-entered stop position (MM/IN) into encoder counts.
@@ -436,10 +451,11 @@ class AssistedThreadingWizard:
             f"delta from start: {delta_in_start_units})"
         )
 
-        # Compute encoder counts using inverse of CoordBar.scaledPosition
+        # Compute encoder counts using inverse of AxisDispatcher.scaledPosition
+        inp = scale._primary_input()
         encoder_counts = (
             (delta_in_start_units / factor_at_start_position) - scale.offsets[self.app.currentOffset]
-        ) * (float(scale.ratioDen) / float(scale.ratioNum))
+        ) * (float(inp.ratioDen) / float(inp.ratioNum))
 
         # Offset by the captured start position
         final_encoder_position = int(round(start_encoder_units + encoder_counts))
@@ -464,19 +480,21 @@ class AssistedThreadingWizard:
             )
             log.info(f"Converted manual stop length to encoder units: {result}")
             return result
-        log.info(f"Using live encoder value: {scale.encoderCurrent}")
-        return scale.encoderCurrent
-    
-    def _convert_distance_units_to_encoder(self, scale: CoordBar, distance: float, is_metric: bool) -> int:
+        log.info(f"Using live encoder value: {self.saddle_input.encoderCurrent}")
+        return self.saddle_input.encoderCurrent
+
+    def _convert_distance_units_to_encoder(self, scale, distance: float, is_metric: bool) -> int:
         """
         Convert a pure distance (mm or inch) into encoder counts.
+        scale: AxisDispatcher
         """
+        inp = scale._primary_input()
         encoder_factor = float(self.app.formats.MM_FRACTION if is_metric else self.app.formats.INCHES_FRACTION)
 
-        # Compute encoder counts using inverse of CoordBar.scaledPosition
+        # Compute encoder counts using inverse of AxisDispatcher.scaledPosition
         encoder_counts = (
             (distance / encoder_factor) - scale.offsets[self.app.currentOffset]
-        ) * (float(scale.ratioDen) / float(scale.ratioNum))
+        ) * (float(inp.ratioDen) / float(inp.ratioNum))
 
         final_encoder_distance = int(round(encoder_counts))
 
@@ -489,14 +507,14 @@ class AssistedThreadingWizard:
 
     def _get_saddle_backlash_distance_encoder_steps(self) -> int:
         """Get the retraction distance in encoder counts."""
-        return self._convert_distance_units_to_encoder(self.saddle_scale, self.bar.saddle_backlash_distance, self.bar.metric_distances)
+        return self._convert_distance_units_to_encoder(self.saddle_scale, self.app.els.at_saddle_backlash_distance, self.app.els.at_metric_distances)
     
     def _get_backlash_cusion_encoder_steps(self) -> int:
         """Get the backlash cushion distance in encoder counts."""
-        return self._convert_distance_units_to_encoder(self.saddle_scale, self.bar.backlash_cushion, self.bar.metric_distances)
+        return self._convert_distance_units_to_encoder(self.saddle_scale, self.app.els.at_backlash_cushion, self.app.els.at_metric_distances)
 
     def _check_servo_threading_done(self, next_step: int, *args):
-        dev = self.app.device       
+        dev = self.app.board.device       
         dev['assistedThreadingData'].refresh() 
         threadPhaseActive = dev['assistedThreadingData']['threadPhaseActive']
         threadEnabled = dev['assistedThreadingData']['threadEnabled']     
@@ -560,7 +578,7 @@ class AssistedThreadingWizard:
 
         effective_dir = self._get_saddle_scale_effective_dir()
 
-        current_encoder = self.saddle_scale.encoderCurrent
+        current_encoder = self.saddle_input.encoderCurrent
         target_encoder = self.bar.stop_position
 
         delta_enc = target_encoder - current_encoder
@@ -572,7 +590,7 @@ class AssistedThreadingWizard:
             )
 
         # Convert encoder delta → servo steps
-        scale_ratio = Fraction(abs(self.saddle_scale.ratioNum), abs(self.saddle_scale.ratioDen))
+        scale_ratio = Fraction(abs(self.saddle_input.ratioNum), abs(self.saddle_input.ratioDen))
         servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
 
         delta_steps = int(delta_enc * scale_ratio / servo_ratio)
@@ -636,7 +654,7 @@ class AssistedThreadingWizard:
         
         # Account for cross-slide diameter mode
         # Formulas are for radial depth; in diameter mode multiply by 2
-        if self.bar.cross_slide_diameter_mode:
+        if self.app.els.at_cross_slide_diameter_mode:
             depth = depth * 2
         
         # Convert depth to match current display format if needed
@@ -648,7 +666,7 @@ class AssistedThreadingWizard:
             # Calculated in inches but displaying in mm
             depth = depth * 25.4
         
-        log.info(f"Calculated thread depth: {depth:.4f} (pitch={pitch:.4f}, type={thread_type}, metric_mode={self.bar.metric_mode}, current_format={'MM' if is_current_format_metric else 'IN'}, diameter_mode={self.bar.cross_slide_diameter_mode})")
+        log.info(f"Calculated thread depth: {depth:.4f} (pitch={pitch:.4f}, type={thread_type}, metric_mode={self.bar.metric_mode}, current_format={'MM' if is_current_format_metric else 'IN'}, diameter_mode={self.app.els.at_cross_slide_diameter_mode})")
         return depth
       
 
@@ -656,12 +674,12 @@ class AssistedThreadingWizard:
         #TODO check if this is working correctly with reversed scales and inner vs outer threads
         """Check if the cross slide is at or more than the final cutting depth position."""
         effective_dir = self._get_cross_slide_scale_effective_dir()
-        current = self.cross_slide_scale.encoderCurrent
+        current = self.cross_slide_input.encoderCurrent
         log.info(f"Checking if at cutting depth: last_cutting_depth={self.bar.last_cutting_depth}, cutting_depth={self.bar.cutting_depth}, effective_dir={effective_dir}")
         return (self.bar.last_cutting_depth - self.bar.cutting_depth) * effective_dir >= 0
     
     def _stop_servo(self):
-        if not self.app.connected:
+        if not self.app.board.connected:
             return
         self.servo.set_max_speed(self.servo.maxSpeed)  # restore speed
         self.servo.servoEnable = 0  # disable
@@ -677,24 +695,24 @@ class AssistedThreadingWizard:
         self.bar.display_value = ""
         
     def _apply_original_servo_acceleration(self):
-        self.app.device['servo']['acceleration'] = self.servo.acceleration
+        self.app.board.device['servo']['acceleration'] = self.servo.acceleration
 
     def _apply_reversing_adjusting_acceleration(self):
-        rate = self.bar.reversing_adjusting_acceleration
+        rate = self.app.els.at_reversing_adjusting_acceleration
         if rate and rate > 0:
-            self.app.device['servo']['acceleration'] = rate
+            self.app.board.device['servo']['acceleration'] = rate
         else:
             self._apply_original_servo_acceleration()
 
     def _apply_threading_acceleration(self):
-        rate = self.bar.threading_acceleration
+        rate = self.app.els.at_threading_acceleration
         if rate and rate > 0:
-            self.app.device['servo']['acceleration'] = rate
+            self.app.board.device['servo']['acceleration'] = rate
         else:
             self._apply_original_servo_acceleration()
 
     def _apply_threading_max_speed(self):
-        target_speed = self.bar.threading_max_speed
+        target_speed = self.app.els.at_threading_max_speed
         if target_speed and target_speed > 0:
             self.servo.set_max_speed(target_speed)
         else:
@@ -708,15 +726,15 @@ class AssistedThreadingWizard:
         - Rem = remaining distance until final thread depth
         """
         self.bar.unbind_all_display_value()
-        self._progress_display_scale = self.cross_slide_scale
+        self._progress_display_scale = self.cross_slide_input
         def on_cross_slide_update(instance, value):
             try:
                 is_metric = self.app.formats.current_format == "MM"
-                current_encoder = self.cross_slide_scale.encoderCurrent
+                current_encoder = self.cross_slide_input.encoderCurrent
                 last_cutting_depth_encoder = self.bar.last_cutting_depth
                 factor = float(self.app.formats.factor)
                 
-                scale_ratio = abs(Fraction(self.cross_slide_scale.ratioNum, self.cross_slide_scale.ratioDen) * factor)
+                scale_ratio = abs(Fraction(self.cross_slide_input.ratioNum, self.cross_slide_input.ratioDen) * factor)
                 
                 # Calculate incremental cut depth in encoder units
                 incremental_cut_encoder = last_cutting_depth_encoder - current_encoder if self.bar.inner_thread else current_encoder - last_cutting_depth_encoder
@@ -734,8 +752,8 @@ class AssistedThreadingWizard:
             except Exception as e:
                 log.error(f"Error updating threading progress display: {e}")
         self._on_threading_progress_update = on_cross_slide_update
-        self.cross_slide_scale.bind(encoderCurrent=on_cross_slide_update)
-        on_cross_slide_update(self.cross_slide_scale, self.cross_slide_scale.encoderCurrent)
+        self.cross_slide_input.bind(encoderCurrent=on_cross_slide_update)
+        on_cross_slide_update(self.cross_slide_input, self.cross_slide_input.encoderCurrent)
         
     def _get_cross_slide_scale_effective_dir(self) -> int:
         """Get the cross slide effective direction, considering thread type (internal/external) and scale direction."""
@@ -743,7 +761,7 @@ class AssistedThreadingWizard:
         thread_dir = 1 if self.bar.inner_thread else -1
         
         # Encoder direction: positive if scale ratio is positive, negative if reversed
-        scale_dir = 1 if self.cross_slide_scale.ratioNum * self.cross_slide_scale.ratioDen > 0 else -1
+        scale_dir = 1 if self.cross_slide_input.ratioNum * self.cross_slide_input.ratioDen > 0 else -1
 
         # Combined effective direction
         return thread_dir * scale_dir
@@ -755,16 +773,16 @@ class AssistedThreadingWizard:
         thread_dir = 1 if self.bar.left_hand_thread else -1
         
         # Scale direction from ratio sign
-        scale_dir = 1 if self.saddle_scale.ratioNum * self.saddle_scale.ratioDen > 0 else -1
+        scale_dir = 1 if self.saddle_input.ratioNum * self.saddle_input.ratioDen > 0 else -1
         
         return thread_dir * scale_dir
     
     def _command_move_to_encoder(self, target_encoder, speed):
         self._reset_encoder_stability_check()
 
-        current_enc = self.saddle_scale.encoderCurrent
+        current_enc = self.saddle_input.encoderCurrent
 
-        scale_ratio = Fraction(abs(self.saddle_scale.ratioNum), abs(self.saddle_scale.ratioDen))
+        scale_ratio = Fraction(abs(self.saddle_input.ratioNum), abs(self.saddle_input.ratioDen))
         servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
 
         delta = int((target_encoder - current_enc) * scale_ratio / servo_ratio)
@@ -776,10 +794,10 @@ class AssistedThreadingWizard:
 
         self.bar.bind_display_value_to_servo_position()
         self.servo.set_max_speed(speed)
-        self.app.device['servo']['direction'] = delta
+        self.app.board.device['servo']['direction'] = delta
     
     def _watch_retracting_stopped(self, *_):
-        if not self._encoder_is_stable(self.bar.saddle_encoder_stability_tolerance, self.bar.saddle_encoder_stability_samples):
+        if not self._encoder_is_stable(self.app.els.at_saddle_encoder_stability_tolerance, self.app.els.at_saddle_encoder_stability_samples):
             return
         
         self._reset_servo_watch_callback()
@@ -807,7 +825,7 @@ class AssistedThreadingWizard:
         self._stable_count = 0
     
     def _encoder_is_stable(self, tolerance, samples):
-        current = self.saddle_scale.encoderCurrent
+        current = self.saddle_input.encoderCurrent
 
         if self._last_saddle_encoder_value is None:
             self._last_saddle_encoder_value = current
@@ -827,7 +845,7 @@ class AssistedThreadingWizard:
         if self.app.fast_data_values['stepsToGo'] != 0:
             return False
 
-        if not self._encoder_is_stable(self.bar.saddle_encoder_stability_tolerance, self.bar.saddle_encoder_stability_samples):
+        if not self._encoder_is_stable(self.app.els.at_saddle_encoder_stability_tolerance, self.app.els.at_saddle_encoder_stability_samples):
             return False
 
         return True
@@ -838,12 +856,12 @@ class AssistedThreadingWizard:
 
         log.info("Retract complete, starting preload move")
         backlash_preload_steps = int(abs(self._get_saddle_backlash_distance_encoder_steps()) * 1.25) # preload 1.25x backlash distance - before we retracted 1.5x so we have some cushion
-        preload_target = self.saddle_scale.encoderCurrent + self._get_saddle_scale_effective_dir() * backlash_preload_steps
+        preload_target = self.saddle_input.encoderCurrent + self._get_saddle_scale_effective_dir() * backlash_preload_steps
 
         self._apply_reversing_adjusting_acceleration()
         self._command_move_to_encoder(
             preload_target,
-            speed=self.bar.preload_adjust_speed
+            speed=self.app.els.at_preload_adjust_speed
         )
 
         self._servo_watch_callback = self._watch_go_to_start
@@ -858,7 +876,7 @@ class AssistedThreadingWizard:
         self._apply_reversing_adjusting_acceleration()
         self._command_move_to_encoder(
             self.bar.start_position,
-            speed=self.bar.preload_adjust_speed
+            speed=self.app.els.at_preload_adjust_speed
         )
 
         self._servo_watch_callback = self._watch_go_to_start
@@ -883,11 +901,11 @@ class AssistedThreadingWizard:
         start_position_preloaded flag was bypassed or the saddle moved after preload."""
         backlash_cushion = abs(self._get_backlash_cusion_encoder_steps())
         log.info(
-            f"Validating start position: current={self.saddle_scale.encoderCurrent}, "
+            f"Validating start position: current={self.saddle_input.encoderCurrent}, "
             f"start={self.bar.start_position}, "
             f"backlash_cushion={backlash_cushion}"
         )
-        delta = abs(self.saddle_scale.encoderCurrent - self.bar.start_position)
+        delta = abs(self.saddle_input.encoderCurrent - self.bar.start_position)
         if delta > backlash_cushion:
             message = (
                 "Not at valid start position including backlash cushion. "
@@ -906,8 +924,9 @@ class AssistedThreadingWizard:
     def _check_spindle_turning_forward(self) -> bool:
         """Return True if the spindle scale exists and is turning in the right/positive/CCW direction.
         Shows a warning popup and redirects to step 6 if not."""
-        spindle_scale = self.app.get_spindle_scale()
-        if spindle_scale is None:
+        spindle_axis = self.app.els.get_spindle_axis()
+        spindle_inp = spindle_axis._primary_input() if spindle_axis is not None else None
+        if spindle_inp is None:
             log.warning("No spindle scale configured — cannot verify spindle direction")
             CustomPopup(
                 title="Warning",
@@ -917,8 +936,8 @@ class AssistedThreadingWizard:
             ).open()
             return False
 
-        spindle_speed = self.app.fast_data_values.get('scaleSpeed', [0] * SCALES_COUNT)[spindle_scale.inputIndex]
-        log.info(f"Validating spindle direction: scaleSpeed[{spindle_scale.inputIndex}]={spindle_speed}")
+        spindle_speed = self.app.fast_data_values.get('scaleSpeed', [0] * SCALES_COUNT)[spindle_inp.inputIndex]
+        log.info(f"Validating spindle direction: scaleSpeed[{spindle_inp.inputIndex}]={spindle_speed}")
 
         if spindle_speed <= 0:
             message = (
@@ -938,11 +957,12 @@ class AssistedThreadingWizard:
     def _check_spindle_speed_for_pitch(self) -> bool:
         """Return True if the current spindle RPM is within the servo's speed limit
         for the selected pitch. Shows a warning popup and redirects to step 6 if not."""
-        spindle_scale = self.app.get_spindle_scale()
-        if spindle_scale is None:
+        spindle_axis = self.app.els.get_spindle_axis()
+        spindle_inp = spindle_axis._primary_input() if spindle_axis is not None else None
+        if spindle_inp is None:
             return True  # already caught by _check_spindle_turning_forward
 
-        spindle_steps_per_sec = self.app.fast_data_values.get('scaleSpeed', [0] * SCALES_COUNT)[spindle_scale.inputIndex]
+        spindle_steps_per_sec = self.app.fast_data_values.get('scaleSpeed', [0] * SCALES_COUNT)[spindle_inp.inputIndex]
 
         try:
             pitch_str = self.bar.selected_pitch.strip()
@@ -960,31 +980,31 @@ class AssistedThreadingWizard:
                 return True
             pitch_mm = 25.4 / pitch_val  # TPI → mm/rev
 
-        spindle_rev_per_sec = spindle_steps_per_sec / spindle_scale.ratioDen
+        spindle_rev_per_sec = spindle_steps_per_sec / spindle_inp.ratioDen
         feed_mm_per_sec = spindle_rev_per_sec * pitch_mm
-        encoder_steps_per_sec = feed_mm_per_sec * self.saddle_scale.stepsPerMM
+        encoder_steps_per_sec = feed_mm_per_sec * self.saddle_input.stepsPerMM
 
-        scale_ratio = Fraction(abs(self.saddle_scale.ratioNum), abs(self.saddle_scale.ratioDen))
+        scale_ratio = Fraction(abs(self.saddle_input.ratioNum), abs(self.saddle_input.ratioDen))
         servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
         required = float(encoder_steps_per_sec * scale_ratio / servo_ratio)
 
-        steps_per_mm_per_rev = pitch_mm * self.saddle_scale.stepsPerMM * float(scale_ratio / servo_ratio)
-        max_rpm = (self.bar.threading_max_speed / steps_per_mm_per_rev) * 60 if steps_per_mm_per_rev > 0 else 0
+        steps_per_mm_per_rev = pitch_mm * self.saddle_input.stepsPerMM * float(scale_ratio / servo_ratio)
+        max_rpm = (self.app.els.at_threading_max_speed / steps_per_mm_per_rev) * 60 if steps_per_mm_per_rev > 0 else 0
 
         log.info(
             f"Spindle speed check: spindle={spindle_steps_per_sec} steps/s, "
             f"pitch={pitch_mm:.4f} mm, feed={feed_mm_per_sec:.4f} mm/s, "
-            f"required_servo={required:.1f} steps/s, max={self.bar.threading_max_speed}, "
-            f"max_rpm={max_rpm:.1f}, greater={required > self.bar.threading_max_speed}"
+            f"required_servo={required:.1f} steps/s, max={self.app.els.at_threading_max_speed}, "
+            f"max_rpm={max_rpm:.1f}, greater={required > self.app.els.at_threading_max_speed}"
         )
 
-        if required > self.bar.threading_max_speed:
+        if required > self.app.els.at_threading_max_speed:
             spindle_rpm = spindle_rev_per_sec * 60
             pitch_label = f"{pitch_mm:.3g} mm" if self.bar.metric_mode else f"{self.bar.selected_pitch} TPI"
             message = (
                 f"Spindle speed ({spindle_rpm:.0f} RPM) is too fast for {pitch_label} pitch. "
                 f"Required servo speed ({required:.0f} steps/s) exceeds the threading limit "
-                f"({self.bar.threading_max_speed} steps/s). "
+                f"({self.app.els.at_threading_max_speed} steps/s). "
                 f"Max allowed spindle speed for this pitch is {max_rpm:.0f} RPM. "
                 "Reduce spindle speed or increase the threading max speed limit."
             )

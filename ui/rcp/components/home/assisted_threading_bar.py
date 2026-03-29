@@ -8,7 +8,6 @@ from kivy.properties import NumericProperty, BooleanProperty, StringProperty
 from rcp import feeds
 from rcp.components.widgets.hold_button import HoldButton
 from rcp.components.home.assisted_threading_wizard import AssistedThreadingWizard
-from rcp.components.home.coordbar import CoordBar
 from rcp.components.home.thread_type import ThreadType
 from rcp.dispatchers.saving_dispatcher import SavingDispatcher
 
@@ -19,27 +18,12 @@ if os.path.exists(kv_file):
     log.info(f"Loading KV file: {kv_file}")
     Builder.load_file(kv_file)
 
-class AssistedThreadingBar(BoxLayout, SavingDispatcher):    
-    selected_cross_slide_scale_id = NumericProperty(0)
-    selected_saddle_scale_id = NumericProperty(1)
-    
-    reversing_speed = NumericProperty(500)
-    preload_adjust_speed = NumericProperty(500)
-    threading_max_speed = NumericProperty(2000)
-    reversing_adjusting_acceleration = NumericProperty(1000)
-    threading_acceleration = NumericProperty(1000)
-    rotary_encoder_sync_tolerance = NumericProperty(5)
-    metric_distances = BooleanProperty(True) # This is for the UI in the setting screen
-    saddle_backlash_distance = NumericProperty(10)
-    backlash_cushion = NumericProperty(2)
-    saddle_encoder_stability_tolerance = NumericProperty(1)
-    saddle_encoder_stability_samples = NumericProperty(3)
-    
-    metric_mode = BooleanProperty(True) # This is for the actual threading logic
+class AssistedThreadingBar(BoxLayout, SavingDispatcher):
+    # ── Per-job thread settings (saved on the bar) ────────────────────
+    metric_mode = BooleanProperty(True)  # This is for the actual threading logic
     selected_pitch = StringProperty("")
     current_feeds_index = NumericProperty(0)
     thread_profile_type = StringProperty("ISO_METRIC")
-    cross_slide_diameter_mode = BooleanProperty(False)
     shaft_diameter = NumericProperty(1)
     left_hand_thread = BooleanProperty(False)
     inner_thread = BooleanProperty(False)
@@ -77,11 +61,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         self.retract_button_condition_fn = None
         super().__init__(**kv)
         
-        if self.metric_mode:
-            self.current_feeds_table = feeds.table["Thread MM"]
-        else:
-            self.current_feeds_table = feeds.table["Thread IN"]
-        
+        self.current_feeds_table = feeds.table["Thread MM"] if self.metric_mode else feeds.table["Thread IN"]
         self.update_feeds_ratio(self, None)
 
         # Initialize with default thread type if not set
@@ -102,6 +82,9 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     def stop_wizard(self):
             self.wizard.stop()
             
+    def on_metric_mode(self, instance, value):
+        self.current_feeds_table = feeds.table["Thread MM"] if value else feeds.table["Thread IN"]
+
     def on_mode_change(self, instance, mode):
         if mode == 5: # AT mode
             self.update_feeds_ratio(None, None)
@@ -126,15 +109,15 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
             self.open_settings()
             
     def update_feeds_ratio(self, instance, value):
-        if self.app.current_mode != 4:
+        if self.app.current_mode != 5:
             return  # only sync in AT mode
-        
+
         ratio = self.current_feeds_table[self.current_feeds_index].ratio
-        spindle_scale: CoordBar = self.app.get_spindle_scale()
-        if spindle_scale is not None:
+        spindle_axis = self.app.els.get_spindle_axis()
+        if spindle_axis is not None:
             direction = -1 if self.left_hand_thread else 1
-            spindle_scale.syncRatioNum = ratio.numerator * direction
-            spindle_scale.syncRatioDen = ratio.denominator
+            spindle_axis.syncRatioNum = ratio.numerator * direction
+            spindle_axis.syncRatioDen = ratio.denominator
         log.info(f"Configured ratio is: {ratio.numerator}/{ratio.denominator}, left_hand_thread={self.left_hand_thread}")
     
     def open_settings(self):
@@ -142,23 +125,24 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         popup = AssistedThreadingSettingsPopup(assistedThreadingBar=self)
         popup.open()
         
-    def bind_display_value_to_scale(self, scale: CoordBar):
-        """Bind display_value to a scale's encoderCurrent with strict keypad override support."""
+    def bind_display_value_to_scale(self, axis):
+        """Bind display_value to an AxisDispatcher's formattedPosition with strict keypad override support."""
 
         # Unbind any previous bindings
         self.unbind_all_display_value()
 
-        # Store the scale
-        self._bound_scale = scale
+        # Store the axis (AxisDispatcher) for later unbind
+        self._bound_scale = axis
+        inp = axis._primary_input() if axis is not None else None
 
-        # --- Encoder update handler ---
-        def on_encoder_update(instance, value):
+        # --- Encoder update handler (fires on raw encoder tick) ---
+        def on_encoder_update(*_):
             # Cancel manual override if the encoder moves
             if self.wizard and self.wizard.manual_stop_length is not None:
                 log.info("Scale encoder moved — discarding manual stop length override")
                 self.wizard.manual_stop_length = None
-            # Always update display to formattedPosition (not raw encoder!)
-            self.display_value = instance.formattedPosition
+            # Display the axis formatted position (not raw encoder ticks)
+            self.display_value = axis.formattedPosition
             self.update_buttons_state()
 
         # --- Format update handler ---
@@ -171,12 +155,13 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         self._on_encoder_update = on_encoder_update
         self._on_format_update = on_format_update
 
-        # Bind both
-        scale.bind(encoderCurrent=on_encoder_update)
-        scale.bind(formattedPosition=on_format_update)
+        # encoderCurrent lives on InputDispatcher; formattedPosition on AxisDispatcher
+        if inp is not None:
+            inp.bind(encoderCurrent=on_encoder_update)
+        axis.bind(formattedPosition=on_format_update)
 
         # Initial display
-        self.display_value = scale.formattedPosition
+        self.display_value = axis.formattedPosition
 
     def bind_display_value_to_servo_position(self):
         """Bind display_value to the servo's formattedPosition."""
@@ -212,7 +197,9 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     
     def unbind_all_display_value(self):
         if hasattr(self, "_bound_scale") and self._bound_scale is not None:
-            self._bound_scale.unbind(encoderCurrent=self._on_encoder_update)
+            inp = self._bound_scale._primary_input()
+            if inp is not None:
+                inp.unbind(encoderCurrent=self._on_encoder_update)
             self._bound_scale.unbind(formattedPosition=self._on_format_update)
             self._bound_scale = None
         if hasattr(self, "_bound_servo") and self._bound_servo is not None:

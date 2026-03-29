@@ -39,8 +39,11 @@ class AssistedThreadingSettingsPopup(Popup):
     def on_metric_mode_changed(self, value):
         self.assistedThreadingBar.metric_mode = value
         pitches_dropdown = self.ids.pitches_dropdown
-        pitches_dropdown.value = ""
-        pitches_dropdown.options = self.get_pitches()
+        pitches = self.get_pitches()
+        pitches_dropdown.options = pitches
+        first_pitch = pitches[0] if pitches else ""
+        pitches_dropdown.value = first_pitch
+        self.on_pitch_selected(0, first_pitch)
         
         # Update thread type options based on metric mode
         thread_type_dropdown = self.ids.thread_type_dropdown
