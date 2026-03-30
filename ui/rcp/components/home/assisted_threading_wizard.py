@@ -464,11 +464,9 @@ class AssistedThreadingWizard:
             f"delta from start: {delta_in_start_units})"
         )
 
-        # Compute encoder counts using inverse of AxisDispatcher.scaledPosition
+        # delta_in_start_units is already relative to the start position — offsets do not apply
         inp = scale._primary_input()
-        encoder_counts = (
-            (delta_in_start_units / factor_at_start_position) - scale.offsets[self.app.currentOffset]
-        ) * (float(inp.ratioDen) / float(inp.ratioNum))
+        encoder_counts = (delta_in_start_units / factor_at_start_position) * (float(inp.ratioDen) / float(inp.ratioNum))
 
         # Offset by the captured start position
         final_encoder_position = int(round(start_encoder_units + encoder_counts))
@@ -504,10 +502,8 @@ class AssistedThreadingWizard:
         inp = scale._primary_input()
         encoder_factor = float(self.app.formats.MM_FRACTION if is_metric else self.app.formats.INCHES_FRACTION)
 
-        # Compute encoder counts using inverse of AxisDispatcher.scaledPosition
-        encoder_counts = (
-            (distance / encoder_factor) - scale.offsets[self.app.currentOffset]
-        ) * (float(inp.ratioDen) / float(inp.ratioNum))
+        # Pure distance conversion — offsets do not apply (those are DRO zero offsets for positions, not distances)
+        encoder_counts = (distance / encoder_factor) * (float(inp.ratioDen) / float(inp.ratioNum))
 
         final_encoder_distance = int(round(encoder_counts))
 
