@@ -157,7 +157,7 @@ class AssistedThreadingWizard:
         self.servo.jogSpeed = 0
         
         self._servo_watch_callback = self._watch_retracting_stopped
-        self.app.bind(update_tick=self._servo_watch_callback)
+        self.app.board.bind(update_tick=self._servo_watch_callback)
     
     # Instruction steps
     #Step 1
@@ -288,7 +288,7 @@ class AssistedThreadingWizard:
         self._command_move_to_encoder(retract_target, speed=self.app.els.at_reversing_speed)
 
         self._servo_watch_callback = self._watch_go_to_start
-        self.app.bind(update_tick=self._servo_watch_callback)
+        self.app.board.bind(update_tick=self._servo_watch_callback)
 
         return False
      
@@ -337,11 +337,11 @@ class AssistedThreadingWizard:
             dev['assistedThreadingData']['threadRemainingSteps'] = self._calculated_threading_delta_steps
             dev['assistedThreadingData']['threadEnabled'] = 1 # Continue threading from previous state
         
-        log.info(f"Threading requested: threadRemainingSteps={dev['assistedThreadingData']['threadRemainingSteps']}, servoCurrent={self.app.fast_data_values['servoCurrent']}, calculatedDeltaSteps={self._calculated_threading_delta_steps}")
+        log.info(f"Threading requested: threadRemainingSteps={dev['assistedThreadingData']['threadRemainingSteps']}, servoCurrent={self.app.board.fast_data_values['servoCurrent']}, calculatedDeltaSteps={self._calculated_threading_delta_steps}")
         
         # Watch until done - then go back to step 6 (Go to start)
         self._servo_watch_callback = lambda *a: self._check_servo_threading_done(5, *a)
-        self.app.bind(update_tick=self._servo_watch_callback)
+        self.app.board.bind(update_tick=self._servo_watch_callback)
 
         return False  # tell goto_next_step not to advance immediately
     
@@ -681,7 +681,7 @@ class AssistedThreadingWizard:
     
     def _reset_servo_watch_callback(self):
         if self._servo_watch_callback:
-            self.app.unbind(update_tick=self._servo_watch_callback)
+            self.app.board.unbind(update_tick=self._servo_watch_callback)
             self._servo_watch_callback = None
         
     def _clear_bar_display(self):
@@ -836,7 +836,7 @@ class AssistedThreadingWizard:
         return self._stable_count >= samples
             
     def _motion_complete(self):
-        if self.app.fast_data_values['stepsToGo'] != 0:
+        if self.app.board.fast_data_values['stepsToGo'] != 0:
             return False
 
         if not self._encoder_is_stable(self.app.els.at_saddle_encoder_stability_tolerance, self.app.els.at_saddle_encoder_stability_samples):
@@ -859,7 +859,7 @@ class AssistedThreadingWizard:
         )
 
         self._servo_watch_callback = self._watch_go_to_start
-        self.app.bind(update_tick=self._servo_watch_callback)
+        self.app.board.bind(update_tick=self._servo_watch_callback)
         
     def _start_adjust_move(self):
         self._reset_servo_watch_callback()
@@ -874,7 +874,7 @@ class AssistedThreadingWizard:
         )
 
         self._servo_watch_callback = self._watch_go_to_start
-        self.app.bind(update_tick=self._servo_watch_callback)
+        self.app.board.bind(update_tick=self._servo_watch_callback)
 
     def _finish_go_to_start(self):
         self._reset_servo_watch_callback()
@@ -930,7 +930,7 @@ class AssistedThreadingWizard:
             ).open()
             return False
 
-        spindle_speed = self.app.fast_data_values.get('scaleSpeed', [0] * SCALES_COUNT)[spindle_inp.inputIndex]
+        spindle_speed = self.app.board.fast_data_values.get('scaleSpeed', [0] * SCALES_COUNT)[spindle_inp.inputIndex]
         log.info(f"Validating spindle direction: scaleSpeed[{spindle_inp.inputIndex}]={spindle_speed}")
 
         if spindle_speed <= 0:
@@ -956,7 +956,7 @@ class AssistedThreadingWizard:
         if spindle_inp is None:
             return True  # already caught by _check_spindle_turning_forward
 
-        spindle_steps_per_sec = self.app.fast_data_values.get('scaleSpeed', [0] * SCALES_COUNT)[spindle_inp.inputIndex]
+        spindle_steps_per_sec = self.app.board.fast_data_values.get('scaleSpeed', [0] * SCALES_COUNT)[spindle_inp.inputIndex]
 
         try:
             pitch_str = self.bar.selected_pitch.strip()
