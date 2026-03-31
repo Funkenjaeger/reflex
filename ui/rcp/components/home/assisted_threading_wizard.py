@@ -78,7 +78,7 @@ class AssistedThreadingWizard:
         if spindle_axis is not None:
             inp = spindle_axis._primary_input()
             if inp is not None:
-                dev['assistedThreadingData']['spindleCountsPerRev'] = inp.ratioDen
+                dev['assistedThreadingData']['spindleCountsPerRev'] = int(spindle_axis._steps_per_revolution())
                 dev['assistedThreadingData']['spindleScaleIndex'] = inp.inputIndex
         
         self.goto_step(0)

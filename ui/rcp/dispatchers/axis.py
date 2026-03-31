@@ -230,7 +230,7 @@ class AxisDispatcher(SavingDispatcher):
 
             if self.spindleMode:
                 scale_ratio = Fraction(
-                    360 * inp.gear_ratio_den,
+                    inp.gear_ratio_den,
                     inp.encoder_ppr * inp.gear_ratio_num,
                 )
             else:
