@@ -82,7 +82,7 @@ class MainApp(App):
         self.board = Board(formats=self.formats, offset_provider=self)
 
         # Load beep sound
-        sound_path = os.path.join(os.path.dirname(__file__), "sounds", "beep.mp3")
+        sound_path = os.path.join(os.path.dirname(__file__), "sounds", "snap.wav")
         pygame.mixer.pre_init(frequency=44100, size=-16, channels=1, buffer=512)
         pygame.init()
         self.sound = pygame.mixer.Sound(sound_path)
