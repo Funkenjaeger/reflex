@@ -1,6 +1,6 @@
 from kivy.factory import Factory
 from kivy.logger import Logger
-from kivy.properties import StringProperty, ObjectProperty, NumericProperty
+from kivy.properties import StringProperty, ObjectProperty, NumericProperty, BooleanProperty, AliasProperty
 from kivy.uix.boxlayout import BoxLayout
 from pydantic import BaseModel
 
@@ -24,6 +24,15 @@ class ElsBar(BoxLayout, SavingDispatcher):
     mode_name = StringProperty(":(")
     feed_name = StringProperty(":(")
     current_feeds_index = NumericProperty(0)
+    els_forward = BooleanProperty(True)
+
+    def _get_move_type(self):
+        if "Thread" in self.mode_name:
+            return "thread_rh" if self.els_forward else "thread_lh"
+        else:
+            return "turn_in" if self.els_forward else "turn_out"
+
+    move_type = AliasProperty(_get_move_type, bind=["els_forward", "mode_name"])
 
     _skip_save = [
         "position",
@@ -31,6 +40,7 @@ class ElsBar(BoxLayout, SavingDispatcher):
         "minimum_width",
         "minimum_height",
         "width", "height",
+        "move_type",
     ]
 
     def __init__(self, **kwargs):
@@ -42,6 +52,9 @@ class ElsBar(BoxLayout, SavingDispatcher):
         self.current_feeds_table = feeds.table[self.mode_name]
         self.update_feeds_ratio(self, None)
         self.bind(current_feeds_index=self.update_feeds_ratio)
+
+    def toggle_move_direction(self):
+        self.els_forward = not self.els_forward
 
     def update_current_position(self):
         Factory.Keypad().show_with_callback(self.app.servo.set_current_position, self.app.servo.scaledPosition)

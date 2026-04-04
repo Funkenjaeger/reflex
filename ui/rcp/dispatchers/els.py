@@ -11,19 +11,28 @@ class ElsDispatcher(SavingDispatcher):
 
     _save_class_name = "Els"
     _skip_save = ["x", "y", "width", "height", "size_hint_x", "size_hint_y",
-                  "pos", "size", "minimum_height", "minimum_width", "padding", "spacing"]
+                  "pos", "size", "minimum_height", "minimum_width", "padding", "spacing",
+                  "spindle_speed"]
 
     spindle_axis_index = NumericProperty(-1)
     z_axis_index = NumericProperty(-1)
     x_axis_index = NumericProperty(-1)
+    spindle_speed = NumericProperty(0.0)
 
     def __init__(self, **kwargs):
         from rcp.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
         super().__init__(**kwargs)
         self.bind(spindle_axis_index=self._apply_spindle_mode)
+        self.app.board.bind(update_tick=self._update_spindle_speed)
         # Apply on startup in case a saved value exists
         self._apply_spindle_mode()
+
+    def _update_spindle_speed(self, *args):
+        axis = self.get_spindle_axis()
+        speed = axis.speed if axis is not None else 0.0
+        if speed != self.spindle_speed:
+            self.spindle_speed = speed
 
     def _apply_spindle_mode(self, *args):
         """Set spindleMode=True on the selected spindle axis, False on all others."""

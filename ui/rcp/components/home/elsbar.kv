@@ -2,6 +2,7 @@
 #: import Keypad rcp.components.popups.keypad
 #: import FeedsTablePopup rcp.components.popups.feeds_table_popup
 #: import AutoSizeButton rcp.components.widgets.auto_size_button
+#: import TwoStateButton rcp.components.toolbars.two_state_button
 
 <ElsBar>:
   orientation: "horizontal"
@@ -11,44 +12,56 @@
   Button:
     width: 96
     size_hint_x: None
-    text: app.servo.name
-    font_size: self.height / 1.5
-    font_style: "bold"
     background_color: [0.2, 1, 0.2, 1] if app.servo.servoEnable else [0.3, 0.3, 0.3, 1]
+    background_normal: ""
     on_press: app.beep()
     on_release: app.servo.toggle_enable()
-
+    Image:
+      source: "pictures/motor_gears.png"
+      x: self.parent.x + self.parent.width * 0.1
+      y: self.parent.y + self.parent.height * 0.1
+      width: self.parent.width * 0.8
+      height: self.parent.height * 0.8
+      allow_stretch: True
+      keep_ratio: True
+  
   BoxLayout:
-    orientation: "vertical"
-    size_hint_x: 0.8
+    orientation: 'vertical'
+    size_hint_x: None
+    width: 96
     Label:
-      text: "Current"
-      text_size: self.size
-      size_hint_y: 0.15
-      font_size: 16
+      id: dir_lbl
+      text: "DIR"
+      font_size: self.height / 1.5
+      size_hint_y: 0.3
       color: app.formats.display_color
       halign: 'center'
       valign: 'top'
-    AutoSizeButton:
-      size_hint_y: 0.30
-      font_name: app.formats.font_name
-      max_font_size: self.height / 2
-      font_style: "bold"
-      background_color: [0.2, 0.2, 0.2, 1]
-      color: app.formats.display_color
-      text: app.servo.formattedPosition + "\u00b0"
-      text_size: self.size
-      halign: 'center'
-      valign: 'middle'
-      disabled: app.servo.disableControls
-      on_release: app.servo.update_current_position()
-    ProgressBar:
-      size_hint_y: 0.20
-      max: int(app.servo.maxSpeed)
-      value: int(abs(app.servo.speed))
+    TwoStateButton:
+      orientation: "horizontal"
+      width: self.parent.width
+      size_hint_y: 0.7
+      font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+      label_true: "\uf060"
+      label_false: "\uf061"
+      value: root.els_forward
+      on_release: root.toggle_move_direction()
+      disabled: abs(app.els.spindle_speed) > 0.5
 
   Button:
-    width: self.height
+    background_color: [0.5, 0.5, 0.5, 1]
+    background_normal: ""
+    Image:
+      source: "pictures/" + root.move_type + ".png"
+      x: self.parent.x + self.parent.width * 0.1
+      y: self.parent.y + self.parent.height * 0.1
+      width: self.parent.width * 0.8
+      height: self.parent.height * 0.8
+      allow_stretch: True
+      keep_ratio: True
+
+  Button:
+    width: self.height / 2
     size_hint_x: None
     font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
     text: "\uf060"
@@ -60,10 +73,11 @@
     on_release: root.previous_feed()
 
   BoxLayout:
-    width: self.height
     size_hint_x: None
+    width: max(mode_lbl.texture_size[0], feed_btn.texture_size[0]) + 16
     orientation: 'vertical'
     Label:
+      id: mode_lbl
       text: root.mode_name
       font_size: self.height / 1.5
       size_hint_y: 0.3
@@ -71,6 +85,7 @@
       halign: 'center'
       valign: 'top'
     Button:
+      id: feed_btn
       size_hint_y: 0.7
       font_name: app.formats.font_name
       font_size: self.height / 2
@@ -78,14 +93,13 @@
       background_color: [0.3, 0.3, 0.3, 1]
       color: app.formats.display_color
       text: root.feed_name
-      text_size: self.size
       halign: 'center'
       valign: 'middle'
       on_press: app.beep()
-      on_release: Factory.FeedsTablePopup().show_with_callback(root.set_feed_ratio)
+      on_release: Factory.FeedsTablePopup().show_with_callback(root.set_feed_ratio, current_mode=root.mode_name)
 
   Button:
-    width: self.height
+    width: self.height / 2
     size_hint_x: None
     font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
     text: "\uf061"

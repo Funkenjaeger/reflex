@@ -1,3 +1,4 @@
+from kivy.clock import Clock
 from kivy.logger import Logger
 from kivy.properties import ObjectProperty, StringProperty
 from kivy.uix.popup import Popup
@@ -36,12 +37,16 @@ class FeedsTablePopup(Popup):
         self.size_hint = (0.8, 0.8)
         self.auto_dismiss = False
 
-        panel = TabbedPanel(
+        self.panel = TabbedPanel(
             do_default_tab=False,
             tab_width=150,
         )
+        self.tabs = {}
 
+        unit = self.app.formats.current_format  # "MM" or "IN"
         for name, table in feeds.table.items():
+            if unit not in name:
+                continue
             layout = GridLayout(cols=5)
             for idx, pitch in enumerate(table):
                 layout.add_widget(
@@ -49,19 +54,22 @@ class FeedsTablePopup(Popup):
                 )
             tab = TabbedPanelItem(text=name)
             tab.add_widget(layout)
-            panel.add_widget(tab)
+            self.panel.add_widget(tab)
+            self.tabs[name] = tab
 
-        self.add_widget(panel)
+        self.add_widget(self.panel)
         self.callback_fn = None
         self.current_value = None
 
-    def show_with_callback(self, callback_fn, current_value=None):
+    def show_with_callback(self, callback_fn, current_value=None, current_mode=None):
         if current_value is not None:
-            # Use the specified current value if passed
             self.current_value = float(current_value)
 
         self.callback_fn = callback_fn
         self.open()
+
+        if current_mode is not None and current_mode in self.tabs:
+            Clock.schedule_once(lambda dt: self.panel.switch_to(self.tabs[current_mode]))
 
     def confirm(self, instance: FeedButton):
         try:

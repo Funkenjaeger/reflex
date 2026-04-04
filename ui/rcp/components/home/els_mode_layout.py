@@ -20,7 +20,6 @@ LONG_PRESS_THRESHOLD = 1.0
 class ElsSpindleInfo(BoxLayout):
     """Displays spindle speed with direction icon and absolute position with zero button."""
     spindle_rpm = StringProperty("--")
-    spindle_position = StringProperty("--")
     direction_icon = StringProperty(ICON_STOP)
 
     def __init__(self, **kwargs):
@@ -35,8 +34,6 @@ class ElsSpindleInfo(BoxLayout):
         if axis is None:
             if self.spindle_rpm != "--":
                 self.spindle_rpm = "--"
-            if self.spindle_position != "--":
-                self.spindle_position = "--"
             if self.direction_icon != ICON_STOP:
                 self.direction_icon = ICON_STOP
             return
@@ -45,13 +42,10 @@ class ElsSpindleInfo(BoxLayout):
         if rpm != self.spindle_rpm:
             self.spindle_rpm = rpm
 
-        pos = self.app.formats.position_format.format(axis.scaledPosition) + "\u00b0"
-        if pos != self.spindle_position:
-            self.spindle_position = pos
-
-        if axis.speed > 0.5:
+        speed = self.app.els.spindle_speed
+        if speed > 0.5:
             icon = ICON_CW
-        elif axis.speed < -0.5:
+        elif speed < -0.5:
             icon = ICON_CCW
         else:
             icon = ICON_STOP

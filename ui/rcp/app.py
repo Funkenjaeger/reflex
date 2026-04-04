@@ -108,7 +108,11 @@ class MainApp(App):
         self.beep()
 
         import importlib.metadata
+        dist = importlib.metadata.distribution("rcp")
+        origin = dist.read_text('direct_url.json')
         self.version = "v" + importlib.metadata.version("rcp")
+        if origin and '"dir_info": {"editable": true}' in origin:
+            self.version = self.version + "*"
 
         self._apply_mouse_cursor()
         self.formats.bind(hide_mouse_cursor=lambda *_: self._apply_mouse_cursor())

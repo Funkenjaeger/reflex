@@ -52,14 +52,14 @@ class Keypad(Popup):
         row2.add_widget(KeypadButton(text="4",on_release=self.add_text,background_color=[1, 1, 1, 1]))
         row2.add_widget(KeypadButton(text="5",on_release=self.add_text,background_color=[1, 1, 1, 1]))
         row2.add_widget(KeypadButton(text="6",on_release=self.add_text,background_color=[1, 1, 1, 1]))
-        row2.add_widget(KeypadButton(text="1/2",on_release=self.halve_value))
+        row2.add_widget(KeypadButton(text="1/2",on_release=self.halve_value,disabled=self.integer))
         layout.add_widget(row2)
 
         row3 = BoxLayout(orientation="horizontal")
         row3.add_widget(KeypadButton(text="1",on_release=self.add_text,background_color=[1, 1, 1, 1]))
         row3.add_widget(KeypadButton(text="2",on_release=self.add_text,background_color=[1, 1, 1, 1]))
         row3.add_widget(KeypadButton(text="3",on_release=self.add_text,background_color=[1, 1, 1, 1]))
-        row3.add_widget(KeypadIconButton(text="\ue43c",on_release=self.sign_key,background_color=[1, 1, 1, 1]))
+        row3.add_widget(KeypadIconButton(text="\ue43c",on_release=self.sign_key,background_color=[1, 1, 1, 1],disabled=self.integer))
         layout.add_widget(row3)
 
         row4 = BoxLayout(orientation="horizontal")
@@ -89,9 +89,9 @@ class Keypad(Popup):
         print(f'Keycode: {keycode}, text: {text}, modifiers: {modifiers}')
         # # Update the label to show which key was pressed
         # log.info(f'Last key pressed: {text}')
-        if text == ".":
+        if text == "." and not self.integer:
             self.dot_key()
-        if text == "-":
+        if text == "-" and not self.integer:
             self.sign_key()
         if text in ["00", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]:
             self.ids['value'].text += text

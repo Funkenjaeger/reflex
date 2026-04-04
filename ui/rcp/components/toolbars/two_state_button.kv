@@ -1,0 +1,28 @@
+<TwoStateButton>:
+  size_hint: None, None
+  orientation: "vertical"
+
+  canvas.before:
+    Color:
+      rgba: app.formats.color_on if root.blink else [1, 1, 1, 1]
+    BorderImage:
+      border: [16, 16, 16, 16]
+      pos: self.pos
+      size: self.size
+      source: "atlas://data/images/defaulttheme/button"
+
+  Label:
+    font_name: root.font_name
+    font_size: root.height / 4
+    text: root.label_true
+    color: [1, 1, 1, 1] if root.value else [0.4, 0.4, 0.4, 1]
+    halign: "center"
+    valign: "middle"
+
+  Label:
+    font_name: root.font_name
+    font_size: root.height / 4
+    text: root.label_false
+    color: [1, 1, 1, 1] if not root.value else [0.4, 0.4, 0.4, 1]
+    halign: "center"
+    valign: "middle"
