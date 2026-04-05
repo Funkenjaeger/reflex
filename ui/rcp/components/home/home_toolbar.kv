@@ -26,12 +26,11 @@
     on_release: app.abs_mode = not app.abs_mode
 
   ToolbarButton:
+    id: wizard_button
     width: root.width
     font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
     text: "\ue2ca"
     on_press: app.manager.goto("plot")
-    size_hint_y: 1 if app.formats.show_wizard else 0
-    disabled: not app.formats.show_wizard
 
   ToolbarButton:
     width: root.width
