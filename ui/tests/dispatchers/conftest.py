@@ -24,6 +24,8 @@ class MockFormats(EventDispatcher):
     display_color = StringProperty("#ffffffff")
     metric_speed_unit = StringProperty("m/min")
     imperial_speed_unit = StringProperty("ft/min")
+    show_speeds = BooleanProperty(True)
+    show_wizard = BooleanProperty(True)
 
 
 class MockOffsetProvider(EventDispatcher):
