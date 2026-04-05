@@ -40,6 +40,8 @@ class ServoDispatcher(SavingDispatcher):
     scaledPosition = NumericProperty(0)
     formattedPosition = StringProperty("--")
 
+    indexSpeed = NumericProperty(200)
+
     disableControls = BooleanProperty(False)
 
     _skip_save = [
@@ -95,6 +97,7 @@ class ServoDispatcher(SavingDispatcher):
         self.positions = dict()
         self.disableControls = True
         self.servoEnable = 0
+        self._speed_override_active = False
 
     def configure_lead_screw_ratio(self, instance, value):
         if self.elsMode is True:
@@ -161,6 +164,10 @@ class ServoDispatcher(SavingDispatcher):
                     self.disableControls
                     and self.board.connected
             ):
+                if self._speed_override_active:
+                    self.board.device['servo']['maxSpeed'] = self.maxSpeed
+                    self._speed_override_active = False
+                    log.info("Restored maxSpeed to %s", self.maxSpeed)
                 log.info("Disable Controls False")
                 self.disableControls = False
         except Exception as e:
@@ -208,6 +215,8 @@ class ServoDispatcher(SavingDispatcher):
                 delta = (delta + steps_per_turn)
 
         if delta != 0:
+            self.board.device['servo']['maxSpeed'] = self.indexSpeed
+            self._speed_override_active = True
             self.board.device['servo']['direction'] = delta
             self.disableControls = True
             self.previousIndex = self.index
@@ -217,6 +226,8 @@ class ServoDispatcher(SavingDispatcher):
         delta = value - self.oldOffset
         delta_steps = int(delta / ratio)
         if delta_steps != 0:
+            self.board.device['servo']['maxSpeed'] = self.indexSpeed
+            self._speed_override_active = True
             self.board.device['servo']['direction'] = delta_steps
             self.disableControls = True
             self.oldOffset = value

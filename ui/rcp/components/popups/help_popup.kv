@@ -1,3 +1,5 @@
+#: import RstDocument kivy.uix.rst
+
 <HelpPopup>:
   size_hint: 0.85, 0.85
   auto_dismiss: True
@@ -7,19 +9,12 @@
     padding: 10
     spacing: 8
 
-    ScrollView:
-      do_scroll_x: False
-      do_scroll_y: True
-
-      Label:
-        text: root.help_text
-        size_hint_y: None
-        height: self.texture_size[1] + 20
-        text_size: self.width, None
-        font_size: 16
-        halign: "left"
-        valign: "top"
-        markup: False
+    RstDocument:
+      text: root.help_text
+      background_color: [0.15, 0.15, 0.15, 1]
+      colors:
+        {"background": "272727", "paragraph": "e0e0e0", "title": "ffffff", \
+        "bullet": "cccccc", "link": "6699ff"}
 
     Button:
       size_hint_y: None

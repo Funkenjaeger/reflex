@@ -38,6 +38,8 @@ class FloatView(FloatLayout):
         self.app: MainApp = MainApp.get_running_app()
         self.plane_pairs: list[tuple[int, int]] = []
         self._plane_index = 0
+        self._pinch_touches = {}
+        self._pinch_distance = 0
         super().__init__(**kwargs)
         Window.bind(on_motion=self.on_motion)
         self.circle_pattern.recalculate()
@@ -116,6 +118,46 @@ class FloatView(FloatLayout):
             self.active_points = self.line_pattern.points
         else:
             self.active_points = self.rect_pattern.points
+
+    def on_touch_down(self, touch):
+        if not self.collide_point(*touch.pos):
+            return super().on_touch_down(touch)
+
+        self._pinch_touches[touch.uid] = touch
+        if len(self._pinch_touches) == 2:
+            # Two fingers down — record initial distance and grab both
+            points = list(self._pinch_touches.values())
+            self._pinch_distance = math.hypot(
+                points[0].x - points[1].x,
+                points[0].y - points[1].y,
+            )
+            for t in points:
+                t.grab(self)
+            return True
+
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if touch.grab_current is self and len(self._pinch_touches) == 2:
+            points = list(self._pinch_touches.values())
+            new_distance = math.hypot(
+                points[0].x - points[1].x,
+                points[0].y - points[1].y,
+            )
+            if self._pinch_distance > 0:
+                scale = new_distance / self._pinch_distance
+                self.zoom *= scale
+                self._pinch_distance = new_distance
+            return True
+
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        self._pinch_touches.pop(touch.uid, None)
+        if touch.grab_current is self:
+            touch.ungrab(self)
+            return True
+        return super().on_touch_up(touch)
 
     def on_motion(self, window, etype, event):
         # will receive all motion events.

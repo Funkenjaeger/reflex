@@ -10,35 +10,41 @@ Numerator is typically 360 (degrees per full output revolution).
 Denominator is the total number of motor steps needed for one
 full revolution of the output (steps/rev × gear ratio).
 
-## Examples
+Examples
+--------
 
-### Direct drive — 400 step motor on rotary table
+Direct drive — 400 step motor on rotary table
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 No gearing between motor and table.
 
 - Numerator = 360
 - Denominator = 400
 - Each step = 360/400 = 0.9°
 
-### 90:1 worm gear — 400 step motor
+90:1 worm gear — 400 step motor
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Common dividing head with 90:1 worm reduction.
 
 - Numerator = 360
 - Denominator = 400 × 90 = 36000
 - Each step = 360/36000 = 0.01°
 
-### 40:1 worm gear — 200 step motor
+40:1 worm gear — 200 step motor
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Smaller dividing head with 200-step motor.
 
 - Numerator = 360
 - Denominator = 200 × 40 = 8000
 - Each step = 360/8000 = 0.045°
 
-### 72:1 worm gear — 200 step motor
+72:1 worm gear — 200 step motor
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 - Numerator = 360
 - Denominator = 200 × 72 = 14400
 - Each step = 360/14400 = 0.025°
 
-## How to Calculate
+How to Calculate
+----------------
 
 1. Find your motor's steps per revolution (typically 200 or 400)
 2. Find the gear/worm reduction ratio of your rotary table
@@ -50,7 +56,8 @@ the motor steps accordingly:
 - 200 step motor at 1/4 microstepping = 800 effective steps/rev
 - Denominator = 800 × gear_ratio
 
-## Notes
+Notes
+-----
 
 - Both values must be positive integers
 - This setting is disabled when ELS mode is active

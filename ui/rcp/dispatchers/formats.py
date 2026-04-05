@@ -43,6 +43,9 @@ class FormatsDispatcher(SavingDispatcher):
     color_on = ColorProperty("#ffcc32a0")
     color_off = ColorProperty("#ffcc3220")
 
+    metric_speed_unit = StringProperty("m/min")
+    imperial_speed_unit = StringProperty("ft/min")
+
     volume = NumericProperty(0.2)
 
     disable_error_reporting = BooleanProperty(False)
@@ -55,15 +58,17 @@ class FormatsDispatcher(SavingDispatcher):
         super().__init__(**kv)
         self.angle_speed_format = self.angle_speed_format.replace("RPM", "").replace(" ", "")
         self.bind(current_format=self.update_format)
+        self.bind(metric_speed_unit=self.update_format)
+        self.bind(imperial_speed_unit=self.update_format)
         self.update_format()
 
     def update_format(self, *args, **kv):
         if self.current_format == "MM":
-            self.speed_format = f"{self.metric_speed} M/min"
+            self.speed_format = f"{self.metric_speed} {self.metric_speed_unit}"
             self.position_format = self.metric_position
             self.factor = Fraction(1, 1)
         else:
-            self.speed_format = f"{self.imperial_speed} Ft/min"
+            self.speed_format = f"{self.imperial_speed} {self.imperial_speed_unit}"
             self.position_format = self.imperial_position
             self.factor = Fraction(10, 254)
 

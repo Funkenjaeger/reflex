@@ -16,12 +16,14 @@ class Keypad(Popup):
     container = None
     current_value = NumericProperty(0)
     integer = BooleanProperty(False)
+    min_value = NumericProperty(None, allownone=True)
+    max_value = NumericProperty(None, allownone=True)
 
     def __init__(self, **kwargs):
         from rcp.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
         super().__init__(**kwargs)
-        self.title = f"Old Value: {self.current_value}"
+        self._update_title()
         self.size_hint = (0.8, 0.8)
         self.auto_dismiss = False
 
@@ -78,8 +80,44 @@ class Keypad(Popup):
         self._keyboard.bind(on_key_down=self._on_keyboard_down)
         self.callback_fn = None
 
+    @staticmethod
+    def build_title(current_value, min_value=None, max_value=None):
+        parts = [f"Old Value: {current_value}"]
+        if min_value is not None:
+            parts.append(f"Min: {min_value}")
+        if max_value is not None:
+            parts.append(f"Max: {max_value}")
+        return "  |  ".join(parts)
+
+    @staticmethod
+    def parse_value(text, integer=False):
+        if type(text) is str and "." in text:
+            value = float(text)
+        else:
+            value = int(text)
+        if integer:
+            value = int(value)
+        return value
+
+    @staticmethod
+    def validate_value(value, min_value=None, max_value=None):
+        if min_value is not None and value < min_value:
+            return False
+        if max_value is not None and value > max_value:
+            return False
+        return True
+
+    def _update_title(self):
+        self.title = self.build_title(self.current_value, self.min_value, self.max_value)
+
     def on_current_value(self, instance, value):
-        self.title = f"Old Value: {value}"
+        self._update_title()
+
+    def on_min_value(self, instance, value):
+        self._update_title()
+
+    def on_max_value(self, instance, value):
+        self._update_title()
 
     def on_touch_down(self, touch):
         self.app.beep()
@@ -108,7 +146,7 @@ class Keypad(Popup):
 
         return True  # Return True to accept the key. False would reject the key press.
 
-    def show(self, container, set_method, current_value=None):
+    def show(self, container, set_method, current_value=None, min_value=None, max_value=None):
         if current_value is not None:
             # Use the specified current value if passed
             self.current_value = float(current_value)
@@ -118,15 +156,19 @@ class Keypad(Popup):
             except AttributeError as e:
                 log.debug(str(e))
             # try to get the current value from the container method specified if
+        self.min_value = min_value
+        self.max_value = max_value
         self.set_method = set_method
         self.container = container
         self.open()
 
-    def show_with_callback(self, callback_fn, current_value=None):
+    def show_with_callback(self, callback_fn, current_value=None, min_value=None, max_value=None):
         if current_value is not None:
             # Use the specified current value if passed
             self.current_value = float(current_value)
 
+        self.min_value = min_value
+        self.max_value = max_value
         self.callback_fn = callback_fn
         self.set_method = None
         self.container = None
@@ -134,14 +176,12 @@ class Keypad(Popup):
 
     def confirm(self, *args, **kwargs):
         try:
-            value = self.ids['value'].text
-            if type(value) is str and "." in value:
-                value = float(value)
-            else:
-                value = int(value)
+            value = self.parse_value(self.ids['value'].text, self.integer)
 
-            if self.integer:
-                value = int(value)
+            if not self.validate_value(value, self.min_value, self.max_value):
+                log.warning(f"Value {value} outside allowed range "
+                            f"(min={self.min_value}, max={self.max_value})")
+                return
 
             if self.callback_fn is not None:
                 self.callback_fn(value)

@@ -5,7 +5,8 @@ View storage information and resize the root partition on a
 Raspberry Pi. This screen is only available on Raspberry Pi
 hardware.
 
-## Storage Devices
+Storage Devices
+---------------
 
 Read-only information about the Pi's storage:
 - **Root Device** — the partition mounted as /
@@ -14,23 +15,27 @@ Read-only information about the Pi's storage:
 - **Disk Size** — total capacity of the storage device
 - **Partition Size** — current size of the root partition
 
-## Filesystem Usage
+Filesystem Usage
+----------------
 
 Current disk space usage of the root filesystem:
 - **Total** — total available space on the partition
 - **Used** — space currently in use
 - **Free** — remaining free space
 
-## Resize Root Partition
+Resize Root Partition
+---------------------
 
 If the root partition does not use the full disk (common after
 flashing a new SD card image), you can expand it to use all
 available space.
 
-### Refresh Storage Info
+Refresh Storage Info
+^^^^^^^^^^^^^^^^^^^^
 Re-reads the current storage state.
 
-### Resize Partition
+Resize Partition
+^^^^^^^^^^^^^^^^
 Expands the root partition to fill the entire disk. This runs
 `growpart` and `resize2fs` and shows status below.
 
@@ -39,7 +44,8 @@ Expands the root partition to fill the entire disk. This runs
   the full disk
 - Button shows "Running..." during the resize operation
 
-## Notes
+Notes
+-----
 
 - Resizing is safe — it only expands, never shrinks
 - The operation takes a few seconds and does not require a reboot
