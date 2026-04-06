@@ -192,16 +192,16 @@ class TestOnConnected:
     def test_reads_fast_data_and_writes_device(self, servo):
         servo.board.fast_data_values = {
             'servoCurrent': 1000,
-            'servoEnable': 1,
+            'servoMode': 1,
         }
         servo.board.connected = True
         assert servo.encoderCurrent == 1000
-        assert servo.servoEnable == 1
+        assert servo.servoMode == 1
 
     def test_disableControls_true_when_servo_disabled(self, servo):
         servo.board.fast_data_values = {
             'servoCurrent': 0,
-            'servoEnable': 0,
+            'servoMode': 0,
         }
         servo.board.connected = True
         assert servo.disableControls is True
@@ -209,7 +209,7 @@ class TestOnConnected:
     def test_disableControls_false_when_servo_enabled(self, servo):
         servo.board.fast_data_values = {
             'servoCurrent': 0,
-            'servoEnable': 1,
+            'servoMode': 1,
         }
         servo.board.connected = True
         assert servo.disableControls is False
@@ -218,18 +218,18 @@ class TestOnConnected:
 class TestToggleEnable:
     def test_toggle_when_disconnected(self, servo):
         servo.board.connected = False
-        servo.servoEnable = 1
+        servo.servoMode = 1
         servo.toggle_enable()
-        assert servo.servoEnable == 0
+        assert servo.servoMode == 0
 
     def test_toggle_on(self, servo):
         servo.board.connected = True
-        servo.servoEnable = 0
+        servo.servoMode = 0
         servo.toggle_enable()
-        assert servo.servoEnable == 1
+        assert servo.servoMode == 1
 
     def test_toggle_off(self, servo):
         servo.board.connected = True
-        servo.servoEnable = 1
+        servo.servoMode = 1
         servo.toggle_enable()
-        assert servo.servoEnable == 0
+        assert servo.servoMode == 0

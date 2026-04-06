@@ -27,7 +27,7 @@ class ServoDispatcher(SavingDispatcher):
     preferredDirection = NumericProperty(1)
     index = NumericProperty(0)
 
-    servoEnable = NumericProperty(0)
+    servoMode = NumericProperty(0)
     unitsPerTurn = NumericProperty(360.0)
     oldOffset = NumericProperty(0.0)
 
@@ -49,14 +49,14 @@ class ServoDispatcher(SavingDispatcher):
         "position",
         "scaledPosition",
         "formattedPosition",
-        "servoEnable",
+        "servoMode",
         "oldOffset",
         "offset",
         "index",
         "preferredDirection",
         "disableControls",
         "speed",
-        "direction",
+        "stepsToGo",
     ]
 
     def __init__(self, board, formats, **kv):
@@ -94,7 +94,7 @@ class ServoDispatcher(SavingDispatcher):
         self.step_positions = dict()
         self.positions = dict()
         self.disableControls = True
-        self.servoEnable = 0
+        self.servoMode = 0
 
     def configure_lead_screw_ratio(self, instance, value):
         if self.elsMode is True:
@@ -112,11 +112,11 @@ class ServoDispatcher(SavingDispatcher):
             if self.board.connected:
                 self.encoderPrevious = self.board.fast_data_values['servoCurrent']
                 self.encoderCurrent = self.board.fast_data_values['servoCurrent']
-                self.servoEnable = self.board.fast_data_values['servoEnable']
+                self.servoMode = self.board.fast_data_values['servoMode']
                 self.board.device['servo']['maxSpeed'] = self.maxSpeed
                 self.board.device['servo']['acceleration'] = self.acceleration
 
-                if self.servoEnable == 0:
+                if self.servoMode == 0:
                     self.disableControls = True
                 else:
                     self.disableControls = False
@@ -143,9 +143,9 @@ class ServoDispatcher(SavingDispatcher):
 
             self.encoderPrevious = self.encoderCurrent
             self.encoderCurrent = self.board.fast_data_values['servoCurrent']
-            servoEnable = self.board.fast_data_values['servoEnable']
-            if servoEnable != self.servoEnable:
-                self.servoEnable = servoEnable
+            servoMode = self.board.fast_data_values['servoMode']
+            if servoMode != self.servoMode:
+                self.servoMode = servoMode
 
             steps_per_second = self.board.fast_data_values['servoSpeed']
             self.speed_history.append(steps_per_second)
@@ -157,7 +157,7 @@ class ServoDispatcher(SavingDispatcher):
             self.position += delta
             if (
                     self.board.fast_data_values['stepsToGo'] == 0 and
-                    self.servoEnable != 0 and
+                    self.servoMode != 0 and
                     self.disableControls
                     and self.board.connected
             ):
@@ -208,7 +208,7 @@ class ServoDispatcher(SavingDispatcher):
                 delta = (delta + steps_per_turn)
 
         if delta != 0:
-            self.board.device['servo']['direction'] = delta
+            self.board.device['servo']['stepsToGo'] = delta
             self.disableControls = True
             self.previousIndex = self.index
 
@@ -217,7 +217,7 @@ class ServoDispatcher(SavingDispatcher):
         delta = value - self.oldOffset
         delta_steps = int(delta / ratio)
         if delta_steps != 0:
-            self.board.device['servo']['direction'] = delta_steps
+            self.board.device['servo']['stepsToGo'] = delta_steps
             self.disableControls = True
             self.oldOffset = value
 
@@ -230,9 +230,9 @@ class ServoDispatcher(SavingDispatcher):
     def on_acceleration(self, instance, value):
         self.board.device['servo']['acceleration'] = self.acceleration
 
-    def on_servoEnable(self, instance, value):
-        self.board.device['fastData']['servoEnable'] = self.servoEnable
-        if self.servoEnable != 0:
+    def on_servoMode(self, instance, value):
+        self.board.device['fastData']['servoMode'] = self.servoMode
+        if self.servoMode != 0:
             log.info("Disable Controls False")
             self.disableControls = False
         else:
@@ -241,13 +241,13 @@ class ServoDispatcher(SavingDispatcher):
 
     def toggle_enable(self):
         if not self.board.connected:
-            self.servoEnable = 0
+            self.servoMode = 0
             return
 
-        if self.servoEnable != 0:
-            self.servoEnable = 0
+        if self.servoMode != 0:
+            self.servoMode = 0
         else:
-            self.servoEnable = 1
+            self.servoMode = 1
 
     def set_current_position(self, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)

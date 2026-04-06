@@ -67,7 +67,7 @@ typedef struct {
   float currentSpeed;
   float jogSpeed;
   float acceleration;
-  int32_t direction;
+  int32_t stepsToGo;
   uint32_t destinationSteps;
   uint32_t currentSteps;
   uint32_t desiredSteps;
@@ -99,7 +99,7 @@ typedef struct {
   int32_t scaleSpeed[4];
   uint32_t cycles;
   uint32_t executionInterval;
-  uint16_t servoEnable;
+  uint16_t servoMode;
 } fastData_t;
 """
 

@@ -29,12 +29,12 @@ class JogBar(BoxLayout):
         # Forward
         if self.enable_jog:
             self.app.servo.jogSpeed = self.desired_speed
-            self.app.servo.servoEnable = 2
+            self.app.servo.servoMode = 2
 
         # Reverse
         if self.enable_jog_reverse:
             self.app.servo.jogSpeed = -self.desired_speed
-            self.app.servo.servoEnable = 2
+            self.app.servo.servoMode = 2
 
         # Idle
         if not self.enable_jog_reverse and not self.enable_jog:
