@@ -9,6 +9,8 @@ log = Logger.getChild(__name__)
 
 
 class ConnectionManager:
+    MAX_ERROR_COUNT = 5
+
     def __init__(
         self, serial_device="/dev/ttyUSB0", baudrate=115200, address=17, debug=False
     ):
@@ -18,6 +20,7 @@ class ConnectionManager:
         self.debug = debug
         self.device: minimalmodbus.Instrument | None = None
         self._connected = False
+        self._error_count = 0
 
         self._last_error_message: str | None = None
 
@@ -31,20 +34,38 @@ class ConnectionManager:
 
     @connected.setter
     def connected(self, value: bool):
-        if value == self._connected:
-            return
-        self._connected = value
         if value:
-            self._last_error_message = None
-            log.info(f"Communication restored with {self.serial_device}")
+            if self._error_count > 0:
+                log.debug(f"Communication OK after {self._error_count} error(s)")
+            self._error_count = 0
+            if not self._connected:
+                self._connected = True
+                self._last_error_message = None
+                log.info(f"Communication restored with {self.serial_device}")
         else:
-            log.warning(f"Communication lost with {self.serial_device}")
+            self._error_count += 1
+            if self._connected and self._error_count >= self.MAX_ERROR_COUNT:
+                self._connected = False
+                log.warning(
+                    f"Communication lost with {self.serial_device} "
+                    f"after {self._error_count} consecutive errors: "
+                    f"{self._last_error_message}"
+                )
+            elif self._connected:
+                log.debug(
+                    f"Communication error {self._error_count}/{self.MAX_ERROR_COUNT} "
+                    f"with {self.serial_device}"
+                )
 
-    def _log_error_once(self, message: str):
-        """Log an error message only if it differs from the last one logged."""
-        if message != self._last_error_message:
-            self._last_error_message = message
-            log.error(message)
+    def report_error(self, message: str):
+        """Record an error and mark the connection as failed for this cycle.
+
+        The connection status will only transition to disconnected after
+        MAX_ERROR_COUNT consecutive errors, preventing transient communication
+        glitches from triggering a full reconnection cycle.
+        """
+        self._last_error_message = message
+        self.connected = False
 
     def connect(self):
         if self.connected:
@@ -61,7 +82,7 @@ class ConnectionManager:
         except Exception as e:
             self.device = None
             self.connected = False
-            self._log_error_once(f"Failed to connect to {self.serial_device}: {str(e)}")
+            log.error(f"Failed to connect to {self.serial_device}: {str(e)}")
 
     def _load_structures(self):
         from rcp.utils import devices
@@ -116,8 +137,7 @@ def read_float(dm: ConnectionManager, address) -> float:
         dm.connected = True
         return value
     except Exception as e:
-        dm.connected = False
-        dm._log_error_once(str(e))
+        dm.report_error(str(e))
         return 0
 
 
@@ -129,8 +149,7 @@ def write_float(dm, address, value, variable_name: Optional[str] = ""):
         dm.connected = True
         log.info(f"Write {variable_name}: float {value} to address {address}")
     except Exception as e:
-        dm.connected = False
-        dm._log_error_once(str(e))
+        dm.report_error(str(e))
 
 
 def read_long(dm, address) -> int:
@@ -141,8 +160,7 @@ def read_long(dm, address) -> int:
         dm.connected = True
         return value
     except Exception as e:
-        dm.connected = False
-        dm._log_error_once(str(e))
+        dm.report_error(str(e))
         return 0
 
 
@@ -157,8 +175,7 @@ def write_long(dm, address, value, variable_name: Optional[str] = ""):
         dm.connected = True
         log.info(f"Write {variable_name}: long {value} to address {address}")
     except Exception as e:
-        dm.connected = False
-        dm._log_error_once(str(e))
+        dm.report_error(str(e))
 
 
 def read_unsigned(dm, address):
@@ -167,8 +184,7 @@ def read_unsigned(dm, address):
         dm.connected = True
         return value
     except Exception as e:
-        dm.connected = False
-        dm._log_error_once(str(e))
+        dm.report_error(str(e))
         return 0
 
 
@@ -178,8 +194,7 @@ def write_unsigned(dm, address, value, variable_name: Optional[str] = ""):
         dm.connected = True
         log.info(f"Write {variable_name}: unsigned {value} to address {address}")
     except Exception as e:
-        dm.connected = False
-        dm._log_error_once(str(e))
+        dm.report_error(str(e))
 
 
 def read_signed(dm, address):
@@ -188,8 +203,7 @@ def read_signed(dm, address):
         dm.connected = True
         return value
     except Exception as e:
-        dm.connected = False
-        dm._log_error_once(str(e))
+        dm.report_error(str(e))
         return 0
 
 
@@ -199,8 +213,7 @@ def write_signed(dm, address, value, variable_name: Optional[str] = ""):
         dm.connected = True
         log.info(f"Write {variable_name}: signed {value} to address {address}")
     except Exception as e:
-        dm.connected = False
-        dm._log_error_once(str(e))
+        dm.report_error(str(e))
 
 
 if __name__ == "__main__":

@@ -189,8 +189,49 @@ class TestSpeedConversion:
         inputs[0].steps_per_second = 1000
         axis.formats.current_format = "IN"
         axis._update_position()
-        expected = 1000 * 60 * (1 / 1000) * (1 / 1000) * (120 / 254)
+        # mm_per_sec=1, in_per_sec=10/254, ft/min = 10/254 * 60/12
+        expected = (10 / 254) * 60 / 12
         assert axis.speed == pytest.approx(expected)
+
+    def test_speed_mm_sec(self, axis, inputs):
+        axis.spindleMode = False
+        inputs[0].stepsPerMM = 1000
+        inputs[0].steps_per_second = 1000
+        axis.formats.current_format = "MM"
+        axis.formats.metric_speed_unit = "mm/sec"
+        axis._update_position()
+        # mm_per_sec = 1000/1000 = 1.0
+        assert axis.speed == pytest.approx(1.0)
+
+    def test_speed_mm_min(self, axis, inputs):
+        axis.spindleMode = False
+        inputs[0].stepsPerMM = 1000
+        inputs[0].steps_per_second = 1000
+        axis.formats.current_format = "MM"
+        axis.formats.metric_speed_unit = "mm/min"
+        axis._update_position()
+        # mm_per_sec = 1.0, mm/min = 60.0
+        assert axis.speed == pytest.approx(60.0)
+
+    def test_speed_in_sec(self, axis, inputs):
+        axis.spindleMode = False
+        inputs[0].stepsPerMM = 1000
+        inputs[0].steps_per_second = 1000
+        axis.formats.current_format = "IN"
+        axis.formats.imperial_speed_unit = "in/sec"
+        axis._update_position()
+        # mm_per_sec = 1.0, in_per_sec = 10/254
+        assert axis.speed == pytest.approx(10 / 254)
+
+    def test_speed_in_min(self, axis, inputs):
+        axis.spindleMode = False
+        inputs[0].stepsPerMM = 1000
+        inputs[0].steps_per_second = 1000
+        axis.formats.current_format = "IN"
+        axis.formats.imperial_speed_unit = "in/min"
+        axis._update_position()
+        # in_per_sec = 10/254, in/min = 10/254 * 60
+        assert axis.speed == pytest.approx(10 / 254 * 60)
 
 
 class TestSpindlePosition:

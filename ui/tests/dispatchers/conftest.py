@@ -20,8 +20,12 @@ class MockFormats(EventDispatcher):
     position_format = StringProperty("{:+0.3f}")
     angle_format = StringProperty("{:+0.1f}")
     angle_speed_format = StringProperty("{:+0.1f}")
-    speed_format = StringProperty("{:+0.3f} M/min")
+    speed_format = StringProperty("{:+0.3f} m/min")
     display_color = StringProperty("#ffffffff")
+    metric_speed_unit = StringProperty("m/min")
+    imperial_speed_unit = StringProperty("ft/min")
+    show_speeds = BooleanProperty(True)
+    show_wizard = BooleanProperty(True)
 
 
 class MockOffsetProvider(EventDispatcher):

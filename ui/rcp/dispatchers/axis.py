@@ -207,11 +207,36 @@ class AxisDispatcher(SavingDispatcher):
         else:
             if inp.stepsPerMM == 0:
                 return 0
-            # m/min or ft/min depending on format
+            mm_per_sec = sps / inp.stepsPerMM
             if self.formats.current_format == "MM":
-                return float(sps * 60 * (1 / inp.stepsPerMM) * (1 / 1000))
+                unit = self.formats.metric_speed_unit
+                if unit == "mm/rev":
+                    return self._speed_per_rev(mm_per_sec)
+                elif unit == "mm/sec":
+                    return float(mm_per_sec)
+                elif unit == "mm/min":
+                    return float(mm_per_sec * 60)
+                else:  # m/min
+                    return float(mm_per_sec * 60 / 1000)
             else:
-                return float(sps * 60 * (1 / inp.stepsPerMM) * (1 / 1000) * (120 / 254))
+                in_per_sec = mm_per_sec * 10 / 254
+                unit = self.formats.imperial_speed_unit
+                if unit == "in/rev":
+                    return self._speed_per_rev(mm_per_sec) * 10 / 254
+                elif unit == "in/sec":
+                    return float(in_per_sec)
+                elif unit == "in/min":
+                    return float(in_per_sec * 60)
+                else:  # ft/min
+                    return float(in_per_sec * 60 / 12)
+
+    def _speed_per_rev(self, mm_per_sec: float) -> float:
+        """Convert mm/sec to mm/rev using the spindle axis RPM."""
+        spindle = self.board.get_spindle_axis()
+        if spindle is None or spindle.speed == 0:
+            return 0.0
+        rpm = spindle.speed
+        return float(mm_per_sec * 60 / rpm)
 
     # ── Sync ratio ───────────────────────────────────────────────────
 

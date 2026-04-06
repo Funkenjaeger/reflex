@@ -111,25 +111,50 @@
         disabled: app.servo.disableControls
         on_release: app.servo.go_next()
     BoxLayout:
-      orientation: "vertical"
-      Label:
-        text: "Index"
-        text_size: self.size
-        size_hint_y: 0.15
-        font_size: 16
-        color: app.formats.display_color
-        halign: 'center'
-        valign: 'top'
-      Button:
-        size_hint_y: 0.35
-        font_name: app.formats.font_name
-        font_size: 32
-        font_style: "bold"
-        background_color: [0.2, 0.2, 0.2, 1]
-        color: app.formats.display_color
-        text: str(int(app.servo.index))
-        text_size: self.size
-        halign: 'center'
-        valign: 'middle'
-        disabled: app.servo.disableControls
-        on_release: Factory.Keypad(integer=True).show(app.servo, 'index')
+      orientation: "horizontal"
+      BoxLayout:
+        orientation: "vertical"
+        Label:
+          text: "Index"
+          text_size: self.size
+          size_hint_y: 0.15
+          font_size: 16
+          color: app.formats.display_color
+          halign: 'center'
+          valign: 'top'
+        Button:
+          size_hint_y: 0.35
+          font_name: app.formats.font_name
+          font_size: 32
+          font_style: "bold"
+          background_color: [0.2, 0.2, 0.2, 1]
+          color: app.formats.display_color
+          text: str(int(app.servo.index))
+          text_size: self.size
+          halign: 'center'
+          valign: 'middle'
+          disabled: app.servo.disableControls
+          on_release: Factory.Keypad(integer=True).show(app.servo, 'index')
+      BoxLayout:
+        orientation: "vertical"
+        Label:
+          text: "Speed"
+          text_size: self.size
+          size_hint_y: 0.15
+          font_size: 16
+          color: app.formats.display_color
+          halign: 'center'
+          valign: 'top'
+        Button:
+          size_hint_y: 0.35
+          font_name: app.formats.font_name
+          font_size: 32
+          font_style: "bold"
+          background_color: [0.2, 0.2, 0.2, 1]
+          color: app.formats.display_color
+          text: str(int(app.servo.indexSpeed))
+          text_size: self.size
+          halign: 'center'
+          valign: 'middle'
+          disabled: app.servo.disableControls
+          on_release: Factory.Keypad(integer=True).show(app.servo, 'indexSpeed', min_value=int(app.servo.maxSpeed * 0.05), max_value=int(app.servo.maxSpeed))
