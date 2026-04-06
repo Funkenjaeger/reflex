@@ -12,7 +12,7 @@
   Button:
     width: 96
     size_hint_x: None
-    background_color: [0.2, 1, 0.2, 1] if app.servo.servoEnable else [0.3, 0.3, 0.3, 1]
+    background_color: [0.2, 1, 0.2, 1] if app.servo.servoMode else [0.3, 0.3, 0.3, 1]
     background_normal: ""
     on_press: app.beep()
     on_release: app.servo.toggle_enable()

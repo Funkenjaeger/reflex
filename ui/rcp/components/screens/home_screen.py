@@ -60,7 +60,7 @@ class HomePage(Screen):
 
     def change_mode(self, instance, value):
         self.next_mode = value
-        if self.app.servo.servoEnable != 0:
+        if self.app.servo.servoMode != 0:
             self.app.servo.jogSpeed = 0
         Clock.schedule_once(self.change_mode_speed_check, 0.1)
 
@@ -72,7 +72,7 @@ class HomePage(Screen):
         # Reset enables
         jog_layout = self.mode_layouts[3]
         jog_layout.jog_bar.enable_jog = False
-        self.app.servo.servoEnable = 0
+        self.app.servo.servoMode = 0
 
         # Swap the entire mode layout
         if self.current_layout is not None:

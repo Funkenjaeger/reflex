@@ -57,7 +57,7 @@ rcp/
 
 - **Python version:** 3.10+ (use modern syntax: `list[X]` over `List[X]`, `X | Y` over `Union[X, Y]`)
 - **Naming:** snake_case for functions, methods, and variables. PascalCase for classes.
-  - **Exception:** Properties that mirror embedded C firmware variable names (from the rotary-controller-f4 project) must keep their original naming (e.g., `syncRatioNum`, `maxSpeed`, `servoEnable`, `scaledPosition`). This ensures naming parity between the Python UI and the STM32 firmware for easier cross-referencing.
+  - **Exception:** Properties that mirror embedded C firmware variable names (from the rotary-controller-f4 project) must keep their original naming (e.g., `syncRatioNum`, `maxSpeed`, `servoMode`, `scaledPosition`). This ensures naming parity between the Python UI and the STM32 firmware for easier cross-referencing.
   - For properties/variables that are local to the Python project and do not correspond to firmware names, prefer snake_case.
 - **Imports:** Group in order: stdlib, third-party, local. Use absolute imports (`from rcp.utils.communication import ...`)
 - **Type hints:** Use on function signatures. For Kivy properties, the property type is the annotation.
