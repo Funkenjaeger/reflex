@@ -1,6 +1,6 @@
 from kivy.uix.widget import Widget
 
-from rcp.components.home.assisted_threading_bar import AssistedThreadingBar
+from rcp.components.home.assisted_threading.bar import AssistedThreadingBar
 from rcp.components.home.coordbar import CoordBar
 from rcp.components.home.dro_coordbar import DroCoordBar
 from rcp.components.home.mode_layout import ModeLayout

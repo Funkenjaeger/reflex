@@ -5,8 +5,8 @@ from kivy.properties import NumericProperty, BooleanProperty, StringProperty
 from rcp import feeds
 from rcp.components.widgets.custom_popup import CustomPopup
 from rcp.components.widgets.hold_button import HoldButton
-from rcp.components.home.assisted_threading_wizard import AssistedThreadingWizard
-from rcp.components.home.thread_type import ThreadType
+from rcp.components.home.assisted_threading.wizard import AssistedThreadingWizard
+from rcp.components.home.assisted_threading.thread_type import ThreadType
 from rcp.dispatchers.saving_dispatcher import SavingDispatcher
 from rcp.utils.kv_loader import load_kv
 
@@ -23,7 +23,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     shaft_diameter = NumericProperty(1)
     left_hand_thread = BooleanProperty(False)
     inner_thread = BooleanProperty(False)
-    
+
     is_running = BooleanProperty(False)
     action_button_enabled = BooleanProperty(True)
     label_text = StringProperty("")
@@ -56,7 +56,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         self.action_button_condition_fn = None
         self.retract_button_condition_fn = None
         super().__init__(**kv)
-        
+
         self.current_feeds_table = feeds.table["Thread MM"] if self.metric_mode else feeds.table["Thread IN"]
         self.update_feeds_ratio(self, None)
 
@@ -67,7 +67,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
 
         self.app.bind(current_mode=self.on_mode_change)
         self.bind(left_hand_thread=self.update_feeds_ratio)
-    
+
     def toggle_is_running(self):
         if not self.is_running:
             missing = []
@@ -89,10 +89,10 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
             self.wizard.start()
         else:
             self.stop_wizard()
-            
+
     def stop_wizard(self):
             self.wizard.stop()
-            
+
     def on_metric_mode(self, instance, value):
         self.current_feeds_table = feeds.table["Thread MM"] if value else feeds.table["Thread IN"]
 
@@ -105,20 +105,20 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         if not self.retract_button_enabled:
             return
         self.wizard.start_retracting()
-        
+
     def on_retract_button_released(self):
         """Called when the retract button is released."""
         if not self.retract_button_enabled:
             return
         self.wizard.stop_retracting()
-        
+
     def on_action_button_clicked(self):
         """Called when the right button is pressed."""
         if self.is_running:
             self.wizard.goto_next_step()
         else:
             self.open_settings()
-            
+
     def update_feeds_ratio(self, instance, value):
         if self.app.current_mode != 5:
             return  # only sync in AT mode
@@ -130,12 +130,12 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
             spindle_axis.syncRatioNum = ratio.numerator * direction
             spindle_axis.syncRatioDen = ratio.denominator
         log.info(f"Configured ratio is: {ratio.numerator}/{ratio.denominator}, left_hand_thread={self.left_hand_thread}")
-    
+
     def open_settings(self):
-        from rcp.components.home.assisted_threading_settings_popup import AssistedThreadingSettingsPopup
+        from rcp.components.home.assisted_threading.settings_popup import AssistedThreadingSettingsPopup
         popup = AssistedThreadingSettingsPopup(assistedThreadingBar=self)
         popup.open()
-        
+
     def bind_display_value_to_scale(self, axis):
         """Bind display_value to an AxisDispatcher's formattedPosition with strict keypad override support."""
 
@@ -179,12 +179,12 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
         # Unbind any previous bindings
         self.unbind_all_display_value()
         self._bound_servo = self.app.servo
-        
+
         def on_servo_position_update(instance, value):
             self.display_value = value
-        
+
         self._on_servo_position_update = on_servo_position_update
-        
+
          # Bind to servo's formattedPosition
         self.app.servo.bind(formattedPosition=on_servo_position_update)
 
@@ -196,16 +196,16 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
 
         # Store the binding function
         self._on_value_button_release = on_release_fn
-        
+
         if(on_release_fn is None):
             # If None is passed, disable the button
             self.ids.btn_value.disabled = True
             return
-        
+
         self.ids.btn_value.disabled = False
         # Bind the new function
         self.ids.btn_value.bind(on_release=on_release_fn)
-    
+
     def unbind_all_display_value(self):
         if hasattr(self, "_bound_scale") and self._bound_scale is not None:
             inp = self._bound_scale._primary_input()
@@ -228,7 +228,7 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
             self.action_button_enabled = self.action_button_condition_fn()
         else:
             self.action_button_enabled = True
-            
+
         if self.retract_button_condition_fn:
             self.retract_button_enabled = self.retract_button_condition_fn()
         else:

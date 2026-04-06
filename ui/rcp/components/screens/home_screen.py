@@ -5,7 +5,7 @@ from kivy.properties import ObjectProperty
 from kivy.clock import Clock
 from kivy.uix.screenmanager import Screen
 
-from rcp.components.home.assisted_threading_bar import AssistedThreadingBar
+from rcp.components.home.assisted_threading.bar import AssistedThreadingBar
 from rcp.components.home.at_mode_layout import AtModeLayout
 from rcp.components.home.dro_mode_layout import DroModeLayout
 from rcp.components.home.els_mode_layout import ElsModeLayout
