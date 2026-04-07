@@ -60,6 +60,29 @@ class AssistedThreadingSafetyMixin:
     # Pre-threading safety checks
     # ---------------------------------------------------------------------------
 
+    def _check_saddle_not_past_stop(self) -> bool:
+        """Return True if the saddle has not moved past (or to) the stop position.
+        Protects against the compound infeed ΔZ shift consuming all remaining thread length.
+        Shows a warning popup and redirects to step 6 if not."""
+        effective_dir = self._get_saddle_scale_effective_dir()
+        current_saddle = self.saddle_input.encoderCurrent
+        remaining = (self.bar.stop_position - current_saddle) * effective_dir
+        if remaining <= 0:
+            log.warning(
+                f"Saddle at or past stop position "
+                f"(current={current_saddle}, stop={self.bar.stop_position}, "
+                f"effective_dir={effective_dir}) — aborting threading"
+            )
+            CustomPopup(
+                title="Warning",
+                message="Compound infeed shift has consumed the remaining thread length. "
+                        "Reduce infeed depth or increase thread start clearance.",
+                button_text="Got it",
+                on_dismiss_callback=lambda: self.goto_step(5),
+            ).open()
+            return False
+        return True
+
     def _check_valid_start_position(self) -> bool:
         """Return True if the saddle is within the backlash cushion of the start position.
         Shows a warning popup and redirects to step 6 if not. Sanity check in case the

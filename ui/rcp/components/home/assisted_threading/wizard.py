@@ -54,7 +54,6 @@ class AssistedThreadingWizard(
         self.current_step = 0
         self._threading_started = False
         self._threading_active_confirmed = False
-        self._calculated_threading_delta_steps = 0
         self._current_callback = None
         self._servo_watch_callback = None
         self.manual_stop_length = None
@@ -283,7 +282,7 @@ class AssistedThreadingWizard(
     def _start_threading_operation(self, *args):
         if not self.app.board.connected:
             self.stop()
-            return False  # tell goto_next_step not to advance immediately
+            return False
 
         if not self._start_position_preloaded:
             log.warning("Threading requested without start preload")
@@ -300,37 +299,66 @@ class AssistedThreadingWizard(
             return False
 
         log.info("Starting threaded cut to stop position: %s", self.bar.stop_position)
-        self.bar.last_cutting_depth = self.cross_slide_input.encoderCurrent  # Update last cutting depth to current position
+        self.bar.last_cutting_depth = self.cross_slide_input.encoderCurrent
+        self.bar.action_button_enabled = False
+        self.bar.retract_button_visible = False
 
+        compound_z_offset = self._get_compound_z_offset_encoder()
+
+        if compound_z_offset != 0:
+            # Compound infeed mode: physically shift the saddle by ΔZ before latching
+            target = self.bar.start_position + self._get_saddle_scale_effective_dir() * compound_z_offset
+            log.info(f"Compound infeed: shifting saddle by {compound_z_offset} encoder counts to {target}")
+            self._apply_reversing_adjusting_acceleration()
+            self._command_move_to_encoder(target, speed=self.app.els.at_preload_adjust_speed)
+            self._servo_watch_callback = self._watch_compound_z_move_done
+            self.app.board.bind(update_tick=self._servo_watch_callback)
+        else:
+            self._prepare_and_send_thread_latch()
+
+        return False
+
+    def _watch_compound_z_move_done(self, *_):
+        if not self._motion_complete():
+            return
+        self._reset_servo_watch_callback()
+        log.info("Compound Z move complete, switching to threading acceleration and latching spindle")
+        self._prepare_and_send_thread_latch()
+
+    def _prepare_and_send_thread_latch(self):
+        """Apply threading parameters, bind UI to servo, and send the latch command."""
         self._apply_threading_acceleration()
         self._apply_threading_max_speed()
-        self.bar.bind_display_value_to_servo_position()  # Bind UI to servo position so progress/pos displays scaledPosition
-        self.bar.action_button_enabled = False  # Disable action button during threading
-        self.bar.retract_button_visible = False  # Hide retract button during threading
+        self.bar.bind_display_value_to_servo_position()
+        self._send_thread_latch()
 
-        # Write the fields into firmware via modbus/device wrapper
+    def _send_thread_latch(self):
+        """Write threading registers to firmware. threadRemainingSteps is calculated
+        fresh from the current saddle position every pass."""
+        if not self._check_saddle_not_past_stop():
+            return
+
+        threading_delta_steps = self._get_threading_servo_delta_steps()
         dev = self.app.board.device
 
-        # Request latch+wait. Firmware will latch current spindle phase and wait until matched.
-        if (self._threading_started is False):
-            # First time starting threading - latch phase and enable
+        if not self._threading_started:
             self._threading_started = True
             self._threading_active_confirmed = False
-            self._calculated_threading_delta_steps = self._get_threading_servo_delta_steps()  # Calculate threading delta steps - we only calculate it once including backlash
-            dev['assistedThreadingData']['threadRemainingSteps'] = self._calculated_threading_delta_steps
+            dev['assistedThreadingData']['threadRemainingSteps'] = threading_delta_steps
             dev['assistedThreadingData']['threadRequest'] = 1
         else:
             self._threading_active_confirmed = False
-            dev['assistedThreadingData']['threadRemainingSteps'] = self._calculated_threading_delta_steps
-            dev['assistedThreadingData']['threadEnabled'] = 1  # Continue threading from previous state
+            dev['assistedThreadingData']['threadRemainingSteps'] = threading_delta_steps
+            dev['assistedThreadingData']['threadEnabled'] = 1
 
-        log.info(f"Threading requested: threadRemainingSteps={dev['assistedThreadingData']['threadRemainingSteps']}, servoCurrent={self.app.board.fast_data_values['servoCurrent']}, calculatedDeltaSteps={self._calculated_threading_delta_steps}")
+        log.info(
+            f"Threading latch sent: threadRemainingSteps={threading_delta_steps}, "
+            f"servoCurrent={self.app.board.fast_data_values['servoCurrent']}, "
+            f"saddle_current={self.saddle_input.encoderCurrent}, stop={self.bar.stop_position}"
+        )
 
-        # Watch until done - then go back to step 6 (Go to start)
         self._servo_watch_callback = lambda *a: self._check_servo_threading_done(5, *a)
         self.app.board.bind(update_tick=self._servo_watch_callback)
-
-        return False  # tell goto_next_step not to advance immediately
 
     def _check_servo_threading_done(self, next_step: int, *args):
         dev = self.app.board.device
@@ -495,10 +523,22 @@ class AssistedThreadingWizard(
                 final_depth_encoder = current_encoder - self.bar.cutting_depth if self.bar.inner_thread else self.bar.cutting_depth - current_encoder
                 remaining_display = final_depth_encoder * scale_ratio
 
-                if is_metric:
-                    self.bar.display_value = f"Last: {incremental_cut_display:.3f} | Rem: {remaining_display:.3f}"
+                if self.bar.compound_infeed_mode:
+                    # Show compound Z offset in saddle display units
+                    z_enc = self._get_compound_z_offset_encoder()
+                    saddle_inp = self.saddle_input
+                    saddle_factor = float(self.app.formats.MM_FRACTION if is_metric else self.app.formats.INCHES_FRACTION)
+                    saddle_scale_factor = abs(float(saddle_inp.ratioDen) / float(saddle_inp.ratioNum)) if saddle_inp.ratioNum != 0 else 1.0
+                    z_display = z_enc * saddle_factor / saddle_scale_factor
+                    if is_metric:
+                        self.bar.display_value = f"Last: {incremental_cut_display:.3f} | Rem: {remaining_display:.3f} | Z+{z_display:.3f}"
+                    else:
+                        self.bar.display_value = f"Last: {incremental_cut_display:.4f} | Rem: {remaining_display:.4f} | Z+{z_display:.4f}"
                 else:
-                    self.bar.display_value = f"Last: {incremental_cut_display:.4f} | Rem: {remaining_display:.4f}"
+                    if is_metric:
+                        self.bar.display_value = f"Last: {incremental_cut_display:.3f} | Rem: {remaining_display:.3f}"
+                    else:
+                        self.bar.display_value = f"Last: {incremental_cut_display:.4f} | Rem: {remaining_display:.4f}"
                 log.debug(f"Threading progress: incremental_cut={incremental_cut_display:.4f}, remaining={remaining_display:.4f}")
             except Exception as e:
                 log.error(f"Error updating threading progress display: {e}")

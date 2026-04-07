@@ -63,3 +63,7 @@ class AssistedThreadingSettingsPopup(Popup):
             log.info(f"Selected thread type: {thread_type}")
         except ValueError:
             log.warning(f"Invalid thread type value: {value}")
+
+    def on_compound_infeed_mode_changed(self, value):
+        self.assistedThreadingBar.compound_infeed_mode = value
+        log.info(f"Compound infeed mode changed to: {value}")

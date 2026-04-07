@@ -1,4 +1,5 @@
 from fractions import Fraction
+from math import radians, tan
 
 from kivy.logger import Logger
 
@@ -7,6 +8,14 @@ from rcp.components.home.assisted_threading.thread_type import ThreadType
 log = Logger.getChild(__name__)
 
 MM_PER_INCH = 25.4
+
+# Thread half-angles in degrees, keyed by ThreadType
+_THREAD_HALF_ANGLES: dict[ThreadType, float] = {
+    ThreadType.ISO_METRIC: 30.0,
+    ThreadType.UNIFIED: 30.0,
+    ThreadType.WHITWORTH: 27.5,
+    ThreadType.ACME: 14.5,
+}
 
 
 class AssistedThreadingCalculationsMixin:
@@ -211,13 +220,26 @@ class AssistedThreadingCalculationsMixin:
         thread_type = ThreadType(self.bar.thread_profile_type)
 
         if thread_type == ThreadType.ISO_METRIC:
+            # ISO 68-1 (60°): H = (√3/2) * pitch;
+            # actual thread depth ≈ 0.61343 * pitch
             depth = 0.61343 * pitch
+
         elif thread_type == ThreadType.UNIFIED:
+            # ASME B1.1 (60°): H = (√3/2) * pitch;
+            # actual thread depth from truncation ≈ 0.64952 * pitch
             depth = 0.64952 * pitch
+
         elif thread_type == ThreadType.WHITWORTH:
+            # BSW (55°): rounded crest/root;
+            # theoretical H ≈ 0.9605 * pitch;
+            # actual thread depth ≈ 0.6403 * pitch
             depth = 0.6403 * pitch
+
         elif thread_type == ThreadType.ACME:
+            # ASME B1.5 (29°): trapezoidal profile;
+            # basic thread height ≈ 0.5 * pitch
             depth = 0.5 * pitch
+
         else:
             log.warning(f"Unknown thread profile: {thread_type}")
             return None
@@ -238,3 +260,66 @@ class AssistedThreadingCalculationsMixin:
 
         log.info(f"Calculated thread depth: {depth:.4f} (pitch={pitch:.4f}, type={thread_type}, metric_mode={self.bar.metric_mode}, current_format={'MM' if is_current_format_metric else 'IN'}, diameter_mode={self.app.els.at_cross_slide_diameter_mode})")
         return depth
+
+    # ---------------------------------------------------------------------------
+    # Compound infeed
+    # ---------------------------------------------------------------------------
+
+    def _get_compound_angle_degrees(self) -> float:
+        """
+        Return the effective compound angle in degrees for the selected thread type.
+        = thread half-angle − user-configured offset (default 1°).
+        """
+        try:
+            thread_type = ThreadType(self.bar.thread_profile_type)
+        except ValueError:
+            log.warning(f"Unknown thread profile for compound angle: {self.bar.thread_profile_type}")
+            return 29.0  # safe fallback (ISO metric at 1° offset)
+
+        half_angle = _THREAD_HALF_ANGLES.get(thread_type, 30.0)
+        offset = float(self.bar.compound_infeed_offset_degrees)
+        effective = half_angle - offset
+        log.info(f"Compound angle: half_angle={half_angle}°, offset={offset}°, effective={effective}° (thread_type={thread_type})")
+        return effective
+
+    def _get_compound_z_offset_encoder(self) -> int:
+        """
+        Compute the saddle (Z) encoder shift for compound infeed.
+
+        ΔZ = ΔX_mm × tan(compound_angle)
+
+        ΔX is the absolute physical depth from the material surface.
+        abs() is intentional: outer threading moves X inward (negative encoder delta),
+        inner threading moves X outward (positive delta). Physical cut depth is always
+        a positive magnitude. Direction is applied by the caller via
+        _get_saddle_scale_effective_dir().
+
+        Returns 0 if compound infeed is disabled or the cross-slide is at material width.
+        """
+        if not self.bar.compound_infeed_mode:
+            return 0
+
+        delta_x_enc = abs(self.cross_slide_input.encoderCurrent - self.bar.material_width)
+        if delta_x_enc == 0:
+            return 0
+
+        # Convert X encoder delta to mm
+        cross_inp = self.cross_slide_input
+        # encoder_factor converts encoder counts to mm (same factor used in formattedPosition)
+        encoder_factor = float(self.app.formats.MM_FRACTION)
+        cross_scale_factor = float(cross_inp.ratioDen) / float(cross_inp.ratioNum) if cross_inp.ratioNum != 0 else 1.0
+        delta_x_mm = abs(delta_x_enc * encoder_factor / cross_scale_factor)
+
+        compound_angle = self._get_compound_angle_degrees()
+        delta_z_mm = delta_x_mm * tan(radians(compound_angle))
+
+        # abs() because _convert_distance_units_to_encoder is signed (reflects scale ratioNum sign).
+        # We return a positive magnitude; direction is applied by the caller via _get_saddle_scale_effective_dir().
+        z_encoder = abs(self._convert_distance_units_to_encoder(self.saddle_scale, delta_z_mm, is_metric=True))
+
+        log.info(
+            f"Compound Z offset: delta_x_enc={delta_x_enc}, delta_x_mm={delta_x_mm:.4f}, "
+            f"compound_angle={compound_angle:.2f}°, delta_z_mm={delta_z_mm:.4f}, "
+            f"z_encoder={z_encoder}"
+        )
+        return z_encoder

@@ -66,6 +66,8 @@ def make_wizard(
     bar.reversing_speed = 500
     bar.selected_pitch = "1.5"
     bar.thread_profile_type = "ISO Metric"
+    bar.compound_infeed_mode = False
+    bar.compound_infeed_offset_degrees = 1.0
 
     saddle_inp = _make_input(ratioNum, ratioDen, saddle_encoderCurrent)
     cross_inp = _make_input(ratioNum, ratioDen, cross_encoderCurrent)

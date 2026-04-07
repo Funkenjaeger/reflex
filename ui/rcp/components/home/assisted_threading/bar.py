@@ -24,6 +24,9 @@ class AssistedThreadingBar(BoxLayout, SavingDispatcher):
     left_hand_thread = BooleanProperty(False)
     inner_thread = BooleanProperty(False)
 
+    compound_infeed_mode = BooleanProperty(False)
+    compound_infeed_offset_degrees = NumericProperty(1.0)
+
     is_running = BooleanProperty(False)
     action_button_enabled = BooleanProperty(True)
     label_text = StringProperty("")
