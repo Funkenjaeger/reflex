@@ -6,6 +6,7 @@ from kivy.uix.widget import Widget
 from rcp.components.home.dro_coordbar import DroCoordBar
 from rcp.components.home.elsbar import ElsBar
 from rcp.components.home.mode_layout import ModeLayout
+from rcp.components.home.els_advbar import ElsAdvancedBar
 from rcp.utils.kv_loader import load_kv
 
 load_kv(__file__)
@@ -78,10 +79,12 @@ class ElsModeLayout(ModeLayout):
         self.els_bar = els_bar
         self.spindle_info = ElsSpindleInfo()
         self.spacer = Widget()
+        self.els_adv_bar = ElsAdvancedBar()
 
         self.build_axis_bars()
         self.add_widget(self.spindle_info)
         self.add_widget(self.spacer)
+        self.add_widget(self.els_adv_bar)
         self.add_widget(self.els_bar)
 
         # Rebuild when ELS axis assignments change
@@ -124,8 +127,10 @@ class ElsModeLayout(ModeLayout):
         self.remove_widget(self.spindle_info)
         self.remove_widget(self.spacer)
         self.remove_widget(self.els_bar)
+        self.remove_widget(self.els_adv_bar)
         super().rebuild_axes()
         self.add_widget(self.spindle_info)
         self.add_widget(self.spacer)
+        self.add_widget(self.els_adv_bar)
         self.add_widget(self.els_bar)
         self._update_row_heights()
