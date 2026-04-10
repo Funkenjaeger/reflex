@@ -1,0 +1,47 @@
+<AssistedThreadingSettingsPopup>:
+    title: "Assisted Threading Settings"
+    size_hint_x: 0.8
+    size_hint_y: None
+    height: 450
+    auto_dismiss: True
+
+    ScrollView:
+        do_scroll_x: False
+        do_scroll_y: True
+        GridLayout:
+            id: grid_layout
+            cols: 1
+            spacing: 1
+            size_hint_y: None
+            height: self.minimum_height
+
+            BooleanItem:
+                name: "Metric Mode"
+                value: root.assistedThreadingBar.metric_mode
+                on_value: root.on_metric_mode_changed(self.value)
+
+            DropDownItem:
+                id: pitches_dropdown
+                height: 60
+                name: "Pitch in MM" if root.assistedThreadingBar.metric_mode else "Pitch in IN"
+                options: root.get_pitches()
+                value: str(root.assistedThreadingBar.selected_pitch) if root.assistedThreadingBar.selected_pitch is not None else ""
+                on_value: root.on_pitch_selected(self.selected_index, self.value)
+
+            DropDownItem:
+                id: thread_type_dropdown
+                height: 60
+                name: "Thread Type"
+                options: root.get_thread_types()
+                value: root.assistedThreadingBar.thread_profile_type
+                on_value: root.on_thread_type_selected(self.value)
+
+            BooleanItem:
+                name: "Left Hand Thread"
+                value: root.assistedThreadingBar.left_hand_thread
+                on_value: root.assistedThreadingBar.left_hand_thread = self.value
+
+            BooleanItem:
+                name: "Inner Thread"
+                value: root.assistedThreadingBar.inner_thread
+                on_value: root.assistedThreadingBar.inner_thread = self.value

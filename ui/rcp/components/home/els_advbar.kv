@@ -97,8 +97,9 @@
     text_size: self.size
     halign: 'center'
     valign: 'middle'
-    on_press: app.beep()
-    #TODO - launch wizard
+    on_press:
+      app.beep()
+      root.on_wizard_pressed()
   Button: # Config button
     font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
     width: self.height

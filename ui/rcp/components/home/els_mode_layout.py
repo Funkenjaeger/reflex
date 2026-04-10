@@ -3,10 +3,11 @@ from kivy.properties import StringProperty
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.widget import Widget
 
+from rcp.components.home.assisted_threading_bar import AssistedThreadingBar
 from rcp.components.home.dro_coordbar import DroCoordBar
+from rcp.components.home.els_advbar import ElsAdvancedBar
 from rcp.components.home.elsbar import ElsBar
 from rcp.components.home.mode_layout import ModeLayout
-from rcp.components.home.els_advbar import ElsAdvancedBar
 from rcp.utils.kv_loader import load_kv
 
 load_kv(__file__)
@@ -80,6 +81,11 @@ class ElsModeLayout(ModeLayout):
         self.spindle_info = ElsSpindleInfo()
         self.spacer = Widget()
         self.els_adv_bar = ElsAdvancedBar()
+        self.at_bar = AssistedThreadingBar()
+        self._showing_at_bar = False
+
+        self.els_adv_bar.wizard_callback = self.show_threading_bar
+        self.at_bar.back_callback = self.show_adv_bar
 
         self.build_axis_bars()
         self.add_widget(self.spindle_info)
@@ -99,12 +105,32 @@ class ElsModeLayout(ModeLayout):
         self.bind(height=self._update_row_heights)
         self._update_row_heights()
 
+    def show_threading_bar(self):
+        if self._showing_at_bar:
+            return
+        self._showing_at_bar = True
+        self.rebuild_axes()
+        #self.remove_widget(self.els_adv_bar)
+        #self.add_widget(self.at_bar)
+        self.at_bar.is_active = True
+        self.at_bar.update_feeds_ratio(None, None)
+
+    def show_adv_bar(self):
+        if not self._showing_at_bar:
+            return
+        self._showing_at_bar = False
+        self.at_bar.is_active = False
+        self.rebuild_axes()
+        #self.remove_widget(self.at_bar)
+        #self.add_widget(self.els_adv_bar)
+
     def _update_row_heights(self, *args):
         num_rows = len(self.axis_bars) + 1  # axis bars + spindle info
         if num_rows == 0:
             return
 
-        available = self.height - self.els_bar.height
+        bottom_bar = self.at_bar if self._showing_at_bar else self.els_adv_bar
+        available = self.height - self.els_bar.height - bottom_bar.height
         row_height = min(available / num_rows, self.app.formats.max_row_height)
 
         self.spindle_info.size_hint_y = None
@@ -127,10 +153,16 @@ class ElsModeLayout(ModeLayout):
         self.remove_widget(self.spindle_info)
         self.remove_widget(self.spacer)
         self.remove_widget(self.els_bar)
-        self.remove_widget(self.els_adv_bar)
+        if self._showing_at_bar:
+            self.remove_widget(self.at_bar)
+        else:
+            self.remove_widget(self.els_adv_bar)
         super().rebuild_axes()
         self.add_widget(self.spindle_info)
         self.add_widget(self.spacer)
-        self.add_widget(self.els_adv_bar)
+        if self._showing_at_bar:
+            self.add_widget(self.at_bar)
+        else:
+            self.add_widget(self.els_adv_bar)
         self.add_widget(self.els_bar)
         self._update_row_heights()
