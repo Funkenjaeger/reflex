@@ -288,27 +288,27 @@ class AssistedThreadingCalculationsMixin:
 
         ΔZ = ΔX_mm × tan(compound_angle)
 
-        ΔX is the absolute physical depth from the material surface.
-        abs() is intentional: outer threading moves X inward (negative encoder delta),
-        inner threading moves X outward (positive delta). Physical cut depth is always
-        a positive magnitude. Direction is applied by the caller via
-        _get_saddle_scale_effective_dir().
-
-        Returns 0 if compound infeed is disabled or the cross-slide is at material width.
+        ΔX is the physical depth from the material surface in the cutting direction.
+        Uses _get_cross_slide_scale_effective_dir() so the sign correctly reflects
+        whether the tool is cutting (positive) or retracted past the surface (≤ 0).
+        Returns 0 when the cross-slide is at or retracted past the material surface.
+        Direction of the Z shift is applied by the caller via _get_saddle_scale_effective_dir().
         """
         if not self.bar.compound_infeed_mode:
             return 0
 
-        delta_x_enc = abs(self.cross_slide_input.encoderCurrent - self.bar.material_width)
-        if delta_x_enc == 0:
+        cross_dir = self._get_cross_slide_scale_effective_dir()
+        cross_inp = self.cross_slide_input
+
+        # Positive = tool is deeper than surface (cutting). Zero/negative = at surface or retracted.
+        delta_x_enc_in_cut_dir = (cross_inp.encoderCurrent - self.bar.material_width) * cross_dir
+        if delta_x_enc_in_cut_dir <= 0:
             return 0
 
-        # Convert X encoder delta to mm
-        cross_inp = self.cross_slide_input
-        # encoder_factor converts encoder counts to mm (same factor used in formattedPosition)
+        # Convert X encoder depth to mm.
+        # cross_dir already accounts for ratioNum sign, so use abs(ratioNum/ratioDen) for magnitude.
         encoder_factor = float(self.app.formats.MM_FRACTION)
-        cross_scale_factor = float(cross_inp.ratioDen) / float(cross_inp.ratioNum) if cross_inp.ratioNum != 0 else 1.0
-        delta_x_mm = abs(delta_x_enc * encoder_factor / cross_scale_factor)
+        delta_x_mm = delta_x_enc_in_cut_dir * encoder_factor * abs(float(cross_inp.ratioNum) / float(cross_inp.ratioDen)) if cross_inp.ratioDen != 0 else 0.0
 
         compound_angle = self._get_compound_angle_degrees()
         delta_z_mm = delta_x_mm * tan(radians(compound_angle))
@@ -318,7 +318,7 @@ class AssistedThreadingCalculationsMixin:
         z_encoder = abs(self._convert_distance_units_to_encoder(self.saddle_scale, delta_z_mm, is_metric=True))
 
         log.info(
-            f"Compound Z offset: delta_x_enc={delta_x_enc}, delta_x_mm={delta_x_mm:.4f}, "
+            f"Compound Z offset: delta_x_enc_in_cut_dir={delta_x_enc_in_cut_dir}, delta_x_mm={delta_x_mm:.4f}, "
             f"compound_angle={compound_angle:.2f}°, delta_z_mm={delta_z_mm:.4f}, "
             f"z_encoder={z_encoder}"
         )

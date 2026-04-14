@@ -166,6 +166,34 @@ class TestGetCompoundZOffsetEncoder:
 
 
 # ---------------------------------------------------------------------------
+# 2b. _get_compound_z_offset_encoder — retraction past material surface
+# ---------------------------------------------------------------------------
+
+class TestCompoundZOffsetRetraction:
+    def test_outer_retracted_past_surface_returns_zero(self):
+        """Outer thread: cross-slide moved outward past material_width (positive encoder,
+        opposite to cutting direction) → no compound shift."""
+        depth_enc = round(0.3 * 6926)
+        # Outer thread with positive ratioNum: cutting direction is inward (negative encoder).
+        # Moving outward (+depth_enc) is a retraction past the surface.
+        wizard, bar, *_ = _w_compound(
+            cross_encoderCurrent=depth_enc, material_width=0, inner_thread=False
+        )
+        assert wizard._get_compound_z_offset_encoder() == 0
+
+    def test_inner_retracted_past_surface_returns_zero(self):
+        """Inner thread: cross-slide moved inward past material_width (negative encoder,
+        opposite to cutting direction) → no compound shift."""
+        depth_enc = round(0.3 * 6926)
+        # Inner thread with positive ratioNum: cutting direction is outward (positive encoder).
+        # Moving inward (-depth_enc) is a retraction past the surface.
+        wizard, bar, *_ = _w_compound(
+            cross_encoderCurrent=-depth_enc, material_width=0, inner_thread=True
+        )
+        assert wizard._get_compound_z_offset_encoder() == 0
+
+
+# ---------------------------------------------------------------------------
 # 3. Direction: ΔZ applied in saddle threading direction
 # ---------------------------------------------------------------------------
 
@@ -205,10 +233,12 @@ class TestCompoundZDirection:
         )
 
     def test_rht_negative_scale_z_applied_in_positive_direction(self):
-        """RHT + negative scale → effective_dir = +1."""
+        """RHT + negative scale → effective_dir = +1.
+        With ratioNum=-1 on outer threading, cross_dir = +1, so encoder must
+        INCREASE to cut deeper. Use +depth_enc to represent a real cutting depth."""
         depth_enc = round(0.3 * 6926)
         wizard, bar, *_ = _w_compound(
-            cross_encoderCurrent=-depth_enc, material_width=0,
+            cross_encoderCurrent=+depth_enc, material_width=0,
             left_hand_thread=False, ratioNum=-1, ratioDen=6926,
         )
         bar.start_position = 0
