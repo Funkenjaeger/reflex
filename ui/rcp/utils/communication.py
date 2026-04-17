@@ -58,10 +58,21 @@ class ConnectionManager:
             self.device.serial.timeout = 0.1
             self.device.serial.write_timeout = 0.1
             self.device.serial.baudrate = self.baudrate
+            log.info(f"Opened serial port {self.serial_device} (baudrate={self.baudrate}, address={self.address})")
         except Exception as e:
             self.device = None
             self.connected = False
             self._log_error_once(f"Failed to connect to {self.serial_device}: {str(e)}")
+
+    def disconnect(self):
+        """Close the serial port and reset state so connect() can retry."""
+        if self.device is not None:
+            try:
+                self.device.serial.close()
+            except Exception:
+                pass
+            self.device = None
+        self.connected = False
 
     def _load_structures(self):
         from rcp.utils import devices

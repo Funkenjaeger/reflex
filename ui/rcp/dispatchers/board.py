@@ -168,7 +168,7 @@ class Board(EventDispatcher):
             self.fast_data_values = self.device['fastData'].refresh()
         except Exception as e:
             self.connection_manager._log_error_once(str(e))
-            self.connection_manager.connected = False
+            self.connection_manager.disconnect()
             self.connected = False
             self.task_update.timeout = 1.0
             self.update_tick = (self.update_tick + 1) % 100
