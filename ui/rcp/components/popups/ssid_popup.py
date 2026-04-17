@@ -1,4 +1,5 @@
 import asyncio
+import shutil
 
 import nmcli
 
@@ -11,7 +12,9 @@ from kivy.uix.button import Button
 
 from rcp.utils.kv_loader import load_kv
 
-nmcli.disable_use_sudo()
+NMCLI_AVAILABLE = shutil.which("nmcli") is not None
+if NMCLI_AVAILABLE:
+    nmcli.disable_use_sudo()
 
 log = Logger.getChild(__name__)
 load_kv(__file__)
@@ -44,6 +47,9 @@ class SsidPopup(ModalView):
                 b.background_color = self.app.formats.color_off
 
     async def wifi_rescan(self, *args, **kv):
+        if not NMCLI_AVAILABLE:
+            log.warning("nmcli not found — wifi scan unavailable")
+            return
         self.scanning = True
         try:
             loop = asyncio.get_running_loop()

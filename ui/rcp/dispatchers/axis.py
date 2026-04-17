@@ -229,17 +229,18 @@ class AxisDispatcher(SavingDispatcher):
             inp = self.inputs[primary_idx]
 
             if self.spindleMode:
+                # Spindle: purely physical units, no display factor
                 scale_ratio = Fraction(
-                    360 * inp.gear_ratio_den,
+                    inp.gear_ratio_den,
                     inp.encoder_ppr * inp.gear_ratio_num,
                 )
+                servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
             else:
                 scale_ratio = Fraction(inp.ratioNum, inp.ratioDen) * self.formats.factor
-
-            if self.servo.elsMode:
-                servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen) * self.formats.factor
-            else:
-                servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
+                if self.servo.elsMode:
+                    servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen) * self.formats.factor
+                else:
+                    servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
 
             final_ratio = scale_ratio * user_sync / servo_ratio
             self.board.device['scales'][primary_idx]['syncRatioNum'] = final_ratio.numerator
