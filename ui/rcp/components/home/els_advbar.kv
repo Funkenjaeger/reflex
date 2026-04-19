@@ -87,6 +87,7 @@
         width: self.height if (root.enable_retract or root.enable_wizard) else 0
         opacity: 1 if (root.enable_retract or root.enable_wizard) else 0
         disabled: not (root.enable_retract or root.enable_wizard)
+        on_release: root.on_value_button_released("start_z")
 
       Widget: # spacer
 
@@ -124,13 +125,14 @@
         halign: "center"
         on_release: root.on_action_button_clicked()
 
-      # ── Retract hold button (visible only during Cut) ──────────────────────
+      # ── Retract hold button ────────────────────────────────────────────────
       HoldButton:
         id: btn_retract
         font_name: "fonts/iosevka-regular.ttf"
-        size_hint_x: None if root.retract_button_visible else 0
-        width: self.height if root.retract_button_visible else 0
-        opacity: 1 if root.retract_button_visible else 0
+        size_hint_x: None if root.retract_button_shown else 0
+        width: self.height if root.retract_button_shown else 0
+        opacity: 1 if root.retract_button_shown else 0
+        disabled: not root.retract_button_usable
         text: 'Retract'
         font_size: self.height / 4
         halign: "center"

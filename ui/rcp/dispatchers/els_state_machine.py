@@ -27,7 +27,7 @@ class ElsStateMachine:
                   retract_button_condition_fn, is_running,
                   enable_stop, enable_retract, enable_wizard,
                   selected_pitch, metric_mode, thread_profile_type,
-                  left_hand_thread, inner_thread
+                  inner_thread, els_bar
       Methods:    set_instruction(), bind_display_value_to_scale(),
                   bind_display_value_to_servo_position(),
                   unbind_all_display_value(), update_buttons_state(),
@@ -64,6 +64,7 @@ class ElsStateMachine:
         self._major_diameter_scaled_position = 0.0
 
         # Manual overrides from keypad
+        self.manual_start_length = None
         self.manual_stop_length = None
         self.manual_cutting_depth = None
 
@@ -411,10 +412,28 @@ class ElsStateMachine:
         if inp is None:
             log.error("_capture_start_z: saddle_input is None — cannot capture")
             return
-        self.bar.start_position = inp.encoderCurrent
-        self._is_start_position_metric_mode = self.app.formats.current_format == "MM"
-        self._start_scaled_position = self.saddle_scale.scaledPosition
-        log.info(f"Start Z captured: {self.bar.start_position}")
+        if self.manual_start_length is not None:
+            is_metric = self.app.formats.current_format == "MM"
+            factor = float(
+                self.app.formats.MM_FRACTION if is_metric
+                else self.app.formats.INCHES_FRACTION
+            )
+            encoder_counts = (self.manual_start_length / factor) * (
+                float(inp.ratioDen) / float(inp.ratioNum)
+            )
+            self.bar.start_position = int(round(encoder_counts))
+            self._is_start_position_metric_mode = is_metric
+            self._start_scaled_position = self.manual_start_length
+            log.info(
+                f"Start Z captured from keypad: {self.bar.start_position} "
+                f"(manual={self.manual_start_length})"
+            )
+            self.manual_start_length = None
+        else:
+            self.bar.start_position = inp.encoderCurrent
+            self._is_start_position_metric_mode = self.app.formats.current_format == "MM"
+            self._start_scaled_position = self.saddle_scale.scaledPosition
+            log.info(f"Start Z captured: {self.bar.start_position}")
 
     def _capture_stop_z(self, *_):
         inp = self.saddle_input
@@ -428,12 +447,14 @@ class ElsStateMachine:
         # Update elsStop registers with captured stop position
         if self.app.board.connected:
             dev = self.app.board.device
+            els_forward = self.bar.els_bar.els_forward if self.bar.els_bar is not None else True
+            stop_direction = -1 if els_forward else 1
             dev['elsStop']['stopPosition'] = int(self.bar.stop_position)
-            dev['elsStop']['stopDirection'] = -1
+            dev['elsStop']['stopDirection'] = stop_direction
             dev['elsStop']['enable'] = 1 if self.bar.els_stop_engaged else 0
             log.info(
                 f"elsStop configured: stopPosition={int(self.bar.stop_position)}, "
-                f"stopDirection=-1, enable={self.bar.els_stop_engaged}"
+                f"stopDirection={stop_direction}, enable={self.bar.els_stop_engaged}"
             )
 
     def _capture_major_diameter(self, *_):
@@ -686,7 +707,7 @@ class ElsStateMachine:
         log.info(f"Move to encoder: current={current_enc}, target={target_encoder}, delta={delta}")
         self.bar.bind_display_value_to_servo_position()
         self.servo.set_max_speed(speed)
-        self.app.board.device['servo']['direction'] = delta
+        self.app.board.device['servo']['stepsToGo'] = delta
 
     # ── Retract button (direct — not state-machine driven) ────────────────────
 
@@ -728,7 +749,9 @@ class ElsStateMachine:
     # ── Calculation helpers ───────────────────────────────────────────────────
 
     def _get_saddle_scale_effective_dir(self) -> int:
-        thread_dir = 1 if getattr(self.bar, 'left_hand_thread', False) else -1
+        els_bar = getattr(self.bar, 'els_bar', None)
+        els_forward = els_bar.els_forward if els_bar is not None else True
+        thread_dir = -1 if els_forward else 1
         scale_dir = (1 if self.saddle_input.ratioNum * self.saddle_input.ratioDen > 0
                      else -1)
         return thread_dir * scale_dir
@@ -946,6 +969,31 @@ class ElsStateMachine:
         )
 
     # ── Manual input handlers ─────────────────────────────────────────────────
+
+    def _open_start_position_keypad(self, *_):
+        from rcp.components.popups.keypad import Keypad
+        is_metric = self.app.formats.current_format == "MM"
+        keypad = Keypad(
+            title="Enter Start Z (" + ("mm" if is_metric else "in") + ")"
+        )
+        keypad.integer = False
+
+        def on_done(value):
+            try:
+                self.manual_start_length = float(value)
+                self.bar.start_z_text = (
+                    f"{self.manual_start_length:.3f}" if is_metric
+                    else f"{self.manual_start_length:.4f}"
+                )
+            except ValueError:
+                log.warning(f"Invalid start Z value: {value}")
+            finally:
+                self.bar.update_buttons_state()
+
+        keypad.show_with_callback(
+            callback_fn=on_done,
+            current_value=self.manual_start_length or 0.0,
+        )
 
     def _open_stop_position_keypad(self, *_):
         from rcp.components.popups.keypad import Keypad
