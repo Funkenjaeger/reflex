@@ -43,7 +43,7 @@ class ElsSpindleInfo(BoxLayout):
         if rpm != self.spindle_rpm:
             self.spindle_rpm = rpm
 
-        speed = self.app.els.spindle_speed
+        speed = self.app.els.get_spindle_speed()
         if speed > 0.5:
             icon = ICON_CW
         elif speed < -0.5:
