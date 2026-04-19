@@ -15,8 +15,3 @@ class LedButton(BeepMixin, ButtonBehavior, BoxLayout):
     checkbox_value = BooleanProperty()
     current_color = ColorProperty((0, 0, 0, 1))
 
-    def on_checkbox_value(self, instance, value):
-        if value:
-            self.current_color = self.color_on
-        else:
-            self.current_color = self.color_off
