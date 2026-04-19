@@ -25,7 +25,7 @@
       allow_stretch: True
       keep_ratio: True
   
-  BoxLayout:
+  BoxLayout: # Direction button
     orientation: 'vertical'
     size_hint_x: None
     width: 96
@@ -46,7 +46,7 @@
       label_false: "\uf061"
       value: root.els_forward
       on_release: root.toggle_move_direction()
-      disabled: abs(app.els.spindle_speed) > 0.5
+      disabled: app.els.spindle_is_running
 
   Button:
     background_color: [0.5, 0.5, 0.5, 1]
