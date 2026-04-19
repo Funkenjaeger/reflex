@@ -78,12 +78,12 @@ typedef struct {
 class Scale(BaseDevice):
     definition = """
 typedef struct {
-  TIM_HandleTypeDef *timerHandle;
+  int32_t dummy;
   int32_t position;
   int32_t speed;
   int32_t syncRatioNum, syncRatioDen;
   uint16_t syncEnable;
-  uint16_t spare;
+  uint16_t _pad0;
 } input_t;
 """
 
@@ -100,7 +100,39 @@ typedef struct {
   uint32_t cycles;
   uint32_t executionInterval;
   uint16_t servoMode;
+  uint16_t _pad0;
 } fastData_t;
+"""
+
+class AssistedThreadingData(BaseDevice):
+    definition = """
+typedef struct {
+  uint16_t threadRequest;
+  uint16_t threadReset;
+  uint16_t spindleScaleIndex;
+  uint16_t threadPhaseActive;
+  uint16_t threadEnabled;
+  uint16_t spindlePhaseTolerance;
+  int32_t threadRemainingSteps;
+  uint32_t threadStartSteps;
+  uint32_t spindleCountsPerRev;
+  int32_t threadPhaseRef;
+  int32_t currentThreadPhase;
+} assistedThreadingData_t;
+"""
+
+class ElsStop(BaseDevice):
+    definition = """
+typedef struct {
+  uint16_t enable;
+  uint16_t scaleIndex;
+  int32_t  stopPosition;
+  int16_t  stopDirection;
+  uint16_t active;
+  int32_t  accumulatedError;
+  float    threadPitchSteps;
+  int32_t  hysteresis;
+} elsStop_t;
 """
 
 
@@ -114,6 +146,8 @@ typedef struct {
   uint32_t executionCycles;
   servo_t servo;
   input_t scales[4];
+  assistedThreadingData_t assistedThreadingData;
   fastData_t fastData;
+  elsStop_t elsStop;
 } rampsSharedData_t;
 """

@@ -25,6 +25,7 @@ class ElsBar(BoxLayout, SavingDispatcher):
     feed_name = StringProperty(":(")
     current_feeds_index = NumericProperty(0)
     els_forward = BooleanProperty(True)
+    enable_advanced = BooleanProperty(False)
 
     def _get_move_type(self):
         if "Thread" in self.mode_name:

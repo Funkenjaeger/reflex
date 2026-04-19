@@ -20,6 +20,9 @@ class FormatsDispatcher(SavingDispatcher):
         'color_off'
     ]
 
+    MM_FRACTION = Fraction(1, 1)
+    INCHES_FRACTION = Fraction(10, 254)
+
     metric_position = StringProperty("{:+0.3f}")
     metric_speed = StringProperty("{:+0.3f}")
 

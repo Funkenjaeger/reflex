@@ -8,7 +8,7 @@
   orientation: "horizontal"
   size_hint_y: None
   height: 128
-
+  
   Button:
     width: 96
     size_hint_x: None
@@ -47,6 +47,14 @@
       value: root.els_forward
       on_release: root.toggle_move_direction()
       disabled: app.els.spindle_is_running
+
+  Button:
+    width: 96
+    size_hint_x: None
+    text: "ADV"
+    on_press:
+      root.enable_advanced = not root.enable_advanced
+      app.beep()
 
   Button:
     background_color: [0.5, 0.5, 0.5, 1]

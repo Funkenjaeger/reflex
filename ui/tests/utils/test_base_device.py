@@ -166,8 +166,8 @@ class TestSetFastData:
 
         device = FastData(mock_cm, base_address=0)
         # FastData: servoCurrent(1) + servoDesired(1) + stepsToGo(1) + servoSpeed(1) +
-        #           scaleCurrent[4](4) + scaleSpeed[4](4) + cycles(1) + executionInterval(1) + servoMode(1)
-        values = [100, 200, 300, 1.5, 10, 20, 30, 40, 50, 60, 70, 80, 999, 888, 1]
+        #           scaleCurrent[4](4) + scaleSpeed[4](4) + cycles(1) + executionInterval(1) + servoMode(1) + _pad0(1)
+        values = [100, 200, 300, 1.5, 10, 20, 30, 40, 50, 60, 70, 80, 999, 888, 1, 0]
         result = device.set_fast_data(values)
         assert result["scaleCurrent"] == [10, 20, 30, 40]
         assert result["scaleSpeed"] == [50, 60, 70, 80]
