@@ -224,6 +224,13 @@ class ServoDispatcher(SavingDispatcher):
     def on_maxSpeed(self, instance, value):
         self.board.device['servo']['maxSpeed'] = self.maxSpeed
 
+    def set_max_speed(self, value):
+        # Write maxSpeed to the hardware without touching the stored property,
+        # so callers can temporarily override and later restore via
+        # set_max_speed(self.maxSpeed).
+        if self.board.connected:
+            self.board.device['servo']['maxSpeed'] = value
+
     def on_jogSpeed(self, instance, value):
         self.board.device['servo']['jogSpeed'] = self.jogSpeed
 

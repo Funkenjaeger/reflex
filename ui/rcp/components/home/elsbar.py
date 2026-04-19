@@ -53,6 +53,7 @@ class ElsBar(BoxLayout, SavingDispatcher):
         self.current_feeds_table = feeds.table[self.mode_name]
         self.update_feeds_ratio(self, None)
         self.bind(current_feeds_index=self.update_feeds_ratio)
+        self.bind(els_forward=self._apply_direction)
 
     def toggle_move_direction(self):
         self.els_forward = not self.els_forward
@@ -69,11 +70,22 @@ class ElsBar(BoxLayout, SavingDispatcher):
     def update_feeds_ratio(self, instance, value):
         ratio = self.current_feeds_table[self.current_feeds_index].ratio
         spindle_axis = self.app.board.get_spindle_axis()
+        direction = 1 if self.els_forward else -1
         if spindle_axis is not None:
-            spindle_axis.syncRatioNum = ratio.numerator
+            spindle_axis.syncRatioNum = ratio.numerator * direction
             spindle_axis.syncRatioDen = ratio.denominator
         self.feed_name = self.current_feeds_table[self.current_feeds_index].name
-        log.info(f"Configured ratio is: {ratio.numerator}/{ratio.denominator}")
+        log.info(
+            f"Configured ratio is: {ratio.numerator}/{ratio.denominator}, "
+            f"els_forward={self.els_forward}"
+        )
+
+    def _apply_direction(self, *_):
+        self.update_feeds_ratio(self, None)
+        if self.app.board.connected:
+            stop_direction = -1 if self.els_forward else 1
+            self.app.board.device['elsStop']['stopDirection'] = stop_direction
+            log.info(f"elsStop.stopDirection = {stop_direction}")
 
     def next_feed(self):
         if self.current_feeds_index < len(self.current_feeds_table) -1:

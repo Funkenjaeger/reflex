@@ -79,7 +79,9 @@ class ElsModeLayout(ModeLayout):
         self.els_bar = els_bar
         self.spindle_info = ElsSpindleInfo()
         self.spacer = Widget()
-        self.els_adv_bar = ElsAdvancedBar()
+        self.els_adv_bar = ElsAdvancedBar(els_bar=els_bar)
+        self.els_adv_bar.size_hint_y = None
+        self._adv_expanded_height = self.els_adv_bar.height
 
         self.build_axis_bars()
         self.add_widget(self.spindle_info)
@@ -97,6 +99,15 @@ class ElsModeLayout(ModeLayout):
         self.app.formats.bind(max_row_height=lambda *_: self._update_row_heights())
         self.app.formats.bind(show_speeds=lambda *_: self.rebuild_axes())
         self.bind(height=self._update_row_heights)
+        self.els_bar.bind(enable_advanced=self._apply_adv_visibility)
+        self._apply_adv_visibility()
+        self._update_row_heights()
+
+    def _apply_adv_visibility(self, *_):
+        shown = bool(self.els_bar.enable_advanced)
+        self.els_adv_bar.height = self._adv_expanded_height if shown else 0
+        self.els_adv_bar.opacity = 1 if shown else 0
+        self.els_adv_bar.disabled = not shown
         self._update_row_heights()
 
     def _update_row_heights(self, *args):
