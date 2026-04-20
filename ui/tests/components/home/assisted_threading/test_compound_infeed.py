@@ -164,6 +164,20 @@ class TestGetCompoundZOffsetEncoder:
 
         assert w2._get_compound_z_offset_encoder() > w1._get_compound_z_offset_encoder()
 
+    def test_diameter_mode_gives_half_z_offset(self):
+        """Diameter mode: MM_FRACTION includes 2× → must halve delta_x_mm for radial depth."""
+        depth_enc = round(0.3 * 6926)
+
+        w_radius, *_ = _w_compound(cross_encoderCurrent=-depth_enc, material_width=0)
+        z_radius = w_radius._get_compound_z_offset_encoder()
+
+        w_diameter, *_ = _w_compound(cross_encoderCurrent=-depth_enc, material_width=0)
+        w_diameter.app.els.at_cross_slide_diameter_mode = True
+        z_diameter = w_diameter._get_compound_z_offset_encoder()
+
+        assert z_radius > 0
+        assert z_diameter == pytest.approx(z_radius / 2, abs=2)
+
 
 # ---------------------------------------------------------------------------
 # 2b. _get_compound_z_offset_encoder — retraction past material surface

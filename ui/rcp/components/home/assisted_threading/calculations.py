@@ -310,6 +310,10 @@ class AssistedThreadingCalculationsMixin:
         encoder_factor = float(self.app.formats.MM_FRACTION)
         delta_x_mm = delta_x_enc_in_cut_dir * encoder_factor * abs(float(cross_inp.ratioNum) / float(cross_inp.ratioDen)) if cross_inp.ratioDen != 0 else 0.0
 
+        # Compound formula requires radial depth; in diameter mode MM_FRACTION includes 2× multiplier
+        if self.app.els.at_cross_slide_diameter_mode:
+            delta_x_mm /= 2.0
+
         compound_angle = self._get_compound_angle_degrees()
         delta_z_mm = delta_x_mm * tan(radians(compound_angle))
 
