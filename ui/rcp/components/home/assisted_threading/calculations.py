@@ -249,14 +249,10 @@ class AssistedThreadingCalculationsMixin:
         if self.app.els.at_cross_slide_diameter_mode:
             depth = depth * 2
 
-        # Convert depth to match current display format if needed
+        # depth is always in mm at this point; convert to display units if needed
         is_current_format_metric = self.app.formats.current_format == "MM"
-        if self.bar.metric_mode and not is_current_format_metric:
-            # Calculated in mm but displaying in inches
+        if not is_current_format_metric:
             depth = depth / MM_PER_INCH
-        elif not self.bar.metric_mode and is_current_format_metric:
-            # Calculated in inches but displaying in mm
-            depth = depth * MM_PER_INCH
 
         log.info(f"Calculated thread depth: {depth:.4f} (pitch={pitch:.4f}, type={thread_type}, metric_mode={self.bar.metric_mode}, current_format={'MM' if is_current_format_metric else 'IN'}, diameter_mode={self.app.els.at_cross_slide_diameter_mode})")
         return depth
