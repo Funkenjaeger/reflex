@@ -209,11 +209,11 @@ class TestCalculateThreadDepth:
         assert abs(w._calculate_thread_depth() - 0.5 * 1.5) < 0.001
 
     def test_imperial_16_tpi_iso_metric(self):
-        """16 TPI, display in inches → no unit conversion applied.
-        pitch = 25.4/16 mm; depth = 0.61343 × pitch (raw formula)."""
+        """16 TPI, display in inches → depth converted to inches (÷ 25.4).
+        pitch_mm = 25.4/16; depth_in = 0.61343 × pitch_mm / 25.4 = 0.61343/16."""
         w = self._w("16", "ISO Metric", metric_mode=False, is_metric_format=False)
         pitch_mm = 25.4 / 16
-        assert abs(w._calculate_thread_depth() - 0.61343 * pitch_mm) < 0.001
+        assert abs(w._calculate_thread_depth() - 0.61343 * pitch_mm / 25.4) < 0.001
 
     def test_diameter_mode_doubles_depth(self):
         w = self._w("1.5", "ISO Metric", diameter_mode=True)
@@ -239,9 +239,9 @@ class TestCalculateThreadDepth:
         assert abs(w._calculate_thread_depth() - expected_in) < 0.0001
 
     def test_imperial_tpi_displayed_in_mm(self):
-        """TPI pitch but display in MM: depth converted by *25.4."""
+        """TPI pitch, display in MM: depth stays in mm (no extra conversion)."""
         w = self._w("16", "ISO Metric", metric_mode=False, is_metric_format=True)
-        expected = 0.61343 * (25.4 / 16) * 25.4
+        expected = 0.61343 * (25.4 / 16)
         assert abs(w._calculate_thread_depth() - expected) < 0.001
 
 
@@ -367,24 +367,25 @@ class TestCalculateThreadDepthTpi:
         app.els.at_cross_slide_diameter_mode = diameter_mode
         return wizard
 
-    def _pitch_mm(self, tpi: str) -> float:
-        return 25.4 / float(tpi)
+    def _pitch_in(self, tpi: str) -> float:
+        """TPI → pitch in inches (= 1/TPI)."""
+        return 1.0 / float(tpi)
 
     def test_unified_16_tpi_inch_display(self):
         w = self._w("16", "Unified")
-        assert abs(w._calculate_thread_depth() - 0.64952 * self._pitch_mm("16")) < 0.001
+        assert abs(w._calculate_thread_depth() - 0.64952 * self._pitch_in("16")) < 0.001
 
     def test_whitworth_16_tpi_inch_display(self):
         w = self._w("16", "Whitworth")
-        assert abs(w._calculate_thread_depth() - 0.6403 * self._pitch_mm("16")) < 0.001
+        assert abs(w._calculate_thread_depth() - 0.6403 * self._pitch_in("16")) < 0.001
 
     def test_acme_16_tpi_inch_display(self):
         w = self._w("16", "ACME")
-        assert abs(w._calculate_thread_depth() - 0.5 * self._pitch_mm("16")) < 0.001
+        assert abs(w._calculate_thread_depth() - 0.5 * self._pitch_in("16")) < 0.001
 
     def test_diameter_mode_doubles_tpi_depth(self):
         w = self._w("16", "ISO Metric", diameter_mode=True)
-        assert abs(w._calculate_thread_depth() - 0.61343 * self._pitch_mm("16") * 2) < 0.001
+        assert abs(w._calculate_thread_depth() - 0.61343 * self._pitch_in("16") * 2) < 0.001
 
     def test_zero_tpi_raises(self):
         """Zero TPI → ZeroDivisionError: the code does `25.4 / tpi` before the
