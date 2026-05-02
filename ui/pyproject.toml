@@ -28,7 +28,6 @@ dev = [
     "pytest>=8.3.4",
     "python-semantic-release>=9.15.2",
     "graphviz>=0.20",
-    "graphifyy",
 ]
 
 [build-system]
