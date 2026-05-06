@@ -6,6 +6,15 @@ RCP is a Kivy-based DRO (Digital Read-Out) and single-axis controller UI for rot
 It communicates with embedded hardware (STM32) over RS-485/Modbus RTU using `minimalmodbus`.
 Target platforms: Raspberry Pi (primary), Linux, Windows, macOS.
 
+## Design Patterns
+
+Follow the architecture guidelines in [kivy-fsm-design-pattern.md](kivy-fsm-design-pattern.md)
+for any work involving state machines, controllers, or UI/HAL boundaries. It defines the
+layered architecture (UI → Controller → FSM → HAL), event bus conventions, the
+declarative state-to-UI policy table, and anti-patterns to avoid. Consult it before
+adding or refactoring `transitions`-based FSMs, dispatchers that mediate between widgets
+and hardware, or multi-step operator flows.
+
 ## Build and Run
 
 ```bash
@@ -179,12 +188,3 @@ def update_tick(self, *args, **kv):
 self.app.device['servo']['maxSpeed'] = value
 value = self.app.device['servo']['maxSpeed']
 ```
-
-## graphify
-
-This project has a graphify knowledge graph at graphify-out/.
-
-Rules:
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` to keep the graph current

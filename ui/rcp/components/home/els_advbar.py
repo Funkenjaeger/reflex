@@ -1,11 +1,10 @@
 from kivy.logger import Logger
-from kivy.properties import AliasProperty, NumericProperty, BooleanProperty, StringProperty
+from kivy.properties import NumericProperty, BooleanProperty, StringProperty
 from kivy.uix.boxlayout import BoxLayout
 
 from rcp import feeds
 from rcp.components.home.thread_type import ThreadType
 from rcp.components.popups.custom_popup import CustomPopup
-from rcp.dispatchers.els_state_machine import ElsStateMachine
 from rcp.dispatchers.saving_dispatcher import SavingDispatcher
 from rcp.utils.kv_loader import load_kv
 
@@ -14,7 +13,7 @@ load_kv(__file__)
 
 
 class ElsAdvancedBar(BoxLayout, SavingDispatcher):
-    """Unified ELS advanced bar — hosts the ElsStateMachine and supports all
+    """Unified ELS advanced bar — hosts the Els UI controller and supports all
     three operating modes (stop-only, stop+retract, wizard) via the
     enable_stop/enable_retract/enable_wizard flags.
     """
@@ -32,14 +31,9 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     shaft_diameter = NumericProperty(1)
     inner_thread = BooleanProperty(False)
 
-    # ── ELS Stop hardware state ─────────────────────────────────────────────
-    els_stop_engaged = BooleanProperty(False)
-    els_stop_active = BooleanProperty(False)
-
     # ── Transient UI state ───────────────────────────────────────────────────
     is_active = BooleanProperty(True)
     is_running = BooleanProperty(False)
-    action_button_enabled = BooleanProperty(True)
     label_text = StringProperty("")
     display_value = StringProperty("")
     next_button_text = StringProperty("")
@@ -48,33 +42,6 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     material_width = NumericProperty(0)
     cutting_depth = NumericProperty(0)
     last_cutting_depth = NumericProperty(0)
-    retract_button_visible = BooleanProperty(False)
-    retract_button_enabled = BooleanProperty(True)
-
-    def _get_retract_button_shown(self):
-        if self.enable_wizard:
-            return self.retract_button_visible
-        if self.enable_retract:
-            return True
-        return False
-
-    retract_button_shown = AliasProperty(
-        _get_retract_button_shown,
-        bind=['enable_wizard', 'enable_retract', 'retract_button_visible'],
-    )
-
-    def _get_retract_button_usable(self):
-        if self.enable_wizard:
-            return self.retract_button_enabled
-        if self.enable_retract:
-            return self.els_stop_active
-        return False
-
-    retract_button_usable = AliasProperty(
-        _get_retract_button_usable,
-        bind=['enable_wizard', 'enable_retract',
-              'retract_button_enabled', 'els_stop_active'],
-    )
 
     # ── State-machine mirror + per-button display text ───────────────────────
     current_state = StringProperty("idle")
@@ -86,7 +53,6 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     _skip_save = [
         "is_active",
         "is_running",
-        "action_button_enabled",
         "label_text",
         "display_value",
         "next_button_text",
@@ -95,8 +61,6 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         "material_width",
         "cutting_depth",
         "last_cutting_depth",
-        "retract_button_visible",
-        "retract_button_enabled",
         "current_state",
         "start_z_text",
         "stop_z_text",
@@ -113,9 +77,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         from rcp.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
         self.els_bar = els_bar
-        self.action_button_condition_fn = None
-        self.retract_button_condition_fn = None
-        self._on_value_button_release = None
+        self.controller = self.app.els_uic
         super().__init__(**kwargs)
 
         self.current_feeds_table = (
@@ -124,54 +86,34 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         if not self.thread_profile_type:
             self.thread_profile_type = ThreadType.ISO_METRIC.value
 
-        self.machine = ElsStateMachine(self)
+        # Mirror persisted widget mode flags into the controller so the
+        # FSM can read them via conditions / on_enter callbacks.
+        self.controller.wizard_enabled = self.enable_wizard
+        self.controller.retract_enabled = self.enable_retract
+        self.bind(enable_wizard=self._sync_wizard_to_controller,
+                  enable_retract=self._sync_retract_to_controller)
+
         self.update_feeds_ratio(self, None)
         if self.els_bar is not None:
-            self.els_bar.bind(els_forward=self.update_feeds_ratio)
-        self.bind(els_stop_engaged=self._on_els_stop_engaged)
-        self.bind(enable_retract=self._update_hysteresis)
-        self.bind(enable_wizard=self._update_hysteresis)
-        self.app.board.bind(update_tick=self._poll_els_stop_active)
+            self.controller.els_forward = self.els_bar.els_forward
+            self.els_bar.bind(els_forward=self._on_els_forward_changed)
 
-    # ── Engage / disengage ───────────────────────────────────────────────────
+    # ── Mode-flag mirroring (widget persistence → controller) ────────────────
+
+    def _sync_wizard_to_controller(self, instance, value):
+        self.controller.wizard_enabled = value
+
+    def _sync_retract_to_controller(self, instance, value):
+        self.controller.retract_enabled = value
+
+    def _on_els_forward_changed(self, instance, value):
+        self.controller.els_forward = value
+        self.update_feeds_ratio(instance, value)
+
+    # ── Engage / disengage (delegates to controller) ─────────────────────────
 
     def toggle_engage(self):
-        self.els_stop_engaged = not self.els_stop_engaged
-
-    def _on_els_stop_engaged(self, instance, value):
-        if not self.app.board.connected:
-            return
-        if value:
-            els_forward = self.els_bar.els_forward if self.els_bar is not None else True
-            stop_direction = -1 if els_forward else 1
-            self.app.board.device['elsStop']['active'] = 0
-            self.app.board.device['elsStop']['stopDirection'] = stop_direction
-            self.app.board.device['elsStop']['enable'] = 1
-            self._update_hysteresis()
-            log.info(f"elsStop engaged, stopDirection={stop_direction}")
-        else:
-            self.app.board.device['elsStop']['enable'] = 0
-            log.info("elsStop disengaged")
-
-    def _update_hysteresis(self, *args):
-        if not self.app.board.connected:
-            return
-        hysteresis = 0 if (self.enable_retract or self.enable_wizard) else 800
-        self.app.board.device['elsStop']['hysteresis'] = hysteresis
-        log.info(f"elsStop.hysteresis = {hysteresis}")
-
-    def _poll_els_stop_active(self, *args):
-        if not self.app.board.connected:
-            return
-        active = bool(self.app.board.device['elsStop']['active'])
-        if active != self.els_stop_active:
-            self.els_stop_active = active
-        if active and self.els_stop_engaged:
-            log.info("elsStop.active set by firmware — disengaging indicator")
-            self.els_stop_engaged = False
-        elif not active and not self.els_stop_engaged and self.app.board.device['elsStop']['enable']:
-            log.info("elsStop.active cleared by firmware — re-engaging indicator")
-            self.els_stop_engaged = True
+        self.controller.toggle_engage()
 
     # ── Start / stop ──────────────────────────────────────────────────────────
 
@@ -206,28 +148,6 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
                 ).open()
                 return
         self.is_running = not self.is_running
-        if self.is_running:
-            self.machine.start()
-        else:
-            self.machine.stop()
-
-    # ── Button event handlers ────────────────────────────────────────────────
-
-    def on_action_button_clicked(self):
-        if self.is_running:
-            self.machine.action()
-        else:
-            self.open_settings()
-
-    def on_retract_button_pressed(self):
-        if not self.retract_button_shown or not self.retract_button_usable:
-            return
-        self.machine.start_retracting()
-
-    def on_retract_button_released(self):
-        if not self.retract_button_shown or not self.retract_button_usable:
-            return
-        self.machine.stop_retracting()
 
     # ── Settings ─────────────────────────────────────────────────────────────
 
@@ -259,8 +179,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     # ── Display binding ──────────────────────────────────────────────────────
 
     def bind_display_value_to_scale(self, axis, target_prop: str = "display_value"):
-        """Bind `target_prop` to an AxisDispatcher's formattedPosition with
-        strict keypad override support.
+        """Bind `target_prop` to an AxisDispatcher's formattedPosition.
 
         `target_prop` lets each state target one of the per-button text
         properties (`start_z_text`, `stop_z_text`, `major_diameter_text`)
@@ -268,28 +187,12 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         """
         self.unbind_all_display_value()
         self._bound_scale = axis
-        self._bound_target_prop = target_prop
         inp = axis._primary_input() if axis is not None else None
 
-        manual_override_attr = {
-            "start_z_text": "manual_start_length",
-            "stop_z_text": "manual_stop_length",
-        }.get(target_prop)
-
         def on_encoder_update(*_):
-            if (manual_override_attr and self.machine
-                    and getattr(self.machine, manual_override_attr) is not None):
-                log.info(
-                    f"Scale encoder moved — discarding {manual_override_attr} override"
-                )
-                setattr(self.machine, manual_override_attr, None)
             setattr(self, target_prop, axis.formattedPosition)
-            self.update_buttons_state()
 
         def on_format_update(instance, value):
-            if (manual_override_attr and self.machine
-                    and getattr(self.machine, manual_override_attr) is not None):
-                return
             setattr(self, target_prop, value)
 
         self._on_encoder_update = on_encoder_update
@@ -301,53 +204,24 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
 
         setattr(self, target_prop, axis.formattedPosition)
 
-    def bind_display_value_to_servo_position(self):
-        self.unbind_all_display_value()
-        self._bound_servo = self.app.servo
-
-        def on_servo_position_update(instance, value):
-            self.display_value = value
-
-        self._on_servo_position_update = on_servo_position_update
-        self.app.servo.bind(formattedPosition=on_servo_position_update)
-
-    def bind_btn_value_on_release(self, on_release_fn):
-        """No-op kept for backward compatibility.
-
-        The former single `btn_value` control has been replaced by the four
-        `TextHeaderButton`s (`btn_start_z`, `btn_stop_z`, `btn_major_dia`,
-        `btn_minor_dia`). Keypad entry is now dispatched via
-        :meth:`on_value_button_released` based on the current machine state.
-        """
-        self._on_value_button_release = on_release_fn
-
     def on_value_button_released(self, which: str):
         """Dispatcher wired to each TextHeaderButton's on_release in the kv.
 
-        For stop_z: always opens keypad (supports standalone stop without wizard).
-        For wizard fields: only opens keypad when the machine is prompting.
+        Wizard-state-aware fields (start_z, minor_dia) are routed by
+        controller.ui_state in a future iteration. For now, only stop_z
+        has a concrete handler — the standalone keypad path.
         """
         if which == "stop_z":
-            if hasattr(self, "machine") and self.machine is not None and self.machine.state == "set_stop_z":
-                self.machine._open_stop_position_keypad()
-            else:
-                self._open_standalone_stop_z_keypad()
-            return
-        if which == "start_z":
-            if hasattr(self, "machine") and self.machine is not None:
-                self.machine._open_start_position_keypad()
-            return
-        if not hasattr(self, "machine") or self.machine is None:
-            return
-        state = self.machine.state
-        if which == "minor_dia" and state == "set_minor_diameter":
-            self.machine._open_cutting_depth_keypad()
+            self._open_standalone_stop_z_keypad()
 
     def _open_standalone_stop_z_keypad(self):
-        """Open keypad for stop Z entry outside the wizard state machine."""
+        """Open keypad for stop Z entry outside the wizard state machine.
+
+        Conversion + register writes are delegated to the controller; the
+        widget only handles the keypad UX.
+        """
         from rcp.components.popups.keypad import Keypad
-        z_axis = self.app.els.get_z_axis()
-        if z_axis is None:
+        if self.app.els.get_z_axis() is None:
             from rcp.components.popups.custom_popup import CustomPopup
             CustomPopup(
                 title="Axis Not Configured",
@@ -364,33 +238,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
 
         def on_done(value):
             try:
-                stop_val = float(value)
-                self.stop_z_text = (
-                    f"{stop_val:.3f}" if is_metric else f"{stop_val:.4f}"
-                )
-                # Convert display units to encoder counts
-                z_input = z_axis._primary_input()
-                if z_input is None:
-                    return
-                factor = float(
-                    self.app.formats.MM_FRACTION if is_metric
-                    else self.app.formats.INCHES_FRACTION
-                )
-                encoder_counts = (stop_val / factor) * (
-                    float(z_input.ratioDen) / float(z_input.ratioNum)
-                )
-                stop_encoder = int(round(encoder_counts))
-
-                # Update elsStop registers
-                if self.app.board.connected:
-                    dev = self.app.board.device
-                    dev['elsStop']['stopPosition'] = stop_encoder
-                    dev['elsStop']['scaleIndex'] = z_input.inputIndex
-                    dev['elsStop']['enable'] = 1 if self.els_stop_engaged else 0
-                    log.info(
-                        f"Standalone elsStop: stopPosition={stop_encoder}, "
-                        f"enable={self.els_stop_engaged}"
-                    )
+                self.controller.commit_standalone_stop_z(float(value))
             except ValueError:
                 log.warning(f"Invalid stop Z value: {value}")
 
@@ -406,19 +254,3 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
                 inp.unbind(encoderCurrent=self._on_encoder_update)
             self._bound_scale.unbind(formattedPosition=self._on_format_update)
             self._bound_scale = None
-        if hasattr(self, "_bound_servo") and self._bound_servo is not None:
-            self._bound_servo.unbind(formattedPosition=self._on_servo_position_update)
-            self._bound_servo = None
-        if hasattr(self, "machine") and self.machine is not None:
-            self.machine.unbind_progress_display()
-
-    def update_buttons_state(self):
-        if self.action_button_condition_fn:
-            self.action_button_enabled = self.action_button_condition_fn()
-        else:
-            self.action_button_enabled = True
-
-        if self.retract_button_condition_fn:
-            self.retract_button_enabled = self.retract_button_condition_fn()
-        else:
-            self.retract_button_enabled = True

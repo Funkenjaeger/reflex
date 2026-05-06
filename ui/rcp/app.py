@@ -16,6 +16,7 @@ from rcp.dispatchers.els import ElsDispatcher
 from rcp.dispatchers.formats import FormatsDispatcher
 from rcp.dispatchers.input import InputDispatcher
 from rcp.dispatchers.servo import ServoDispatcher
+from rcp.fsms.ui_controller import ElsUiController
 
 
 class MainApp(App):
@@ -35,6 +36,8 @@ class MainApp(App):
     axes: list[AxisDispatcher] = ListProperty()
 
     els: ElsDispatcher = ObjectProperty()
+
+    els_uic: ElsUiController = ObjectProperty()
 
     current_mode = ConfigParserProperty(
         defaultvalue=1, section="device", key="current_mode", config=config, val_type=int
@@ -104,6 +107,8 @@ class MainApp(App):
         self.axes = list(self.board.axes)
 
         self.els = ElsDispatcher(id_override="0")
+
+        self.els_uic = ElsUiController(els=self.els, board=self.board)
 
         self.beep()
 
