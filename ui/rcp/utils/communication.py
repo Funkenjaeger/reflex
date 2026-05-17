@@ -7,6 +7,8 @@ import minimalmodbus
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
 
+_ERROR_REPEAT_INTERVAL_S = 10.0
+
 
 class ConnectionManager:
     def __init__(
@@ -20,6 +22,7 @@ class ConnectionManager:
         self._connected = False
 
         self._last_error_message: str | None = None
+        self._last_error_time: float = 0.0
 
         self.definitions = []
         self.structures = dict()
@@ -36,15 +39,24 @@ class ConnectionManager:
         self._connected = value
         if value:
             self._last_error_message = None
-            log.info(f"Communication restored with {self.serial_device}")
+            log.info(
+                f"Communication established with {self.serial_device} "
+                f"(baudrate={self.baudrate}, address={self.address})"
+            )
         else:
             log.warning(f"Communication lost with {self.serial_device}")
 
     def _log_error_once(self, message: str):
-        """Log an error message only if it differs from the last one logged."""
+        """Log an error message on first occurrence, then re-log periodically
+        while the same error persists so the user can still see the problem."""
+        now = time.monotonic()
         if message != self._last_error_message:
             self._last_error_message = message
+            self._last_error_time = now
             log.error(message)
+        elif now - self._last_error_time >= _ERROR_REPEAT_INTERVAL_S:
+            self._last_error_time = now
+            log.error(f"{message} (still failing)")
 
     def connect(self):
         if self.connected:
@@ -58,7 +70,6 @@ class ConnectionManager:
             self.device.serial.timeout = 0.1
             self.device.serial.write_timeout = 0.1
             self.device.serial.baudrate = self.baudrate
-            log.info(f"Opened serial port {self.serial_device} (baudrate={self.baudrate}, address={self.address})")
         except Exception as e:
             self.device = None
             self.connected = False
