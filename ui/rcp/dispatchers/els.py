@@ -7,7 +7,7 @@ log = Logger.getChild(__name__)
 
 
 class ElsDispatcher(SavingDispatcher):
-    """Persists ELS axis role assignments and Assisted Threading machine settings."""
+    """Persists ELS axis role assignments and ELS-stop tuning."""
 
     _save_class_name = "Els"
     _skip_save = ["x", "y", "width", "height", "size_hint_x", "size_hint_y",
@@ -22,23 +22,64 @@ class ElsDispatcher(SavingDispatcher):
     # ── Reactive spindle state (updated each tick) ────────────────────
     spindle_is_running = BooleanProperty(False)
 
-    # ── Assisted Threading: thread geometry ───────────────────────────
-    at_cross_slide_diameter_mode = BooleanProperty(False)
+    # ── ELS stop tuning ───────────────────────────────────────────────
+    # Magnitude in servo steps; 0 disables takeup. Direction is derived by
+    # firmware from stopDirection × sign(threadPitchSteps × zCountsPerPitch).
+    # User-facing entry happens in mm via the settings popup, which converts
+    # using the servo ratio.
+    els_backlash_steps = NumericProperty(0)
 
-    # ── Assisted Threading: speed & acceleration ──────────────────────
-    at_reversing_speed = NumericProperty(500)
-    at_preload_adjust_speed = NumericProperty(500)
-    at_threading_max_speed = NumericProperty(2000)
-    at_reversing_adjusting_acceleration = NumericProperty(1000)
-    at_threading_acceleration = NumericProperty(1000)
+    # ── Machine direction polarity ────────────────────────────────────
+    # Three INDEPENDENT polarity knobs. They have to be independent because
+    # they capture three different physical wiring relationships:
+    #
+    #   cut_polarity_inverted     → flips spindle.syncRatioNum sign.
+    #       Captures: operator's "forward" rotation × servo step polarity
+    #       × leadscrew lead direction. Determines which way the carriage
+    #       moves during the cut.
+    #
+    #   stop_polarity_inverted    → flips elsStop.stopDirection sign.
+    #       Captures: operator's "forward" carriage direction × Z-scale
+    #       wiring sign. Determines which side of stopPosition triggers
+    #       the stop, and (because firmware derives backlash takeup
+    #       direction from stopDirection × sign(threadPitchSteps ×
+    #       zCountsPerPitch)) which way takeup moves.
+    #
+    #   z_scale_step_inverted     → flips the sign that converts Z-scale
+    #       count deltas to leadscrew step deltas during non-sync moves
+    #       (retract). Captures: servo step polarity × Z-scale wiring sign
+    #       (independent of spindle).
+    #
+    # Default baseline (all False) matches the original hardcoded logic:
+    # forward → +syncRatio, -stopDirection, scale-to-step inverted (-1).
+    # Flip whichever one(s) at first commissioning so all three motions
+    # (cut, stop trigger, retract) go the right way for this machine.
+    cut_polarity_inverted  = BooleanProperty(False)
+    stop_polarity_inverted = BooleanProperty(False)
+    z_scale_step_inverted  = BooleanProperty(False)
 
-    # ── Assisted Threading: tolerances & backlash ─────────────────────
-    at_rotary_encoder_sync_tolerance = NumericProperty(5)
-    at_saddle_encoder_stability_tolerance = NumericProperty(1)
-    at_saddle_encoder_stability_samples = NumericProperty(3)
-    at_metric_distances = BooleanProperty(True)
-    at_saddle_backlash_distance = NumericProperty(10)
-    at_backlash_cushion = NumericProperty(2)
+    def direction_sign(self, els_forward: bool) -> int:
+        """Sign applied to spindle syncRatioNum to drive the carriage in
+        the operator's "forward" direction. ±1.
+        """
+        base = 1 if els_forward else -1
+        return -base if self.cut_polarity_inverted else base
+
+    def stop_direction_value(self, els_forward: bool) -> int:
+        """Integer value for elsStop.stopDirection register. ±1.
+        Independent of direction_sign — different physical wiring.
+        """
+        base = -1 if els_forward else 1
+        return -base if self.stop_polarity_inverted else base
+
+    def scale_to_step_sign(self) -> int:
+        """Sign that maps a Z-scale count delta to a servo step delta for
+        non-sync moves (retract). ±1. Independent of operator's forward
+        toggle — pure mechanical wiring.
+        """
+        # Default baseline matches the prior hardcoded `step_delta = -1 *
+        # step_delta` flip; toggling z_scale_step_inverted makes it +1.
+        return 1 if self.z_scale_step_inverted else -1
 
     def __init__(self, **kwargs):
         from rcp.app import MainApp

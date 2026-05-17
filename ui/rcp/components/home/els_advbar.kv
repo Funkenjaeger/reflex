@@ -154,3 +154,18 @@
       on_release:
         app.beep()
         root.enable_retract = not root.enable_retract
+
+    Button:
+      id: btn_settings
+      font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+      font_size: min(self.height / 3, self.width / 3)
+      background_color: [0.2, 0.2, 0.2, 1]
+      color: app.formats.display_color
+      text: "\uf013"
+      text_size: self.size
+      halign: 'center'
+      valign: 'middle'
+      disabled: root.is_running
+      on_release:
+        app.beep()
+        root.open_settings()

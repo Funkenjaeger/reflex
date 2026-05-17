@@ -93,7 +93,11 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         self.bind(enable_wizard=self._sync_wizard_to_controller,
                   enable_retract=self._sync_retract_to_controller)
 
-        self.update_feeds_ratio(self, None)
+        # ElsBar is the single writer of spindle.syncRatioNum/Den; it has
+        # already self-initialized the spindle from its persisted state.
+        # We deliberately do NOT call self.update_feeds_ratio() here — that
+        # would race with ElsBar at startup and clobber the visible bar's
+        # selection with whatever this widget last persisted.
         if self.els_bar is not None:
             self.controller.els_forward = self.els_bar.els_forward
             self.els_bar.bind(els_forward=self._on_els_forward_changed)
@@ -157,18 +161,24 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         )
 
     def update_feeds_ratio(self, instance, value):
+        # ElsAdvancedBar does NOT write the spindle syncRatio itself. The
+        # popup-driven pitch selection (or anything else that calls this)
+        # is propagated to ElsBar, which owns the single canonical
+        # spindle-write path.
         if not self.is_active:
             return
-        ratio = self.current_feeds_table[self.current_feeds_index].ratio
-        spindle_axis = self.app.els.get_spindle_axis()
-        els_forward = self.els_bar.els_forward if self.els_bar is not None else True
-        if spindle_axis is not None:
-            direction = 1 if els_forward else -1
-            spindle_axis.syncRatioNum = ratio.numerator * direction
-            spindle_axis.syncRatioDen = ratio.denominator
+        if self.els_bar is None:
+            return
+        mode_name = "Thread MM" if self.metric_mode else "Thread IN"
+        idx = int(self.current_feeds_index)
+        # Sync ElsBar's selection. set_feed_ratio() doesn't itself trigger
+        # ElsBar.update_feeds_ratio (Kivy property bindings don't fire when
+        # the value is unchanged), so call it explicitly to guarantee a
+        # spindle write reflecting the new pitch.
+        self.els_bar.set_feed_ratio(mode_name, idx)
+        self.els_bar.update_feeds_ratio(self.els_bar, None)
         log.info(
-            f"Configured ratio is: {ratio.numerator}/{ratio.denominator}, "
-            f"els_forward={els_forward}"
+            f"ElsAdvancedBar pitch change → ElsBar({mode_name}[{idx}])"
         )
 
     def open_settings(self):

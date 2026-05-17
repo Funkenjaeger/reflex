@@ -150,6 +150,11 @@ rcp/
 * **PCB design & BOM:** [rotary-controller-pcb](https://github.com/bartei/rotary-controller-pcb)
 * **OSPI OS with pre-installed RCP:** [ospi](https://github.com/bartei/ospi)
 
+### Internal docs
+
+* **FSM architecture pattern:** [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md)
+* **ELS shoulder-stop orchestration:** [`ELS_STOP.md`](ELS_STOP.md)
+
 ---
 
 ## 🧾 Changelog

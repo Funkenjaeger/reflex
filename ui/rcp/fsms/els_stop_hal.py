@@ -12,11 +12,6 @@ log = Logger.getChild(__name__)
 class ElsStopHal:
     """Domain-named operations against the elsStop register block."""
 
-    # ELS Stop direction mirrors the firmware convention: -1 when the
-    # operator's "forward" direction matches positive scale travel.
-    DIR_FORWARD = -1
-    DIR_REVERSE = 1
-
     # Hysteresis values used by the firmware to debounce the stop trigger.
     HYSTERESIS_TIGHT = 0      # active retract / wizard — stop on first crossing
     HYSTERESIS_LOOSE = 800    # standalone stop — tolerate small overshoot
@@ -45,11 +40,13 @@ class ElsStopHal:
         return bool(self._board.device['elsStop']['active'])
 
     # ── direction / hysteresis ────────────────────────────────────────
-    def set_stop_direction(self, forward: bool) -> None:
+    def set_stop_direction(self, value: int) -> None:
+        # Caller (FSM / controller / UI bar) computes the signed value
+        # via ElsDispatcher.stop_direction_value(els_forward). The HAL
+        # just writes the int the firmware expects (-1 or +1).
         if not self._board.connected:
             return
-        d = self.DIR_FORWARD if forward else self.DIR_REVERSE
-        self._board.device['elsStop']['stopDirection'] = d
+        self._board.device['elsStop']['stopDirection'] = int(value)
 
     def set_hysteresis_tight(self) -> None:
         self._set_hysteresis(self.HYSTERESIS_TIGHT)
@@ -78,11 +75,65 @@ class ElsStopHal:
             return
         self._board.device['servo']['stepsToGo'] = steps
 
-    # ──  ── 
+    # ── thread geometry ───────────────────────────────────────────────
     def set_thread_pitch_steps(self, tps_value: float) -> None:
         if not self._board.connected:
             return
         self._board.device['elsStop']['threadPitchSteps'] = tps_value
+
+    def set_z_counts_per_pitch(self, value: float) -> None:
+        # 0.0 disables the firmware's Z-scale-based phase correction.
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['zCountsPerPitch'] = value
+
+    def set_backlash_steps(self, magnitude: int) -> None:
+        # uint32 magnitude in servo steps. The firmware derives the takeup
+        # direction from stopDirection × sign(threadPitchSteps × zCountsPerPitch).
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['backlashSteps'] = max(0, int(magnitude))
+
+    # ── diagnostics / latch readbacks (low frequency) ─────────────────
+    def read_reference_latched(self) -> bool:
+        if not self._board.connected:
+            return False
+        return bool(self._board.device['elsStop']['referenceLatched'])
+
+    def read_takeup_pending(self) -> bool:
+        if not self._board.connected:
+            return False
+        return bool(self._board.device['elsStop']['takeupPending'])
+
+    def read_latched_z(self) -> int:
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['latchedZ'])
+
+    def read_latched_spindle(self) -> int:
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['latchedSpindle'])
+
+    def read_last_ideal_advance(self) -> float:
+        if not self._board.connected:
+            return 0.0
+        return float(self._board.device['elsStop']['lastIdealAdvance'])
+
+    def read_last_actual_advance(self) -> float:
+        if not self._board.connected:
+            return 0.0
+        return float(self._board.device['elsStop']['lastActualAdvance'])
+
+    def read_last_phase_error(self) -> float:
+        if not self._board.connected:
+            return 0.0
+        return float(self._board.device['elsStop']['lastPhaseError'])
+
+    def read_last_correction(self) -> float:
+        if not self._board.connected:
+            return 0.0
+        return float(self._board.device['elsStop']['lastCorrection'])
 
     def is_move_done(self) -> bool:
         return self._board.device['servo']['stepsToGo'] == 0

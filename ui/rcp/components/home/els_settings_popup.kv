@@ -40,3 +40,23 @@
                 name: "Inner Thread"
                 value: root.bar.inner_thread
                 on_value: root.bar.inner_thread = self.value
+
+            NumberItem:
+                name: "Backlash takeup (mm)"
+                value: root.backlash_mm
+                on_value: root.backlash_mm = self.value
+
+            BooleanItem:
+                name: "Invert sync direction"
+                value: app.els.cut_polarity_inverted
+                on_value: app.els.cut_polarity_inverted = self.value
+
+            BooleanItem:
+                name: "Invert stop direction"
+                value: app.els.stop_polarity_inverted
+                on_value: app.els.stop_polarity_inverted = self.value
+
+            BooleanItem:
+                name: "Invert retract direction"
+                value: app.els.z_scale_step_inverted
+                on_value: app.els.z_scale_step_inverted = self.value

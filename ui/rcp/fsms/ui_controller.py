@@ -146,7 +146,7 @@ class ElsUiController(EventDispatcher):
         # without forcing an FSM transition.
         if self._els_fsm.state != "stopped":
             return
-        self._hal.set_stop_direction(forward=self.els_forward)
+        self._hal.set_stop_direction(self._els.stop_direction_value(self.els_forward))
         if self.retract_enabled or self.wizard_enabled:
             self._hal.set_hysteresis_tight()
         else:
