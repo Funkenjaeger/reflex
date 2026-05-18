@@ -5,43 +5,63 @@
   size_hint_y: None
   height: 128
 
-  # ── LEDs ──
+  # ── ELS-stop tri-state LED + Engage/Disengage button ──
   BoxLayout:
     orientation: "vertical"
     size_hint_x: None
+    width: 96
+
     LedButton:
-      label: "Engaged" if root.controller.engaged else "Disengaged"
-      checkbox_value: root.controller.engaged
-    LedButton:
-      label: "Disarmed"
-      checkbox_value: False
-  # ── Engage/Disengage button ──
-  Button:
-    text: "Disengage" if root.controller.engaged else "Engage"
-    size_hint_x: None
-    width: self.height * 0.6
-    on_release:
-      app.beep()
-      root.toggle_engage()
+      size_hint_y: None
+      height: 28
+      font_size: 12
+      label: "Disabled" if not root.controller.engaged else ("Stopped" if root.controller.els_stop_active else "Armed")
+      current_color: [0.4, 0.4, 0.4, 1] if not root.controller.engaged else ([0.8, 0.15, 0.15, 1] if root.controller.els_stop_active else [0.15, 0.7, 0.15, 1])
+
+    Button:
+      text: "Disengage" if root.controller.engaged else "Engage"
+      on_release:
+        app.beep()
+        root.toggle_engage()
 
   BoxLayout:
     orientation: 'vertical'
 
-    # ── Wizard instruction bar (if enabled) ───────────────────────────────────
-    Label: # Wizard instruction bar
-      id: label_instruction
-      text: root.controller.instruction_text
-      text_size: self.size
+    # ── Wizard instruction bar ─────────────────────────────────────────────────
+    # depth_reached indicator is an overlay (FloatLayout child) so it can
+    # extend past the Stop-button column on the left without stealing width
+    # from the centered instruction text.
+    FloatLayout:
       size_hint_y: 0.2
-      font_size: 16
-      halign: 'center'
-      valign: 'top'
       canvas.before:
         Color:
           rgba: [0.2, 0.2, 0.2, 1]
         Rectangle:
           pos: self.pos
           size: self.size
+
+      Label:
+        id: label_instruction
+        text: root.controller.instruction_text
+        text_size: self.size
+        size_hint: 1, 1
+        pos_hint: {'x': 0, 'y': 0}
+        font_size: 16
+        halign: 'center'
+        valign: 'top'
+
+      Label:
+        id: label_depth_reached
+        text: "Stop ø reached" if root.controller.depth_reached else ""
+        text_size: self.size
+        size_hint: None, None
+        size: 200, 24
+        pos_hint: {'x': 0, 'top': 1}
+        font_size: 16
+        halign: 'left'
+        valign: 'middle'
+        padding: 8, 0
+        color: [0.4, 1.0, 0.4, 1]
 
     # ── Controls (varied by mode) ─────────────────────────────────────────────
     BoxLayout:
@@ -92,6 +112,7 @@
         width: self.height if root.enable_wizard else 0
         opacity: 1 if root.enable_wizard else 0
         disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
+        on_release: root.on_value_button_released("major_dia")
 
       TextHeaderButton:
         id: btn_minor_dia
@@ -101,7 +122,7 @@
         width: self.height if root.enable_wizard else 0
         opacity: 1 if root.enable_wizard else 0
         disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
-        on_release: root.controller.x_z_inputs_enabled and root.on_value_button_released("minor_dia")
+        on_release: root.on_value_button_released("minor_dia")
 
       Widget: # spacer
 
@@ -111,7 +132,7 @@
         width: self.height if root.enable_wizard else 0
         size_hint_x: None
         opacity: 1 if root.enable_wizard else 0
-        disabled: not root.enable_wizard
+        disabled: not root.enable_wizard or not root.controller.action_button_text or not root.controller.action_allowed
         #font_name: "fonts/iosevka-regular.ttf" if root.is_running else "fonts/Font Awesome 6 Free-Solid-900.otf"
         text: root.controller.action_button_text
         font_size: self.height / 4

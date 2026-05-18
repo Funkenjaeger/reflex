@@ -101,6 +101,13 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         if self.els_bar is not None:
             self.controller.els_forward = self.els_bar.els_forward
             self.els_bar.bind(els_forward=self._on_els_forward_changed)
+            # Mirror thread/feed mode and inner/outer direction so the controller
+            # can apply mode-specific safety gates (e.g. block Z-retract when
+            # threading and X is still at depth).
+            self._sync_is_threading()
+            self.els_bar.bind(mode_name=lambda *_: self._sync_is_threading())
+        self.controller.is_inner = self.inner_thread
+        self.bind(inner_thread=lambda *_: setattr(self.controller, "is_inner", self.inner_thread))
 
     # ── Mode-flag mirroring (widget persistence → controller) ────────────────
 
@@ -113,6 +120,11 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     def _on_els_forward_changed(self, instance, value):
         self.controller.els_forward = value
         self.update_feeds_ratio(instance, value)
+
+    def _sync_is_threading(self):
+        # ElsBar.mode_name uses the "Thread" prefix for threading feed tables
+        # (e.g. "Thread MM", "Thread IN"); feed tables don't contain it.
+        self.controller.is_threading = "Thread" in (self.els_bar.mode_name or "")
 
     # ── Engage / disengage (delegates to controller) ─────────────────────────
 
@@ -223,6 +235,10 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         """
         if which == "stop_z":
             self._open_standalone_stop_z_keypad()
+        elif which == "major_dia":
+            self._open_standalone_diameter_keypad("major")
+        elif which == "minor_dia":
+            self._open_standalone_diameter_keypad("minor")
 
     def _open_standalone_stop_z_keypad(self):
         """Open keypad for stop Z entry outside the wizard state machine.
@@ -255,6 +271,41 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         keypad.show_with_callback(
             callback_fn=on_done,
             current_value=0.0,
+        )
+
+    def _open_standalone_diameter_keypad(self, which: str):
+        """Open keypad for manual major/minor diameter entry.
+
+        Bypasses the wizard's "move to position and press Set" flow. Writes
+        directly to controller.start_dia / controller.stop_dia; validation
+        bindings run automatically.
+        """
+        from rcp.components.popups.keypad import Keypad
+        if self.app.els.get_x_axis() is None:
+            from rcp.components.popups.custom_popup import CustomPopup
+            CustomPopup(
+                title="Axis Not Configured",
+                message="Cross-slide (X) axis is not set in ELS settings.",
+                button_text="OK",
+            ).open()
+            return
+
+        is_metric = self.app.formats.current_format == "MM"
+        unit_label = "mm" if is_metric else "in"
+        target_attr = "start_dia" if which == "major" else "stop_dia"
+        title_label = "Major ø" if which == "major" else "Minor ø"
+        keypad = Keypad(title=f"Enter {title_label} ({unit_label})")
+        keypad.integer = False
+
+        def on_done(value):
+            try:
+                setattr(self.controller, target_attr, float(value))
+            except ValueError:
+                log.warning(f"Invalid {target_attr} value: {value}")
+
+        keypad.show_with_callback(
+            callback_fn=on_done,
+            current_value=getattr(self.controller, target_attr),
         )
 
     def unbind_all_display_value(self):

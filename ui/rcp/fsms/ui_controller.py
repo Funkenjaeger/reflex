@@ -13,9 +13,9 @@ log = Logger.getChild(__name__)
 
 UI_POLICY = {
     "idle":          {"action_button_text": "\uf013", "can_stop": True, "instruction_text": ""},
-    "set_stop_z":    {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to or enter stop Z position and press Set"},
-    "set_retract_z": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to or enter start Z position and press Set"},
-    "set_start_dia": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to or enter start diameter and press Set"},
+    "set_stop_z":    {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to stop Z position and press Set"},
+    "set_retract_z": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to start Z position and press Set"},
+    "set_start_dia": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to start diameter and press Set"},
     "set_stop_dia":  {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to or enter stop diameter and press Set"},
     "confirm":       {"action_button_text": "Confirm", "can_stop": True, "instruction_text": "Confirm half nut is engaged"},
     "in_cycle.waiting_to_cut":     {"action_button_text": "Cut", "can_stop": True, "instruction_text": "Ready to cut"},
@@ -44,10 +44,23 @@ class ElsUiController(EventDispatcher):
     engaged             = BooleanProperty(False)   # True iff domain FSM not in 'disabled'
     els_stop_active     = BooleanProperty(False)   # mirrors HAL read_active()
 
+    # ── Operator-job descriptors (mirrored from the widget) ────────────
+    # is_threading toggles the X-clear-of-start-dia gate in waiting_to_retract.
+    # is_inner flips the "outside" comparison: OD work retracts to larger X,
+    # ID work retracts to smaller X.
+    is_threading        = BooleanProperty(False)
+    is_inner            = BooleanProperty(False)
+
     # ── Derived UI state ───────────────────────────────────────────────
     x_z_inputs_enabled  = BooleanProperty(False)
     start_stop_enabled  = BooleanProperty(False)
     start_not_stop      = BooleanProperty(False)
+    action_allowed      = BooleanProperty(True)    # gated by state-specific checks
+    # Informational latch: set once a cut in this cycle reaches stop_dia,
+    # cleared when the cycle ends (return to idle, i.e. operator pressed Stop).
+    # Lets the operator see the milestone even while doing additional cleanup
+    # / spring passes that don't visually change the dimension.
+    depth_reached       = BooleanProperty(False)
 
     instruction_text    = StringProperty("")
     action_button_text  = StringProperty("")
@@ -104,6 +117,7 @@ class ElsUiController(EventDispatcher):
         self._apply_policy()
         self._board.bind(connected=self._on_connected_changed)
         self._board.bind(update_tick=self._poll_els_stop_active)
+        self._board.bind(update_tick=self._poll_carriage_retracted)
 
         # 7. Re-arm HAL when mode flags change so firmware tracks the operator.
         self.bind(retract_enabled=self._on_modes_changed,
@@ -141,6 +155,35 @@ class ElsUiController(EventDispatcher):
         if active != self.els_stop_active:
             self.els_stop_active = active
 
+    def _poll_carriage_retracted(self, *args):
+        """Mirror manual carriage motion across retract_z into cycle state.
+
+        When the operator hand-retracts past retract_z (waiting_to_retract →
+        waiting_to_cut), or backs the carriage below retract_z while waiting
+        to cut (waiting_to_cut → waiting_to_retract). Marshals FSM triggers
+        to the main thread since this fires on the board polling thread.
+        """
+        state = self._ui_fsm.state
+        if state not in ("in_cycle.waiting_to_retract", "in_cycle.waiting_to_cut"):
+            return
+        try:
+            retracted = self._els_fsm.is_retracted()
+        except Exception:
+            return
+        if state == "in_cycle.waiting_to_retract" and retracted:
+            Clock.schedule_once(lambda _dt: self._fire_if_allowed("manual_retract_done"), 0)
+        elif state == "in_cycle.waiting_to_cut" and not retracted:
+            Clock.schedule_once(lambda _dt: self._fire_if_allowed("carriage_unretracted"), 0)
+        # Refresh X-position-dependent instruction text / action gate.
+        if state == "in_cycle.waiting_to_retract":
+            Clock.schedule_once(lambda _dt: self._apply_policy(), 0)
+
+    def _fire_if_allowed(self, trigger: str):
+        may = getattr(self._ui_fsm, f"may_{trigger}", None)
+        if may is None or not may():
+            return
+        getattr(self._ui_fsm, trigger)()
+
     def _on_modes_changed(self, *args):
         # When engaged-and-idle, push current direction/hysteresis to firmware
         # without forcing an FSM transition.
@@ -157,11 +200,59 @@ class ElsUiController(EventDispatcher):
         self.x_z_inputs_enabled = self._els_fsm.state in ["stopped", "disabled"]
         self.start_not_stop = self._ui_fsm.state == "idle"
 
-        p = UI_POLICY[self._ui_fsm.state]
+        state = self._ui_fsm.state
+        p = UI_POLICY[state]
         self.start_stop_enabled = p["can_stop"] and self._board.connected
-        self.instruction_text = p["instruction_text"]
         self.action_button_text = p["action_button_text"]
-        self.active_input = BLINK_TARGET.get(self._ui_fsm.state, "")
+        self.active_input = BLINK_TARGET.get(state, "")
+
+        # Dynamic instruction text + action gating (depends on live X position).
+        text = p["instruction_text"]
+        allowed = True
+        if state == "in_cycle.waiting_to_retract":
+            if self.is_threading and not self._x_clear_of_start_dia():
+                text = "Move X clear of start diameter, then retract"
+                allowed = False
+        self.instruction_text = text
+        self.action_allowed = allowed
+
+        # Stop-diameter latch (informational; rendered by a dedicated label).
+        # Latch on the first in-cycle pass that reaches stop_dia; hold through
+        # any cleanup / spring passes; drop the moment we're back to idle.
+        if state == "in_cycle.waiting_to_retract":
+            if not self.depth_reached and self._x_reached_stop_dia():
+                self.depth_reached = True
+        elif state == "idle":
+            if self.depth_reached:
+                self.depth_reached = False
+
+    # ——— X-position predicates ———
+    def _x_position(self):
+        axis = self._els.get_x_axis()
+        if axis is None:
+            return None
+        try:
+            return float(axis.scaledPosition)
+        except Exception:
+            return None
+
+    def _x_clear_of_start_dia(self) -> bool:
+        """True iff X has been backed off the workpiece past start_dia.
+        OD work (is_inner=False): clear means X > start_dia (radially out).
+        ID work (is_inner=True):  clear means X < start_dia (radially in).
+        Missing axis → assume clear, so the gate never blocks a misconfigured rig.
+        """
+        x = self._x_position()
+        if x is None:
+            return True
+        return x < self.start_dia if self.is_inner else x > self.start_dia
+
+    def _x_reached_stop_dia(self) -> bool:
+        """True iff the last cut has reached/passed the configured stop diameter."""
+        x = self._x_position()
+        if x is None:
+            return False
+        return x >= self.stop_dia if self.is_inner else x <= self.stop_dia
 
     # ——— intents from UI ———
     def toggle_engage(self):
@@ -181,6 +272,10 @@ class ElsUiController(EventDispatcher):
         self._hal.set_enable(self.engaged)
 
     def on_action_button_clicked(self):
+        # Capture the live axis position FIRST so the FSM's transition
+        # conditions (e.g. retract_z_valid: retract_z > stop_z) evaluate
+        # against the freshly-captured value, not the stale one carried
+        # over from the previous visit to this wizard step.
         if self._ui_fsm.state == "set_stop_z":
             self.stop_z = self._els.get_z_axis().scaledPosition
         elif self._ui_fsm.state == "set_retract_z":
@@ -192,8 +287,17 @@ class ElsUiController(EventDispatcher):
         elif self._ui_fsm.state == "confirm":
             # write stop z down to FW
             pass
+        # State-specific safety gate (e.g. threading + X still at depth).
+        if not self.action_allowed:
+            log.debug(f"action button gated in state '{self._ui_fsm.state}'")
+            return
+        # No-op when the current state offers no `action` transition (cutting,
+        # retracting, alarm — kv also blanks/disables the button, this is a
+        # safety net for race conditions and stale UI taps).
+        if not self._ui_fsm.may_action():
+            log.debug(f"action button ignored in state '{self._ui_fsm.state}'")
+            return
         self._ui_fsm.action()
-        pass
 
     def on_start_stop_button_clicked(self):
         if self._ui_fsm.state == "idle":

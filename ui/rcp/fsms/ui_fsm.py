@@ -38,6 +38,12 @@ UI_TRANSITIONS = [
     {"trigger": "action", "source": "in_cycle.waiting_to_retract", "dest": "in_cycle.retracting"},
     {"trigger": "retract_done", "source": "in_cycle.retracting", "dest": "in_cycle.waiting_to_cut"},
 
+    # ─── Manual carriage motion: mirror retract-threshold crossings into cycle state ──
+    {"trigger": "manual_retract_done", "source": "in_cycle.waiting_to_retract",
+                                       "dest":   "in_cycle.waiting_to_cut"},
+    {"trigger": "carriage_unretracted", "source": "in_cycle.waiting_to_cut",
+                                        "dest":   "in_cycle.waiting_to_retract"},
+
     # ─── Reverse navigation: back one wizard step ────────────────────────────
     {"trigger": "back", "source": "set_retract_z", "dest": "set_stop_z"},
     {"trigger": "back", "source": "set_start_dia", "dest": "set_retract_z"},

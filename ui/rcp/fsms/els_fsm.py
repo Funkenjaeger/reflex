@@ -121,8 +121,8 @@ class ElsFsm:
         else:
             retract_dir = 1 if span > 0 else -1
             retracted = (z_pos - retract_z) * retract_dir >= 0
-        log.info(
-            f"DEBUG is_retracted() z_pos={z_pos} stop_z={stop_z} "
+        log.debug(
+            f"is_retracted() z_pos={z_pos} stop_z={stop_z} "
             f"retract_z={retract_z} span={span} retracted={retracted}"
         )
         return retracted
