@@ -271,6 +271,20 @@ class ElsUiController(EventDispatcher):
         self._els_fsm.set_stop_z(stop_z_value)
         self._hal.set_enable(self.engaged)
 
+    def try_advance_wizard(self):
+        """Attempt the UI FSM `action` transition with no side effects.
+
+        Used by popup-keypad callbacks that have already committed the
+        operator's typed value. We deliberately don't go through
+        on_action_button_clicked() because that captures the live axis
+        position, which would clobber what the user just entered.
+        """
+        if not self.action_allowed:
+            return
+        if not self._ui_fsm.may_action():
+            return
+        self._ui_fsm.action()
+
     def on_action_button_clicked(self):
         # Capture the live axis position FIRST so the FSM's transition
         # conditions (e.g. retract_z_valid: retract_z > stop_z) evaluate

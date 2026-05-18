@@ -267,6 +267,11 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
                 self.controller.commit_standalone_stop_z(float(value))
             except ValueError:
                 log.warning(f"Invalid stop Z value: {value}")
+                return
+            # If invoked from within the matching wizard step, advance the FSM
+            # so the operator doesn't have to also press Set (which would
+            # capture the live axis position and clobber what they just typed).
+            self.controller.try_advance_wizard()
 
         keypad.show_with_callback(
             callback_fn=on_done,
@@ -302,6 +307,11 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
                 setattr(self.controller, target_attr, float(value))
             except ValueError:
                 log.warning(f"Invalid {target_attr} value: {value}")
+                return
+            # If invoked from within the matching wizard step, advance the FSM
+            # so the operator doesn't have to also press Set (which would
+            # capture the live axis position and clobber what they just typed).
+            self.controller.try_advance_wizard()
 
         keypad.show_with_callback(
             callback_fn=on_done,
