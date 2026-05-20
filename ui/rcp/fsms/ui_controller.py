@@ -12,7 +12,7 @@ from rcp.fsms.fsm_event_bus import fsm_event_bus as bus
 log = Logger.getChild(__name__)
 
 UI_POLICY = {
-    "idle":          {"action_button_text": "\uf013", "can_stop": True, "instruction_text": ""},
+    "idle":          {"action_button_text": "", "can_stop": True, "instruction_text": ""},
     "set_stop_z":    {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to stop Z position and press Set"},
     "set_retract_z": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to start Z position and press Set"},
     "set_start_dia": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to start diameter and press Set"},
@@ -124,6 +124,16 @@ class ElsUiController(EventDispatcher):
                   wizard_enabled=self._on_modes_changed,
                   els_forward=self._on_modes_changed)
 
+        # 8. Re-evaluate UI policy when validity flags change so the action
+        # button enables/disables live as the operator types values in.
+        self.bind(stop_z_valid=lambda *_: self._apply_policy(),
+                  retract_z_valid=lambda *_: self._apply_policy())
+
+        # 9. Land in the correct UI state for the (default) mode flags. The
+        # widget mirrors persisted enable_* flags into the controller after
+        # this point, which will retrigger _on_modes_changed and re-sync.
+        self._sync_ui_state_to_modes()
+
     # ——— event handlers ———
     # Bus events may originate on the ConnectionManager polling thread, so
     # all assignments to Kivy properties are marshaled to the main thread.
@@ -185,6 +195,13 @@ class ElsUiController(EventDispatcher):
         getattr(self._ui_fsm, trigger)()
 
     def _on_modes_changed(self, *args):
+        # Re-sync the UI FSM with the new operator modes. In non-wizard
+        # modes the cycle states are the bar's idle landing spot; in wizard
+        # mode the operator drives entry via the Start button.
+        self._sync_ui_state_to_modes()
+        # Action-button gating in waiting_to_cut depends on retract_enabled,
+        # so reapply policy whenever a mode flag flips.
+        self._apply_policy()
         # When engaged-and-idle, push current direction/hysteresis to firmware
         # without forcing an FSM transition.
         if self._els_fsm.state != "stopped":
@@ -194,6 +211,28 @@ class ElsUiController(EventDispatcher):
             self._hal.set_hysteresis_tight()
         else:
             self._hal.set_hysteresis_loose()
+
+    def _sync_ui_state_to_modes(self):
+        """Align the UI FSM with the current wizard_enabled flag.
+
+        Non-wizard mode has no Start button, so the bar must auto-advance
+        into in_cycle.waiting_to_cut whenever the operator toggles wizard
+        off (or the app starts up in a non-wizard mode). Toggling wizard
+        on cancels back to idle so the wizard can be initiated via Start
+        as today. Mid-cycle transitions are left alone — pulling the rug
+        out from under a live cut would be surprising.
+        """
+        state = self._ui_fsm.state
+        if not self.wizard_enabled:
+            if state == "idle":
+                self._ui_fsm.start()
+            elif state in ("set_stop_z", "set_retract_z",
+                           "set_start_dia", "set_stop_dia", "confirm"):
+                self._ui_fsm.cancel()
+                self._ui_fsm.start()
+        else:
+            if state.startswith("in_cycle"):
+                self._ui_fsm.cancel()
 
     def _apply_policy(self):
         # X/Z input buttons are usable only when the machine is not moving.
@@ -206,11 +245,27 @@ class ElsUiController(EventDispatcher):
         self.action_button_text = p["action_button_text"]
         self.active_input = BLINK_TARGET.get(state, "")
 
-        # Dynamic instruction text + action gating (depends on live X position).
+        # Dynamic instruction text + action gating (depends on live X position
+        # and on per-field validity for the non-wizard cycle states, since
+        # those states are reachable before the operator has entered values).
         text = p["instruction_text"]
         allowed = True
-        if state == "in_cycle.waiting_to_retract":
-            if self.is_threading and not self._x_clear_of_start_dia():
+        if state == "in_cycle.waiting_to_cut":
+            allowed = self.stop_z_valid
+            if self.retract_enabled:
+                allowed = allowed and self.retract_z_valid
+            if not allowed:
+                missing = []
+                if not self.stop_z_valid:
+                    missing.append("Stop Z")
+                if self.retract_enabled and not self.retract_z_valid:
+                    missing.append("Start Z")
+                text = f"Enter {' and '.join(missing)} to begin cutting"
+        elif state == "in_cycle.waiting_to_retract":
+            if not self.retract_z_valid:
+                allowed = False
+                text = "Enter Start Z to retract"
+            elif self.is_threading and not self._x_clear_of_start_dia():
                 text = "Move X clear of start diameter, then retract"
                 allowed = False
         self.instruction_text = text
@@ -263,22 +318,37 @@ class ElsUiController(EventDispatcher):
             self._els_fsm.enable()
 
     def commit_standalone_stop_z(self, stop_z_value: float):
-        """Stop-Z entered via the standalone keypad (no wizard). Pushes the
-        new target through the FSM/HAL and re-arms enable to match the
-        current engagement.
+        """Stop-Z entered via the standalone keypad or long-press capture.
+
+        Stashes the value on the controller only — no firmware writes here.
+        The action button is the sole initiator of motion: when the cycle
+        advances to in_cycle.cutting, ElsFsm.start_cut() pushes stop_z to
+        firmware via the HAL.
         """
         self.stop_z = stop_z_value
-        self._els_fsm.set_stop_z(stop_z_value)
-        self._hal.set_enable(self.engaged)
+
+    def commit_standalone_retract_z(self, retract_z_value: float):
+        """Start-Z (retract target) entered outside the wizard. retract_z is
+        only consumed by ElsFsm.on_enter_retracting, so we just stash it on
+        the controller — no firmware write here.
+        """
+        self.retract_z = retract_z_value
 
     def try_advance_wizard(self):
-        """Attempt the UI FSM `action` transition with no side effects.
+        """If the UI FSM is on a wizard configuration step, advance to the
+        next one. Otherwise do nothing.
 
-        Used by popup-keypad callbacks that have already committed the
-        operator's typed value. We deliberately don't go through
-        on_action_button_clicked() because that captures the live axis
-        position, which would clobber what the user just entered.
+        Used by popup-keypad / long-press callbacks that have already
+        committed the operator's typed (or captured-live) value. We
+        deliberately don't go through on_action_button_clicked() because
+        that captures the live axis position, which would clobber what
+        the user just entered. We gate on state so a long-press in
+        non-wizard mode (UI FSM in in_cycle.waiting_to_cut) doesn't
+        immediately fire a Cut — only the action button initiates motion.
         """
+        if self._ui_fsm.state not in ("set_stop_z", "set_retract_z",
+                                      "set_start_dia", "set_stop_dia"):
+            return
         if not self.action_allowed:
             return
         if not self._ui_fsm.may_action():

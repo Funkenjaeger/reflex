@@ -17,6 +17,7 @@
 
             BooleanItem:
                 name: "Metric Mode"
+                help_file: "els_thread_pitch.md"
                 value: root.bar.metric_mode
                 on_value: root.on_metric_mode_changed(self.value)
 
@@ -24,6 +25,7 @@
                 id: pitches_dropdown
                 height: 60
                 name: "Pitch in MM" if root.bar.metric_mode else "Pitch in IN"
+                help_file: "els_thread_pitch.md"
                 options: root.get_pitches()
                 value: str(root.bar.selected_pitch) if root.bar.selected_pitch is not None else ""
                 on_value: root.on_pitch_selected(self.selected_index, self.value)
@@ -32,31 +34,37 @@
                 id: thread_type_dropdown
                 height: 60
                 name: "Thread Type"
+                help_file: "els_thread_pitch.md"
                 options: root.get_thread_types()
                 value: root.bar.thread_profile_type
                 on_value: root.on_thread_type_selected(self.value)
 
             BooleanItem:
                 name: "Inner Thread"
+                help_file: "els_inner_thread.md"
                 value: root.bar.inner_thread
                 on_value: root.bar.inner_thread = self.value
 
             NumberItem:
                 name: "Backlash takeup (mm)"
+                help_file: "els_backlash_takeup.md"
                 value: root.backlash_mm
                 on_value: root.backlash_mm = self.value
 
             BooleanItem:
                 name: "Invert sync direction"
+                help_file: "els_polarity.md"
                 value: app.els.cut_polarity_inverted
                 on_value: app.els.cut_polarity_inverted = self.value
 
             BooleanItem:
                 name: "Invert stop direction"
+                help_file: "els_polarity.md"
                 value: app.els.stop_polarity_inverted
                 on_value: app.els.stop_polarity_inverted = self.value
 
             BooleanItem:
                 name: "Invert retract direction"
+                help_file: "els_polarity.md"
                 value: app.els.z_scale_step_inverted
                 on_value: app.els.z_scale_step_inverted = self.value

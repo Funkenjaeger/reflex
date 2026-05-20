@@ -35,6 +35,15 @@ class Keypad(Popup):
         )
         self.ids['value'] = value_label
         value_row.add_widget(value_label)
+        # Optional "USE CURRENT" affordance. Hidden by default; the caller
+        # opts in by passing use_current_fn to show_with_callback().
+        self._use_current_button = KeypadButton(
+            text="USE\nCURRENT", size_hint_x=None, width=0,
+            on_release=self._on_use_current,
+        )
+        self._use_current_button.opacity = 0
+        self._use_current_button.disabled = True
+        value_row.add_widget(self._use_current_button)
         value_row.add_widget(KeypadButton(
             text="OLD", size_hint_x=None, width=80,
             on_release=self.load_old_value,
@@ -77,6 +86,7 @@ class Keypad(Popup):
         self._keyboard = Window._system_keyboard
         self._keyboard.bind(on_key_down=self._on_keyboard_down)
         self.callback_fn = None
+        self.use_current_fn = None
 
     def on_current_value(self, instance, value):
         self.title = f"Old Value: {value}"
@@ -118,15 +128,37 @@ class Keypad(Popup):
         self.container = container
         self.open()
 
-    def show_with_callback(self, callback_fn, current_value=None):
+    def show_with_callback(self, callback_fn, current_value=None, use_current_fn=None):
         if current_value is not None:
             # Use the specified current value if passed
             self.current_value = float(current_value)
 
         self.callback_fn = callback_fn
+        self.use_current_fn = use_current_fn
+        self._configure_use_current_button(use_current_fn is not None)
         self.set_method = None
         self.container = None
         self.open()
+
+    def _configure_use_current_button(self, visible: bool):
+        btn = self._use_current_button
+        if visible:
+            btn.width = 120
+            btn.opacity = 1
+            btn.disabled = False
+        else:
+            btn.width = 0
+            btn.opacity = 0
+            btn.disabled = True
+
+    def _on_use_current(self, *_):
+        fn = self.use_current_fn
+        try:
+            self._keyboard.release()
+        finally:
+            self.dismiss()
+        if fn is not None:
+            fn()
 
     def confirm(self, *args, **kwargs):
         try:

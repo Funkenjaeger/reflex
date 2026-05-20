@@ -227,18 +227,41 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         setattr(self, target_prop, axis.formattedPosition)
 
     def on_value_button_released(self, which: str):
-        """Dispatcher wired to each TextHeaderButton's on_release in the kv.
+        """Dispatcher wired to each TextHeaderButton's on_short_press in the kv.
 
-        Wizard-state-aware fields (start_z, minor_dia) are routed by
-        controller.ui_state in a future iteration. For now, only stop_z
-        has a concrete handler — the standalone keypad path.
+        Each field routes to the keypad popup matching its semantics
+        (stop_z / retract_z target a Z axis; diameters target the X axis).
         """
         if which == "stop_z":
             self._open_standalone_stop_z_keypad()
+        elif which == "start_z":
+            self._open_standalone_start_z_keypad()
         elif which == "major_dia":
             self._open_standalone_diameter_keypad("major")
         elif which == "minor_dia":
             self._open_standalone_diameter_keypad("minor")
+
+    def on_value_long_press(self, which: str):
+        """Long-press on a bar button captures the live axis position
+        directly, skipping the keypad. Used for quick "set this to where
+        the carriage is right now" moves in non-wizard modes.
+        """
+        if which in ("stop_z", "start_z"):
+            axis = self.app.els.get_z_axis()
+        else:
+            axis = self.app.els.get_x_axis()
+        if axis is None:
+            return
+        position = float(axis.scaledPosition)
+        if which == "stop_z":
+            self.controller.commit_standalone_stop_z(position)
+        elif which == "start_z":
+            self.controller.commit_standalone_retract_z(position)
+        elif which == "major_dia":
+            self.controller.start_dia = position
+        elif which == "minor_dia":
+            self.controller.stop_dia = position
+        self.controller.try_advance_wizard()
 
     def _open_standalone_stop_z_keypad(self):
         """Open keypad for stop Z entry outside the wizard state machine.
@@ -247,7 +270,8 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         widget only handles the keypad UX.
         """
         from rcp.components.popups.keypad import Keypad
-        if self.app.els.get_z_axis() is None:
+        z_axis = self.app.els.get_z_axis()
+        if z_axis is None:
             from rcp.components.popups.custom_popup import CustomPopup
             CustomPopup(
                 title="Axis Not Configured",
@@ -273,9 +297,55 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
             # capture the live axis position and clobber what they just typed).
             self.controller.try_advance_wizard()
 
+        def use_current():
+            self.controller.commit_standalone_stop_z(float(z_axis.scaledPosition))
+            self.controller.try_advance_wizard()
+
         keypad.show_with_callback(
             callback_fn=on_done,
-            current_value=0.0,
+            current_value=self.controller.stop_z,
+            use_current_fn=use_current,
+        )
+
+    def _open_standalone_start_z_keypad(self):
+        """Open keypad for Start Z (retract target) entry.
+
+        Mirrors the stop-Z keypad: routes through commit_standalone_retract_z
+        so the controller stays the chokepoint for value writes.
+        """
+        from rcp.components.popups.keypad import Keypad
+        z_axis = self.app.els.get_z_axis()
+        if z_axis is None:
+            from rcp.components.popups.custom_popup import CustomPopup
+            CustomPopup(
+                title="Axis Not Configured",
+                message="Saddle (Z) axis is not set in ELS settings.",
+                button_text="OK",
+            ).open()
+            return
+
+        is_metric = self.app.formats.current_format == "MM"
+        keypad = Keypad(
+            title="Enter Start Z Position (" + ("mm" if is_metric else "in") + ")"
+        )
+        keypad.integer = False
+
+        def on_done(value):
+            try:
+                self.controller.commit_standalone_retract_z(float(value))
+            except ValueError:
+                log.warning(f"Invalid start Z value: {value}")
+                return
+            self.controller.try_advance_wizard()
+
+        def use_current():
+            self.controller.commit_standalone_retract_z(float(z_axis.scaledPosition))
+            self.controller.try_advance_wizard()
+
+        keypad.show_with_callback(
+            callback_fn=on_done,
+            current_value=self.controller.retract_z,
+            use_current_fn=use_current,
         )
 
     def _open_standalone_diameter_keypad(self, which: str):

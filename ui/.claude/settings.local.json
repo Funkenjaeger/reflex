@@ -4,7 +4,9 @@
       "Bash(bash runme.sh)",
       "Bash(git config:*)",
       "Bash(uv add:*)",
-      "Bash(uv run:*)"
+      "Bash(uv run:*)",
+      "Bash(find /home/evand/.claude/projects -type d -name \"*rotary-controller-python*\" 2>/dev/null | head -5)",
+      "Read(//home/evand/.claude/projects/**)"
     ]
   }
 }
