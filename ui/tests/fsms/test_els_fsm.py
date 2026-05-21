@@ -15,6 +15,14 @@ from rcp.fsms.els_fsm import ElsFsm
 
 # ─── fixtures: mock collaborators with just enough surface for the FSM ─────
 
+def _set_carriage(z, inp, mm):
+    """Move the simulated carriage: update both the axis's display value
+    AND the encoder counter (the FSM reads encoderCurrent for step_delta
+    computation, not scaledPosition)."""
+    z.scaledPosition = mm
+    inp.encoderCurrent = int(mm)
+
+
 def _make_z_axis(scaled_position=0.0, encoder_offset=0):
     """Minimal Z-axis mock. position_to_encoder maps mm → encoder counts
     one-to-one (offset configurable). _primary_input is needed for the
@@ -218,6 +226,104 @@ def test_on_enter_retracting_pushes_steps_to_go():
     hal.reset_mock()
     fsm.retract()   # is_ready_to_retract: check_x_retract defaults False → allowed
     assert fsm.state == "retracting"
+    hal.set_steps_to_go.assert_called_once_with(-20)
+
+
+# ─── retract backlash compensation ─────────────────────────────────────────
+
+def test_first_retract_after_cut_adds_backlash_to_step_delta():
+    """On the first retract after a cut, the nut is at the cut-side wall.
+    The host must add backlash_steps in the retract direction so the
+    carriage actually reaches retract_z instead of stopping short by the
+    play-window distance."""
+    z, inp = _make_z_axis()
+    hal = MagicMock()
+    controller = _make_controller(stop_z=10.0, retract_z=20.0,
+                                  retract_enabled=True)
+    fsm = _build_fsm(z=z, hal=hal, controller=controller,
+                     els_extra={"els_backlash_steps": 5})
+    # Walk through cut → stopped → retract so the cut entry clears the
+    # flag and we test the first retract after.
+    _set_carriage(z, inp, 20.0)
+    fsm.enable()
+    fsm.cut()
+    fsm.stop_active()
+    _set_carriage(z, inp, 10.0)   # carriage parked at stop_z after cut
+    hal.reset_mock()
+    fsm.retract()
+    # enc_delta = 20 - 10 = 10 → raw step_delta = -10 (sign × ceil × scale_to_step_sign);
+    # backlash of 5 applied in the same sign → -15.
+    hal.set_steps_to_go.assert_called_once_with(-15)
+
+
+def test_self_loop_retract_does_not_add_backlash_twice():
+    """After the first retract has consumed the play window, the nut sits
+    at the retract-side wall. A retracting → retracting self-loop (which
+    fires when the first retract lands short of retract_z) is in the
+    same direction, so it must NOT add backlash again."""
+    z, inp = _make_z_axis()
+    hal = MagicMock()
+    controller = _make_controller(stop_z=10.0, retract_z=20.0,
+                                  retract_enabled=True)
+    fsm = _build_fsm(z=z, hal=hal, controller=controller,
+                     els_extra={"els_backlash_steps": 5})
+    _set_carriage(z, inp, 20.0)   # at retract_z initially
+    fsm.enable()
+    fsm.cut()
+    fsm.stop_active()
+    _set_carriage(z, inp, 10.0)   # cut parked carriage at stop_z
+    fsm.retract()                 # 1st: adds backlash
+    # Simulate the carriage landing 2 mm short of retract_z, then a self-
+    # loop retract (retract_done with is_retracted=False → same state).
+    _set_carriage(z, inp, 18.0)
+    hal.reset_mock()
+    fsm.retract_done()
+    # Self-loop landed back in retracting. enc_delta = 20 - 18 = 2 →
+    # step_delta = -2 (no backlash compensation).
+    hal.set_steps_to_go.assert_called_once_with(-2)
+
+
+def test_retract_backlash_resets_on_next_cut():
+    """A new cut starts a fresh cycle: the next retract must again pre-
+    consume the play window."""
+    z, inp = _make_z_axis()
+    hal = MagicMock()
+    controller = _make_controller(stop_z=10.0, retract_z=20.0,
+                                  retract_enabled=True)
+    fsm = _build_fsm(z=z, hal=hal, controller=controller,
+                     els_extra={"els_backlash_steps": 5})
+    _set_carriage(z, inp, 20.0)
+    fsm.enable()
+    fsm.cut()
+    fsm.stop_active()
+    _set_carriage(z, inp, 10.0)
+    fsm.retract()                 # 1st retract: backlash added
+    # Land at retract_z so retract_done transitions retracting → stopped.
+    _set_carriage(z, inp, 20.0)
+    fsm.retract_done()
+    assert fsm.state == "stopped"
+    # Next cycle: cut → stop → retract again
+    fsm.cut()                     # on_enter_cutting resets the flag
+    fsm.stop_active()
+    _set_carriage(z, inp, 10.0)
+    hal.reset_mock()
+    fsm.retract()
+    # enc_delta = 10 → raw step_delta = -10; backlash applied again on
+    # this fresh first-retract-of-cycle → -15.
+    hal.set_steps_to_go.assert_called_once_with(-15)
+
+
+def test_retract_with_zero_backlash_setting_is_unchanged():
+    """When the user hasn't configured backlash, the host commands the
+    raw step_delta — no compensation."""
+    z, _ = _make_z_axis()
+    hal = MagicMock()
+    controller = _make_controller(stop_z=10.0, retract_z=20.0)
+    fsm = _build_fsm(z=z, hal=hal, controller=controller,
+                     els_extra={"els_backlash_steps": 0})
+    fsm.enable()
+    hal.reset_mock()
+    fsm.retract()
     hal.set_steps_to_go.assert_called_once_with(-20)
 
 

@@ -136,4 +136,24 @@ class ElsStopHal:
         return float(self._board.device['elsStop']['lastCorrection'])
 
     def is_move_done(self) -> bool:
-        return self._board.device['servo']['stepsToGo'] == 0
+        """True only when the firmware's commanded indexing motion has been
+        fully *executed*, not just consumed by the planner.
+
+        The firmware's `updateIndexingPosition` decrements `stepsToGo` as
+        it accumulates `positionIncrement` into `desiredSteps`. The step
+        pulse generator is separately rate-limited by `servoCycles`
+        (derived from maxSpeed) and emits one pulse per `servoCycles`
+        ticks until `currentSteps` catches up to `desiredSteps`. When
+        `stepsToGo == 0` alone the planner is done but pulses are often
+        still in flight — declaring the move complete then lets the ELS
+        FSM re-issue a follow-up retract on top of the still-pending
+        pulses, producing the proportional overshoot we hit in testing.
+        Wait for the pulses to actually flush by also requiring
+        `currentSteps == desiredSteps`.
+        """
+        if not self._board.connected:
+            return False
+        if self._board.device['servo']['stepsToGo'] != 0:
+            return False
+        return (self._board.device['servo']['currentSteps']
+                == self._board.device['servo']['desiredSteps'])

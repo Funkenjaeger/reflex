@@ -55,6 +55,15 @@ class ElsFsm:
         self.check_x_retract = False # TODO: move to controller
         self.inside = False # TODO: move to controller
 
+        # Whether the leadscrew nut is already at the retract-side wall.
+        # The firmware does a backlash takeup in the cutting direction at
+        # cut start, leaving the nut against the cut-side wall. The first
+        # retract after that has to traverse the full play window before
+        # the carriage starts moving — see on_enter_retracting for the
+        # compensation. Subsequent same-direction retract self-loops do
+        # not need the compensation.
+        self._retract_backlash_applied = False
+
 
     # ——— transition side effects ———
     def on_enter_retracting(self):
@@ -62,12 +71,36 @@ class ElsFsm:
         enc_target = self.z_axis.position_to_encoder(self.controller.retract_z)
         enc_delta = enc_target - enc_current
         step_delta = self._scale_counts_to_steps(enc_delta)
-        log.info(f"***retract(): {enc_current} {enc_target} {enc_delta} {step_delta}")
+
+        # On the FIRST retract after a cut, the leadscrew nut is at the
+        # cut-side wall (the firmware's pre-cut takeup pinned it there).
+        # The first `backlash_steps` of retract motion just walk the nut
+        # across the play window without moving the carriage, so add
+        # them to the commanded move. Self-loop corrections within the
+        # same retracting episode don't reverse direction, so the flag
+        # stays True until the next cut (or disable) resets it.
+        backlash_added = 0
+        if step_delta != 0 and not self._retract_backlash_applied:
+            backlash_steps = int(self.els.els_backlash_steps or 0)
+            if backlash_steps:
+                sign = 1 if step_delta > 0 else -1
+                backlash_added = sign * backlash_steps
+                step_delta += backlash_added
+            self._retract_backlash_applied = True
+
+        log.info(
+            f"retract: z_pos={self.z_axis.scaledPosition} "
+            f"retract_z={self.controller.retract_z} "
+            f"enc_d={enc_delta} step_d={step_delta} backlash_added={backlash_added}"
+        )
         self.set_scale_index()
         self.hal.set_steps_to_go(step_delta)
         self.board.bind(update_tick=self._on_board_update)
 
     def on_enter_cutting(self):
+        # Starting a new cut reverses direction, so the next retract will
+        # again need to traverse the play window.
+        self._retract_backlash_applied = False
         self.hal.set_scale_index(self._saddle_input.inputIndex)
         self.push_thread_geometry() # TODO: only if threading!
         self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
@@ -96,6 +129,9 @@ class ElsFsm:
         self.hal.set_enable(True)
 
     def on_enter_disabled(self):
+        # Nut position is unknown after disable + re-enable + manual jogs,
+        # so conservatively assume the next retract needs full takeup.
+        self._retract_backlash_applied = False
         self.board.unbind(update_tick=self._on_board_update)
         self.hal.set_enable(False)
 
