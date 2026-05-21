@@ -32,6 +32,16 @@ def _pump(n=3):
         Clock.tick()
 
 
+def _engage(ctrl):
+    """Toggle the domain FSM into 'stopped' and pump until `engaged` is
+    mirrored back into the controller. Most tests of cycle-state gating
+    need this — the bar refuses to enable Start/Stop or action until the
+    operator has hit Engage, since the underlying FSM triggers have no
+    valid source from 'disabled'."""
+    ctrl.toggle_engage()
+    _pump()
+
+
 def _make_z_axis(scaled_position=0.0, encoder_offset=0):
     axis = MagicMock()
     axis.scaledPosition = scaled_position
@@ -125,12 +135,14 @@ def test_toggling_wizard_off_mid_wizard_cancels_and_enters_in_cycle(ctrl):
 # ─── Action-button gating in non-wizard cycle states ───────────────────────
 
 def test_stop_only_action_allowed_with_valid_stop_z(ctrl):
+    _engage(ctrl)
     # Default stop_z=0; validator considers it valid (no criteria).
     assert ctrl.action_allowed is True
     assert ctrl.instruction_text == "Ready to cut"
 
 
 def test_stop_retract_action_blocked_until_retract_z_set(ctrl):
+    _engage(ctrl)
     ctrl.retract_enabled = True
     _pump()
     # retract_z=0, stop_z=0 → retract_z > stop_z is False → retract_z_valid False
@@ -139,6 +151,7 @@ def test_stop_retract_action_blocked_until_retract_z_set(ctrl):
 
 
 def test_stop_retract_action_allows_after_setting_retract_z(ctrl):
+    _engage(ctrl)
     ctrl.retract_enabled = True
     ctrl.stop_z = 5.0
     ctrl.retract_z = 10.0
@@ -146,6 +159,46 @@ def test_stop_retract_action_allows_after_setting_retract_z(ctrl):
     assert ctrl.retract_z_valid is True
     assert ctrl.action_allowed is True
     assert ctrl.instruction_text == "Ready to cut"
+
+
+# ─── Disengaged: Start/Stop and action are gated off entirely ──────────────
+
+def test_action_blocked_when_not_engaged(ctrl):
+    """Without Engage, the underlying FSM triggers (cut, retract) have no
+    valid source — pressing the action button used to raise MachineError.
+    Now the button is disabled until the operator engages."""
+    assert ctrl.engaged is False
+    assert ctrl.action_allowed is False
+    assert "Engage" in ctrl.instruction_text
+
+
+def test_engaging_enables_action(ctrl):
+    assert ctrl.action_allowed is False
+    _engage(ctrl)
+    assert ctrl.engaged is True
+    assert ctrl.action_allowed is True
+
+
+def test_start_stop_disabled_when_not_engaged_in_wizard_mode(ctrl):
+    """The wizard's Start button must also be gated on engagement — without
+    it, pressing Start would walk the wizard through set_* and confirm but
+    crash when the cycle finally fires cut() against a disabled FSM."""
+    ctrl.wizard_enabled = True
+    _pump()
+    # idle policy says can_stop=True, but engaged=False blocks it.
+    assert ctrl.engaged is False
+    assert ctrl.start_stop_enabled is False
+
+
+def test_disengaging_mid_cycle_disables_action(ctrl):
+    """If the operator disengages mid-cycle, the action button must
+    immediately disable so they can't press it and crash the FSM."""
+    _engage(ctrl)
+    assert ctrl.action_allowed is True
+    ctrl.toggle_engage()   # back to disabled
+    _pump()
+    assert ctrl.engaged is False
+    assert ctrl.action_allowed is False
 
 
 # ─── Validators ────────────────────────────────────────────────────────────
@@ -254,6 +307,7 @@ def test_on_action_button_clicked_captures_stop_z_in_wizard():
     c = ElsUiController(els=els, board=board)
     c.wizard_enabled = True
     _pump()
+    _engage(c)
     c._ui_fsm.start()                  # idle → set_stop_z
     c.on_action_button_clicked()       # captures live z → advances FSM
     assert c.stop_z == 12.34
@@ -266,7 +320,9 @@ def test_on_action_button_clicked_captures_diameters_in_wizard():
     c = ElsUiController(els=els, board=board)
     c.wizard_enabled = True
     _pump()
+    _engage(c)
     c._ui_fsm.fsm.set_state("set_start_dia")
+    c._apply_policy()   # set_state bypasses broadcast; refresh action_allowed
     c.on_action_button_clicked()
     assert c.start_dia == 22.0
     assert c._ui_fsm.state == "set_stop_dia"
@@ -345,6 +401,7 @@ def test_try_advance_wizard_advances_when_in_matching_state():
     c = ElsUiController(els=els, board=board)
     c.wizard_enabled = True
     _pump()
+    _engage(c)
     c._ui_fsm.start()
     c.stop_z = 4.0  # keypad-style entry; bypasses live capture
     c.try_advance_wizard()
@@ -357,6 +414,7 @@ def test_try_advance_wizard_noop_in_non_wizard_cycle_state(ctrl):
     capture would auto-fire the action transition and start a cut,
     bypassing the requirement that the action button is the only
     motion initiator."""
+    _engage(ctrl)
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
     assert ctrl.action_allowed is True
     ctrl.try_advance_wizard()

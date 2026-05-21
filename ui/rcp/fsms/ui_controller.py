@@ -241,7 +241,12 @@ class ElsUiController(EventDispatcher):
 
         state = self._ui_fsm.state
         p = UI_POLICY[state]
-        self.start_stop_enabled = p["can_stop"] and self._board.connected
+        # Start/Stop and action both require the domain FSM to be engaged —
+        # otherwise the underlying FSM triggers (cut, retract) have no
+        # valid transition from 'disabled' and raise MachineError.
+        self.start_stop_enabled = (
+            p["can_stop"] and self._board.connected and self.engaged
+        )
         self.action_button_text = p["action_button_text"]
         self.active_input = BLINK_TARGET.get(state, "")
 
@@ -250,7 +255,10 @@ class ElsUiController(EventDispatcher):
         # those states are reachable before the operator has entered values).
         text = p["instruction_text"]
         allowed = True
-        if state == "in_cycle.waiting_to_cut":
+        if not self.engaged:
+            allowed = False
+            text = "Engage to begin"
+        elif state == "in_cycle.waiting_to_cut":
             allowed = self.stop_z_valid
             if self.retract_enabled:
                 allowed = allowed and self.retract_z_valid
