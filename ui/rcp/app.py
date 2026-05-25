@@ -1,10 +1,9 @@
 import os
 
-import pygame
-
 import sentry_sdk
 from kivy.app import App
 from kivy.config import Config
+from kivy.core.audio import SoundLoader
 from kivy.properties import ObjectProperty, ConfigParserProperty, NumericProperty, ListProperty, StringProperty, BooleanProperty
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
@@ -55,7 +54,7 @@ class MainApp(App):
 
     def beep(self, *args, **kv):
         if self.sound and hasattr(self, "formats"):
-            self.sound.set_volume(self.formats.volume)
+            self.sound.volume = self.formats.volume
             self.sound.play()
 
     @staticmethod
@@ -86,9 +85,7 @@ class MainApp(App):
 
         # Load beep sound
         sound_path = os.path.join(os.path.dirname(__file__), "sounds", "snap.wav")
-        pygame.mixer.pre_init(frequency=44100, size=-16, channels=1, buffer=512)
-        pygame.init()
-        self.sound = pygame.mixer.Sound(sound_path)
+        self.sound = SoundLoader.load(sound_path)
         if self.sound is None:
             log.warning(f"Failed to load sound from {sound_path}")
 
