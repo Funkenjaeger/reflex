@@ -41,10 +41,10 @@ class HomePage(Screen):
             4: DroModeLayout(),
         }
 
-        # Configure initial mode, disable Indexing if servo is in ELS mode
+        # Configure initial mode: coerce to a mode valid for the current use case.
         self.next_mode = self.app.current_mode
-        if self.app.servo.elsMode and self.next_mode == 1:
-            self.next_mode = 2
+        if self.next_mode not in self.app.allowed_modes():
+            self.next_mode = 4  # DRO is valid for every use case
 
         self.current_layout = None
         self._keyboard = Window._system_keyboard

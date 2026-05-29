@@ -19,13 +19,12 @@ class ModePopup(Popup):
         self.size_hint = (0.6, 0.8)
         self.auto_dismiss = False
 
+        allowed = self.app.allowed_modes()
         buttons = BoxLayout(orientation="vertical")
-        if not self.app.servo.elsMode:
-            buttons.add_widget(KeypadButton(text="Indexing", return_value=1, on_release=self.confirm))
-
-        buttons.add_widget(KeypadButton(text="ELS", return_value=2, on_release=self.confirm))
-        buttons.add_widget(KeypadButton(text="JOG", return_value=3, on_release=self.confirm))
-        buttons.add_widget(KeypadButton(text="DRO", return_value=4, on_release=self.confirm))
+        for label, mode_id in (("Indexing", 1), ("ELS", 2), ("JOG", 3), ("DRO", 4)):
+            if mode_id not in allowed:
+                continue
+            buttons.add_widget(KeypadButton(text=label, return_value=mode_id, on_release=self.confirm))
         self.add_widget(buttons)
         self.callback_fn = None
 

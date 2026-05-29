@@ -17,6 +17,25 @@ from rcp.dispatchers.input import InputDispatcher
 from rcp.dispatchers.servo import ServoDispatcher
 from rcp.fsms.ui_controller import ElsUiController
 
+# Operating modes (must match home_screen mode_layouts keys and ModePopup buttons)
+MODE_INDEX = 1
+MODE_ELS = 2
+MODE_JOG = 3
+MODE_DRO = 4
+
+# Which modes each use case exposes. DRO is available everywhere.
+USE_CASE_MODES = {
+    "rotary_table": [MODE_INDEX, MODE_JOG, MODE_DRO],
+    "lathe": [MODE_ELS, MODE_DRO],
+    "all_features": [MODE_INDEX, MODE_ELS, MODE_JOG, MODE_DRO],
+}
+USE_CASE_LABELS = {
+    "rotary_table": "Rotary Table",
+    "lathe": "Lathe",
+    "all_features": "All Features",
+}
+DEFAULT_USE_CASE = "rotary_table"
+
 
 class MainApp(App):
     formats = ObjectProperty()
@@ -40,6 +59,10 @@ class MainApp(App):
 
     current_mode = ConfigParserProperty(
         defaultvalue=1, section="device", key="current_mode", config=config, val_type=int
+    )
+
+    use_case = ConfigParserProperty(
+        defaultvalue=DEFAULT_USE_CASE, section="device", key="use_case", config=config, val_type=str
     )
 
     manager = ObjectProperty()
@@ -73,8 +96,19 @@ class MainApp(App):
         with open(help_file_path, "r") as f:
             return f.read()
 
+    def allowed_modes(self) -> list[int]:
+        """Modes selectable for the current use case (DRO is always allowed)."""
+        return USE_CASE_MODES.get(self.use_case, USE_CASE_MODES[DEFAULT_USE_CASE])
+
     def set_mode(self, mode_id: int):
+        if mode_id not in self.allowed_modes():
+            mode_id = MODE_DRO
         self.current_mode = mode_id
+
+    def on_use_case(self, instance, value):
+        # If the active mode is no longer valid for the new use case, fall back
+        # to DRO (common to all use cases and the most benign).
+        self.set_mode(self.current_mode)
 
     def get_spindle_axis(self):
         return self.board.get_spindle_axis()

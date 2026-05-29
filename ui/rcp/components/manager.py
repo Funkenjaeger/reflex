@@ -20,6 +20,9 @@ class Manager(ScreenManager):
         from rcp.components.screens.setup_screen import SetupScreen
         self.add_widget(SetupScreen(name="setup_screen"))
 
+        from rcp.components.screens.machine_screen import MachineScreen
+        self.add_widget(MachineScreen(name="machine"))
+
         from rcp.components.screens.network_screen import NetworkScreen
         self.add_widget(NetworkScreen(name="network"))
 

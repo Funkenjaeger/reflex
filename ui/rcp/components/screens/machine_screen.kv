@@ -1,0 +1,26 @@
+#: import ScreenHeader rcp.components.widgets.screen_header
+#: import DropDownItem rcp.components.widgets.dropdown_item
+#: import TitleItem rcp.components.widgets.title_item
+
+<MachineScreen>:
+  BoxLayout:
+    orientation: "vertical"
+    padding: 10
+    ScreenHeader:
+      text: "Machine"
+
+    ScrollView:
+      do_scroll_x: False
+      do_scroll_y: True
+      GridLayout:
+        cols: 1
+        spacing: 1
+        size_hint_y: None
+        height: self.minimum_height
+
+        TitleItem:
+          name: "Machine Type"
+        DropDownItem:
+          id: use_case_dropdown
+          name: "Use Case"
+          on_value: root.on_use_case_selected(self, self.value)
