@@ -31,6 +31,10 @@
           value: root.axis.spindleMode if root.axis else False
           help_file: "spindle_mode.md"
           on_value: root.axis.spindleMode = self.value
+        BooleanItem:
+          name: "Reverse"
+          value: root.axis.reverse if root.axis else False
+          on_value: root.axis.reverse = self.value
 
         TitleItem:
           name: "Sync Ratio"

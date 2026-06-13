@@ -36,6 +36,7 @@ class AxisDispatcher(SavingDispatcher):
     spindleMode = BooleanProperty(False)
     abs_offset = NumericProperty(0)
     offsets = ListProperty([0 for _ in range(100)])
+    reverse = BooleanProperty(False)
 
     # ── Transient properties (skip save) ─────────────────────────────
     scaledPosition = NumericProperty(0)
@@ -168,6 +169,10 @@ class AxisDispatcher(SavingDispatcher):
                     self.scaledPosition = 0
             else:
                 self.scaledPosition = raw * float(self.formats.factor)
+
+            # Apply reverse direction
+            if self.reverse:
+                self.scaledPosition = -self.scaledPosition
 
             # Derive speed from primary input
             primary_idx = self._transform.primary_input
