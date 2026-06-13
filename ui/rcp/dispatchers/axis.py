@@ -164,21 +164,23 @@ class AxisDispatcher(SavingDispatcher):
                 spr = self._steps_per_revolution()
                 if spr > 0:
                     degrees = (raw / spr) * 360
+                    if self.reverse:
+                        degrees = -degrees
                     self.scaledPosition = degrees % 360
                 else:
                     self.scaledPosition = 0
             else:
                 self.scaledPosition = raw * float(self.formats.factor)
-
-            # Apply reverse direction
-            if self.reverse:
-                self.scaledPosition = -self.scaledPosition
+                if self.reverse:
+                    self.scaledPosition = -self.scaledPosition
 
             # Derive speed from primary input
             primary_idx = self._transform.primary_input
             if primary_idx < len(self.inputs):
                 inp = self.inputs[primary_idx]
                 self.speed = self._compute_speed(inp)
+                if self.reverse:
+                    self.speed = -self.speed
 
             # Format — only update StringProperty when text actually changes
             # to avoid triggering Kivy texture regeneration on every tick
