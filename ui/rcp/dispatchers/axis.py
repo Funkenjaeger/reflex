@@ -82,6 +82,7 @@ class AxisDispatcher(SavingDispatcher):
         self.board.bind(connected=self._init_connection)
         self.bind(syncRatioNum=self._set_sync_ratio)
         self.bind(syncRatioDen=self._set_sync_ratio)
+        self.servo.bind(reverse=self._set_sync_ratio)
 
         self._update_position()
 
@@ -264,6 +265,8 @@ class AxisDispatcher(SavingDispatcher):
                     servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
 
             final_ratio = scale_ratio * user_sync / servo_ratio
+            if self.servo.reverse:
+                final_ratio = -final_ratio
             self.board.device['scales'][primary_idx]['syncRatioNum'] = final_ratio.numerator
             self.board.device['scales'][primary_idx]['syncRatioDen'] = final_ratio.denominator
 
