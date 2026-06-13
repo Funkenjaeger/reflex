@@ -73,6 +73,8 @@ class ElsStopHal:
     def set_steps_to_go(self, steps: int) -> None:
         if not self._board.connected:
             return
+        if self._board.servo.reverse:
+            steps = -steps
         self._board.device['servo']['stepsToGo'] = steps
 
     # ── thread geometry ───────────────────────────────────────────────

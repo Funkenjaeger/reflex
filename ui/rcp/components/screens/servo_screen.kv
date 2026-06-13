@@ -74,6 +74,10 @@
           value: root.servo.elsMode
           help_file: "els_mode.md"
           on_value: root.servo.elsMode = self.value
+        BooleanItem:
+          name: "Reverse"
+          value: root.servo.reverse if root.servo else False
+          on_value: root.servo.reverse = self.value
         NumberItem:
           disabled: not root.servo.elsMode
           name: "Lead Screw Pitch in IN" if root.servo.leadScrewPitchIn else "Lead Screw Pitch in MM"
