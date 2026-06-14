@@ -73,6 +73,7 @@ def _make_collaborators(*, z_axis=None, x_axis=None, connected=False):
         syncRatioNum=1, syncRatioDen=1,
     )
     els.stop_direction_value.return_value = +1
+    els.direction_sign.return_value = +1
     els.scale_to_step_sign.return_value = -1
     els.els_backlash_steps = 0
     els.cut_polarity_inverted = False
@@ -135,8 +136,17 @@ def test_toggling_wizard_off_mid_wizard_cancels_and_enters_in_cycle(ctrl):
 # ─── Action-button gating in non-wizard cycle states ───────────────────────
 
 def test_stop_only_action_allowed_with_valid_stop_z(ctrl):
+    """In stop-only mode, UI FSM auto-advances to in_cycle.waiting_to_cut at
+    startup (no Start button). After engage, the action button is enabled
+    when Z is on the safe side of stop_z."""
+    # Z=0, stop_z=0 → Z at stop → blocked by _z_safe_for_cut.
+    # Set stop_z so Z is on the safe side (cut_dir=+1, so Z < stop_z is safe).
+    ctrl.stop_z = 10.0
     _engage(ctrl)
-    # Default stop_z=0; validator considers it valid (no criteria).
+    # Non-wizard mode auto-advances to in_cycle.waiting_to_cut at startup,
+    # so no need to call start() here.
+    assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
+    # Z=0 < stop_z=10 → safe for cut (cut_dir=+1, cutting toward +Z)
     assert ctrl.action_allowed is True
     assert ctrl.instruction_text == "Ready to cut"
 
@@ -173,9 +183,14 @@ def test_action_blocked_when_not_engaged(ctrl):
 
 
 def test_engaging_enables_action(ctrl):
-    assert ctrl.action_allowed is False
+    """In stop-only mode, the UI FSM auto-advances to in_cycle.waiting_to_cut
+    at startup. Before engage, action is blocked by 'not engaged'. After
+    engage, action is enabled when Z is on the safe side of stop_z."""
+    assert ctrl.action_allowed is False  # not engaged
+    ctrl.stop_z = 10.0  # Z=0 < stop_z=10 → safe for cut
     _engage(ctrl)
     assert ctrl.engaged is True
+    assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
     assert ctrl.action_allowed is True
 
 
@@ -193,6 +208,7 @@ def test_start_stop_disabled_when_not_engaged_in_wizard_mode(ctrl):
 def test_disengaging_mid_cycle_disables_action(ctrl):
     """If the operator disengages mid-cycle, the action button must
     immediately disable so they can't press it and crash the FSM."""
+    ctrl.stop_z = 10.0  # Z=0 < stop_z=10 → safe for cut
     _engage(ctrl)
     assert ctrl.action_allowed is True
     ctrl.toggle_engage()   # back to disabled
@@ -335,7 +351,8 @@ def test_on_action_button_clicked_captures_diameters_in_wizard():
 def test_on_action_button_clicked_in_waiting_to_cut_enters_cutting(ctrl):
     """Non-wizard cycle: action button drives waiting_to_cut → cutting."""
     z = ctrl._els.get_z_axis()
-    z.scaledPosition = 0.0   # at retract_z (default 0) → is_retracted True
+    z.scaledPosition = 0.0
+    ctrl.stop_z = 10.0  # Z=0 < stop_z=10 → safe for cut
     ctrl.toggle_engage()
     _pump()
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
@@ -414,6 +431,7 @@ def test_try_advance_wizard_noop_in_non_wizard_cycle_state(ctrl):
     capture would auto-fire the action transition and start a cut,
     bypassing the requirement that the action button is the only
     motion initiator."""
+    ctrl.stop_z = 10.0  # Z=0 < stop_z=10 → safe for cut
     _engage(ctrl)
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
     assert ctrl.action_allowed is True
@@ -483,3 +501,79 @@ def test_depth_reached_clears_when_returning_to_idle():
     c._ui_fsm.cancel()  # → idle (fires after_state_change → _apply_policy via Clock)
     _pump()
     assert c.depth_reached is False
+
+
+def test_poll_carriage_retracted_noop_in_stop_only_mode():
+    """_poll_carriage_retracted must not fire carriage_unretracted in
+    stop-only mode — there is no retract threshold to cross, and
+    is_retracted() would return False (span=0, z!=0), incorrectly
+    transitioning the UI FSM to waiting_to_retract."""
+    z = _make_z_axis(scaled_position=12.7)
+    board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis())
+    c = ElsUiController(els=els, board=board)
+    _pump()
+    # Non-wizard mode auto-advances to in_cycle.waiting_to_cut at startup.
+    assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
+    assert c.retract_enabled is False
+    # Simulate a board update tick
+    c._poll_carriage_retracted()
+    # Should still be in waiting_to_cut, not transitioned to waiting_to_retract
+    assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
+
+
+def test_action_button_disabled_when_z_past_stop_in_stop_only_mode():
+    """In stop-only mode, the action button should be disabled when Z
+    is past stop_z in the cutting direction, and re-enable when Z
+    moves to the safe side."""
+    z = _make_z_axis(scaled_position=12.7)
+    board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
+    c = ElsUiController(els=els, board=board)
+    _pump()
+    # Non-wizard mode auto-advances to in_cycle.waiting_to_cut at startup.
+    assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
+    # Engage domain FSM so action button is not blocked by "not engaged"
+    c.toggle_engage()
+    _pump()
+    # Z=12.7, stop_z=0.0, cut_dir=+1 → Z past stop → button disabled
+    assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
+    assert c.action_allowed is False
+    # Move Z to safe side
+    z.scaledPosition = -1.0
+    c._poll_apply_policy()
+    assert c.action_allowed is True
+
+
+def test_action_button_disabled_when_z_at_stop_in_stop_only_mode():
+    """In stop-only mode, the action button should be disabled when Z
+    is exactly at stop_z — the cut should only start when Z is strictly
+    before the stop position in the cutting direction."""
+    z = _make_z_axis(scaled_position=10.0)
+    board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
+    c = ElsUiController(els=els, board=board)
+    c.stop_z = 10.0
+    _pump()
+    c.toggle_engage()
+    _pump()
+    # Non-wizard mode auto-advances to in_cycle.waiting_to_cut at startup.
+    assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
+    # Z=10.0, stop_z=10.0 → exactly at stop → button disabled
+    assert c.action_allowed is False
+    # Move Z to safe side (below stop_z when cut_dir=+1)
+    z.scaledPosition = 9.9
+    c._poll_apply_policy()
+    assert c.action_allowed is True
+
+
+def test_fsm_cut_blocked_when_z_at_stop_in_stop_only_mode():
+    """The domain FSM's is_ready_to_cut should return False when Z
+    is exactly at stop_z, preventing the cut transition."""
+    z = _make_z_axis(scaled_position=10.0)
+    board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis())
+    c = ElsUiController(els=els, board=board)
+    c.stop_z = 10.0
+    _pump()
+    # Z=10.0, stop_z=10.0 → exactly at stop → not ready to cut
+    assert not c._els_fsm.is_ready_to_cut()
+    # Move Z to safe side
+    z.scaledPosition = 9.9
+    assert c._els_fsm.is_ready_to_cut()

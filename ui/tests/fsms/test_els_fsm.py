@@ -51,13 +51,15 @@ def _make_spindle():
 
 
 def _make_els(*, z_axis=None, x_axis=None, spindle=None,
-              forward_stop=+1, els_backlash_steps=0, scale_to_step_sign=-1):
+               forward_stop=+1, els_backlash_steps=0, scale_to_step_sign=-1,
+               direction_sign=+1):
     els = MagicMock()
     els.get_z_axis.return_value = z_axis
     els.get_x_axis.return_value = x_axis
     els.get_spindle_axis.return_value = spindle or _make_spindle()
     els.stop_direction_value.return_value = forward_stop
     els.scale_to_step_sign.return_value = scale_to_step_sign
+    els.direction_sign.return_value = direction_sign
     els.els_backlash_steps = els_backlash_steps
     els.cut_polarity_inverted = False
     els.stop_polarity_inverted = False
@@ -145,6 +147,15 @@ def test_on_enter_stopped_arms_loose_hysteresis_in_stop_only_mode():
     hal.set_enable.assert_called_with(True)
 
 
+def test_on_enter_stopped_clears_active_flag():
+    """Arming the stop must clear any stale active flag from a previous
+    cycle so the UI doesn't show 'Stopped' immediately after engage."""
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.enable()
+    hal.set_active.assert_called_with(False)
+
+
 def test_on_enter_stopped_arms_tight_hysteresis_when_retract_enabled():
     hal = MagicMock()
     controller = _make_controller(retract_enabled=True)
@@ -206,6 +217,42 @@ def test_on_enter_cutting_arms_and_writes_thread_geometry():
     # Thread geometry comes from spindle/servo ratios; just verify writes happened.
     assert hal.set_thread_pitch_steps.called
     assert hal.set_z_counts_per_pitch.called
+
+
+def test_cut_allowed_in_stop_only_mode_when_z_safe_of_stop():
+    """In stop-only mode, cut is allowed when Z is on the safe side
+    of stop_z (not past it in the cutting direction)."""
+    z, _ = _make_z_axis(scaled_position=12.7)
+    controller = _make_controller(stop_z=10.0, retract_enabled=False, els_forward=True)
+    fsm = _build_fsm(z=z, controller=controller)
+    # els_forward=True → cut_dir=+1, stop_z=10, z=12.7 → (12.7-10)*1 = 2.7 > 0 → NOT safe
+    assert not fsm.is_ready_to_cut()
+    # Move Z to safe side (below stop_z when cutting direction is +1)
+    z.scaledPosition = 8.0
+    assert fsm.is_ready_to_cut()
+
+
+def test_cut_blocked_in_stop_only_mode_when_z_past_stop():
+    """In stop-only mode, cut is blocked when Z has already overshot stop_z."""
+    z, _ = _make_z_axis(scaled_position=15.0)
+    controller = _make_controller(stop_z=10.0, retract_enabled=False, els_forward=True)
+    fsm = _build_fsm(z=z, controller=controller)
+    # cut_dir=+1, z=15, stop_z=10 → already past stop
+    assert not fsm.is_ready_to_cut()
+
+
+def test_cut_blocked_in_stop_only_mode_when_z_at_stop():
+    """In stop-only mode, cut is blocked when Z is exactly at stop_z.
+    The cut should only be allowed when Z is strictly before the stop
+    position in the cutting direction."""
+    z, _ = _make_z_axis(scaled_position=10.0)
+    controller = _make_controller(stop_z=10.0, retract_enabled=False, els_forward=True)
+    fsm = _build_fsm(z=z, controller=controller)
+    # cut_dir=+1, z=10, stop_z=10 → exactly at stop → NOT ready
+    assert not fsm.is_ready_to_cut()
+    # Move Z to safe side
+    z.scaledPosition = 9.9
+    assert fsm.is_ready_to_cut()
 
 
 # ─── retracting entry: encoder delta + step delta computed and pushed ──────

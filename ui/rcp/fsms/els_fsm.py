@@ -119,6 +119,7 @@ class ElsFsm:
         # hysteresis from current operator-mode flags. Idempotent — also
         # runs after the cycle ends or a retract completes.
         self.board.unbind(update_tick=self._on_board_update)
+        self.hal.set_active(False)
         self.hal.set_stop_direction(
             self.els.stop_direction_value(self.controller.els_forward)
         )
@@ -164,7 +165,18 @@ class ElsFsm:
         return retracted
     
     def is_ready_to_cut(self):
-        return self.is_retracted()
+        if self.controller.retract_enabled:
+            return self.is_retracted()
+        # In stop-only mode, verify Z is on the safe side of stop_z
+        # (not past it in the cutting direction).
+        z_pos = self.z_axis.scaledPosition
+        cut_dir = self.els.direction_sign(self.controller.els_forward)
+        result = (z_pos - self.controller.stop_z) * cut_dir < 0
+        log.debug(
+            f"is_ready_to_cut: z_pos={z_pos} stop_z={self.controller.stop_z} "
+            f"cut_dir={cut_dir} → {result}"
+        )
+        return result
 
     # ——— after any state change ———
     def _broadcast(self):

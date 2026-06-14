@@ -118,6 +118,7 @@ class ElsUiController(EventDispatcher):
         self._board.bind(connected=self._on_connected_changed)
         self._board.bind(update_tick=self._poll_els_stop_active)
         self._board.bind(update_tick=self._poll_carriage_retracted)
+        self._board.bind(update_tick=self._poll_apply_policy)
 
         # 7. Re-arm HAL when mode flags change so firmware tracks the operator.
         self.bind(retract_enabled=self._on_modes_changed,
@@ -172,7 +173,13 @@ class ElsUiController(EventDispatcher):
         waiting_to_cut), or backs the carriage below retract_z while waiting
         to cut (waiting_to_cut → waiting_to_retract). Marshals FSM triggers
         to the main thread since this fires on the board polling thread.
+
+        Only active when retract is enabled — in stop-only mode there is no
+        retract threshold to cross, so polling here would incorrectly
+        transition the UI FSM to waiting_to_retract.
         """
+        if not self.retract_enabled:
+            return
         state = self._ui_fsm.state
         if state not in ("in_cycle.waiting_to_retract", "in_cycle.waiting_to_cut"):
             return
@@ -262,13 +269,20 @@ class ElsUiController(EventDispatcher):
             allowed = self.stop_z_valid
             if self.retract_enabled:
                 allowed = allowed and self.retract_z_valid
+            # In stop-only mode, also gate on Z being on the safe side of
+            # stop_z — same check as the domain FSM's is_ready_to_cut.
+            if allowed and not self.retract_enabled:
+                allowed = self._z_safe_for_cut()
             if not allowed:
                 missing = []
                 if not self.stop_z_valid:
                     missing.append("Stop Z")
                 if self.retract_enabled and not self.retract_z_valid:
                     missing.append("Start Z")
-                text = f"Enter {' and '.join(missing)} to begin cutting"
+                if missing:
+                    text = f"Enter {' and '.join(missing)} to begin cutting"
+                elif not self.retract_enabled and not allowed:
+                    text = "Move Z to safe side of stop position"
         elif state == "in_cycle.waiting_to_retract":
             if not self.retract_z_valid:
                 allowed = False
@@ -288,6 +302,38 @@ class ElsUiController(EventDispatcher):
         elif state == "idle":
             if self.depth_reached:
                 self.depth_reached = False
+
+    def _poll_apply_policy(self, *args):
+        """Re-evaluate UI policy on each board tick so the action button
+        enables/disables live as Z moves (important in stop-only mode
+        where _apply_policy is not triggered by other bindings)."""
+        self._apply_policy()
+
+    # ——— Z-position predicates ———
+    def _z_safe_for_cut(self) -> bool:
+        """True iff Z is on the safe side of stop_z (not past it in the
+        cutting direction). Mirrors the domain FSM's is_ready_to_cut
+        logic for stop-only mode."""
+        z_axis = self._els.get_z_axis()
+        if z_axis is None:
+            log.debug("_z_safe_for_cut: z_axis is None → True (don't block)")
+            return True  # Missing axis → don't block
+        try:
+            z_pos = float(z_axis.scaledPosition)
+        except Exception:
+            log.debug(f"_z_safe_for_cut: failed to read z_pos → True (don't block)")
+            return True
+        try:
+            cut_dir = self._els.direction_sign(self.els_forward)
+        except Exception:
+            log.debug(f"_z_safe_for_cut: failed to read cut_dir → True (don't block)")
+            return True
+        result = (z_pos - self.stop_z) * cut_dir < 0
+        log.debug(
+            f"_z_safe_for_cut: z_pos={z_pos} stop_z={self.stop_z} "
+            f"cut_dir={cut_dir} diff={z_pos - self.stop_z} → {result}"
+        )
+        return result
 
     # ——— X-position predicates ———
     def _x_position(self):
