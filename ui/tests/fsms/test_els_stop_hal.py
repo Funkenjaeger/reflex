@@ -34,6 +34,7 @@ def _make_board(connected=True, **registers):
         blocks[block].update(overrides)
     board.device.__getitem__.side_effect = lambda key: blocks[key]
     board._blocks = blocks   # expose for assertions
+    board.servo.reverse = False
     return board
 
 

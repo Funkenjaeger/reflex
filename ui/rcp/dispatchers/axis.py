@@ -227,6 +227,8 @@ class AxisDispatcher(SavingDispatcher):
             log.warning("Cannot convert position to encoder value for spindle axis")
             return 0
         else:
+            if self.reverse:
+                position = -position
             inp = self.inputs[self._transform.primary_input]
             scale_ratio = float ( Fraction(inp.ratioNum, inp.ratioDen) * self.formats.factor )
             p = position / scale_ratio # convert position to ratio_units
