@@ -86,6 +86,7 @@ class ServoDispatcher(SavingDispatcher):
         self.bind(leadScrewPitch=self.configure_lead_screw_ratio)
         self.bind(leadScrewPitchIn=self.configure_lead_screw_ratio)
         self.bind(leadScrewPitchSteps=self.configure_lead_screw_ratio)
+        self.bind(reverse=self._on_reverse_changed)
 
         # Private variables that don't need dispatchers etc
         self.encoderPrevious = 0
@@ -117,6 +118,8 @@ class ServoDispatcher(SavingDispatcher):
                 self.servoMode = self.board.fast_data_values['servoMode']
                 self.board.device['servo']['maxSpeed'] = self.maxSpeed
                 self.board.device['servo']['acceleration'] = self.acceleration
+                servo_dir = -1 if self.reverse else 1
+                self.board.device['servo']['servoDir'] = servo_dir
 
                 if self.servoMode == 0:
                     self.disableControls = True
@@ -174,14 +177,10 @@ class ServoDispatcher(SavingDispatcher):
         is_rotary = self.elsMode is False and self.unitsPerTurn > 0
         if is_rotary:
             val = float(self.position * ratio)
-            if self.reverse:
-                val = -val
             self.scaledPosition = val % self.unitsPerTurn
             fmt = self.formats.angle_format
         else:
             self.scaledPosition = float(self.position * ratio) * self.formats.factor
-            if self.reverse:
-                self.scaledPosition = -self.scaledPosition
             fmt = self.formats.position_format
 
         fp = fmt.format(self.scaledPosition)
@@ -218,8 +217,6 @@ class ServoDispatcher(SavingDispatcher):
                 delta = (delta + steps_per_turn)
 
         if delta != 0:
-            if self.reverse:
-                delta = -delta
             self.board.device['servo']['stepsToGo'] = delta
             self.disableControls = True
             self.previousIndex = self.index
@@ -229,8 +226,6 @@ class ServoDispatcher(SavingDispatcher):
         delta = value - self.oldOffset
         delta_steps = int(delta / ratio)
         if delta_steps != 0:
-            if self.reverse:
-                delta_steps = -delta_steps
             self.board.device['servo']['stepsToGo'] = delta_steps
             self.disableControls = True
             self.oldOffset = value
@@ -246,13 +241,19 @@ class ServoDispatcher(SavingDispatcher):
             self.board.device['servo']['maxSpeed'] = value
 
     def on_jogSpeed(self, instance, value):
-        v = self.jogSpeed
-        if self.reverse:
-            v = -v
-        self.board.device['servo']['jogSpeed'] = v
+        self.board.device['servo']['jogSpeed'] = self.jogSpeed
 
     def on_acceleration(self, instance, value):
         self.board.device['servo']['acceleration'] = self.acceleration
+
+    def _on_reverse_changed(self, instance, value):
+        if not self.board.connected:
+            return
+        servo_dir = -1 if self.reverse else 1
+        try:
+            self.board.device['servo']['servoDir'] = servo_dir
+        except Exception as e:
+            log.error(f"Unable to write servoDir: {e}")
 
     def on_servoMode(self, instance, value):
         self.board.device['fastData']['servoMode'] = self.servoMode
@@ -275,8 +276,6 @@ class ServoDispatcher(SavingDispatcher):
 
     def set_current_position(self, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)
-        if self.reverse:
-            value = -value
         self.position = int(value / ratio)
 
     def update_current_position(self):

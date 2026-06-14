@@ -28,8 +28,8 @@ reversal in the cycle:
   the nut is already on the retract-side wall.
 
 You only configure the magnitude. Direction is derived from the
-cut/stop polarity settings (cuts) or the sign of the retract delta
-(retracts).
+firmware's scaleDir/servoDir registers (cuts) or the sign of the
+retract delta (retracts).
 
 ## Typical Values
 

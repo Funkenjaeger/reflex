@@ -101,24 +101,10 @@ class ElsFsm:
         # Starting a new cut reverses direction, so the next retract will
         # again need to traverse the play window.
         self._retract_backlash_applied = False
+        self.set_stop_z(self.controller.stop_z)
         self.hal.set_scale_index(self._saddle_input.inputIndex)
         self.push_thread_geometry() # TODO: only if threading!
         self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
-        self.hal.set_active(False)
-        log.info(
-            f"on_enter_cutting: els_forward={self.controller.els_forward} "
-            f"cut_inv={self.els.cut_polarity_inverted} "
-            f"stop_inv={self.els.stop_polarity_inverted} "
-            f"z_step_inv={self.els.z_scale_step_inverted} "
-            f"backlash_steps={int(self.els.els_backlash_steps)}"
-        )
-        self.board.bind(update_tick=self._on_board_update)
-
-    def on_enter_stopped(self):
-        # Engaged but idle: arm the stop block and configure direction +
-        # hysteresis from current operator-mode flags. Idempotent — also
-        # runs after the cycle ends or a retract completes.
-        self.board.unbind(update_tick=self._on_board_update)
         self.hal.set_active(False)
         self.hal.set_stop_direction(
             self.els.stop_direction_value(self.controller.els_forward)
@@ -128,6 +114,28 @@ class ElsFsm:
         else:
             self.hal.set_hysteresis_loose()
         self.hal.set_enable(True)
+        log.info(
+            f"on_enter_cutting: els_forward={self.controller.els_forward} "
+            f"backlash_steps={int(self.els.els_backlash_steps)}"
+        )
+        self.board.bind(update_tick=self._on_board_update)
+
+    def on_enter_stopped(self):
+        # Engaged but idle: configure direction + hysteresis from current
+        # operator-mode flags. Do NOT arm the ELS stop block here — arming
+        # with a stale stopPosition and no handler for active triggers in
+        # stopped state causes false ELS fires → Python clears active=0 →
+        # firmware sees active 1→0 + thread geometry set → backlash takeup
+        # fires, pushing Z past the workpiece. ELS is armed only when
+        # cutting starts (on_enter_cutting) with a fresh stopPosition.
+        self.board.unbind(update_tick=self._on_board_update)
+        self.hal.set_stop_direction(
+            self.els.stop_direction_value(self.controller.els_forward)
+        )
+        if self.controller.retract_enabled or self.controller.wizard_enabled:
+            self.hal.set_hysteresis_tight()
+        else:
+            self.hal.set_hysteresis_loose()
 
     def on_enter_disabled(self):
         # Nut position is unknown after disable + re-enable + manual jogs,
@@ -167,14 +175,19 @@ class ElsFsm:
     def is_ready_to_cut(self):
         if self.controller.retract_enabled:
             return self.is_retracted()
-        # In stop-only mode, verify Z is on the safe side of stop_z
-        # (not past it in the cutting direction).
+        # In stop-only mode, verify Z is on the safe side of stop_z AND at
+        # least _safety_margin_mm away. This prevents starting a cut when
+        # too close to the workpiece — even with deferred ELS arming, a
+        # backlash takeup + thread re-sync could push past stop_z before
+        # ELS fires if Z is within that distance.
         z_pos = self.z_axis.scaledPosition
-        cut_dir = self.els.direction_sign(self.controller.els_forward)
-        result = (z_pos - self.controller.stop_z) * cut_dir < 0
+        cut_dir = self.els.stop_direction_value(self.controller.els_forward)
+        margin = self._safety_margin_mm()
+        diff = (z_pos - self.controller.stop_z) * cut_dir
+        result = diff < -margin if margin > 0 else diff < 0
         log.debug(
             f"is_ready_to_cut: z_pos={z_pos} stop_z={self.controller.stop_z} "
-            f"cut_dir={cut_dir} → {result}"
+            f"cut_dir={cut_dir} margin={margin:.4f} diff={diff:.4f} → {result}"
         )
         return result
 
@@ -261,6 +274,34 @@ class ElsFsm:
         self.hal.set_thread_pitch_steps(thread_pitch_steps)
         self.hal.set_z_counts_per_pitch(z_counts_per_pitch)
 
+    # ——— Safety margin ———
+    def _safety_margin_mm(self) -> float:
+        """Minimum distance (mm) Z must be from stop_z before cutting is allowed.
+
+        Thread pitch + backlash distance × 1.1 ensures that even a worst-case
+        backlash takeup followed by thread re-sync cannot push the carriage
+        past the workpiece before ELS can fire.
+        """
+        spindle = self.els.get_spindle_axis()
+        if spindle is None:
+            return 0.0
+        try:
+            pitch_mm = float(Fraction(abs(spindle.syncRatioNum), abs(spindle.syncRatioDen)))
+        except (ValueError, ZeroDivisionError):
+            return 0.0
+
+        try:
+            servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
+        except (ValueError, ZeroDivisionError):
+            return 0.0
+
+        backlash_steps = int(self.els.els_backlash_steps or 0)
+        backlash_mm = float(backlash_steps * float(servo_ratio))
+
+        margin = pitch_mm + backlash_mm * 1.1
+        log.debug(f"_safety_margin_mm: pitch={pitch_mm:.4f} backlash_mm={backlash_mm:.4f} margin={margin:.4f}")
+        return margin
+
     # ——— Helpers ———
     def _scale_counts_to_steps(self, scale_counts : int) -> int:
         scale_ratio = Fraction(abs(self._saddle_input.ratioNum),
@@ -278,7 +319,4 @@ class ElsFsm:
         else:
             magnitude = math.ceil(abs(raw))  # Fraction supports __ceil__
         sign = 1 if raw > 0 else (-1 if raw < 0 else 0)
-        # scale_to_step_sign captures the machine's Z-scale-count ↔
-        # leadscrew-step wiring relationship (independent of the cut /
-        # stop polarities). User can flip it in the settings popup.
-        return sign * magnitude * self.els.scale_to_step_sign()
+        return sign * magnitude

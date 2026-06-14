@@ -25,6 +25,11 @@
           help_file: "spindle_mode.md"
           on_value: root.input.spindleMode = self.value
 
+        BooleanItem:
+          name: "Reverse"
+          value: root.input.reverse
+          on_value: root.input.reverse = self.value
+
         NumberItem:
           name: "Ratio Numerator"
           value: root.input.ratioNum

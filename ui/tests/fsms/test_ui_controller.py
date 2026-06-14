@@ -74,11 +74,7 @@ def _make_collaborators(*, z_axis=None, x_axis=None, connected=False):
     )
     els.stop_direction_value.return_value = +1
     els.direction_sign.return_value = +1
-    els.scale_to_step_sign.return_value = -1
     els.els_backlash_steps = 0
-    els.cut_polarity_inverted = False
-    els.stop_polarity_inverted = False
-    els.z_scale_step_inverted = False
     return board, els
 
 

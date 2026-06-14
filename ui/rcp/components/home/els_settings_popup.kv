@@ -50,21 +50,3 @@
                 help_file: "els_backlash_takeup.md"
                 value: root.backlash_mm
                 on_value: root.backlash_mm = self.value
-
-            BooleanItem:
-                name: "Invert sync direction"
-                help_file: "els_polarity.md"
-                value: app.els.cut_polarity_inverted
-                on_value: app.els.cut_polarity_inverted = self.value
-
-            BooleanItem:
-                name: "Invert stop direction"
-                help_file: "els_polarity.md"
-                value: app.els.stop_polarity_inverted
-                on_value: app.els.stop_polarity_inverted = self.value
-
-            BooleanItem:
-                name: "Invert retract direction"
-                help_file: "els_polarity.md"
-                value: app.els.z_scale_step_inverted
-                on_value: app.els.z_scale_step_inverted = self.value

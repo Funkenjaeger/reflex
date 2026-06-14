@@ -36,7 +36,6 @@ class AxisDispatcher(SavingDispatcher):
     spindleMode = BooleanProperty(False)
     abs_offset = NumericProperty(0)
     offsets = ListProperty([0 for _ in range(100)])
-    reverse = BooleanProperty(False)
 
     # ── Transient properties (skip save) ─────────────────────────────
     scaledPosition = NumericProperty(0)
@@ -82,7 +81,6 @@ class AxisDispatcher(SavingDispatcher):
         self.board.bind(connected=self._init_connection)
         self.bind(syncRatioNum=self._set_sync_ratio)
         self.bind(syncRatioDen=self._set_sync_ratio)
-        self.servo.bind(reverse=self._set_sync_ratio)
 
         self._update_position()
 
@@ -165,23 +163,17 @@ class AxisDispatcher(SavingDispatcher):
                 spr = self._steps_per_revolution()
                 if spr > 0:
                     degrees = (raw / spr) * 360
-                    if self.reverse:
-                        degrees = -degrees
                     self.scaledPosition = degrees % 360
                 else:
                     self.scaledPosition = 0
             else:
                 self.scaledPosition = raw * float(self.formats.factor)
-                if self.reverse:
-                    self.scaledPosition = -self.scaledPosition
 
             # Derive speed from primary input
             primary_idx = self._transform.primary_input
             if primary_idx < len(self.inputs):
                 inp = self.inputs[primary_idx]
                 self.speed = self._compute_speed(inp)
-                if self.reverse:
-                    self.speed = -self.speed
 
             # Format — only update StringProperty when text actually changes
             # to avoid triggering Kivy texture regeneration on every tick
@@ -227,8 +219,6 @@ class AxisDispatcher(SavingDispatcher):
             log.warning("Cannot convert position to encoder value for spindle axis")
             return 0
         else:
-            if self.reverse:
-                position = -position
             inp = self.inputs[self._transform.primary_input]
             scale_ratio = float ( Fraction(inp.ratioNum, inp.ratioDen) * self.formats.factor )
             p = position / scale_ratio # convert position to ratio_units
@@ -267,8 +257,6 @@ class AxisDispatcher(SavingDispatcher):
                     servo_ratio = Fraction(self.servo.ratioNum, self.servo.ratioDen)
 
             final_ratio = scale_ratio * user_sync / servo_ratio
-            if self.servo.reverse:
-                final_ratio = -final_ratio
             self.board.device['scales'][primary_idx]['syncRatioNum'] = final_ratio.numerator
             self.board.device['scales'][primary_idx]['syncRatioDen'] = final_ratio.denominator
 

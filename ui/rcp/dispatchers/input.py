@@ -35,6 +35,7 @@ class InputDispatcher(SavingDispatcher):
     encoder_ppr = NumericProperty(1000)
     gear_ratio_num = NumericProperty(1)
     gear_ratio_den = NumericProperty(1)
+    reverse = BooleanProperty(False)
 
     # ── Transient computed properties ────────────────────────────────
     _spindle_wrap_steps = NumericProperty(0)
@@ -62,6 +63,7 @@ class InputDispatcher(SavingDispatcher):
 
         # Bindings
         self.board.bind(update_tick=self._on_update_tick)
+        self.board.bind(connected=self._write_scale_dir_on_connect)
         self.bind(position=self._update_scaled_value)
         self.bind(ratioNum=self._update_scaled_value)
         self.bind(ratioDen=self._update_scaled_value)
@@ -70,6 +72,7 @@ class InputDispatcher(SavingDispatcher):
         self.bind(spindleMode=self._update_wrap_steps)
         self.bind(encoder_ppr=self._update_wrap_steps)
         self.bind(gear_ratio_num=self._update_wrap_steps)
+        self.bind(reverse=self._on_reverse_changed)
 
         self._update_wrap_steps()
         self._update_scaled_value()
@@ -117,3 +120,21 @@ class InputDispatcher(SavingDispatcher):
         )[self.inputIndex]
         self.speed_history.append(steps_per_second)
         self.steps_per_second = sum(self.speed_history) / len(self.speed_history)
+
+    def _write_scale_dir_on_connect(self, instance, value):
+        if not self.board.connected:
+            return
+        scale_dir = -1 if self.reverse else 1
+        try:
+            self.board.device['scales'][self.inputIndex]['scaleDir'] = scale_dir
+        except Exception as e:
+            log.error(f"Unable to write scaleDir for input {self.inputIndex}: {e}")
+
+    def _on_reverse_changed(self, instance, value):
+        if not self.board.connected:
+            return
+        scale_dir = -1 if self.reverse else 1
+        try:
+            self.board.device['scales'][self.inputIndex]['scaleDir'] = scale_dir
+        except Exception as e:
+            log.error(f"Unable to write scaleDir for input {self.inputIndex}: {e}")

@@ -96,14 +96,14 @@ class ElsUiController(EventDispatcher):
                   start_dia=lambda *_: self._validate_start_dia(),
                   stop_dia=lambda *_: self._validate_stop_dia())
 
-        # 2. Eagerly compute initial validation so FSM guards don't start False.
+        # 2. Build domain FSM (HAL injected; controller doubles as modes source).
+        self._els_fsm = ElsFsm(els, board, self._hal, self)
+
+        # 3. Eagerly compute initial validation so FSM guards don't start False.
         self._validate_stop_z()
         self._validate_retract_z()
         self._validate_start_dia()
         self._validate_stop_dia()
-
-        # 3. Build domain FSM (HAL injected; controller doubles as modes source).
-        self._els_fsm = ElsFsm(els, board, self._hal, self)
 
         # 4. Build UI FSM last (depends on a fully-constructed controller).
         self._ui_fsm = ElsUiFsm(self)
@@ -311,8 +311,8 @@ class ElsUiController(EventDispatcher):
 
     # ——— Z-position predicates ———
     def _z_safe_for_cut(self) -> bool:
-        """True iff Z is on the safe side of stop_z (not past it in the
-        cutting direction). Mirrors the domain FSM's is_ready_to_cut
+        """True iff Z is on the safe side of stop_z AND at least
+        _safety_margin_mm away. Mirrors the domain FSM's is_ready_to_cut
         logic for stop-only mode."""
         z_axis = self._els.get_z_axis()
         if z_axis is None:
@@ -324,14 +324,16 @@ class ElsUiController(EventDispatcher):
             log.debug(f"_z_safe_for_cut: failed to read z_pos → True (don't block)")
             return True
         try:
-            cut_dir = self._els.direction_sign(self.els_forward)
+            cut_dir = self._els.stop_direction_value(self.els_forward)
         except Exception:
             log.debug(f"_z_safe_for_cut: failed to read cut_dir → True (don't block)")
             return True
-        result = (z_pos - self.stop_z) * cut_dir < 0
+        margin = self._els_fsm._safety_margin_mm()
+        diff = (z_pos - self.stop_z) * cut_dir
+        result = diff < -margin if margin > 0 else diff < 0
         log.debug(
             f"_z_safe_for_cut: z_pos={z_pos} stop_z={self.stop_z} "
-            f"cut_dir={cut_dir} diff={z_pos - self.stop_z} → {result}"
+            f"cut_dir={cut_dir} margin={margin:.4f} diff={diff:.4f} → {result}"
         )
         return result
 
@@ -456,8 +458,10 @@ class ElsUiController(EventDispatcher):
         self.stop_z_error = ""
 
     def _validate_retract_z(self):
-        self.retract_z_valid = self.retract_z > self.stop_z # TODO: account for direction
-        self.retract_z_error = "" if self.retract_z_valid else "Invalid retract Z setting"
+        margin = self._els_fsm._safety_margin_mm()
+        span = abs(self.retract_z - self.stop_z)
+        self.retract_z_valid = span >= margin if margin > 0 else self.retract_z != self.stop_z
+        self.retract_z_error = "" if self.retract_z_valid else "Retract Z too close to stop position"
 
     def _validate_start_dia(self):
         # No validation criteria

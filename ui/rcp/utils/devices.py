@@ -71,6 +71,8 @@ typedef struct {
   uint32_t destinationSteps;
   uint32_t currentSteps;
   uint32_t desiredSteps;
+  int16_t servoDir;
+  int16_t _pad;
 } servo_t;
 """
 
@@ -83,7 +85,7 @@ typedef struct {
   int32_t speed;
   int32_t syncRatioNum, syncRatioDen;
   uint16_t syncEnable;
-  uint16_t _pad0;
+  int16_t scaleDir;
 } input_t;
 """
 

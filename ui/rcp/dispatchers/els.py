@@ -30,56 +30,19 @@ class ElsDispatcher(SavingDispatcher):
     els_backlash_steps = NumericProperty(0)
 
     # ── Machine direction polarity ────────────────────────────────────
-    # Three INDEPENDENT polarity knobs. They have to be independent because
-    # they capture three different physical wiring relationships:
-    #
-    #   cut_polarity_inverted     → flips spindle.syncRatioNum sign.
-    #       Captures: operator's "forward" rotation × servo step polarity
-    #       × leadscrew lead direction. Determines which way the carriage
-    #       moves during the cut.
-    #
-    #   stop_polarity_inverted    → flips elsStop.stopDirection sign.
-    #       Captures: operator's "forward" carriage direction × Z-scale
-    #       wiring sign. Determines which side of stopPosition triggers
-    #       the stop, and (because firmware derives backlash takeup
-    #       direction from stopDirection × sign(threadPitchSteps ×
-    #       zCountsPerPitch)) which way takeup moves.
-    #
-    #   z_scale_step_inverted     → flips the sign that converts Z-scale
-    #       count deltas to leadscrew step deltas during non-sync moves
-    #       (retract). Captures: servo step polarity × Z-scale wiring sign
-    #       (independent of spindle).
-    #
-    # Default baseline (all False) matches the original hardcoded logic:
-    # forward → +syncRatio, -stopDirection, scale-to-step inverted (-1).
-    # Flip whichever one(s) at first commissioning so all three motions
-    # (cut, stop trigger, retract) go the right way for this machine.
-    cut_polarity_inverted  = BooleanProperty(False)
-    stop_polarity_inverted = BooleanProperty(False)
-    z_scale_step_inverted  = BooleanProperty(False)
+    # Direction canonicalization is now handled by firmware via scaleDir
+    # and servoDir. These methods return the sign for the operator's
+    # "forward" toggle only — no learned/commissioned state needed.
 
     def direction_sign(self, els_forward: bool) -> int:
         """Sign applied to spindle syncRatioNum to drive the carriage in
         the operator's "forward" direction. ±1.
         """
-        base = 1 if els_forward else -1
-        return -base if self.cut_polarity_inverted else base
+        return 1 if els_forward else -1
 
     def stop_direction_value(self, els_forward: bool) -> int:
-        """Integer value for elsStop.stopDirection register. ±1.
-        Independent of direction_sign — different physical wiring.
-        """
-        base = -1 if els_forward else 1
-        return -base if self.stop_polarity_inverted else base
-
-    def scale_to_step_sign(self) -> int:
-        """Sign that maps a Z-scale count delta to a servo step delta for
-        non-sync moves (retract). ±1. Independent of operator's forward
-        toggle — pure mechanical wiring.
-        """
-        # Default baseline matches the prior hardcoded `step_delta = -1 *
-        # step_delta` flip; toggling z_scale_step_inverted makes it +1.
-        return 1 if self.z_scale_step_inverted else -1
+        """Integer value for elsStop.stopDirection register. ±1."""
+        return -1 if els_forward else 1
 
     def __init__(self, **kwargs):
         from rcp.app import MainApp

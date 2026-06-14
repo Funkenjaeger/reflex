@@ -51,19 +51,15 @@ def _make_spindle():
 
 
 def _make_els(*, z_axis=None, x_axis=None, spindle=None,
-               forward_stop=+1, els_backlash_steps=0, scale_to_step_sign=-1,
-               direction_sign=+1):
+                forward_stop=+1, els_backlash_steps=0,
+                direction_sign=+1):
     els = MagicMock()
     els.get_z_axis.return_value = z_axis
     els.get_x_axis.return_value = x_axis
     els.get_spindle_axis.return_value = spindle or _make_spindle()
     els.stop_direction_value.return_value = forward_stop
-    els.scale_to_step_sign.return_value = scale_to_step_sign
     els.direction_sign.return_value = direction_sign
     els.els_backlash_steps = els_backlash_steps
-    els.cut_polarity_inverted = False
-    els.stop_polarity_inverted = False
-    els.z_scale_step_inverted = False
     return els
 
 
@@ -263,8 +259,7 @@ def test_on_enter_retracting_pushes_steps_to_go():
        encoder_current = 0 (z._primary_input().encoderCurrent default)
        enc_delta = 20 - 0 = 20
        step_delta = scale_counts_to_steps(20)
-         Fraction(20) * 1/1 / 1/1 = 20; sign +1; magnitude 20;
-         scale_to_step_sign = -1 (default) → -20"""
+         Fraction(20) * 1/1 / 1/1 = 20; sign +1; magnitude 20 → +20"""
     z, _ = _make_z_axis()
     hal = MagicMock()
     controller = _make_controller(stop_z=10.0, retract_z=20.0)
@@ -273,7 +268,7 @@ def test_on_enter_retracting_pushes_steps_to_go():
     hal.reset_mock()
     fsm.retract()   # is_ready_to_retract: check_x_retract defaults False → allowed
     assert fsm.state == "retracting"
-    hal.set_steps_to_go.assert_called_once_with(-20)
+    hal.set_steps_to_go.assert_called_once_with(20)
 
 
 # ─── retract backlash compensation ─────────────────────────────────────────
@@ -298,9 +293,9 @@ def test_first_retract_after_cut_adds_backlash_to_step_delta():
     _set_carriage(z, inp, 10.0)   # carriage parked at stop_z after cut
     hal.reset_mock()
     fsm.retract()
-    # enc_delta = 20 - 10 = 10 → raw step_delta = -10 (sign × ceil × scale_to_step_sign);
-    # backlash of 5 applied in the same sign → -15.
-    hal.set_steps_to_go.assert_called_once_with(-15)
+    # enc_delta = 20 - 10 = 10 → raw step_delta = +10 (sign × ceil);
+    # backlash of 5 applied in the same sign → +15.
+    hal.set_steps_to_go.assert_called_once_with(15)
 
 
 def test_self_loop_retract_does_not_add_backlash_twice():
@@ -326,8 +321,8 @@ def test_self_loop_retract_does_not_add_backlash_twice():
     hal.reset_mock()
     fsm.retract_done()
     # Self-loop landed back in retracting. enc_delta = 20 - 18 = 2 →
-    # step_delta = -2 (no backlash compensation).
-    hal.set_steps_to_go.assert_called_once_with(-2)
+    # step_delta = +2 (no backlash compensation).
+    hal.set_steps_to_go.assert_called_once_with(2)
 
 
 def test_retract_backlash_resets_on_next_cut():
@@ -355,9 +350,9 @@ def test_retract_backlash_resets_on_next_cut():
     _set_carriage(z, inp, 10.0)
     hal.reset_mock()
     fsm.retract()
-    # enc_delta = 10 → raw step_delta = -10; backlash applied again on
-    # this fresh first-retract-of-cycle → -15.
-    hal.set_steps_to_go.assert_called_once_with(-15)
+    # enc_delta = 10 → raw step_delta = +10; backlash applied again on
+    # this fresh first-retract-of-cycle → +15.
+    hal.set_steps_to_go.assert_called_once_with(15)
 
 
 def test_retract_with_zero_backlash_setting_is_unchanged():
@@ -371,7 +366,7 @@ def test_retract_with_zero_backlash_setting_is_unchanged():
     fsm.enable()
     hal.reset_mock()
     fsm.retract()
-    hal.set_steps_to_go.assert_called_once_with(-20)
+    hal.set_steps_to_go.assert_called_once_with(20)
 
 
 # ─── is_retracted: position predicate semantics ────────────────────────────
@@ -441,15 +436,6 @@ def test_scale_counts_to_steps_rounds_magnitude_away_from_zero():
     inp = SimpleNamespace(inputIndex=2, ratioNum=1, ratioDen=10, encoderCurrent=0)
     z._primary_input.return_value = inp
     z.position_to_encoder.side_effect = lambda mm: int(mm)
-    # Override scale_to_step_sign to +1 so output sign matches input.
-    fsm = _build_fsm(z=z, els_extra={"scale_to_step_sign": +1})
+    fsm = _build_fsm(z=z)
     assert fsm._scale_counts_to_steps(1) == 1
     assert fsm._scale_counts_to_steps(-1) == -1
-
-
-def test_scale_counts_to_steps_scale_to_step_sign_flips_output():
-    fsm = _build_fsm(els_extra={"scale_to_step_sign": -1})
-    # 1:1 ratios, sign flipped → +20 in → -20 out
-    assert fsm._scale_counts_to_steps(20) == -20
-    fsm2 = _build_fsm(els_extra={"scale_to_step_sign": +1})
-    assert fsm2._scale_counts_to_steps(20) == +20

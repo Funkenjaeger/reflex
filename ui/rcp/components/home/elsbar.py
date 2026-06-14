@@ -54,11 +54,6 @@ class ElsBar(BoxLayout, SavingDispatcher):
         self.update_feeds_ratio(self, None)
         self.bind(current_feeds_index=self.update_feeds_ratio)
         self.bind(els_forward=self._apply_direction)
-        # Re-apply sign to firmware when either machine polarity knob flips
-        # in settings — without this, the user would also have to toggle
-        # els_forward twice for the new polarity to land on the device.
-        self.app.els.bind(cut_polarity_inverted=self._apply_direction)
-        self.app.els.bind(stop_polarity_inverted=self._apply_direction)
 
     def toggle_move_direction(self):
         self.els_forward = not self.els_forward
