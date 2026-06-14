@@ -23,7 +23,8 @@ class ElsFsm:
 
     # Note - Fields: trigger, source, dest, conditions, unless, before, after, prepare
     TRANSITIONS = [
-        {'trigger': 'enable', 'source': 'disabled', 'dest': 'stopped'},
+        {'trigger': 'enable', 'source': 'disabled', 'dest': 'stopped',
+         'prepare': '_on_prepare_enable'},
         {'trigger': 'retract', 'source': 'stopped', 'dest': 'retracting', 'conditions': ['is_ready_to_retract']},
         {'trigger': 'retract_done', 'source': 'retracting', 'dest': 'stopped', 'conditions': ['is_retracted']},
         {'trigger': 'retract_done', 'source': 'retracting', 'dest': '='},
@@ -64,8 +65,18 @@ class ElsFsm:
         # not need the compensation.
         self._retract_backlash_applied = False
 
+        # True when entering stopped from disabled (enable trigger). Lets
+        # on_enter_stopped know to arm ELS with a fresh stopPosition.
+        self._engaging = False
+
 
     # ——— transition side effects ———
+
+    def _on_prepare_enable(self):
+        """Mark that we're entering stopped from disabled so on_enter_stopped
+        can arm ELS with a fresh stopPosition."""
+        self._engaging = True
+
     def on_enter_retracting(self):
         enc_current = self._saddle_input.encoderCurrent
         enc_target = self.z_axis.position_to_encoder(self.controller.retract_z)
@@ -122,13 +133,30 @@ class ElsFsm:
 
     def on_enter_stopped(self):
         # Engaged but idle: configure direction + hysteresis from current
-        # operator-mode flags. Do NOT arm the ELS stop block here — arming
-        # with a stale stopPosition and no handler for active triggers in
-        # stopped state causes false ELS fires → Python clears active=0 →
-        # firmware sees active 1→0 + thread geometry set → backlash takeup
-        # fires, pushing Z past the workpiece. ELS is armed only when
-        # cutting starts (on_enter_cutting) with a fresh stopPosition.
+        # operator-mode flags. When entering from disabled (operator clicked
+        # "Engage"), arm ELS immediately with a fresh stopPosition so there's
+        # protection against unexpected spindle starts before "Cut" is pressed.
+        # Only arm if Z is on the safe side of stop_z — arming when past
+        # stop_z would cause immediate ELS fire → backlash takeup.
         self.board.unbind(update_tick=self._on_board_update)
+
+        if self._engaging:
+            self._engaging = False
+            z_pos = self.z_axis.scaledPosition
+            cut_dir = self.els.stop_direction_value(self.controller.els_forward)
+            diff = (z_pos - self.controller.stop_z) * cut_dir
+            if diff <= 0:  # Z is on the safe side or at stop_z
+                self.set_stop_z(self.controller.stop_z)
+                # Set active=1 before enable so ELS arms in STOPPED state —
+                # sync motion paused until operator clicks Cut (which clears
+                # active via on_enter_cutting, triggering resume/takeup).
+                self.hal.set_active(True)
+                self.hal.set_enable(True)
+                log.info(
+                    f"on_enter_stopped (engage): armed ELS stopped with "
+                    f"stop_z={self.controller.stop_z} z_pos={z_pos}"
+                )
+
         self.hal.set_stop_direction(
             self.els.stop_direction_value(self.controller.els_forward)
         )
@@ -176,13 +204,13 @@ class ElsFsm:
         if self.controller.retract_enabled:
             return self.is_retracted()
         # In stop-only mode, verify Z is on the safe side of stop_z AND at
-        # least _safety_margin_mm away. This prevents starting a cut when
+        # least _safety_margin_display away. This prevents starting a cut when
         # too close to the workpiece — even with deferred ELS arming, a
         # backlash takeup + thread re-sync could push past stop_z before
         # ELS fires if Z is within that distance.
         z_pos = self.z_axis.scaledPosition
         cut_dir = self.els.stop_direction_value(self.controller.els_forward)
-        margin = self._safety_margin_mm()
+        margin = self._safety_margin_display()
         diff = (z_pos - self.controller.stop_z) * cut_dir
         result = diff < -margin if margin > 0 else diff < 0
         log.debug(
@@ -275,18 +303,23 @@ class ElsFsm:
         self.hal.set_z_counts_per_pitch(z_counts_per_pitch)
 
     # ——— Safety margin ———
-    def _safety_margin_mm(self) -> float:
-        """Minimum distance (mm) Z must be from stop_z before cutting is allowed.
+    def _safety_margin_display(self) -> float:
+        """Minimum distance (in display units) Z must be from stop_z before cutting is allowed.
 
-        Thread pitch + backlash distance × 1.1 ensures that even a worst-case
+        Leadscrew pitch + backlash distance × 1.1 ensures that even a worst-case
         backlash takeup followed by thread re-sync cannot push the carriage
-        past the workpiece before ELS can fire.
+        past the workpiece before ELS can fire. Result is converted to
+        display units (mm or inches) so it matches scaledPosition/stop_z.
+
+        Uses the servo leadscrew pitch, not the thread pitch being cut — the
+        safety margin is about how far the servo can move before ELS fires,
+        independent of what thread is being cut.
         """
-        spindle = self.els.get_spindle_axis()
-        if spindle is None:
-            return 0.0
+        # Leadscrew pitch in mm (not thread pitch)
         try:
-            pitch_mm = float(Fraction(abs(spindle.syncRatioNum), abs(spindle.syncRatioDen)))
+            pitch_mm = float(Fraction(self.servo.leadScrewPitch))
+            if self.servo.leadScrewPitchIn:
+                pitch_mm *= 25.4  # convert inches to mm
         except (ValueError, ZeroDivisionError):
             return 0.0
 
@@ -298,9 +331,15 @@ class ElsFsm:
         backlash_steps = int(self.els.els_backlash_steps or 0)
         backlash_mm = float(backlash_steps * float(servo_ratio))
 
-        margin = pitch_mm + backlash_mm * 1.1
-        log.debug(f"_safety_margin_mm: pitch={pitch_mm:.4f} backlash_mm={backlash_mm:.4f} margin={margin:.4f}")
-        return margin
+        margin_mm = (pitch_mm + backlash_mm) * 1.1
+        # Convert mm to display units so comparison with scaledPosition is valid
+        factor = self.board.formats.factor
+        margin_display = margin_mm * float(factor)
+        log.debug(
+            f"_safety_margin: pitch={pitch_mm:.4f}mm backlash={backlash_mm:.4f}mm "
+            f"margin={margin_mm:.4f}mm → {margin_display:.6f} display units (factor={float(factor):.6f})"
+        )
+        return margin_display
 
     # ——— Helpers ———
     def _scale_counts_to_steps(self, scale_counts : int) -> int:

@@ -2,7 +2,6 @@ from kivy.logger import Logger
 from kivy.properties import NumericProperty, BooleanProperty, StringProperty
 from kivy.uix.boxlayout import BoxLayout
 
-from rcp import feeds
 from rcp.components.home.thread_type import ThreadType
 from rcp.components.popups.custom_popup import CustomPopup
 from rcp.dispatchers.saving_dispatcher import SavingDispatcher
@@ -24,9 +23,6 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     enable_wizard = BooleanProperty(True)
 
     # ── Per-job thread settings (persisted) ──────────────────────────────────
-    metric_mode = BooleanProperty(True)
-    selected_pitch = StringProperty("")
-    current_feeds_index = NumericProperty(0)
     thread_profile_type = StringProperty("ISO_METRIC")
     shaft_diameter = NumericProperty(1)
     inner_thread = BooleanProperty(False)
@@ -80,9 +76,6 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         self.controller = self.app.els_uic
         super().__init__(**kwargs)
 
-        self.current_feeds_table = (
-            feeds.table["Thread MM"] if self.metric_mode else feeds.table["Thread IN"]
-        )
         if not self.thread_profile_type:
             self.thread_profile_type = ThreadType.ISO_METRIC.value
 
@@ -93,11 +86,11 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         self.bind(enable_wizard=self._sync_wizard_to_controller,
                   enable_retract=self._sync_retract_to_controller)
 
-        # ElsBar is the single writer of spindle.syncRatioNum/Den; it has
-        # already self-initialized the spindle from its persisted state.
-        # We deliberately do NOT call self.update_feeds_ratio() here — that
-        # would race with ElsBar at startup and clobber the visible bar's
-        # selection with whatever this widget last persisted.
+        # Mirror in_cycle flag from controller so engage/disengage and mode
+        # toggles are disabled while the FSM is inside the cut/retract cycle.
+        self.is_running = self.controller.in_cycle
+        self.controller.bind(in_cycle=lambda _, v: setattr(self, "is_running", v))
+
         if self.els_bar is not None:
             self.controller.els_forward = self.els_bar.els_forward
             self.els_bar.bind(els_forward=self._on_els_forward_changed)
@@ -119,7 +112,6 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
 
     def _on_els_forward_changed(self, instance, value):
         self.controller.els_forward = value
-        self.update_feeds_ratio(instance, value)
 
     def _sync_is_threading(self):
         # ElsBar.mode_name uses the "Thread" prefix for threading feed tables
@@ -131,67 +123,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     def toggle_engage(self):
         self.controller.toggle_engage()
 
-    # ── Start / stop ──────────────────────────────────────────────────────────
-
-    def toggle_is_running(self):
-        if not self.is_running:
-            if not self.app.board.connected:
-                CustomPopup(
-                    title="Controller Not Connected",
-                    message=(
-                        "The motion controller board is not connected. "
-                        "ELS cannot capture scale positions without live "
-                        "hardware. Check the RS-485 connection and try again."
-                    ),
-                    button_text="OK",
-                ).open()
-                return
-            missing = []
-            if self.app.els.get_spindle_axis() is None:
-                missing.append("Spindle")
-            if self.app.els.get_z_axis() is None:
-                missing.append("Saddle (Z)")
-            if self.enable_wizard and self.app.els.get_x_axis() is None:
-                missing.append("Cross-slide (X)")
-            if missing:
-                CustomPopup(
-                    title="Axes Not Configured",
-                    message=(
-                        f"The following axes are not set in ELS: "
-                        f"{', '.join(missing)}. Please configure them in Settings."
-                    ),
-                    button_text="OK",
-                ).open()
-                return
-        self.is_running = not self.is_running
-
     # ── Settings ─────────────────────────────────────────────────────────────
-
-    def on_metric_mode(self, instance, value):
-        self.current_feeds_table = (
-            feeds.table["Thread MM"] if value else feeds.table["Thread IN"]
-        )
-
-    def update_feeds_ratio(self, instance, value):
-        # ElsAdvancedBar does NOT write the spindle syncRatio itself. The
-        # popup-driven pitch selection (or anything else that calls this)
-        # is propagated to ElsBar, which owns the single canonical
-        # spindle-write path.
-        if not self.is_active:
-            return
-        if self.els_bar is None:
-            return
-        mode_name = "Thread MM" if self.metric_mode else "Thread IN"
-        idx = int(self.current_feeds_index)
-        # Sync ElsBar's selection. set_feed_ratio() doesn't itself trigger
-        # ElsBar.update_feeds_ratio (Kivy property bindings don't fire when
-        # the value is unchanged), so call it explicitly to guarantee a
-        # spindle write reflecting the new pitch.
-        self.els_bar.set_feed_ratio(mode_name, idx)
-        self.els_bar.update_feeds_ratio(self.els_bar, None)
-        log.info(
-            f"ElsAdvancedBar pitch change → ElsBar({mode_name}[{idx}])"
-        )
 
     def open_settings(self):
         from rcp.components.home.els_settings_popup import ElsSettingsPopup

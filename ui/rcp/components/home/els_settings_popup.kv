@@ -15,21 +15,6 @@
             size_hint_y: None
             height: self.minimum_height
 
-            BooleanItem:
-                name: "Metric Mode"
-                help_file: "els_thread_pitch.md"
-                value: root.bar.metric_mode
-                on_value: root.on_metric_mode_changed(self.value)
-
-            DropDownItem:
-                id: pitches_dropdown
-                height: 60
-                name: "Pitch in MM" if root.bar.metric_mode else "Pitch in IN"
-                help_file: "els_thread_pitch.md"
-                options: root.get_pitches()
-                value: str(root.bar.selected_pitch) if root.bar.selected_pitch is not None else ""
-                on_value: root.on_pitch_selected(self.selected_index, self.value)
-
             DropDownItem:
                 id: thread_type_dropdown
                 height: 60

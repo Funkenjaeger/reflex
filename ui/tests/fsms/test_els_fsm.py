@@ -143,13 +143,16 @@ def test_on_enter_stopped_arms_loose_hysteresis_in_stop_only_mode():
     hal.set_enable.assert_called_with(True)
 
 
-def test_on_enter_stopped_clears_active_flag():
-    """Arming the stop must clear any stale active flag from a previous
-    cycle so the UI doesn't show 'Stopped' immediately after engage."""
+def test_on_enter_stopped_arms_in_stopped_state():
+    """When engaging with Z on the safe side, ELS should arm in STOPPED
+    state (active=1 before enable=1) so sync motion is paused until Cut."""
     hal = MagicMock()
-    fsm = _build_fsm(hal=hal)
+    z, _ = _make_z_axis(scaled_position=5.0)  # on safe side of default stop_z=10
+    fsm = _build_fsm(z=z, hal=hal)
     fsm.enable()
-    hal.set_active.assert_called_with(False)
+    # active should be set True (stopped state), not False
+    hal.set_active.assert_called_with(True)
+    hal.set_enable.assert_called_with(True)
 
 
 def test_on_enter_stopped_arms_tight_hysteresis_when_retract_enabled():
@@ -177,6 +180,57 @@ def test_on_enter_stopped_writes_stop_direction():
     # stop_direction_value returns +1 in our mock regardless of forward;
     # what matters is that the HAL was told to write it.
     hal.set_stop_direction.assert_called_once_with(+1)
+
+
+def test_on_enter_stopped_writes_stop_position_and_arms_on_engage():
+    """When entering stopped from disabled (enable trigger), ELS should be
+    armed with a fresh stopPosition from controller.stop_z, and active=1
+    so it starts in STOPPED state."""
+    z, _ = _make_z_axis(encoder_offset=100)
+    hal = MagicMock()
+    controller = _make_controller(stop_z=42.0)
+    fsm = _build_fsm(z=z, hal=hal, controller=controller)
+    fsm.enable()  # disabled → stopped (fires on_enter_stopped with _engaging=True)
+    # stopPosition should be written from controller.stop_z
+    # position_to_encoder(42.0) → 42 + 100 = 142
+    hal.set_stop_position.assert_called_with(142)
+    hal.set_enable.assert_called_with(True)
+    # active should be set True (stopped state), NOT cleared to False
+    hal.set_active.assert_called_once_with(True)
+
+
+def test_on_enter_stopped_does_not_arm_when_returning_from_cut():
+    """When entering stopped from cutting (stop_active trigger), ELS should
+    NOT be re-armed — it's already armed from before."""
+    z, _ = _make_z_axis()
+    hal = MagicMock()
+    controller = _make_controller(retract_enabled=True)
+    fsm = _build_fsm(z=z, hal=hal, controller=controller)
+    # Go through: disabled → stopped (enable) → cutting → stopped (stop_active)
+    z.scaledPosition = controller.retract_z  # satisfy is_ready_to_cut
+    fsm.enable()
+    hal.reset_mock()
+    fsm.cut()
+    hal.reset_mock()
+    fsm.stop_active()  # cutting → stopped (_engaging=False)
+    # set_stop_position should NOT be called (no re-arm on return from cut)
+    hal.set_stop_position.assert_not_called()
+    # But direction and hysteresis should still be updated
+    hal.set_stop_direction.assert_called_once()
+    hal.set_hysteresis_tight.assert_called_once()
+
+
+def test_on_enter_stopped_does_not_arm_when_z_past_stop():
+    """When Z is past stop_z in the cutting direction, arming would cause
+    immediate ELS fire → backlash takeup. Skip arming in this case."""
+    z, _ = _make_z_axis(scaled_position=15.0)  # past default stop_z=10
+    hal = MagicMock()
+    controller = _make_controller(stop_z=10.0, els_forward=True)
+    fsm = _build_fsm(z=z, hal=hal, controller=controller)
+    fsm.enable()
+    # enable should NOT be called (Z is past stop_z)
+    hal.set_enable.assert_not_called()
+    hal.set_stop_position.assert_not_called()
 
 
 # ─── set_stop_z: HAL writes stopPosition + scaleIndex ──────────────────────

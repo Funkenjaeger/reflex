@@ -50,42 +50,12 @@ class ElsSettingsPopup(Popup):
             self.app.els.els_backlash_steps = steps
             log.info(f"Backlash takeup: {value} mm → {steps} steps")
 
-    def get_pitches(self):
-        if not self.bar:
-            return []
-        return [f.name for f in self.bar.current_feeds_table]
-
     def get_thread_types(self):
-        """Get available thread types based on metric mode."""
-        if self.bar.metric_mode:
+        """Get available thread types based on global format setting."""
+        if self.bar.app.formats.current_format == "MM":
             return [ThreadType.ISO_METRIC.value, ThreadType.ACME.value]
         else:
             return [ThreadType.UNIFIED.value, ThreadType.WHITWORTH.value, ThreadType.ACME.value]
-
-    def on_metric_mode_changed(self, value):
-        self.bar.metric_mode = value
-        pitches_dropdown = self.ids.pitches_dropdown
-        pitches = self.get_pitches()
-        pitches_dropdown.options = pitches
-        first_pitch = pitches[0] if pitches else ""
-        pitches_dropdown.value = first_pitch
-        self.on_pitch_selected(0, first_pitch)
-
-        # Update thread type options based on metric mode
-        thread_type_dropdown = self.ids.thread_type_dropdown
-        thread_type_dropdown.options = self.get_thread_types()
-        # Reset to first available type
-        first_type = self.get_thread_types()[0] if self.get_thread_types() else ThreadType.ISO_METRIC.value
-        thread_type_dropdown.value = first_type
-        self.bar.thread_profile_type = ThreadType(first_type).value
-
-        log.info(f"Metric mode changed to: {value}")
-
-    def on_pitch_selected(self, index, selected_pitch):
-        self.bar.selected_pitch = selected_pitch
-        self.bar.current_feeds_index = index
-        self.bar.update_feeds_ratio(None, None)
-        log.info(f"Selected pitch: {selected_pitch}")
 
     def on_thread_type_selected(self, value):
         """Handle thread type selection."""

@@ -52,6 +52,7 @@ class ElsUiController(EventDispatcher):
     is_inner            = BooleanProperty(False)
 
     # ── Derived UI state ───────────────────────────────────────────────
+    in_cycle            = BooleanProperty(False)   # True while FSM is in any in_cycle.* state
     x_z_inputs_enabled  = BooleanProperty(False)
     start_stop_enabled  = BooleanProperty(False)
     start_not_stop      = BooleanProperty(False)
@@ -95,6 +96,10 @@ class ElsUiController(EventDispatcher):
                   retract_z=lambda *_: self._validate_retract_z(),
                   start_dia=lambda *_: self._validate_start_dia(),
                   stop_dia=lambda *_: self._validate_stop_dia())
+
+        # Also propagate stop_z changes to firmware while engaged-and-idle, so ELS
+        # uses the operator's latest value if they type a new one via keypad.
+        self.bind(stop_z=lambda *_: self._propagate_stop_z_to_firmware())
 
         # 2. Build domain FSM (HAL injected; controller doubles as modes source).
         self._els_fsm = ElsFsm(els, board, self._hal, self)
@@ -245,6 +250,7 @@ class ElsUiController(EventDispatcher):
         # X/Z input buttons are usable only when the machine is not moving.
         self.x_z_inputs_enabled = self._els_fsm.state in ["stopped", "disabled"]
         self.start_not_stop = self._ui_fsm.state == "idle"
+        self.in_cycle = self._ui_fsm.state in ("in_cycle.cutting", "in_cycle.retracting")
 
         state = self._ui_fsm.state
         p = UI_POLICY[state]
@@ -309,10 +315,20 @@ class ElsUiController(EventDispatcher):
         where _apply_policy is not triggered by other bindings)."""
         self._apply_policy()
 
+    def _propagate_stop_z_to_firmware(self):
+        """Write stopPosition to firmware when domain FSM is in stopped state,
+        so ELS uses the operator's latest configured value immediately."""
+        if self._els_fsm.state != "stopped":
+            return
+        try:
+            self._els_fsm.set_stop_z(self.stop_z)
+        except Exception:
+            log.debug("_propagate_stop_z_to_firmware: failed to write stopPosition")
+
     # ——— Z-position predicates ———
     def _z_safe_for_cut(self) -> bool:
         """True iff Z is on the safe side of stop_z AND at least
-        _safety_margin_mm away. Mirrors the domain FSM's is_ready_to_cut
+        _safety_margin_display away. Mirrors the domain FSM's is_ready_to_cut
         logic for stop-only mode."""
         z_axis = self._els.get_z_axis()
         if z_axis is None:
@@ -328,7 +344,7 @@ class ElsUiController(EventDispatcher):
         except Exception:
             log.debug(f"_z_safe_for_cut: failed to read cut_dir → True (don't block)")
             return True
-        margin = self._els_fsm._safety_margin_mm()
+        margin = self._els_fsm._safety_margin_display()
         diff = (z_pos - self.stop_z) * cut_dir
         result = diff < -margin if margin > 0 else diff < 0
         log.debug(
@@ -458,7 +474,7 @@ class ElsUiController(EventDispatcher):
         self.stop_z_error = ""
 
     def _validate_retract_z(self):
-        margin = self._els_fsm._safety_margin_mm()
+        margin = self._els_fsm._safety_margin_display()
         span = abs(self.retract_z - self.stop_z)
         self.retract_z_valid = span >= margin if margin > 0 else self.retract_z != self.stop_z
         self.retract_z_error = "" if self.retract_z_valid else "Retract Z too close to stop position"
