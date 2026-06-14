@@ -20,6 +20,7 @@
 
     Button:
       text: "Disengage" if root.controller.engaged else "Engage"
+      disabled: root.is_running
       on_release:
         app.beep()
         root.toggle_engage()
