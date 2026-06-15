@@ -214,18 +214,24 @@ class AxisDispatcher(SavingDispatcher):
                 return float(sps * 60 * (1 / inp.stepsPerMM) * (1 / 1000) * (120 / 254))
             
     def position_to_encoder(self, position: float) -> int:
-        metric = self.formats.current_format == "MM"
+        """Convert a display position (mm/in) to the raw encoder count
+        the firmware would see at that indicated position.
+
+        Derivation from _update_position:
+            scaledPosition = (raw + abs_offset + offsets) * factor
+            raw = encoder_counts * ratioNum / ratioDen
+            → encoder_counts = (position/factor - abs_offset - offsets) * ratioDen/ratioNum
+        """
         if self.spindleMode:
             log.warning("Cannot convert position to encoder value for spindle axis")
             return 0
-        else:
-            inp = self.inputs[self._transform.primary_input]
-            scale_ratio = float ( Fraction(inp.ratioNum, inp.ratioDen) * self.formats.factor )
-            p = position / scale_ratio # convert position to ratio_units
-            current_offset = self.offset_provider.currentOffset
-            p -= self.abs_offset
-            p -= self.offsets[current_offset]
-            return int(p)
+        inp = self.inputs[self._transform.primary_input]
+        factor = float(self.formats.factor)
+        p = position / factor  # display units → mm (same unit as abs_offset / offsets)
+        current_offset = self.offset_provider.currentOffset
+        p -= self.abs_offset
+        p -= self.offsets[current_offset]
+        return int(p * inp.ratioDen / inp.ratioNum)
 
     # ── Sync ratio ───────────────────────────────────────────────────
 

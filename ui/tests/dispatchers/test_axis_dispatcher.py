@@ -640,6 +640,75 @@ class TestPersistence:
         assert ax2.offsets[1] == ax.offsets[1]
 
 
+class TestPositionToEncoder:
+    def test_roundtrip_no_offset(self, axis, inputs):
+        """position_to_encoder(axis.scaledPosition) == input.position when no offset."""
+        inputs[0].ratioNum = 1
+        inputs[0].ratioDen = 1000
+        inputs[0].position = 5000
+        axis._update_position()
+        enc = axis.position_to_encoder(axis.scaledPosition)
+        assert enc == 5000
+
+    def test_roundtrip_with_abs_offset(self, axis, inputs):
+        """Roundtrip holds after zeroing (abs_offset is non-zero)."""
+        inputs[0].ratioNum = 1
+        inputs[0].ratioDen = 1000
+        inputs[0].position = 5000
+        axis.zero_position()
+        axis._update_position()
+        assert axis.scaledPosition == pytest.approx(0.0, abs=0.01)
+        inputs[0].position = 9200
+        axis._update_position()
+        enc = axis.position_to_encoder(axis.scaledPosition)
+        assert enc == 9200
+
+    def test_stop_at_indicated_zero_after_zero(self, axis, inputs):
+        """After zeroing at encoder 5000, stop_z=0 maps to encoder count 5000."""
+        inputs[0].ratioNum = 1
+        inputs[0].ratioDen = 1000
+        inputs[0].position = 5000
+        axis.zero_position()
+        axis._update_position()
+        assert axis.position_to_encoder(0) == 5000
+
+    def test_stop_at_indicated_plus_one(self, axis, inputs):
+        """After zeroing at 5000, indicated +1 maps to encoder count 6000."""
+        inputs[0].ratioNum = 1
+        inputs[0].ratioDen = 1000
+        inputs[0].position = 5000
+        axis.zero_position()
+        axis._update_position()
+        assert axis.position_to_encoder(1.0) == 6000
+
+    def test_with_tool_offset(self, axis, inputs, offset_provider):
+        """Tool offset (INC mode) is accounted for in conversion."""
+        inputs[0].ratioNum = 1
+        inputs[0].ratioDen = 1000
+        inputs[0].position = 5000
+        offset_provider.abs_mode = False
+        axis.zero_position()
+        axis._update_position()
+        inputs[0].position = 7000
+        axis._update_position()
+        enc = axis.position_to_encoder(axis.scaledPosition)
+        assert enc == 7000
+
+    def test_with_inch_factor(self, axis, inputs):
+        """Conversion works correctly in inches mode."""
+        inputs[0].ratioNum = 1
+        inputs[0].ratioDen = 1000
+        inputs[0].position = 5000
+        axis.formats.factor = Fraction(10, 254)
+        axis.zero_position()
+        axis._update_position()
+        assert axis.scaledPosition == pytest.approx(0.0, abs=0.01)
+        inputs[0].position = 7540  # 2540 mm counts = 1.0 inch
+        axis._update_position()
+        enc = axis.position_to_encoder(axis.scaledPosition)
+        assert enc == 7540
+
+
 class TestAbsOffset:
     def test_abs_offset_included_in_position(self, axis, inputs):
         """abs_offset adds to raw before tool offset and factor."""
