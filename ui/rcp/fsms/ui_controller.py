@@ -128,7 +128,8 @@ class ElsUiController(EventDispatcher):
         # 7. Re-arm HAL when mode flags change so firmware tracks the operator.
         self.bind(retract_enabled=self._on_modes_changed,
                   wizard_enabled=self._on_modes_changed,
-                  els_forward=self._on_modes_changed)
+                  els_forward=self._on_modes_changed,
+                  is_threading=self._on_modes_changed)
 
         # 8. Re-evaluate UI policy when validity flags change so the action
         # button enables/disables live as the operator types values in.
@@ -218,6 +219,12 @@ class ElsUiController(EventDispatcher):
         # without forcing an FSM transition.
         if self._els_fsm.state != "stopped":
             return
+        # Clear thread geometry when switching to feed mode so stale values
+        # don't trigger firmware takeup/phase-correction on future transitions.
+        if not self.is_threading:
+            self._hal.set_thread_pitch_steps(0.0)
+            self._hal.set_z_counts_per_pitch(0.0)
+            self._hal.set_backlash_steps(0)
         self._hal.set_stop_direction(self._els.stop_direction_value(self.els_forward))
         if self.retract_enabled or self.wizard_enabled:
             self._hal.set_hysteresis_tight()

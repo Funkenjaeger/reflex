@@ -114,8 +114,15 @@ class ElsFsm:
         self._retract_backlash_applied = False
         self.set_stop_z(self.controller.stop_z)
         self.hal.set_scale_index(self._saddle_input.inputIndex)
-        self.push_thread_geometry() # TODO: only if threading!
-        self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
+        if self.controller.is_threading:
+            self.push_thread_geometry()
+            self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
+        else:
+            # Clear thread geometry so firmware skips takeup/phase-correction
+            # on the active→inactive transition below.
+            self.hal.set_thread_pitch_steps(0.0)
+            self.hal.set_z_counts_per_pitch(0.0)
+            self.hal.set_backlash_steps(0)
         self.hal.set_active(False)
         self.hal.set_stop_direction(
             self.els.stop_direction_value(self.controller.els_forward)
