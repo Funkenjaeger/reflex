@@ -24,7 +24,7 @@ class ElsDispatcher(SavingDispatcher):
 
     # ── ELS stop tuning ───────────────────────────────────────────────
     # Magnitude in servo steps; 0 disables takeup. Direction is derived by
-    # firmware from stopDirection × sign(threadPitchSteps × zCountsPerPitch).
+    # firmware from sign(syncRatioNum) × sign(threadPitchSteps × zCountsPerPitch).
     # User-facing entry happens in mm via the settings popup, which converts
     # using the servo ratio.
     els_backlash_steps = NumericProperty(0)

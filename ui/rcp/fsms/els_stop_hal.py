@@ -89,7 +89,7 @@ class ElsStopHal:
 
     def set_backlash_steps(self, magnitude: int) -> None:
         # uint32 magnitude in servo steps. The firmware derives the takeup
-        # direction from stopDirection × sign(threadPitchSteps × zCountsPerPitch).
+        # direction from sign(syncRatioNum) × sign(threadPitchSteps × zCountsPerPitch).
         if not self._board.connected:
             return
         self._board.device['elsStop']['backlashSteps'] = max(0, int(magnitude))
