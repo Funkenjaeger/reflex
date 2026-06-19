@@ -21,7 +21,7 @@ Target platforms: Raspberry Pi (primary), Linux, Windows, macOS.
 
 This project is tightly coupled with **reflex-fw**, the STM32 firmware that runs on the controller board.
 
-- **Firmware repo:** reflex-fw (sibling repository, typically found alongside this repo)
+- **Firmware repo path:** `/mnt/c/projects/embedded/reflex-fw/`
 - **Interface:** RS-485 Modbus RTU — the UI reads/writes holding registers that map directly to the firmware's shared data struct
 - **Version compatibility:** For released versions, matching major.minor implies UI↔FW compatibility. For dev branches, assume the latest commit on each repo's respective branch is compatible. Cross-repo changes affecting the Modbus register interface are called out in commit messages.
 
@@ -30,6 +30,19 @@ This project is tightly coupled with **reflex-fw**, the STM32 firmware that runs
 This project has a sibling repository (reflex-fw) that agents may need to reference.
 If your runtime supports workspace or permission configuration, grant read access to the sibling repo path.
 For opencode, this means configuring `external_directory` permission in your project config to allow access to the reflex-fw repository.
+
+## Runtime Notes
+
+- You're running in WSL on a Windows PC, NOT the target Raspberry Pi system.
+- To launch the UI: `DISPLAY=:0 SDL_AUDIODRIVER=dummy KIVY_INPUT=mouse uv run python -m reflex.main --size=1024x600`
+  (See `runme.sh` for the full command — adapt it as needed for your context.)
+
+## Testing
+
+- The full test suite takes ~5 minutes and WILL time out with the default 120s timeout — use at least 360000ms.
+- Always ask the user before running the full test suite — it's often not worth it for small changes.
+- Running targeted subsets (e.g., `pytest tests/fsms/test_els_fsm.py`) is fine to verify specific changes.
+- Tests hang on headless Linux due to Kivy display init — may need `xvfb-run` or similar.
 
 ## Design Patterns
 
@@ -123,7 +136,6 @@ kv_file = os.path.join(os.path.dirname(__file__), __file__.replace(".py", ".kv")
 if os.path.exists(kv_file):
     Builder.load_file(kv_file)
 ```
-TODO: Extract this to a shared utility function.
 
 ### Component Pattern
 
