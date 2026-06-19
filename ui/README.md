@@ -152,7 +152,7 @@ reflex/
 
 * **Firmware & hardware:** [reflex-fw](https://github.com/Funkenjaeger/reflex-fw)
 * **PCB design & BOM:** [rotary-controller-pcb](https://github.com/bartei/rotary-controller-pcb)
-* **OSPI OS with pre-installed Reflex UI:** [ospi](https://github.com/bartei/ospi)
+* **OSPI OS:** [ospi](https://github.com/bartei/ospi) — ships with RCP pre-installed; see deployment notes below for replacing it with Reflex UI
 
 ### Internal docs
 
