@@ -21,9 +21,9 @@ Target platforms: Raspberry Pi (primary), Linux, Windows, macOS.
 
 This project is tightly coupled with **reflex-fw**, the STM32 firmware that runs on the controller board.
 
-- **Firmware repo path:** `/mnt/c/projects/embedded/reflex-fw/`
 - **Interface:** RS-485 Modbus RTU — the UI reads/writes holding registers that map directly to the firmware's shared data struct
 - **Version compatibility:** For released versions, matching major.minor implies UI↔FW compatibility. For dev branches, assume the latest commit on each repo's respective branch is compatible. Cross-repo changes affecting the Modbus register interface are called out in commit messages.
+- **Finding the firmware repo:** The reflex-fw repository may be cloned adjacent to this one. If you can't locate it, ask the user for the path. Once found, persist the location using whatever memory or persistence mechanism is available so you don't need to ask again.
 
 ## Agent Provisioning
 

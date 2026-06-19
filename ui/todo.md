@@ -2,6 +2,21 @@
 
 ---
 
+## Hard Fork Cleanup
+
+### Workflow Fixes
+- **Done:** Pinned `ad-m/github-push-action` to `v0.7.0` in reflex-fw workflow
+- **Done:** Updated `softprops/action-gh-release` to `v2` in reflex-fw workflow
+- **Done:** Fixed `github.ref` to `github.ref_name` in reflex-fw workflow
+- **Done:** Fixed `BRANCH` comparison from `refs/heads/main` to `main` in reflex-fw workflow
+- **Done:** Fixed git user email to use `github-actions[bot]` in reflex-fw workflow
+- **Done:** Updated `PaulHatch/semantic-version` from `v5.0.3` to `v6.0.2` in reflex-fw workflow
+- **Issue:** `PaulHatch/semantic-version` v6 has breaking changes to default version patterns (now follow Conventional Commits), but reflex-fw explicitly sets `major_pattern`/`minor_pattern` so should be unaffected
+
+---
+
+## Deployment
+
 ## Deployment
 
 ### OSPI Service Unit Migration
