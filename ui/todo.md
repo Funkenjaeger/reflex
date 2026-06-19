@@ -27,6 +27,10 @@
 - **Issue:** The README includes a bash snippet for replacing RCP with reflex-ui on OSPI but doesn't specify the exact systemd service unit changes.
 - **Action:** Once deployment is tested on a Pi, document the exact changes (ExecStart, WorkingDirectory, etc.) and update the README with complete instructions.
 
+### Reconcile Systemd Service Name in README
+- **Issue:** The README's `journalctl` commands reference a service named `reflex`, but the original OSPI service is `rotary-controller`. The correct service name depends on what the migrated service unit is named.
+- **Action:** Reconcile the service name as part of updating the Pi migration instructions.
+
 ---
 
 ## Architecture
