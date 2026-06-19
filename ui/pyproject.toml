@@ -3,7 +3,8 @@ name = "reflex"
 version = "0.1.0"
 description = "Reflex UI"
 authors = [
-    { name = "Stefano Bertelli", email = "stefano@provvedo.com" }
+    { name = "Stefano Bertelli", email = "stefano@provvedo.com" },
+    { name = "Evan Dudzik" }
 ]
 requires-python = ">=3.10,<4.0"
 license = "MIT"
