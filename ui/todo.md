@@ -2,6 +2,18 @@
 
 ---
 
+## Deployment
+
+### OSPI Service Unit Migration
+- **Issue:** OSPI ships with a systemd service unit pointing to `/root/rotary-controller-python` and `rcp.main`. Reflex UI lives in a different path and uses `reflex.main`.
+- **Action:** Document the exact changes needed to the systemd service unit (ExecStart, WorkingDirectory, etc.) and test the full migration path on a Pi.
+
+### Document Systemd Service Unit Changes
+- **Issue:** The README includes a bash snippet for replacing RCP with reflex-ui on OSPI but doesn't specify the exact systemd service unit changes.
+- **Action:** Once deployment is tested on a Pi, document the exact changes (ExecStart, WorkingDirectory, etc.) and update the README with complete instructions.
+
+---
+
 ## Architecture
 
 ### 5. Circular Import Dependencies

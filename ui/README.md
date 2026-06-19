@@ -19,7 +19,6 @@ A **Kivy-based Digital Read-Out (DRO) and single-axis controller UI** for rotary
 * Customizable display: fonts, colors, digit formats (metric/imperial/angle)
 * **Contextual help** — info button on every setting field with documentation and examples
 * Works on Raspberry Pi 3/4/5, Windows, macOS, and Linux
-* Runs headless on Pi using the custom **OSPI** OS with pre-installed Reflex ([ospi](https://github.com/bartei/ospi))
 
 ---
 
@@ -88,16 +87,21 @@ uv run pytest
 ### Raspberry Pi & OSPI
 
 * Install an SD card image from the [OSPI project](https://github.com/bartei/ospi)
-* Reflex UI is pre-installed in `/root/reflex-ui/`
-* To update:
+* OSPI ships with RCP pre-installed in `/root/rotary-controller-python/`. Reflex UI **must** be manually installed to replace it:
 
   ```bash
-  sudo systemctl stop reflex
-  cd /root/reflex-ui
-  git pull
+  # Stop the existing RCP service
+  sudo systemctl stop rotary-controller
+
+  # Clone reflex-ui
+  cd /root
+  git clone https://github.com/Funkenjaeger/reflex-ui.git
+  cd reflex-ui
   uv sync
-  reboot
+
+  # Update the systemd service unit to point to the new path and module
   ```
+
 * View logs:
 
   ```bash

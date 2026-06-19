@@ -1,5 +1,16 @@
 # AGENTS.md — Reflex UI
 
+## Todo Tracking
+
+When you encounter a task, follow-up item, or piece of work that should be tracked, add it to `todo.md` in the project root. This applies to:
+- Deferred work discovered during development
+- TODO comments that appear in code or documentation
+- Bugs or improvements identified during debugging
+- Deployment or configuration tasks that need documentation
+- Any action item that won't be completed in the current session
+
+Do NOT leave TODO comments in code, documentation, or bash snippets — always route them to `todo.md` instead.
+
 ## Project Overview
 
 Reflex UI is a Kivy-based DRO (Digital Read-Out) and single-axis controller UI for rotary tables.
