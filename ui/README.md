@@ -1,4 +1,4 @@
-# Rotary Controller Python (RCP)
+# Reflex UI
 
 [![Discord](https://img.shields.io/discord/1386014070632878100?style=social)](https://discord.gg/EDtgj7Yayr) [![Shop at Provvedo](https://img.shields.io/badge/Shop-Provvedo-blue?logo=shopify&style=flat-square)](https://www.provvedo.com/shop)
 
@@ -11,7 +11,7 @@ A **Kivy-based Digital Read-Out (DRO) and single-axis controller UI** for rotary
 ## 🚀 Features
 
 * Responsive touch-capable UI built with **Kivy**
-* Communicates over **RS-485 Modbus RTU** with an STM32 controller ([rotary-controller-f4](https://github.com/bartei/rotary-controller-f4))
+* Communicates over **RS-485 Modbus RTU** with an STM32 controller ([reflex-fw](https://github.com/Funkenjaeger/reflex-fw))
 * **Configurable axes** — add/remove axes, assign hardware scale inputs, apply transforms (identity, scaling, weighted sum, angle cos/sin)
 * **Electronic Lead Screw (ELS)** mode for synchronized threading and power feed on manual lathes
 * **Sync mode** with configurable gear ratios for spindle-synchronized movement
@@ -19,7 +19,7 @@ A **Kivy-based Digital Read-Out (DRO) and single-axis controller UI** for rotary
 * Customizable display: fonts, colors, digit formats (metric/imperial/angle)
 * **Contextual help** — info button on every setting field with documentation and examples
 * Works on Raspberry Pi 3/4/5, Windows, macOS, and Linux
-* Runs headless on Pi using the custom **OSPI** OS with pre-installed RCP ([ospi](https://github.com/bartei/ospi))
+* Runs headless on Pi using the custom **OSPI** OS with pre-installed Reflex ([ospi](https://github.com/bartei/ospi))
 
 ---
 
@@ -27,7 +27,7 @@ A **Kivy-based Digital Read-Out (DRO) and single-axis controller UI** for rotary
 
 * **Hardware**
 
-  * Rotary controller board (STM32 firmware from [rotary-controller-f4](https://github.com/bartei/rotary-controller-f4))
+  * Rotary controller board (STM32 firmware from [reflex-fw](https://github.com/Funkenjaeger/reflex-fw))
   * RS-485 interface (e.g. via Power Hat)
   * Raspberry Pi 3/4/5 for Pi deployments
 
@@ -43,8 +43,8 @@ A **Kivy-based Digital Read-Out (DRO) and single-axis controller UI** for rotary
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/bartei/rotary-controller-python.git
-cd rotary-controller-python
+git clone https://github.com/Funkenjaeger/reflex-ui.git
+cd reflex-ui
 ```
 
 ### 2. Install `uv`
@@ -66,7 +66,7 @@ uv sync
 ### 4. Run the App
 
 ```bash
-uv run python -m rcp.main
+uv run python -m reflex.main
 ```
 
 ### 5. Run Tests
@@ -88,12 +88,12 @@ uv run pytest
 ### Raspberry Pi & OSPI
 
 * Install an SD card image from the [OSPI project](https://github.com/bartei/ospi)
-* RCP is pre-installed in `/root/rotary-controller-python/`
+* Reflex UI is pre-installed in `/root/reflex-ui/`
 * To update:
 
   ```bash
-  sudo systemctl stop rotary-controller
-  cd /root/rotary-controller-python
+  sudo systemctl stop reflex
+  cd /root/reflex-ui
   git pull
   uv sync
   reboot
@@ -101,8 +101,8 @@ uv run pytest
 * View logs:
 
   ```bash
-  journalctl -u rotary-controller
-  journalctl -xeu rotary-controller
+  journalctl -u reflex
+  journalctl -xeu reflex
   tail -n +1 /var/log/kivy*
   ```
 
@@ -111,7 +111,7 @@ uv run pytest
 ## 📂 Project Structure
 
 ```
-rcp/
+reflex/
 ├── main.py                    # Entry point (asyncio + Kivy event loop)
 ├── app.py                     # MainApp class
 ├── feeds.py                   # Feed/thread pitch configurations
@@ -146,20 +146,14 @@ rcp/
 
 ## 📚 References & Related Projects
 
-* **Firmware & hardware:** [rotary-controller-f4](https://github.com/bartei/rotary-controller-f4)
+* **Firmware & hardware:** [reflex-fw](https://github.com/Funkenjaeger/reflex-fw)
 * **PCB design & BOM:** [rotary-controller-pcb](https://github.com/bartei/rotary-controller-pcb)
-* **OSPI OS with pre-installed RCP:** [ospi](https://github.com/bartei/ospi)
+* **OSPI OS with pre-installed Reflex UI:** [ospi](https://github.com/bartei/ospi)
 
 ### Internal docs
 
 * **FSM architecture pattern:** [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md)
 * **ELS shoulder-stop orchestration:** [`ELS_STOP.md`](ELS_STOP.md)
-
----
-
-## 🧾 Changelog
-
-See `CHANGELOG.md` for detailed history, updates, and breaking changes.
 
 ---
 

@@ -4,7 +4,7 @@ import pytest
 import yaml
 
 from tests.dispatchers.conftest import MockBoard
-from rcp.dispatchers.input import InputDispatcher
+from reflex.dispatchers.input import InputDispatcher
 
 
 @pytest.fixture
@@ -17,7 +17,7 @@ def board():
 @pytest.fixture
 def inp(board, tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "rcp.dispatchers.saving_dispatcher.Path.home",
+        "reflex.dispatchers.saving_dispatcher.Path.home",
         lambda: tmp_path,
     )
     return InputDispatcher(
@@ -31,7 +31,7 @@ class TestInputDispatcherFilename:
 
     def test_different_indices_different_files(self, board, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         i0 = InputDispatcher(board=board, inputIndex=0, id_override="0")
@@ -204,7 +204,7 @@ class TestSpeed:
 class TestSaveRestore:
     def test_round_trip_ratio(self, board, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         i1 = InputDispatcher(board=board, inputIndex=2, id_override="test_rt")
@@ -220,10 +220,10 @@ class TestSaveRestore:
     def test_old_yaml_keys_silently_ignored(self, board, tmp_path, monkeypatch):
         """Old CoordBar YAML keys (offsets, syncRatioNum, axisName) should be silently ignored."""
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
-        config_dir = tmp_path / ".config" / "rotary-controller-python"
+        config_dir = tmp_path / ".config" / "reflex"
         config_dir.mkdir(parents=True)
         yaml_file = config_dir / "CoordBar-test_old.yaml"
         yaml_file.write_text(yaml.dump({
@@ -246,7 +246,7 @@ class TestSaveRestore:
     def test_spindle_mode_persists(self, board, tmp_path, monkeypatch):
         """spindleMode is now persisted (not transient)."""
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         i1 = InputDispatcher(board=board, inputIndex=0, id_override="test_spindle_persist")
@@ -264,7 +264,7 @@ class TestSaveRestore:
     def test_yaml_contains_only_input_properties(self, board, tmp_path, monkeypatch):
         """YAML file should only contain InputDispatcher properties after save."""
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         inp = InputDispatcher(board=board, inputIndex=0, id_override="test_clean")
@@ -291,7 +291,7 @@ class TestSaveRestore:
 
     def test_default_values_when_no_yaml(self, board, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         inp = InputDispatcher(board=board, inputIndex=0, id_override="test_defaults")

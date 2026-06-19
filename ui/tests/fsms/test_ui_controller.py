@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 from kivy.clock import Clock
 
-from rcp.fsms.ui_controller import ElsUiController
+from reflex.fsms.ui_controller import ElsUiController
 
 
 def _pump(n=3):

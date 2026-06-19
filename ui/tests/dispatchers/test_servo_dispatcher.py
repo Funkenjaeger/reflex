@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from tests.dispatchers.conftest import MockBoard, MockFormats
-from rcp.dispatchers.servo import ServoDispatcher
+from reflex.dispatchers.servo import ServoDispatcher
 
 
 @pytest.fixture
@@ -22,7 +22,7 @@ def formats():
 @pytest.fixture
 def servo(board, formats, tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "rcp.dispatchers.saving_dispatcher.Path.home",
+        "reflex.dispatchers.saving_dispatcher.Path.home",
         lambda: tmp_path,
     )
     return ServoDispatcher(board=board, formats=formats, id_override="0")

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rcp.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_stop_hal import ElsStopHal
 
 
 def _make_board(connected=True, **registers):

@@ -1,8 +1,8 @@
-# CLAUDE.md - Project Standards for RCP (Rotary Controller Python)
+# CLAUDE.md - Project Standards for Reflex UI
 
 ## Project Overview
 
-RCP is a Kivy-based DRO (Digital Read-Out) and single-axis controller UI for rotary tables.
+Reflex UI is a Kivy-based DRO (Digital Read-Out) and single-axis controller UI for rotary tables.
 It communicates with embedded hardware (STM32) over RS-485/Modbus RTU using `minimalmodbus`.
 Target platforms: Raspberry Pi (primary), Linux, Windows, macOS.
 
@@ -22,7 +22,7 @@ and hardware, or multi-step operator flows.
 uv sync
 
 # Run the application
-uv run python -m rcp.main
+uv run python -m reflex.main
 
 # Run tests
 uv run pytest
@@ -34,7 +34,7 @@ uv build
 ## Project Structure
 
 ```
-rcp/
+reflex/
 ├── main.py                    # Entry point (asyncio + Kivy event loop)
 ├── app.py                     # MainApp class (Kivy App)
 ├── feeds.py                   # Feed/thread pitch configurations (Pydantic models)
@@ -66,9 +66,9 @@ rcp/
 
 - **Python version:** 3.10+ (use modern syntax: `list[X]` over `List[X]`, `X | Y` over `Union[X, Y]`)
 - **Naming:** snake_case for functions, methods, and variables. PascalCase for classes.
-  - **Exception:** Properties that mirror embedded C firmware variable names (from the rotary-controller-f4 project) must keep their original naming (e.g., `syncRatioNum`, `maxSpeed`, `servoMode`, `scaledPosition`). This ensures naming parity between the Python UI and the STM32 firmware for easier cross-referencing.
+  - **Exception:** Properties that mirror embedded C firmware variable names (from the reflex-fw project) must keep their original naming (e.g., `syncRatioNum`, `maxSpeed`, `servoMode`, `scaledPosition`). This ensures naming parity between the Python UI and the STM32 firmware for easier cross-referencing.
   - For properties/variables that are local to the Python project and do not correspond to firmware names, prefer snake_case.
-- **Imports:** Group in order: stdlib, third-party, local. Use absolute imports (`from rcp.utils.communication import ...`)
+- **Imports:** Group in order: stdlib, third-party, local. Use absolute imports (`from reflex.utils.communication import ...`)
 - **Type hints:** Use on function signatures. For Kivy properties, the property type is the annotation.
 
 ### Logging
@@ -111,7 +111,7 @@ Every UI component follows this structure:
 
 ### Dispatchers
 
-- `SavingDispatcher` auto-persists Kivy properties to YAML files in `~/.config/rotary-controller-python/`
+- `SavingDispatcher` auto-persists Kivy properties to YAML files in `~/.config/reflex/`
 - Subclasses: `FormatsDispatcher`, `CirclePatternDispatcher`, `ConnectionSettings`
 - Use `id_override` parameter to create multiple instances with separate save files
 
@@ -127,7 +127,7 @@ Every UI component follows this structure:
 
 - `config.ini` stores device connection settings and basic prefs (loaded via Kivy's ConfigParser)
 - `SavingDispatcher` YAML files store per-component settings (formats, scale configs, etc.)
-- Settings path: `~/.config/rotary-controller-python/`
+- Settings path: `~/.config/reflex/`
 
 ## Git and Releases
 
@@ -154,7 +154,7 @@ Every UI component follows this structure:
 
 - Framework: pytest
 - Run: `uv run pytest`
-- Test files go in `tests/` at project root, mirroring the `rcp/` structure
+- Test files go in `tests/` at project root, mirroring the `reflex/` structure
 - Priority areas for test coverage:
   1. `utils/ctype_calc.py` - pure functions
   2. `feeds.py` - data correctness
@@ -167,7 +167,7 @@ Every UI component follows this structure:
 ### Accessing the running app from a component
 ```python
 def __init__(self, **kv):
-    from rcp.app import MainApp
+    from reflex.app import MainApp
     self.app: MainApp = MainApp.get_running_app()
     super().__init__(**kv)
 ```

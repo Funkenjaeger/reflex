@@ -8,7 +8,7 @@
 
 ## Running the UI
 - You're running in WSL on a Windows PC, NOT the target Raspberry Pi system.
-- To launch the UI, you need: `DISPLAY=:0 SDL_AUDIODRIVER=dummy KIVY_INPUT=mouse uv run python -m rcp.main --size=1024x600`
+- To launch the UI, you need: `DISPLAY=:0 SDL_AUDIODRIVER=dummy KIVY_INPUT=mouse uv run python -m reflex.main --size=1024x600`
   (See `runme.sh` for the full command — adapt it as needed for your context.)
 
 ## Memory

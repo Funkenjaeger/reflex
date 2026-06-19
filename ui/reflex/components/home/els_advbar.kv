@@ -1,0 +1,200 @@
+#: import TextHeaderButton reflex.components.toolbars.text_header_button
+
+<ElsAdvancedBar>:
+  orientation: "horizontal"
+  size_hint_y: None
+  height: 128
+
+  # ── ELS-stop tri-state LED + Engage/Disengage button ──
+  BoxLayout:
+    orientation: "vertical"
+    size_hint_x: None
+    width: 96
+
+    LedButton:
+      size_hint_y: None
+      height: 28
+      font_size: 12
+      label: "Disabled" if not root.controller.engaged else ("Stopped" if root.controller.els_stop_active else "Armed")
+      current_color: [0.4, 0.4, 0.4, 1] if not root.controller.engaged else ([0.8, 0.15, 0.15, 1] if root.controller.els_stop_active else [0.15, 0.7, 0.15, 1])
+
+    Button:
+      text: "Disengage" if root.controller.engaged else "Engage"
+      disabled: root.is_running
+      on_release:
+        app.beep()
+        root.toggle_engage()
+
+  BoxLayout:
+    orientation: 'vertical'
+
+    # ── Wizard instruction bar ─────────────────────────────────────────────────
+    # Wizard-only: hidden in stop-only and stop+retract modes (those rely on
+    # action-button labels + validity gating for operator guidance instead).
+    # depth_reached indicator is an overlay (FloatLayout child) so it can
+    # extend past the Stop-button column on the left without stealing width
+    # from the centered instruction text.
+    FloatLayout:
+      size_hint_y: 0.2 if root.enable_wizard else 0
+      opacity: 1 if root.enable_wizard else 0
+      disabled: not root.enable_wizard
+      canvas.before:
+        Color:
+          rgba: [0.2, 0.2, 0.2, 1]
+        Rectangle:
+          pos: self.pos
+          size: self.size
+
+      Label:
+        id: label_instruction
+        text: root.controller.instruction_text
+        text_size: self.size
+        size_hint: 1, 1
+        pos_hint: {'x': 0, 'y': 0}
+        font_size: 16
+        halign: 'center'
+        valign: 'top'
+
+      Label:
+        id: label_depth_reached
+        text: "Stop ø reached" if root.controller.depth_reached else ""
+        text_size: self.size
+        size_hint: None, None
+        size: 200, 24
+        pos_hint: {'x': 0, 'top': 1}
+        font_size: 16
+        halign: 'left'
+        valign: 'middle'
+        padding: 8, 0
+        color: [0.4, 1.0, 0.4, 1]
+
+    # ── Controls (varied by mode) ─────────────────────────────────────────────
+    BoxLayout:
+      orientation: 'horizontal'
+      size_hint_y: 0.8 if root.enable_wizard else 1.0
+
+      # ── Start / Stop (wizard only) ──────────────────────────────────────────
+      Button:
+        id: btn_start_stop
+        width: 96 if root.enable_wizard else 0
+        size_hint_x: None
+        opacity: 1 if root.enable_wizard else 0
+        disabled: not ( root.controller.start_stop_enabled and root.enable_wizard )
+        text: "Start" if root.controller.start_not_stop else "Stop"
+        font_size: self.height / 4
+        font_style: "bold"
+        background_color: [0.3, 0.3, 0.3, 1] if root.controller.start_not_stop else [1, 0.2, 0.2, 1]
+        on_release: root.controller.on_start_stop_button_clicked()
+
+      Widget: # spacer
+
+      TextHeaderButton:
+        id: btn_stop_z
+        text_header: "Stop Z"
+        text_button: app.formats.position_format.format(root.controller.stop_z)
+        blink_enable: root.controller.active_input == "stop_z"
+        width: self.height
+        disabled: not root.controller.x_z_inputs_enabled
+        on_short_press: root.on_value_button_released("stop_z")
+        on_long_press: root.on_value_long_press("stop_z")
+
+      TextHeaderButton:
+        id: btn_start_z
+        text_header: "Start Z"
+        text_button: app.formats.position_format.format(root.controller.retract_z)
+        blink_enable: root.controller.active_input == "start_z"
+        width: self.height if (root.enable_retract or root.enable_wizard) else 0
+        opacity: 1 if (root.enable_retract or root.enable_wizard) else 0
+        disabled:  not (root.controller.x_z_inputs_enabled and (root.enable_retract or root.enable_wizard) )
+        on_short_press: root.on_value_button_released("start_z")
+        on_long_press: root.on_value_long_press("start_z")
+
+      Widget: # spacer
+
+      TextHeaderButton:
+        id: btn_major_dia
+        text_header: "Major \u00f8"
+        text_button: app.formats.position_format.format(root.controller.start_dia)
+        blink_enable: root.controller.active_input == "major_dia"
+        width: self.height if root.enable_wizard else 0
+        opacity: 1 if root.enable_wizard else 0
+        disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
+        on_short_press: root.on_value_button_released("major_dia")
+        on_long_press: root.on_value_long_press("major_dia")
+
+      TextHeaderButton:
+        id: btn_minor_dia
+        text_header: "Minor \u00f8"
+        text_button: app.formats.position_format.format(root.controller.stop_dia)
+        blink_enable: root.controller.active_input == "minor_dia"
+        width: self.height if root.enable_wizard else 0
+        opacity: 1 if root.enable_wizard else 0
+        disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
+        on_short_press: root.on_value_button_released("minor_dia")
+        on_long_press: root.on_value_long_press("minor_dia")
+
+      Widget: # spacer
+
+      # ── Action button (Set / Cut / Retract / Confirm). Visible in all
+      # modes; non-wizard modes use it for Cut/Retract within in_cycle.
+      Button:
+        id: btn_action
+        width: self.height
+        size_hint_x: None
+        disabled: not root.controller.action_button_text or not root.controller.action_allowed
+        text: root.controller.action_button_text
+        font_size: self.height / 4
+        halign: "center"
+        on_release: root.controller.on_action_button_clicked()
+
+  # ── Mode selector buttons (wizard / retract toggles) ───────────────────
+  BoxLayout:
+    orientation: "vertical"
+    size_hint_x: None
+    width: self.height * 0.7
+
+    Button:
+      id: btn_wizard_toggle
+      font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+      font_size: min(self.height / 3, self.width / 3)
+      background_color: [0.3, 0.5, 0.3, 1] if root.enable_wizard else [0.2, 0.2, 0.2, 1]
+      color: app.formats.display_color
+      text: "\ue2ca"
+      text_size: self.size
+      halign: 'center'
+      valign: 'middle'
+      disabled: root.is_running
+      on_release:
+        app.beep()
+        root.enable_wizard = not root.enable_wizard
+        if root.enable_wizard: root.enable_retract = True
+
+    Button:
+      id: btn_retract_toggle
+      font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+      font_size: min(self.height / 3, self.width / 3)
+      background_color: [0.3, 0.5, 0.3, 1] if root.enable_retract else [0.2, 0.2, 0.2, 1]
+      color: app.formats.display_color
+      text: "\uf085"
+      text_size: self.size
+      halign: 'center'
+      valign: 'middle'
+      disabled: root.is_running or root.enable_wizard
+      on_release:
+        app.beep()
+        root.enable_retract = not root.enable_retract
+
+    Button:
+      id: btn_settings
+      font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+      font_size: min(self.height / 3, self.width / 3)
+      background_color: [0.2, 0.2, 0.2, 1]
+      color: app.formats.display_color
+      text: "\uf013"
+      text_size: self.size
+      halign: 'center'
+      valign: 'middle'
+      disabled: root.is_running
+      on_release:
+        app.beep()
+        root.open_settings()

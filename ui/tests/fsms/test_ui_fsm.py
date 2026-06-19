@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from rcp.fsms.ui_fsm import ElsUiFsm
+from reflex.fsms.ui_fsm import ElsUiFsm
 
 
 def _make_controller(**overrides):

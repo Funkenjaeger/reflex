@@ -2,7 +2,7 @@ from fractions import Fraction
 
 import pytest
 
-from rcp.feeds import FeedConfiguration, THREAD_MM, THREAD_IN, FEED_IN, FEED_MM, table
+from reflex.feeds import FeedConfiguration, THREAD_MM, THREAD_IN, FEED_IN, FEED_MM, table
 
 
 class TestFeedConfiguration:

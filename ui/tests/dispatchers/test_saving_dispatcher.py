@@ -1,6 +1,6 @@
 from kivy.properties import NumericProperty, StringProperty
 
-from rcp.dispatchers.saving_dispatcher import SavingDispatcher
+from reflex.dispatchers.saving_dispatcher import SavingDispatcher
 
 
 class PlainDispatcher(SavingDispatcher):
@@ -20,7 +20,7 @@ class OverriddenDispatcher(SavingDispatcher):
 class TestSavingDispatcherFilename:
     def test_default_uses_class_name(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         d = PlainDispatcher(id_override="0")
@@ -28,7 +28,7 @@ class TestSavingDispatcherFilename:
 
     def test_save_class_name_overrides_filename(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         d = OverriddenDispatcher(id_override="0")
@@ -36,7 +36,7 @@ class TestSavingDispatcherFilename:
 
     def test_round_trip_with_override(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         # Write with one class name
@@ -50,7 +50,7 @@ class TestSavingDispatcherFilename:
 
     def test_different_overrides_use_different_files(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         d1 = OverriddenDispatcher(id_override="0")

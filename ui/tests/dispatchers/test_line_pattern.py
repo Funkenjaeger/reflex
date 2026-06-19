@@ -1,12 +1,12 @@
 import pytest
 
-from rcp.dispatchers.line_pattern import LinePatternDispatcher
+from reflex.dispatchers.line_pattern import LinePatternDispatcher
 
 
 @pytest.fixture
 def pattern(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "rcp.dispatchers.saving_dispatcher.Path.home",
+        "reflex.dispatchers.saving_dispatcher.Path.home",
         lambda: tmp_path,
     )
     p = LinePatternDispatcher(id_override="test_line")

@@ -2,13 +2,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rcp.utils.base_device import BaseDevice, TypeDefinition, VariableDefinition
-from rcp.utils.devices import (
+from reflex.utils.base_device import BaseDevice, TypeDefinition, VariableDefinition
+from reflex.utils.devices import (
     Int16, UInt16, Int32, Uint32T, Float, Bool,
     TimHandleTypeDef, Scale, Servo, FastData, Global,
     SCALES_COUNT,
 )
-from rcp.utils import communication
+from reflex.utils import communication
 
 
 @pytest.fixture
