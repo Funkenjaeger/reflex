@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rcp.fsms.els_fsm import ElsFsm
+from reflex.fsms.els_fsm import ElsFsm
 
 
 # ─── fixtures: mock collaborators with just enough surface for the FSM ─────

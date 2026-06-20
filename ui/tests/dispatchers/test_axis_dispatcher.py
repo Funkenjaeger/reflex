@@ -5,10 +5,10 @@ import pytest
 import yaml
 
 from tests.dispatchers.conftest import MockBoard, MockFormats, MockOffsetProvider
-from rcp.dispatchers.axis import AxisDispatcher
-from rcp.dispatchers.axis_transform import AxisTransform, TransformType
-from rcp.dispatchers.servo import ServoDispatcher
-from rcp.dispatchers.input import InputDispatcher
+from reflex.dispatchers.axis import AxisDispatcher
+from reflex.dispatchers.axis_transform import AxisTransform, TransformType
+from reflex.dispatchers.servo import ServoDispatcher
+from reflex.dispatchers.input import InputDispatcher
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def offset_provider():
 @pytest.fixture
 def servo(board, formats, tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "rcp.dispatchers.saving_dispatcher.Path.home",
+        "reflex.dispatchers.saving_dispatcher.Path.home",
         lambda: tmp_path,
     )
     return ServoDispatcher(board=board, formats=formats, id_override="test_servo")
@@ -40,7 +40,7 @@ def servo(board, formats, tmp_path, monkeypatch):
 @pytest.fixture
 def inputs(board, tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "rcp.dispatchers.saving_dispatcher.Path.home",
+        "reflex.dispatchers.saving_dispatcher.Path.home",
         lambda: tmp_path,
     )
     result = []
@@ -56,7 +56,7 @@ def inputs(board, tmp_path, monkeypatch):
 @pytest.fixture
 def axis(board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "rcp.dispatchers.saving_dispatcher.Path.home",
+        "reflex.dispatchers.saving_dispatcher.Path.home",
         lambda: tmp_path,
     )
     return AxisDispatcher(
@@ -70,7 +70,7 @@ def axis(board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
 def _make_axis(board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch, transform, id_override):
     """Helper to create an AxisDispatcher with tmp_path monkeypatched."""
     monkeypatch.setattr(
-        "rcp.dispatchers.saving_dispatcher.Path.home",
+        "reflex.dispatchers.saving_dispatcher.Path.home",
         lambda: tmp_path,
     )
     return AxisDispatcher(
@@ -515,7 +515,7 @@ class TestSyncConflict:
 class TestPersistence:
     def test_axis_saves_and_restores_name(self, board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         ax = AxisDispatcher(
@@ -547,7 +547,7 @@ class TestPersistence:
 
     def test_sum_transform_survives_round_trip(self, board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         ax = AxisDispatcher(
@@ -567,7 +567,7 @@ class TestPersistence:
 
     def test_transform_change_then_property_change_preserves_both(self, board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         ax = AxisDispatcher(
@@ -610,7 +610,7 @@ class TestPersistence:
     def test_offsets_persist_correctly(self, board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
         """Offsets (including non-zero slots) survive save/restore."""
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         ax = AxisDispatcher(
@@ -783,7 +783,7 @@ class TestAbsOffset:
     def test_abs_offset_persisted(self, board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
         """abs_offset survives save/restore cycle."""
         monkeypatch.setattr(
-            "rcp.dispatchers.saving_dispatcher.Path.home",
+            "reflex.dispatchers.saving_dispatcher.Path.home",
             lambda: tmp_path,
         )
         ax = AxisDispatcher(

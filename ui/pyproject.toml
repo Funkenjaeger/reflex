@@ -1,9 +1,10 @@
 [project]
-name = "rcp"
-version = "1.3.0"
-description = "Rotary Controller Python"
+name = "reflex"
+version = "0.1.0"
+description = "Reflex UI"
 authors = [
-    { name = "Stefano Bertelli", email = "stefano@provvedo.com" }
+    { name = "Stefano Bertelli", email = "stefano@provvedo.com" },
+    { name = "Evan Dudzik" }
 ]
 requires-python = ">=3.10,<4.0"
 license = "MIT"

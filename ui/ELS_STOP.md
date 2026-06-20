@@ -1,6 +1,6 @@
 # ELS Shoulder Stop — Python orchestration
 
-The position-based shoulder-stop and phase-preserving re-sync logic live in firmware. See [`rotary-controller-f4/ARCHITECTURE.md` → ELS Shoulder Stop](https://github.com/bartei/rotary-controller-f4/blob/main/ARCHITECTURE.md) for the conceptual model: the cut/trigger/resume phases, the latched reference pair, and the modular-correction re-sync.
+The position-based shoulder-stop and phase-preserving re-sync logic live in firmware. See [`reflex-fw/ARCHITECTURE.md` → ELS Shoulder Stop](https://github.com/Funkenjaeger/reflex-fw/blob/main/ARCHITECTURE.md) for the conceptual model: the cut/trigger/resume phases, the latched reference pair, and the modular-correction re-sync.
 
 This document covers the **Python side** — what the GUI does to drive the firmware through a threading job.
 
@@ -25,12 +25,12 @@ The firmware's re-sync correction depends on three configured quantities being m
 
 | Concern | File |
 |---|---|
-| FSM states (`disabled`, `stopped`, `cutting`, `retracting`, `alarm`) and their `on_enter_*` register writes | [`rcp/fsms/els_fsm.py`](rcp/fsms/els_fsm.py) |
-| Hardware-abstracted register access (`set_active`, `set_enable`, `set_stop_position`, etc.) | [`rcp/fsms/els_stop_hal.py`](rcp/fsms/els_stop_hal.py) |
-| Wizard state machine (configuration sequence → cycle loop) | [`rcp/fsms/ui_fsm.py`](rcp/fsms/ui_fsm.py) |
-| User-facing controller that wires the wizard, the ELS FSM, and the UI together | [`rcp/fsms/ui_controller.py`](rcp/fsms/ui_controller.py) |
-| Thread-geometry computation and unit conversions | [`rcp/dispatchers/els.py`](rcp/dispatchers/els.py) |
-| Advanced settings (backlash, hysteresis, direction modes) | [`rcp/components/home/els_advbar.py`](rcp/components/home/els_advbar.py), [`els_settings_popup.py`](rcp/components/home/els_settings_popup.py) |
+| FSM states (`disabled`, `stopped`, `cutting`, `retracting`, `alarm`) and their `on_enter_*` register writes | [`reflex/fsms/els_fsm.py`](reflex/fsms/els_fsm.py) |
+| Hardware-abstracted register access (`set_active`, `set_enable`, `set_stop_position`, etc.) | [`reflex/fsms/els_stop_hal.py`](reflex/fsms/els_stop_hal.py) |
+| Wizard state machine (configuration sequence → cycle loop) | [`reflex/fsms/ui_fsm.py`](reflex/fsms/ui_fsm.py) |
+| User-facing controller that wires the wizard, the ELS FSM, and the UI together | [`reflex/fsms/ui_controller.py`](reflex/fsms/ui_controller.py) |
+| Thread-geometry computation and unit conversions | [`reflex/dispatchers/els.py`](reflex/dispatchers/els.py) |
+| Advanced settings (backlash, hysteresis, direction modes) | [`reflex/components/home/els_advbar.py`](reflex/components/home/els_advbar.py), [`els_settings_popup.py`](reflex/components/home/els_settings_popup.py) |
 
 The layered architecture these files implement (UI → Controller → FSM → HAL → firmware registers) is documented separately in [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md); the ELS stop is a faithful instance of that pattern.
 

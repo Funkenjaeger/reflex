@@ -3,10 +3,10 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from tests.dispatchers.conftest import MockFormats, MockOffsetProvider
-from rcp.dispatchers.axis import AxisDispatcher
-from rcp.dispatchers.board import Board
-from rcp.dispatchers.input import InputDispatcher
-from rcp.dispatchers.servo import ServoDispatcher
+from reflex.dispatchers.axis import AxisDispatcher
+from reflex.dispatchers.board import Board
+from reflex.dispatchers.input import InputDispatcher
+from reflex.dispatchers.servo import ServoDispatcher
 
 
 @pytest.fixture
@@ -22,11 +22,11 @@ def offset_provider():
 @pytest.fixture
 def board(formats, offset_provider, tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "rcp.dispatchers.saving_dispatcher.Path.home",
+        "reflex.dispatchers.saving_dispatcher.Path.home",
         lambda: tmp_path,
     )
-    with patch("rcp.dispatchers.board.ConnectionManager") as MockCM, \
-         patch("rcp.dispatchers.board.Clock"):
+    with patch("reflex.dispatchers.board.ConnectionManager") as MockCM, \
+         patch("reflex.dispatchers.board.Clock"):
         mock_cm = MagicMock()
         mock_cm.__getitem__ = MagicMock(return_value=MagicMock())
         MockCM.return_value = mock_cm

@@ -2,7 +2,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from rcp.components.screens.update_screen import UpdateScreen, DEV_RELEASE
+from reflex.components.screens.update_screen import UpdateScreen, DEV_RELEASE
 
 
 @pytest.fixture
