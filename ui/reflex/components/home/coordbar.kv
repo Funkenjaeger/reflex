@@ -121,11 +121,19 @@
         on_press: app.beep()
         on_release: Factory.Keypad(integer=True).show(root.axis, 'syncRatioDen') if root.axis else None
 
-  CircularButton:
-    text: "Zero"
-    font_size: 24
-    width: self.height
+  # Zero key: a small centered circle (not a full-height disc) with margin to
+  # the screen edge, matching the mockup.
+  AnchorLayout:
     size_hint_x: None
-    # beep handled by BeepMixin.on_press
-    on_press: root.on_zero_press()
-    on_release: root.on_zero_release()
+    width: dp(108)
+    anchor_x: 'center'
+    anchor_y: 'center'
+    CircularButton:
+      text: "Zero"
+      size_hint: None, None
+      height: min(self.parent.height * 0.62, dp(76))
+      width: self.height
+      font_size: self.height * 0.30
+      # beep handled by BeepMixin.on_press
+      on_press: root.on_zero_press()
+      on_release: root.on_zero_release()

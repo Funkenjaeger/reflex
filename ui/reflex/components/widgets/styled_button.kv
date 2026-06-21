@@ -7,9 +7,10 @@
     opacity: 0.4 if self.disabled else 1
 
     canvas.before:
-        # ── Soft outer glow (highlighted state only) ──────────────────────
+        # ── Soft outer glow (highlighted + enabled only; a disabled/blank
+        #    action button like an unavailable "Cut" should not glow) ────────
         Color:
-            rgba: root.glow_color if root.is_highlighted else [0, 0, 0, 0]
+            rgba: root.glow_color if (root.is_highlighted and not root.disabled) else [0, 0, 0, 0]
         RoundedRectangle:
             pos: (self.x - 3, self.y - 3)
             size: (self.width + 6, self.height + 6)

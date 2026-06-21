@@ -28,7 +28,11 @@ class HomeToolbar(BoxLayout):
         if tabs is None:
             return
         tabs.clear_widgets()
-        for mode_id in self.app.allowed_modes():
+        modes = self.app.allowed_modes()
+        # Keep per-segment height uniform with the other groups (see KV note):
+        # the group is as tall as it has segments.
+        tabs.size_hint_y = max(len(modes), 1)
+        for mode_id in modes:
             tabs.add_widget(
                 TabSegment(text=MODE_LABELS.get(mode_id, "?"), value=mode_id)
             )

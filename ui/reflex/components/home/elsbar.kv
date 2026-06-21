@@ -3,62 +3,148 @@
 #: import FeedsTablePopup reflex.components.popups.feeds_table_popup
 #: import AutoSizeButton reflex.components.widgets.auto_size_button
 #: import TwoStateButton reflex.components.toolbars.two_state_button
+#: import THEME reflex.components.widgets.facelift_theme
+#: import TabSelector reflex.components.widgets.tab_selector
 
 <ElsBar>:
   orientation: "horizontal"
   size_hint_y: None
   height: 128
   
-  Button:
-    width: 96
+  # ── Sync Enable: slate card, cyan status LED top-left when servo enabled ──
+  FloatLayout:
     size_hint_x: None
-    background_color: [0.2, 1, 0.2, 1] if app.servo.servoMode else [0.3, 0.3, 0.3, 1]
-    background_normal: ""
-    on_press: app.beep()
-    on_release: app.servo.toggle_enable()
+    width: 96
+    Button:
+      # Fill the FloatLayout; without an explicit pos_hint a FloatLayout child
+      # keeps absolute pos (0,0) and its canvas would draw in the window corner.
+      size_hint: 1, 1
+      pos_hint: {'x': 0, 'y': 0}
+      background_color: 0, 0, 0, 0
+      background_normal: ""
+      on_press: app.beep()
+      on_release: app.servo.toggle_enable()
+      canvas.before:
+        Color:
+          rgba: THEME.SLATE_FILL
+        RoundedRectangle:
+          pos: self.x + dp(4), self.y + dp(4)
+          size: self.width - dp(8), self.height - dp(8)
+          radius: [dp(7)]
+        Color:
+          rgba: THEME.ACCENT if app.servo.servoMode else THEME.BORDER_DIM
+        Line:
+          rounded_rectangle: (self.x + dp(4), self.y + dp(4), self.width - dp(8), self.height - dp(8), dp(7))
+          width: 1.2
+        # Status LED, top-left corner.
+        Color:
+          rgba: THEME.ACCENT if app.servo.servoMode else THEME.BORDER_DIM
+        Ellipse:
+          pos: self.x + dp(12), self.top - dp(18)
+          size: dp(8), dp(8)
     Image:
       source: "pictures/motor_gears.png"
-      x: self.parent.x + self.parent.width * 0.1
-      y: self.parent.y + self.parent.height * 0.1
-      width: self.parent.width * 0.8
-      height: self.parent.height * 0.8
       allow_stretch: True
       keep_ratio: True
-  
-  BoxLayout: # Direction button
+      size_hint: 0.52, 0.42
+      pos_hint: {'center_x': 0.5, 'center_y': 0.58}
+    Label:
+      text: "Sync\nEnable"
+      font_name: THEME.FONT_BOLD
+      font_size: dp(12)
+      color: THEME.TEXT if app.servo.servoMode else THEME.TEXT_DIM
+      halign: 'center'
+      valign: 'middle'
+      size_hint: 1, 0.3
+      pos_hint: {'center_x': 0.5, 'y': 0.06}
+      text_size: self.width, None
+
+  # ── DIR: header + integrated forward/reverse one-hot (both arrows shown,
+  #    active one highlighted), matching the sidebar tab style ──
+  BoxLayout:
     orientation: 'vertical'
     size_hint_x: None
     width: 96
     Label:
       id: dir_lbl
       text: "DIR"
-      font_size: self.height / 1.5
-      size_hint_y: 0.3
-      color: app.formats.display_color
+      font_name: THEME.FONT_BOLD
+      font_size: self.height / 2.4
+      size_hint_y: 0.28
+      color: THEME.TEXT_DIM
       halign: 'center'
-      valign: 'top'
-    TwoStateButton:
+      valign: 'middle'
+    TabSelector:
       orientation: "horizontal"
-      width: self.parent.width
-      size_hint_y: 0.7
-      font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-      label_true: "\uf060"
-      label_false: "\uf061"
-      value: root.els_forward
-      on_release: root.toggle_move_direction()
+      size_hint_y: 0.72
       disabled: app.els.spindle_is_running
+      selected: "fwd" if root.els_forward else "rev"
+      on_select: root.els_forward = (args[1] == "fwd")
+      TabSegment:
+        value: "fwd"
+        text: "\uf060"
+        font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+      TabSegment:
+        value: "rev"
+        text: "\uf061"
+        font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
 
-  Button:
-    width: 96
+  # ── ADV: slate card; lights cyan (fill + LED) when advanced mode is on ──
+  FloatLayout:
     size_hint_x: None
-    text: "ADV"
-    on_press:
-      root.enable_advanced = not root.enable_advanced
-      app.beep()
+    width: 96
+    Button:
+      size_hint: 1, 1
+      pos_hint: {'x': 0, 'y': 0}
+      background_color: 0, 0, 0, 0
+      background_normal: ""
+      on_press:
+        root.enable_advanced = not root.enable_advanced
+        app.beep()
+      canvas.before:
+        Color:
+          rgba: THEME.ACCENT_BG if root.enable_advanced else THEME.SLATE_FILL
+        RoundedRectangle:
+          pos: self.x + dp(4), self.y + dp(4)
+          size: self.width - dp(8), self.height - dp(8)
+          radius: [dp(7)]
+        Color:
+          rgba: THEME.ACCENT if root.enable_advanced else THEME.BORDER_DIM
+        Line:
+          rounded_rectangle: (self.x + dp(4), self.y + dp(4), self.width - dp(8), self.height - dp(8), dp(7))
+          width: 1.2
+        Color:
+          rgba: THEME.ACCENT if root.enable_advanced else THEME.BORDER_DIM
+        Ellipse:
+          pos: self.x + dp(12), self.top - dp(18)
+          size: dp(8), dp(8)
+    Label:
+      text: "ADV"
+      font_name: THEME.FONT_BOLD
+      font_size: dp(20)
+      color: THEME.ACCENT_TEXT if root.enable_advanced else THEME.TEXT
+      halign: 'center'
+      valign: 'middle'
+      size_hint: 1, 1
+      pos_hint: {'x': 0, 'y': 0}
+      text_size: self.size
 
+  # ── Cut type / direction illustration: dark recessed panel (item 5) ──
   Button:
-    background_color: [0.5, 0.5, 0.5, 1]
+    background_color: 0, 0, 0, 0
     background_normal: ""
+    canvas.before:
+      Color:
+        rgba: THEME.RECESS_FILL
+      RoundedRectangle:
+        pos: self.x + dp(4), self.y + dp(4)
+        size: self.width - dp(8), self.height - dp(8)
+        radius: [dp(7)]
+      Color:
+        rgba: THEME.BORDER_DIM
+      Line:
+        rounded_rectangle: (self.x + dp(4), self.y + dp(4), self.width - dp(8), self.height - dp(8), dp(7))
+        width: 1.0
     Image:
       source: "pictures/" + root.move_type + ".png"
       x: self.parent.x + self.parent.width * 0.1

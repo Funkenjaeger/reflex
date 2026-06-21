@@ -17,15 +17,16 @@
   font_size: 16
 
   canvas.before:
-    # Recessed slate pill.
+    # Recessed slate pill (suppressed in flat mode -- the dot + label then sit
+    # bare in a shared parent gutter).
     Color:
-      rgba: THEME.RECESS_FILL
+      rgba: [0, 0, 0, 0] if root.flat else THEME.RECESS_FILL
     RoundedRectangle:
       pos: self.x + 3, self.y + 3
       size: max(self.width - 6, 0), max(self.height - 6, 0)
       radius: [6]
     Color:
-      rgba: THEME.BORDER_DIM
+      rgba: [0, 0, 0, 0] if root.flat else THEME.BORDER_DIM
     Line:
       rounded_rectangle: (self.x + 3, self.y + 3, max(self.width - 6, 0), max(self.height - 6, 0), 6)
       width: 1.0
@@ -64,6 +65,6 @@
     font_size: root.font_size
     text: root.label
     color: THEME.TEXT
-    halign: 'left' if root.two_line else 'center'
+    halign: 'left' if (root.two_line or root.flat) else 'center'
     valign: 'middle'
-    text_size: (self.width, None) if root.two_line else (None, None)
+    text_size: (self.width, None) if (root.two_line or root.flat) else (None, None)

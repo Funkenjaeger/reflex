@@ -12,9 +12,12 @@
   padding: dp(6), dp(8), 0, dp(8)
   spacing: dp(9)
 
+  # Each group's size_hint_y matches its segment count so every segment is the
+  # same height regardless of how many a group has (otherwise P0–P3 squashed
+  # into a 2-tall slot rendered tiny). Single icon buttons stay 1 unit tall.
   TabSelector:
     width: root.width
-    size_hint_y: 1
+    size_hint_y: 2
     orientation: "vertical"
     selected: app.formats.current_format
     on_select: app.formats.toggle() if args[1] != app.formats.current_format else None
@@ -28,7 +31,7 @@
   # P-offset one-hot: tap anywhere cycles P0→P3.
   TabSelector:
     width: root.width
-    size_hint_y: 1
+    size_hint_y: 4
     orientation: "vertical"
     selected: app.currentOffset
     on_select: app.currentOffset = args[1]
@@ -47,7 +50,7 @@
 
   TabSelector:
     width: root.width
-    size_hint_y: 1
+    size_hint_y: 2
     orientation: "vertical"
     selected: "ABS" if app.abs_mode else "INC"
     on_select: app.setter('abs_mode')(app, args[1] == "ABS")
@@ -64,9 +67,14 @@
     tab_style: True
     on_release: app.manager.goto("plot")
 
-    # Hide wizard button if show_wizard is False
-    size_hint_y: 1 if app.formats.show_wizard else None
-    height: self.height if app.formats.show_wizard else 0
+    # Hide wizard button when show_wizard is False. Use a fixed height with
+    # size_hint_y None so BoxLayout honours it, collapsing to 0 when hidden.
+    # Avoid `size_hint_y: 0` (Kivy treats 0 as None -> full height) and the old
+    # self-referential `height: self.height` (left a stale height at runtime
+    # that drew a dark band over the ABS/INC tab above). Height 0 also makes it
+    # non-drawing regardless of the IconButton disabled-opacity class rule.
+    size_hint_y: None
+    height: dp(46) if app.formats.show_wizard else 0
     opacity: 1 if app.formats.show_wizard else 0
     disabled: not app.formats.show_wizard
 

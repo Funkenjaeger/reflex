@@ -19,20 +19,22 @@
 
     canvas.before:
         # Per-segment body fill. Round only the outer corner of the first/last
-        # segment: left corners for a right-accent group, right corners for a
-        # left-accent group, none for horizontal groups.
+        # segment so a butted group reads as one rounded strip: left corners for
+        # a right-accent (vertical) group, right corners for a left-accent one,
+        # and the leading/trailing ends for a horizontal (top/bottom) group.
         Color:
             rgba: THEME.ACCENT_BG if self.is_selected else THEME.SLATE_FILL
         RoundedRectangle:
             pos: self.pos
             size: self.size
-            radius: [(dp(7) if self.is_first else 0), 0, 0, (dp(7) if self.is_last else 0)] if self.edge == 'right' else ([0, (dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0] if self.edge == 'left' else [0, 0, 0, 0])
+            radius: [(dp(7) if self.is_first else 0), 0, 0, (dp(7) if self.is_last else 0)] if self.edge == 'right' else ([0, (dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0] if self.edge == 'left' else [(dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), (dp(7) if self.is_last else 0), (dp(7) if self.is_first else 0)])
 
-        # Hairline divider between stacked segments (skip the first).
+        # Hairline divider between butted segments (skip the first): a top edge
+        # for vertical stacks, a left edge for horizontal rows.
         Color:
             rgba: THEME.BORDER_DIM if not self.is_first else [0, 0, 0, 0]
         Line:
-            points: (self.x, self.top, self.right, self.top)
+            points: (self.x, self.top, self.right, self.top) if self.edge in ('left', 'right') else (self.x, self.y, self.x, self.top)
             width: 1.0
 
         # Crisp accent bar on the inner edge when selected.
@@ -43,13 +45,34 @@
             size: (dp(3), self.height) if self.edge in ('left', 'right') else (self.width, dp(3))
 
     Label:
+        # Text glyph (hidden when the segment uses image icons instead).
         text: root.text
         font_name: root.font_name
-        font_size: root.font_size if root.font_size else min(self.height * 0.62, sp(24))
+        font_size: root.font_size if root.font_size else min(self.height * 0.5, self.width * 0.42, sp(30))
         bold: True
         color: THEME.ACCENT_TEXT if root.is_selected else THEME.TEXT_DIM
+        opacity: 0 if root.icons else 1
         size_hint: 1, 1
         pos_hint: {'x': 0, 'y': 0}
         text_size: self.size
         halign: 'center'
         valign: 'middle'
+
+    Image:
+        # Primary icon (e.g. stop sign). Centered + larger when it's the only
+        # icon; raised + smaller when paired with a second stacked icon.
+        source: root.icons[0] if root.icons else ''
+        allow_stretch: True
+        keep_ratio: True
+        opacity: (1 if root.is_selected else 0.4) if root.icons else 0
+        size_hint: (0.6, 0.4) if len(root.icons) > 1 else (0.66, 0.66)
+        pos_hint: {'center_x': 0.5, 'center_y': 0.72 if len(root.icons) > 1 else 0.5}
+
+    Image:
+        # Secondary icon (e.g. retract arrow), only when two icons are stacked.
+        source: root.icons[1] if len(root.icons) > 1 else ''
+        allow_stretch: True
+        keep_ratio: True
+        opacity: (1 if root.is_selected else 0.4) if len(root.icons) > 1 else 0
+        size_hint: 0.6, 0.4
+        pos_hint: {'center_x': 0.5, 'center_y': 0.28}

@@ -39,6 +39,7 @@ from kivy.properties import (
     ObjectProperty,
     NumericProperty,
     BooleanProperty,
+    ListProperty,
 )
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
@@ -129,6 +130,10 @@ class TabSegment(BeepMixin, ButtonBehavior, FloatLayout):
     """
 
     text = StringProperty("")
+    # Optional image icons drawn (stacked vertically, centered) instead of the
+    # text label -- e.g. the ELS mode tab whose states are stop-sign / U-arrow
+    # SVG art rather than glyphs. Up to two are shown; one icon centers larger.
+    icons = ListProperty([])
     value = ObjectProperty(None, allownone=True)
     font_size = NumericProperty(0)  # 0 = auto-size from segment height
     font_name = StringProperty("fonts/ChakraPetch-SemiBold.ttf")

@@ -36,5 +36,9 @@ class LedButton(BeepMixin, ButtonBehavior, BoxLayout):
     color_off = ColorProperty((0.25, 0.30, 0.36, 1))
     icon = StringProperty("")
     two_line = BooleanProperty(False)
+    # When True, drop the recessed pill + border so the LED dot and label sit
+    # bare in a shared parent gutter (e.g. the top status strip, where the four
+    # telemetry items read as one bar rather than four separate pills).
+    flat = BooleanProperty(False)
     font_size = NumericProperty(16)
     font_name = StringProperty("fonts/Manrope-Bold.ttf")

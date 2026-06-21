@@ -1,6 +1,7 @@
 #: import TextHeaderButton reflex.components.toolbars.text_header_button
 #: import StyledButton reflex.components.widgets.styled_button
 #: import IconButton reflex.components.widgets.icon_button
+#: import TabSelector reflex.components.widgets.tab_selector
 
 <ElsAdvancedBar>:
   orientation: "horizontal"
@@ -149,29 +150,34 @@
         font_size: self.height / 4
         on_release: root.controller.on_action_button_clicked()
 
-  # ── Mode selector buttons (wizard / retract toggles) ───────────────────
+  # ── Mode selector + settings ───────────────────────────────────────────
   BoxLayout:
     orientation: "vertical"
     size_hint_x: None
     width: self.height * 0.7
     spacing: 4
 
-    IconButton:
-      id: btn_wizard_toggle
-      icon: "\ue2ca"
-      is_highlighted: root.enable_wizard
+    # One-hot tri-state operating-mode tab: shows all three states with
+    # the active one highlighted, like the sidebar tabs but horizontal
+    # (matching this button's aspect). Tap anywhere cycles wizard →
+    # stop+retract → stop. Wizard is the wand glyph; the stop modes use
+    # the stop-sign / U-arrow SVG icons (stacked when both are shown).
+    TabSelector:
+      id: btn_mode
+      orientation: "horizontal"
       disabled: root.is_running
-      # beep handled by BeepMixin.on_press
-      on_release:
-        root.enable_wizard = not root.enable_wizard
-        if root.enable_wizard: root.enable_retract = True
-
-    IconButton:
-      id: btn_retract_toggle
-      icon: "\uf085"
-      is_highlighted: root.enable_retract
-      disabled: root.is_running or root.enable_wizard
-      on_release: root.enable_retract = not root.enable_retract
+      selected: root.mode
+      on_select: root.apply_mode(args[1])
+      TabSegment:
+        value: "wizard"
+        text: "\ue2ca"
+        font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+      TabSegment:
+        value: "stop_retract"
+        icons: ["pictures/stop_sign.png", "pictures/u_arrow.png"]
+      TabSegment:
+        value: "stop"
+        icons: ["pictures/stop_sign.png"]
 
     IconButton:
       id: btn_settings
