@@ -11,21 +11,43 @@
 
 <HomePage>:
   BoxLayout:
-    orientation: "horizontal"
-    # Small gap so the sidebar tabs don't touch the next column of widgets.
-    spacing: dp(6)
+    orientation: "vertical"
 
-    HomeToolbar:
-      id: home_toolbar
-
+    # ── Title bar: Reflex logo, top-left (per the mockup) ──
     BoxLayout:
-      id: bars_container
-      orientation: "vertical"
-      size_hint: 1, 1
-      # Divider in the gap so the sidebar reads as attached, not floating.
+      size_hint_y: None
+      height: dp(32)
+      padding: dp(10), dp(5), dp(10), dp(3)
       canvas.before:
         Color:
-          rgba: THEME.BORDER
+          rgba: THEME.BACKGROUND
         Rectangle:
-          pos: self.x - dp(3), self.y + dp(2)
-          size: dp(1.5), self.height - dp(4)
+          pos: self.pos
+          size: self.size
+      Image:
+        source: "pictures/reflex_logo.png"
+        size_hint_x: None
+        width: self.height * 3.83
+        allow_stretch: True
+        keep_ratio: True
+      Widget:
+
+    BoxLayout:
+      orientation: "horizontal"
+      # Small gap so the sidebar tabs don't touch the next column of widgets.
+      spacing: dp(6)
+
+      HomeToolbar:
+        id: home_toolbar
+
+      BoxLayout:
+        id: bars_container
+        orientation: "vertical"
+        size_hint: 1, 1
+        # Divider in the gap so the sidebar reads as attached, not floating.
+        canvas.before:
+          Color:
+            rgba: THEME.BORDER
+          Rectangle:
+            pos: self.x - dp(3), self.y + dp(2)
+            size: dp(1.5), self.height - dp(4)
