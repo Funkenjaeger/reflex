@@ -1,62 +1,51 @@
 # Styling for TabSelector / TabSegment (see tab_selector.py).
-# Flat, butted-together one-hot segments. Selected = cyan text + glowing
-# accent edge + faintly cyan-tinted fill; others = dim slate. Pure-KV canvas
-# (no LinearGradient -- unavailable on this Kivy).
+#
+# Each segment paints its OWN rounded background, so selected and unselected
+# segments share identical geometry -- no separate group "backing" layer to
+# peek out from under a square selected fill (which caused the corner notch +
+# square-selected-corner artifacts). The outer (screen-side) corner is rounded
+# only on the first/last segment so the butted group reads as one rounded-left
+# strip. The inner edge stays flush and carries a crisp cyan accent bar when
+# selected (no soft glow -> no ghosting/misalignment).
 
 #: import THEME reflex.components.widgets.facelift_theme
 
 <TabSelector>:
     spacing: 0
 
-    canvas.before:
-        # Tab-strip backing: a slate panel rounded on its OUTER (left) corners
-        # and flush/square on the right, so the group reads as a set of tabs
-        # attached to the screen content rather than a free-floating box.
-        Color:
-            rgba: THEME.SLATE_FILL
-        RoundedRectangle:
-            pos: self.pos
-            size: self.size
-            radius: [dp(7), 0, 0, dp(7)] if self.orientation == 'vertical' else [dp(7), dp(7), 0, 0]
-
 
 <TabSegment>:
     opacity: 0.45 if self.disabled else 1
 
     canvas.before:
-        # Selected fill (cyan-tinted) vs transparent (group fill shows through).
+        # Per-segment body fill. Round only the outer corner of the first/last
+        # segment: left corners for a right-accent group, right corners for a
+        # left-accent group, none for horizontal groups.
         Color:
-            rgba: THEME.ACCENT_BG if self.is_selected else [0, 0, 0, 0]
-        Rectangle:
+            rgba: THEME.ACCENT_BG if self.is_selected else THEME.SLATE_FILL
+        RoundedRectangle:
             pos: self.pos
             size: self.size
+            radius: [(dp(7) if self.is_first else 0), 0, 0, (dp(7) if self.is_last else 0)] if self.edge == 'right' else ([0, (dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0] if self.edge == 'left' else [0, 0, 0, 0])
 
-        # Soft glow hugging the accent edge (selected only).
+        # Hairline divider between stacked segments (skip the first).
         Color:
-            rgba: THEME.GLOW if self.is_selected else [0, 0, 0, 0]
-        Rectangle:
-            pos: (self.x, self.y) if self.edge == 'left' else ((self.right - 6, self.y) if self.edge == 'right' else ((self.x, self.y) if self.edge == 'bottom' else (self.x, self.top - 6)))
-            size: (6, self.height) if self.edge in ('left', 'right') else (self.width, 6)
+            rgba: THEME.BORDER_DIM if not self.is_first else [0, 0, 0, 0]
+        Line:
+            points: (self.x, self.top, self.right, self.top)
+            width: 1.0
 
-        # Bright accent bar on the chosen edge (selected only).
+        # Crisp accent bar on the inner edge when selected.
         Color:
             rgba: THEME.ACCENT if self.is_selected else [0, 0, 0, 0]
         Rectangle:
-            pos: (self.x, self.y) if self.edge == 'left' else ((self.right - 3, self.y) if self.edge == 'right' else ((self.x, self.y) if self.edge == 'bottom' else (self.x, self.top - 3)))
-            size: (3, self.height) if self.edge in ('left', 'right') else (self.width, 3)
-
-        # Thin divider between segments (between stacked tabs; on the inner side
-        # for horizontal groups).
-        Color:
-            rgba: THEME.BORDER_DIM
-        Line:
-            points: (self.x, self.top, self.right, self.top) if self.edge in ('left', 'right') else (self.right, self.y, self.right, self.top)
-            width: 1.0
+            pos: (self.x, self.y) if self.edge == 'left' else ((self.right - dp(3), self.y) if self.edge == 'right' else ((self.x, self.y) if self.edge == 'bottom' else (self.x, self.top - dp(3))))
+            size: (dp(3), self.height) if self.edge in ('left', 'right') else (self.width, dp(3))
 
     Label:
         text: root.text
-        font_size: root.font_size
         font_name: root.font_name
+        font_size: root.font_size if root.font_size else min(self.height * 0.62, sp(24))
         bold: True
         color: THEME.ACCENT_TEXT if root.is_selected else THEME.TEXT_DIM
         size_hint: 1, 1

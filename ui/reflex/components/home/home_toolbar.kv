@@ -21,11 +21,9 @@
     TabSegment:
       text: "MM"
       value: "MM"
-      font_size: min(self.height / 2.5, self.width / 2.5)
     TabSegment:
       text: "IN"
       value: "IN"
-      font_size: min(self.height / 2.5, self.width / 2.5)
 
   # P-offset one-hot: tap anywhere cycles P0→P3.
   TabSelector:
@@ -37,19 +35,15 @@
     TabSegment:
       text: "P0"
       value: 0
-      font_size: min(self.height / 2.5, self.width / 2.5)
     TabSegment:
       text: "P1"
       value: 1
-      font_size: min(self.height / 2.5, self.width / 2.5)
     TabSegment:
       text: "P2"
       value: 2
-      font_size: min(self.height / 2.5, self.width / 2.5)
     TabSegment:
       text: "P3"
       value: 3
-      font_size: min(self.height / 2.5, self.width / 2.5)
 
   TabSelector:
     width: root.width
@@ -60,15 +54,14 @@
     TabSegment:
       text: "ABS"
       value: "ABS"
-      font_size: min(self.height / 2.5, self.width / 2.5)
     TabSegment:
       text: "INC"
       value: "INC"
-      font_size: min(self.height / 2.5, self.width / 2.5)
 
   IconButton:
     width: root.width
     icon: "\ue2ca"
+    tab_style: True
     on_release: app.manager.goto("plot")
 
     # Hide wizard button if show_wizard is False
@@ -90,6 +83,7 @@
   IconButton:
     width: root.width
     icon: "\uf085"
+    tab_style: True
     on_release: app.manager.goto("setup_screen")
     size_hint_y: 1
 

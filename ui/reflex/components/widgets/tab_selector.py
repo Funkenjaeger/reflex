@@ -77,9 +77,13 @@ class TabSelector(BoxLayout):
 
     def _apply_edges(self, *_):
         edge = self.resolved_accent_edge()
-        for child in self.children:
-            if isinstance(child, TabSegment):
-                child.edge = edge
+        segments = [c for c in reversed(self.children)
+                    if isinstance(c, TabSegment)]
+        last = len(segments) - 1
+        for i, seg in enumerate(segments):
+            seg.edge = edge
+            seg.is_first = (i == 0)
+            seg.is_last = (i == last)
 
     def resolved_accent_edge(self) -> str:
         if self.accent_edge != "auto":
@@ -126,12 +130,17 @@ class TabSegment(BeepMixin, ButtonBehavior, FloatLayout):
 
     text = StringProperty("")
     value = ObjectProperty(None, allownone=True)
-    font_size = NumericProperty(18)
+    font_size = NumericProperty(0)  # 0 = auto-size from segment height
     font_name = StringProperty("fonts/Manrope-Bold.ttf")
     is_selected = BooleanProperty(False)
     # Which edge the cyan accent sits on; pushed by the parent group's
     # _apply_edges() so it stays in sync with orientation/accent_edge.
     edge = StringProperty("right")
+    # Position within the group, pushed by _apply_edges(): the first/last
+    # segment rounds its outer (screen-side) corner so the group reads as a
+    # single rounded-left tab strip without a separate backing layer.
+    is_first = BooleanProperty(False)
+    is_last = BooleanProperty(False)
 
     def _update_selected(self, *_):
         group = self._group()

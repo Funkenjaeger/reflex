@@ -39,6 +39,9 @@ class IconButton(BeepMixin, ButtonBehavior, FloatLayout):
     font_size = NumericProperty(0)
     radius = NumericProperty(8)
     is_highlighted = BooleanProperty(False)
+    # When True, render like a sidebar tab: rounded on the outer (left) edge
+    # only, flush/attached on the right, no floating border or glow box.
+    tab_style = BooleanProperty(False)
 
     # Optional explicit icon color override (defaults follow the theme).
     icon_color = ColorProperty([0, 0, 0, 0])

@@ -29,10 +29,6 @@ class HomeToolbar(BoxLayout):
             return
         tabs.clear_widgets()
         for mode_id in self.app.allowed_modes():
-            seg = TabSegment(text=MODE_LABELS.get(mode_id, "?"), value=mode_id)
-            seg.bind(size=self._fit_font)
-            tabs.add_widget(seg)
-
-    @staticmethod
-    def _fit_font(seg, _size):
-        seg.font_size = min(seg.height / 2.5, seg.width / 2.5)
+            tabs.add_widget(
+                TabSegment(text=MODE_LABELS.get(mode_id, "?"), value=mode_id)
+            )
