@@ -27,7 +27,10 @@
         RoundedRectangle:
             pos: self.pos
             size: self.size
-            radius: [(dp(7) if self.is_first else 0), 0, 0, (dp(7) if self.is_last else 0)] if self.edge == 'right' else ([0, (dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0] if self.edge == 'left' else [(dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), (dp(7) if self.is_last else 0), (dp(7) if self.is_first else 0)])
+            # Vertical groups round the outer LEFT corners; horizontal groups
+            # round only the outer TOP corners (square bottom so the bottom
+            # accent bar lines up). Segments inside their own box stay square.
+            radius: [0, 0, 0, 0] if not self.round_corners else ([(dp(7) if self.is_first else 0), 0, 0, (dp(7) if self.is_last else 0)] if self.edge == 'right' else ([0, (dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0] if self.edge == 'left' else [(dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0, 0]))
 
         # Hairline divider between butted segments (skip the first): a top edge
         # for vertical stacks, a left edge for horizontal rows.
@@ -49,7 +52,8 @@
         # Text glyph (hidden when the segment uses image icons instead).
         text: root.text
         font_name: root.font_name
-        font_size: root.font_size if root.font_size else min(self.height * 0.5, self.width * 0.42, sp(30))
+        # Unselected segments use a smaller font so the selected one stands out.
+        font_size: (root.font_size if root.font_size else min(self.height * 0.5, self.width * 0.42, sp(30))) * (1.0 if root.is_selected else 0.68)
         bold: True
         color: THEME.ACCENT_TEXT if root.is_selected else THEME.TEXT_DIM
         opacity: 0 if root.icons else 1

@@ -67,17 +67,6 @@ class ElsBar(BoxLayout, SavingDispatcher):
         self.current_feeds_table = table_instance
         self.current_feeds_index = index
 
-    def set_feed_category(self, threading: bool):
-        """Switch between the Feed and Thread tables for the current unit.
-
-        Driven by the FEED/THREAD one-hot in the ELS bar; resets to the first
-        entry of the chosen table.
-        """
-        unit = "MM" if self.app.formats.current_format == "MM" else "IN"
-        name = f"{'Thread' if threading else 'Feed'} {unit}"
-        if name in feeds.table and name != self.mode_name:
-            self.set_feed_ratio(name, 0)
-
     def update_feeds_ratio(self, instance, value):
         ratio = self.current_feeds_table[self.current_feeds_index].ratio
         spindle_axis = self.app.board.get_spindle_axis()

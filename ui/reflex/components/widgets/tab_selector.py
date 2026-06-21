@@ -142,6 +142,9 @@ class TabSegment(BeepMixin, ButtonBehavior, FloatLayout):
     # bordered segmented controls (e.g. DIR) that show selection via fill +
     # an outer border instead of an attached-edge accent.
     show_accent = BooleanProperty(True)
+    # Whether the group rounds its outer corners. Off for segments that sit
+    # inside their own bordered box (e.g. DIR), which should stay square.
+    round_corners = BooleanProperty(True)
     # Which edge the cyan accent sits on; pushed by the parent group's
     # _apply_edges() so it stays in sync with orientation/accent_edge.
     edge = StringProperty("right")

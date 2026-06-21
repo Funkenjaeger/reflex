@@ -29,13 +29,13 @@
         Color:
           rgba: THEME.SLATE_FILL
         RoundedRectangle:
-          pos: self.x + dp(4), self.y + dp(4)
-          size: self.width - dp(8), self.height - dp(8)
+          pos: self.x + dp(4), self.y + dp(6)
+          size: self.width - dp(8), self.height - dp(12)
           radius: [dp(7)]
         Color:
           rgba: THEME.ACCENT if app.servo.servoMode else THEME.BORDER_DIM
         Line:
-          rounded_rectangle: (self.x + dp(4), self.y + dp(4), self.width - dp(8), self.height - dp(8), dp(7))
+          rounded_rectangle: (self.x + dp(4), self.y + dp(6), self.width - dp(8), self.height - dp(12), dp(7))
           width: 1.2
         # Status LED, top-left corner.
         Color:
@@ -66,7 +66,7 @@
     orientation: 'vertical'
     size_hint_x: None
     width: 96
-    padding: dp(7), dp(6), dp(7), dp(10)
+    padding: dp(4), dp(6), dp(4), dp(6)
     BoxLayout:
       orientation: 'vertical'
       canvas.after:
@@ -74,7 +74,7 @@
           rgba: THEME.BORDER
         Line:
           rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
-          width: 1.3
+          width: 1.0
       Label:
         id: dir_lbl
         text: "DIR"
@@ -101,11 +101,13 @@
           text: "\uf060"
           font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
           show_accent: False
+          round_corners: False
         TabSegment:
           value: "rev"
           text: "\uf061"
           font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
           show_accent: False
+          round_corners: False
 
   # ── ADV: slate card; lights cyan (fill + LED) when advanced mode is on ──
   FloatLayout:
@@ -123,13 +125,13 @@
         Color:
           rgba: THEME.ACCENT_BG if root.enable_advanced else THEME.SLATE_FILL
         RoundedRectangle:
-          pos: self.x + dp(4), self.y + dp(4)
-          size: self.width - dp(8), self.height - dp(8)
+          pos: self.x + dp(4), self.y + dp(6)
+          size: self.width - dp(8), self.height - dp(12)
           radius: [dp(7)]
         Color:
           rgba: THEME.ACCENT if root.enable_advanced else THEME.BORDER_DIM
         Line:
-          rounded_rectangle: (self.x + dp(4), self.y + dp(4), self.width - dp(8), self.height - dp(8), dp(7))
+          rounded_rectangle: (self.x + dp(4), self.y + dp(6), self.width - dp(8), self.height - dp(12), dp(7))
           width: 1.2
         Color:
           rgba: THEME.ACCENT if root.enable_advanced else THEME.BORDER_DIM
@@ -172,44 +174,20 @@
       allow_stretch: True
       keep_ratio: True
 
-  # ── Feed / Thread: one widget — FEED|THREAD one-hot over a recessed
-  #    value, with ▲▼ steppers, per the mockup ──
+  # ── Feed / Thread: ONE control. The FEED/THREAD indicator + pitch open
+  #    the feeds dialog (which DRIVES the selection); ▲▼ step the table. ──
   BoxLayout:
     orientation: 'horizontal'
     size_hint_x: None
     width: dp(168)
-    padding: dp(4), dp(6), dp(4), dp(8)
+    padding: dp(4), dp(6), dp(4), dp(6)
     spacing: dp(5)
-    BoxLayout:
-      orientation: 'vertical'
-      spacing: dp(4)
-      TabSelector:
-        orientation: 'horizontal'
-        size_hint_y: 0.42
-        selected: "thread" if ("Thread" in root.mode_name) else "feed"
-        on_select: root.set_feed_category(args[1] == "thread")
-        TabSegment:
-          value: "feed"
-          text: "FEED"
-          font_name: THEME.FONT_BOLD
-          font_size: sp(12)
-        TabSegment:
-          value: "thread"
-          text: "THREAD"
-          font_name: THEME.FONT_BOLD
-          font_size: sp(12)
+    FloatLayout:
       Button:
-        id: feed_btn
-        size_hint_y: 0.58
+        size_hint: 1, 1
+        pos_hint: {'x': 0, 'y': 0}
         background_color: 0, 0, 0, 0
         background_normal: ""
-        text: root.feed_name + " " + ("tpi" if root.mode_name == "Thread IN" else ("in" if root.mode_name == "Feed IN" else "mm"))
-        font_name: THEME.FONT_MONO
-        font_size: self.height * 0.42
-        color: app.formats.display_color
-        halign: 'center'
-        valign: 'middle'
-        text_size: self.size
         on_press: app.beep()
         on_release: Factory.FeedsTablePopup().show_with_callback(root.set_feed_ratio, current_mode=root.mode_name)
         canvas.before:
@@ -224,6 +202,43 @@
           Line:
             rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(6))
             width: 1.0
+      BoxLayout:
+        orientation: 'vertical'
+        size_hint: 1, 1
+        pos_hint: {'x': 0, 'y': 0}
+        padding: dp(6), dp(6)
+        spacing: dp(2)
+        # FEED / THREAD indicator (read-only; the modal dialog drives it)
+        BoxLayout:
+          orientation: 'horizontal'
+          size_hint_y: 0.4
+          Label:
+            text: "FEED"
+            font_name: THEME.FONT_BOLD
+            bold: True
+            color: THEME.TEXT_DIM if ("Thread" in root.mode_name) else THEME.ACCENT_TEXT
+            font_size: sp(11) if ("Thread" in root.mode_name) else sp(14)
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
+          Label:
+            text: "THREAD"
+            font_name: THEME.FONT_BOLD
+            bold: True
+            color: THEME.ACCENT_TEXT if ("Thread" in root.mode_name) else THEME.TEXT_DIM
+            font_size: sp(14) if ("Thread" in root.mode_name) else sp(11)
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
+        Label:
+          size_hint_y: 0.6
+          text: root.feed_name + " " + ("tpi" if root.mode_name == "Thread IN" else ("in" if root.mode_name == "Feed IN" else "mm"))
+          font_name: THEME.FONT_MONO
+          font_size: min(self.height * 0.5, self.width * 0.17)
+          color: app.formats.display_color
+          halign: 'center'
+          valign: 'middle'
+          text_size: self.size
     BoxLayout:
       orientation: 'vertical'
       size_hint_x: None
