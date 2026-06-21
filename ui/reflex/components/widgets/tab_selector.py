@@ -131,7 +131,7 @@ class TabSegment(BeepMixin, ButtonBehavior, FloatLayout):
     text = StringProperty("")
     value = ObjectProperty(None, allownone=True)
     font_size = NumericProperty(0)  # 0 = auto-size from segment height
-    font_name = StringProperty("fonts/Manrope-Bold.ttf")
+    font_name = StringProperty("fonts/ChakraPetch-SemiBold.ttf")
     is_selected = BooleanProperty(False)
     # Which edge the cyan accent sits on; pushed by the parent group's
     # _apply_edges() so it stays in sync with orientation/accent_edge.

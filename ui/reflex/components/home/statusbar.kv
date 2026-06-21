@@ -27,17 +27,22 @@
       width: 1.0
 
   LedButton:
+    font_name: THEME.FONT_MONO
     label: "COM"
     checkbox_value: app.board.connected or app.board.blink
 
   LedButton:
+    font_name: THEME.FONT_MONO
     label: "{:0.0f}".format(0 if root.interval == 0 else (100000000 / root.interval))
 
   LedButton:
+    font_name: THEME.FONT_MONO
     label: "{:0.0f}".format(root.fps)
 
   LedButton:
+    font_name: THEME.FONT_MONO
     label: "{:0.0f}".format(root.cycles)
 
   LedButton:
+    font_name: THEME.FONT_MONO
     label: app.version

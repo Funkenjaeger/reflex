@@ -29,7 +29,7 @@ class StyledButton(BeepMixin, ButtonBehavior, FloatLayout):
 
     text = StringProperty("")
     font_size = NumericProperty(20)
-    font_name = StringProperty("fonts/Manrope-Bold.ttf")
+    font_name = StringProperty("fonts/ChakraPetch-SemiBold.ttf")
     radius = NumericProperty(8)
 
     # When True, render the cyan accent / glow style instead of the slate style.

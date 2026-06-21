@@ -36,5 +36,9 @@ TEXT = [0.62, 0.78, 0.85, 1]              # light blue-grey body text
 TEXT_DIM = [0.38, 0.46, 0.53, 1]          # dimmed / inactive text
 
 # -- Fonts ------------------------------------------------------------------
-FONT_BOLD = "fonts/Manrope-Bold.ttf"
+# Mockup fonts (all SIL OFL 1.1). Chakra Petch = squared industrial UI sans;
+# Share Tech Mono = telemetry mono; DSEG7 Classic = seven-segment numerals.
+FONT_BOLD = "fonts/ChakraPetch-SemiBold.ttf"   # main UI labels / captions
+FONT_MONO = "fonts/ShareTechMono-Regular.ttf"  # status-bar telemetry + version
+FONT_SEG = "fonts/DSEG7Classic-Regular.ttf"    # DRO / RPM / Stop Z / feed numerals
 FONT_ICON = "fonts/Font Awesome 6 Free-Solid-900.otf"

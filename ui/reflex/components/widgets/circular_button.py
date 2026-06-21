@@ -35,7 +35,7 @@ log = Logger.getChild(__name__)
 class CircularButton(BeepMixin, ButtonBehavior, FloatLayout):
     text = StringProperty("Zero")
     font_size = NumericProperty(20)
-    font_name = StringProperty("fonts/Manrope-Bold.ttf")
+    font_name = StringProperty("fonts/ChakraPetch-SemiBold.ttf")
     is_highlighted = BooleanProperty(False)
 
 
