@@ -1,5 +1,7 @@
 #: import ToolbarButton reflex.components.toolbars.toolbar_button
 #: import TwoStateButton reflex.components.toolbars.two_state_button
+#: import TabSelector reflex.components.widgets.tab_selector
+#: import IconButton reflex.components.widgets.icon_button
 #: import Factory kivy.factory.Factory
 #: import Keypad reflex.components.popups.keypad
 #: import ModePopup reflex.components.popups.mode_popup
@@ -10,13 +12,20 @@
   size_hint_x: None
   size_hint_y: 1
 
-  TwoStateButton:
+  TabSelector:
     width: root.width
-    label_true: "MM"
-    label_false: "IN"
-    value: app.formats.current_format == "MM"
-    on_release: app.formats.toggle()
     size_hint_y: 1
+    orientation: "vertical"
+    selected: app.formats.current_format
+    on_select: app.formats.toggle() if args[1] != app.formats.current_format else None
+    TabSegment:
+      text: "MM"
+      value: "MM"
+      font_size: min(self.height / 2.5, self.width / 2.5)
+    TabSegment:
+      text: "IN"
+      value: "IN"
+      font_size: min(self.height / 2.5, self.width / 2.5)
 
   ToolbarButton:
     width: root.width
@@ -25,21 +34,25 @@
     size_hint_y: 1
     font_size: min(self.height/3, self.width/3)
 
-  TwoStateButton:
+  TabSelector:
     width: root.width
-    label_true: "ABS"
-    label_false: "INC"
-    value: app.abs_mode
-    blink: app.board.blink and app.abs_mode
-    on_release: app.abs_mode = not app.abs_mode
     size_hint_y: 1
+    orientation: "vertical"
+    selected: "ABS" if app.abs_mode else "INC"
+    on_select: app.setter('abs_mode')(app, args[1] == "ABS")
+    TabSegment:
+      text: "ABS"
+      value: "ABS"
+      font_size: min(self.height / 2.5, self.width / 2.5)
+    TabSegment:
+      text: "INC"
+      value: "INC"
+      font_size: min(self.height / 2.5, self.width / 2.5)
 
-  ToolbarButton:
+  IconButton:
     width: root.width
-    font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-    text: "\ue2ca"
-    on_press: app.manager.goto("plot")
-    font_size: min(self.height/3, self.width/3)
+    icon: "\ue2ca"
+    on_release: app.manager.goto("plot")
 
     # Hide wizard button if show_wizard is False
     size_hint_y: 1 if app.formats.show_wizard else None
@@ -55,13 +68,11 @@
     size_hint_y: 1
     font_size: min(self.height/3, self.width/3)
 
-  ToolbarButton:
+  IconButton:
     width: root.width
-    font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-    text: "\uf085"
-    on_press: app.manager.goto("setup_screen")
+    icon: "\uf085"
+    on_release: app.manager.goto("setup_screen")
     size_hint_y: 1
-    font_size: min(self.height/3, self.width/3)
 
   #Widget:
   #  size_hint_y: 1

@@ -1,9 +1,30 @@
 #: import LedButton reflex.components.toolbars.led_button
+#: import THEME reflex.components.widgets.facelift_theme
 
 <StatusBar>:
   size_hint: 1, None
   height: 32
   orientation: "horizontal"
+  padding: 4
+  spacing: 4
+
+  canvas.before:
+    # Recessed status strip backing.
+    Color:
+      rgba: THEME.RECESS_FILL
+    Rectangle:
+      pos: self.pos
+      size: self.size
+    Color:
+      rgba: THEME.RECESS_EDGE_DARK
+    Line:
+      points: (self.x, self.top, self.x, self.y, self.right, self.y)
+      width: 1.0
+    Color:
+      rgba: THEME.BORDER_DIM
+    Line:
+      rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1)
+      width: 1.0
 
   LedButton:
     label: "COM"

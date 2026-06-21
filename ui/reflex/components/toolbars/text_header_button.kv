@@ -1,19 +1,19 @@
+# TextHeaderButton: a header label over a recessed value field (e.g. els_advbar
+# "Stop Z" / value). Facelift gives the value box a sunken inset look.
+
+#: import THEME reflex.components.widgets.facelift_theme
+
 <TextHeaderButton>:
   size_hint_x: None
   orientation: "vertical"
   font_name: app.formats.font_name
 
-  #canvas.before:
-  #  Color:
-  #    rgba: app.formats.color_on # if root.blink else [1, 1, 1, 1]
-    
   Label:
     size_hint_y: 0.3
-    #id: label_text_header
     font_name: root.font_name
     font_size: self.height / 1.5
     text: root.text_header
-    color: app.formats.color_on if root._blink else app.formats.display_color    
+    color: THEME.ACCENT if root._blink else THEME.TEXT_DIM
     halign: 'center'
     valign: 'top'
 
@@ -25,9 +25,21 @@
     color: app.formats.display_color
     halign: "center"
     valign: "middle"
+    # Recessed inset value field.
     canvas.before:
       Color:
-        rgba: [0.3, 0.3, 0.3, 1]
-      Rectangle:
-        pos: self.pos
-        size: self.size
+        rgba: THEME.RECESS_FILL
+      RoundedRectangle:
+        pos: self.x + 2, self.y + 1
+        size: max(self.width - 4, 0), max(self.height - 2, 0)
+        radius: [5]
+      Color:
+        rgba: THEME.RECESS_EDGE_DARK
+      Line:
+        points: (self.x + 4, self.y + 3, self.x + 4, self.top - 3, self.right - 4, self.top - 3)
+        width: 1.0
+      Color:
+        rgba: THEME.ACCENT if root._blink else THEME.BORDER_DIM
+      Line:
+        rounded_rectangle: (self.x + 2, self.y + 1, max(self.width - 4, 0), max(self.height - 2, 0), 5)
+        width: 1.2 if root._blink else 1.0
