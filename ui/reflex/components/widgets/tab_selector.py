@@ -95,6 +95,24 @@ class TabSelector(BoxLayout):
             self.selected = value
         self.dispatch("on_select", value)
 
+    def cycle(self):
+        """Advance the one-hot selection to the next segment's value.
+
+        Tapping *any* segment cycles the whole group, so the operator doesn't
+        have to hit a specific sub-segment -- much friendlier on a small,
+        dirty machine touchscreen. For a 2-segment group this is a toggle.
+        """
+        segments = [c for c in reversed(self.children)
+                    if isinstance(c, TabSegment) and c.value is not None]
+        if not segments:
+            return
+        values = [s.value for s in segments]
+        try:
+            idx = values.index(self.selected)
+        except ValueError:
+            idx = -1
+        self.select(values[(idx + 1) % len(values)])
+
     def on_select(self, value):
         pass
 
@@ -136,9 +154,11 @@ class TabSegment(BeepMixin, ButtonBehavior, FloatLayout):
         self._update_selected()
 
     def on_release(self):
+        # Tap anywhere on the group cycles the selection (touch-friendly),
+        # rather than selecting only the specific segment that was hit.
         group = self._group()
-        if group is not None and self.value is not None:
-            group.select(self.value)
+        if group is not None:
+            group.cycle()
 
 
 load_kv(__file__)

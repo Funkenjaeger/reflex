@@ -12,6 +12,11 @@
   width: self.height / 6
   size_hint_x: None
   size_hint_y: 1
+  # Breathing room: inset off the top/bottom/left edges and gaps between the
+  # tab groups so they don't crowd each other or the screen edge. Right stays
+  # flush so the tabs read as attached to the content.
+  padding: dp(6), dp(8), 0, dp(8)
+  spacing: dp(9)
 
   TabSelector:
     width: root.width
