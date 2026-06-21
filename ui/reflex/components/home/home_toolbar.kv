@@ -1,11 +1,5 @@
-#: import ToolbarButton reflex.components.toolbars.toolbar_button
-#: import TwoStateButton reflex.components.toolbars.two_state_button
 #: import TabSelector reflex.components.widgets.tab_selector
-#: import TabButton reflex.components.widgets.tab_button
 #: import IconButton reflex.components.widgets.icon_button
-#: import Factory kivy.factory.Factory
-#: import Keypad reflex.components.popups.keypad
-#: import ModePopup reflex.components.popups.mode_popup
 
 <HomeToolbar>:
   orientation: "vertical"
@@ -33,14 +27,29 @@
       value: "IN"
       font_size: min(self.height / 2.5, self.width / 2.5)
 
-  TabButton:
+  # P-offset one-hot: tap anywhere cycles P0→P3.
+  TabSelector:
     width: root.width
     size_hint_y: 1
-    text: "P{:d}".format(app.currentOffset)
-    font_size: min(self.height/3, self.width/3)
-    # tap cycles P0–P3; long-press opens the keypad for any offset
-    on_short_press: root.cycle_offset()
-    on_long_press: Factory.Keypad(integer=True).show(app, 'currentOffset')
+    orientation: "vertical"
+    selected: app.currentOffset
+    on_select: app.currentOffset = args[1]
+    TabSegment:
+      text: "P0"
+      value: 0
+      font_size: min(self.height / 2.5, self.width / 2.5)
+    TabSegment:
+      text: "P1"
+      value: 1
+      font_size: min(self.height / 2.5, self.width / 2.5)
+    TabSegment:
+      text: "P2"
+      value: 2
+      font_size: min(self.height / 2.5, self.width / 2.5)
+    TabSegment:
+      text: "P3"
+      value: 3
+      font_size: min(self.height / 2.5, self.width / 2.5)
 
   TabSelector:
     width: root.width
@@ -68,14 +77,15 @@
     opacity: 1 if app.formats.show_wizard else 0
     disabled: not app.formats.show_wizard
 
-  TabButton:
+  # Mode one-hot (ELS/DRO etc.): segments built from allowed_modes() in
+  # home_toolbar.py since the set depends on use case. Tap cycles modes.
+  TabSelector:
+    id: mode_tabs
     width: root.width
     size_hint_y: 1
-    text: root.current_mode_desc
-    font_size: min(self.height/3, self.width/3)
-    # tap cycles allowed modes; long-press opens the full mode popup
-    on_short_press: root.cycle_mode()
-    on_long_press: root.popup_mode()
+    orientation: "vertical"
+    selected: app.current_mode
+    on_select: app.set_mode(args[1])
 
   IconButton:
     width: root.width

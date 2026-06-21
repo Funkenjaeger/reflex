@@ -144,11 +144,15 @@
   (state-colored, disabled logic, image children) — higher layout risk. Restyle later.
 - **Status bar `v1.3.0` pill:** currently a restyled `LedButton`; the mockup wants a plain
   bordered version pill (no LED dot). Minor; add a `no_led` flag to `LedButton` if desired.
-- **Sidebar P0 / mode buttons: DONE (2026-06-21).** Now `TabButton`s styled like the tab
-  strip (right cyan accent, attached): tap cycles (P0–P3 via `OFFSET_PRESETS`; allowed modes),
-  long-press opens the keypad / mode popup. Sidebar accent moved to the right edge and the
-  `TabSegment` edge made reactive (was a stale one-shot read). Possible later polish: render
-  P0–P3 / ELS–DRO as literal multi-segment groups instead of single cycling tabs.
+- **Sidebar P0 / mode now multi-segment one-hots: DONE (2026-06-21).** P0–P3 (4 segments)
+  and ELS/DRO (built from `allowed_modes()`, so correct per use case) are `TabSelector`
+  groups like MM/IN; tap *anywhere* on a group cycles the one-hot selection (touch-friendly).
+  Sidebar accent moved to the right (inner) edge; `TabSegment` edge made reactive (was a
+  stale one-shot read of orientation). Interim `TabButton` widget removed.
+- **Dropped the sidebar long-press popups (follow-up):** converting to pure one-hots removed
+  the P-offset keypad (so offsets **4–99 are no longer selectable** from the sidebar — only
+  P0–P3) and the mode popup. If keypad/extended-offset or popup access is still wanted, add a
+  long-press affordance to `TabSegment`/`TabSelector`.
 
 ### Next batch — queued 2026-06-21 (rollout merged into ui-facelift @ d16c3dc)
 Reviewed the merged result live; these are the remaining gaps vs the mockup, in
