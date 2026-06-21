@@ -1,3 +1,4 @@
+#: import THEME reflex.components.widgets.facelift_theme
 #: import AutoSizeButton reflex.components.widgets.auto_size_button
 #: import CircularButton reflex.components.widgets.circular_button
 
@@ -19,11 +20,11 @@
       AutoSizeButton:
         id: pos_label
         background_color: (0, 0, 0, 1)
-        font_name: app.formats.font_name
+        font_name: THEME.FONT_SEG
         max_font_size: min(self.height / 1.1, self.parent.width/5)
         font_style: "bold"
         color: app.formats.display_color
-        text: root.axis.formattedPosition if root.axis else "--"
+        text: (root.axis.formattedPosition).replace("+", "") if root.axis else "--"
         text_size: self.size
         halign: 'right'
         valign: 'center'

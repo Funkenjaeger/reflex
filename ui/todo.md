@@ -180,3 +180,21 @@ in light-themed image viewers. Composite previews over black before judging.
 - `previews/preview_widgets.py`, `previews/preview_probe.py`, `previews/preview_home_live.py`
   render widgets via `export_to_png` (needs `EventLoop.idle()` ticks + a double export, else
   only one tile renders). Consider deleting these or moving under `tests/` before release.
+
+### Mockup fonts (Chakra Petch / Share Tech Mono / DSEG7) — DONE + follow-ups (2026-06-21)
+- Bundled all three (SIL OFL 1.1) under `reflex/fonts/` with their OFL license files.
+  UI labels → Chakra Petch (`THEME.FONT_BOLD`); status-bar telemetry/version → Share
+  Tech Mono (`THEME.FONT_MONO`); DRO/RPM/Stop-Z numerals → DSEG7 Classic (`THEME.FONT_SEG`).
+- **DSEG7 has no `+` or `/` glyph.** Consequences/decisions:
+  - The leading `+` is stripped at the seven-seg display only (`...replace("+","")` on the
+    value labels); positives show unsigned, negatives keep `-`. Format strings still carry
+    `+` (the formats_screen digit-parser depends on the `{:+0.` prefix — don't remove it).
+    To restore a literal `+` on readouts like the mockup, render the sign in a companion
+    (non-DSEG7) font — a sign/digit/unit split in coordbar/dro_coordbar/els_mode/text_header.
+  - **Speed value stays a normal font** (its string embeds the unit, e.g. `+0.000 M/min`,
+    which DSEG7 would garble). Only pure-numeric fields use DSEG7.
+  - **Rotary/angle mode not handled:** `formattedPosition` appends `°` in angle mode, which
+    DSEG7 lacks → would garble for the rotary_table use case (only linear mm/in verified).
+    Fix before shipping rotary.
+- **DRO font picker (`formats.font_name`) no longer controls the big numerals** (now pinned
+  to DSEG7). It still affects units/other displays. Decide whether to keep/repoint the picker.
