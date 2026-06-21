@@ -60,45 +60,52 @@
       pos_hint: {'center_x': 0.5, 'y': 0.06}
       text_size: self.width, None
 
-  # ── DIR: header + bordered forward/reverse segmented control (both
-  #    arrows, active highlighted), outer border + margin per the mockup ──
+  # ── DIR: bordered box — "DIR" header (divider below) over a forward/
+  #    reverse one-hot, matching the mockup; margin around the box ──
   BoxLayout:
     orientation: 'vertical'
     size_hint_x: None
     width: 96
-    padding: dp(7), dp(4), dp(7), dp(8)
-    spacing: dp(3)
-    Label:
-      id: dir_lbl
-      text: "DIR"
-      font_name: THEME.FONT_BOLD
-      font_size: self.height / 2.6
-      size_hint_y: 0.26
-      color: THEME.TEXT_DIM
-      halign: 'center'
-      valign: 'middle'
-    TabSelector:
-      orientation: "horizontal"
-      size_hint_y: 0.74
-      disabled: app.els.spindle_is_running
-      selected: "fwd" if root.els_forward else "rev"
-      on_select: root.els_forward = (args[1] == "fwd")
+    padding: dp(7), dp(6), dp(7), dp(10)
+    BoxLayout:
+      orientation: 'vertical'
       canvas.after:
         Color:
           rgba: THEME.BORDER
         Line:
           rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
           width: 1.3
-      TabSegment:
-        value: "fwd"
-        text: "\uf060"
-        font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-        show_accent: False
-      TabSegment:
-        value: "rev"
-        text: "\uf061"
-        font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-        show_accent: False
+      Label:
+        id: dir_lbl
+        text: "DIR"
+        size_hint_y: 0.36
+        font_name: THEME.FONT_BOLD
+        font_size: self.height / 1.7
+        color: THEME.TEXT_DIM
+        halign: 'center'
+        valign: 'middle'
+        canvas.after:
+          Color:
+            rgba: THEME.BORDER_DIM
+          Line:
+            points: (self.x, self.y, self.right, self.y)
+            width: 1.0
+      TabSelector:
+        orientation: "horizontal"
+        size_hint_y: 0.64
+        disabled: app.els.spindle_is_running
+        selected: "fwd" if root.els_forward else "rev"
+        on_select: root.els_forward = (args[1] == "fwd")
+        TabSegment:
+          value: "fwd"
+          text: "\uf060"
+          font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+          show_accent: False
+        TabSegment:
+          value: "rev"
+          text: "\uf061"
+          font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+          show_accent: False
 
   # ── ADV: slate card; lights cyan (fill + LED) when advanced mode is on ──
   FloatLayout:

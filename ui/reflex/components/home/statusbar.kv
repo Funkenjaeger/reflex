@@ -46,6 +46,14 @@
     font_name: THEME.FONT_MONO
     label: "{:0.0f}".format(root.cycles)
 
+  # Reflex logo, right end of the gutter, next to the version number.
+  Image:
+    source: "pictures/reflex_logo.png"
+    size_hint_x: None
+    width: self.height * 3.6
+    allow_stretch: True
+    keep_ratio: True
+
   # Version chip: bordered, no LED, pinned to the right end of the gutter.
   Label:
     size_hint_x: None
