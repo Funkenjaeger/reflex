@@ -1,5 +1,6 @@
 #: import TextHeaderButton reflex.components.toolbars.text_header_button
 #: import StyledButton reflex.components.widgets.styled_button
+#: import IconButton reflex.components.widgets.icon_button
 
 <ElsAdvancedBar>:
   orientation: "horizontal"
@@ -153,49 +154,27 @@
     orientation: "vertical"
     size_hint_x: None
     width: self.height * 0.7
+    spacing: 4
 
-    Button:
+    IconButton:
       id: btn_wizard_toggle
-      font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-      font_size: min(self.height / 3, self.width / 3)
-      background_color: [0.3, 0.5, 0.3, 1] if root.enable_wizard else [0.2, 0.2, 0.2, 1]
-      color: app.formats.display_color
-      text: "\ue2ca"
-      text_size: self.size
-      halign: 'center'
-      valign: 'middle'
+      icon: "\ue2ca"
+      is_highlighted: root.enable_wizard
       disabled: root.is_running
+      # beep handled by BeepMixin.on_press
       on_release:
-        app.beep()
         root.enable_wizard = not root.enable_wizard
         if root.enable_wizard: root.enable_retract = True
 
-    Button:
+    IconButton:
       id: btn_retract_toggle
-      font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-      font_size: min(self.height / 3, self.width / 3)
-      background_color: [0.3, 0.5, 0.3, 1] if root.enable_retract else [0.2, 0.2, 0.2, 1]
-      color: app.formats.display_color
-      text: "\uf085"
-      text_size: self.size
-      halign: 'center'
-      valign: 'middle'
+      icon: "\uf085"
+      is_highlighted: root.enable_retract
       disabled: root.is_running or root.enable_wizard
-      on_release:
-        app.beep()
-        root.enable_retract = not root.enable_retract
+      on_release: root.enable_retract = not root.enable_retract
 
-    Button:
+    IconButton:
       id: btn_settings
-      font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-      font_size: min(self.height / 3, self.width / 3)
-      background_color: [0.2, 0.2, 0.2, 1]
-      color: app.formats.display_color
-      text: "\uf013"
-      text_size: self.size
-      halign: 'center'
-      valign: 'middle'
+      icon: "\uf013"
       disabled: root.is_running
-      on_release:
-        app.beep()
-        root.open_settings()
+      on_release: root.open_settings()

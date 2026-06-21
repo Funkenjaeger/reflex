@@ -1,0 +1,41 @@
+# Styling for CircularButton (see circular_button.py). Cyan outline ring with
+# centered text; faint cyan fill + glow when pressed or highlighted.
+
+#: import THEME reflex.components.widgets.facelift_theme
+
+<CircularButton>:
+    opacity: 0.4 if self.disabled else 1
+
+    canvas.before:
+        # Soft glow behind the ring when active.
+        Color:
+            rgba: THEME.GLOW if (root.is_highlighted or root.state == 'down') else [0, 0, 0, 0]
+        Ellipse:
+            pos: (self.center_x - (min(self.width, self.height) - 6) / 2 - 3, self.center_y - (min(self.width, self.height) - 6) / 2 - 3)
+            size: (min(self.width, self.height) - 6 + 6, min(self.width, self.height) - 6 + 6)
+
+        # Disc fill: faint cyan tint when active, dark slate otherwise.
+        Color:
+            rgba: THEME.ACCENT_BG if (root.is_highlighted or root.state == 'down') else THEME.SLATE_FILL
+        Ellipse:
+            pos: (self.center_x - (min(self.width, self.height) - 6) / 2, self.center_y - (min(self.width, self.height) - 6) / 2)
+            size: (min(self.width, self.height) - 6, min(self.width, self.height) - 6)
+
+        # Outline ring.
+        Color:
+            rgba: THEME.ACCENT
+        Line:
+            circle: (self.center_x, self.center_y, (min(self.width, self.height) - 6) / 2)
+            width: 1.8 if (root.is_highlighted or root.state == 'down') else 1.3
+
+    Label:
+        text: root.text
+        font_size: root.font_size
+        font_name: root.font_name
+        bold: True
+        color: THEME.ACCENT_TEXT if (root.is_highlighted or root.state == 'down') else THEME.TEXT
+        size_hint: 1, 1
+        pos_hint: {'x': 0, 'y': 0}
+        text_size: self.size
+        halign: 'center'
+        valign: 'middle'

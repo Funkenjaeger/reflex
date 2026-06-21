@@ -107,3 +107,46 @@
   ElsFsm/ElsUiController/servo interfaces and get the suite green again. Verify the
   engage-with-no-Z-axis guard (ui_controller.toggle_engage) and the lazy z_axis/x_axis
   properties (els_fsm) are covered by a regression test once the suite runs.
+
+---
+
+## UI Facelift (StyledButton rollout)
+
+### Reusable widgets created (solid)
+- `reflex/components/widgets/facelift_theme.py` — central dark/cyan palette module.
+- `reflex/components/widgets/tab_selector.py/.kv` — one-hot `TabSelector`/`TabSegment` group.
+- `reflex/components/widgets/icon_button.py/.kv` — square Font Awesome `IconButton` (slate / cyan-glow).
+- `reflex/components/widgets/circular_button.py/.kv` — cyan-outline `CircularButton` (Zero keys).
+- `reflex/components/widgets/recess_panel.py/.kv` — `RecessPanel` container + `RecessFrame` overlay class.
+- Restyled `toolbars/led_button.kv` (LED dot + label, optional icon/two-line) and
+  `toolbars/text_header_button.kv` (recessed inset value field).
+
+### Deferred / needs human design judgment
+- **ABS/INC blink lost:** the old TwoStateButton blinked on `app.board.blink and app.abs_mode`
+  (a board-connection hint). The new `TabSelector` swap dropped this. Decide whether the
+  blink hint matters; if so add a `blink`/pulse affordance to `TabSegment`.
+- **FEED/THREAD toggle (elsbar):** the mockup shows a FEED/THREAD one-hot toggle, but in the
+  live `ElsBar` the feed/thread mode is chosen via `FeedsTablePopup` (`mode_name`), not a
+  two-segment toggle. Left as-is (different interaction model). Revisit if the design wants a
+  literal toggle that filters the feeds table.
+- **DIR arrows (elsbar):** still a `TwoStateButton` with FA arrows. Could become a horizontal
+  2-segment `TabSelector`, but its `value`/`on_release` semantics are load-bearing — left alone
+  to avoid regressions. Convert with care + live testing.
+- **Big DRO readouts stay amber:** the large position numbers use `app.formats.display_color`
+  (a user-saved preference, default amber). Not recolored to cyan — decide whether the facelift
+  should override the saved display color or add a separate "facelift" theme toggle.
+- **`servobar.kv` / `jogbar.kv` / inner `coordbar` Num/Den/feed buttons:** still raw `Button`s
+  with grey backgrounds. Lower priority; convert to `StyledButton`/recessed fields once the
+  layout proportions are confirmed against the mockup.
+- **els_advbar `btn_start_stop` and elsbar gear/ADV/feed buttons:** left as raw Buttons
+  (state-colored, disabled logic, image children) — higher layout risk. Restyle later.
+- **Status bar `v1.3.0` pill:** currently a restyled `LedButton`; the mockup wants a plain
+  bordered version pill (no LED dot). Minor; add a `no_led` flag to `LedButton` if desired.
+- **Sidebar P0–P3 / mode buttons:** P-offset and mode are popup/keypad driven (not one-hot),
+  so they remain `ToolbarButton`s rather than `TabSelector`s. Could be restyled to match the
+  tab strip visually without changing interaction.
+
+### Preview scripts (not for production)
+- `previews/preview_widgets.py`, `previews/preview_probe.py`, `previews/preview_home_live.py`
+  render widgets via `export_to_png` (needs `EventLoop.idle()` ticks + a double export, else
+  only one tile renders). Consider deleting these or moving under `tests/` before release.

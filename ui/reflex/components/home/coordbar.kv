@@ -1,6 +1,7 @@
 #: import Factory kivy.factory.Factory
 #: import Keypad reflex.components.popups.keypad
 #: import AutoSizeButton reflex.components.widgets.auto_size_button
+#: import CircularButton reflex.components.widgets.circular_button
 
 <CoordBar>:
   orientation: "horizontal"
@@ -119,14 +120,11 @@
         on_press: app.beep()
         on_release: Factory.Keypad(integer=True).show(root.axis, 'syncRatioDen') if root.axis else None
 
-  Button:
+  CircularButton:
     text: "Zero"
     font_size: 24
-    font_style: "bold"
-    background_color: [0.5, 0.5, 0.5, 1]
     width: self.height
     size_hint_x: None
-    on_press:
-      app.beep()
-      root.on_zero_press()
+    # beep handled by BeepMixin.on_press
+    on_press: root.on_zero_press()
     on_release: root.on_zero_release()
