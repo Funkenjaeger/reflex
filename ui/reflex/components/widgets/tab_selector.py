@@ -62,6 +62,15 @@ class TabSelector(BoxLayout):
     # are chosen from orientation in ``on_orientation`` unless explicitly set.
     accent_edge = StringProperty("auto")
 
+    # Read-only display: tapping does not cycle the selection; it just fires
+    # on_select(current) so a host can react (e.g. open a modal that drives the
+    # value). Used by the ELS-bar FEED/THREAD indicator.
+    readonly = BooleanProperty(False)
+
+    # Horizontal groups only: True = tabs on content (round top corners);
+    # False = standalone control (round all corners). Pushed to segments.
+    attached = BooleanProperty(True)
+
     __events__ = ("on_select",)
 
     def __init__(self, **kwargs):
@@ -73,6 +82,7 @@ class TabSelector(BoxLayout):
         self.bind(
             orientation=self._apply_edges,
             accent_edge=self._apply_edges,
+            attached=self._apply_edges,
             children=self._apply_edges,
         )
 
@@ -85,6 +95,7 @@ class TabSelector(BoxLayout):
             seg.edge = edge
             seg.is_first = (i == 0)
             seg.is_last = (i == last)
+            seg.attached = self.attached
 
     def resolved_accent_edge(self) -> str:
         if self.accent_edge != "auto":
@@ -145,6 +156,10 @@ class TabSegment(BeepMixin, ButtonBehavior, FloatLayout):
     # Whether the group rounds its outer corners. Off for segments that sit
     # inside their own bordered box (e.g. DIR), which should stay square.
     round_corners = BooleanProperty(True)
+    # For horizontal groups: True = sits like tabs on content (round only the
+    # top outer corners); False = a standalone control (round all outer
+    # corners + the accent bar's outer bottom corner). Ignored when vertical.
+    attached = BooleanProperty(True)
     # Which edge the cyan accent sits on; pushed by the parent group's
     # _apply_edges() so it stays in sync with orientation/accent_edge.
     edge = StringProperty("right")
@@ -176,10 +191,14 @@ class TabSegment(BeepMixin, ButtonBehavior, FloatLayout):
 
     def on_release(self):
         # Tap anywhere on the group cycles the selection (touch-friendly),
-        # rather than selecting only the specific segment that was hit.
+        # rather than selecting only the specific segment that was hit. A
+        # read-only group instead just notifies (its host opens a modal).
         group = self._group()
         if group is not None:
-            group.cycle()
+            if group.readonly:
+                group.dispatch("on_select", group.selected)
+            else:
+                group.cycle()
 
 
 load_kv(__file__)

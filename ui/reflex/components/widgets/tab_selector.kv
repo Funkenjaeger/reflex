@@ -16,6 +16,10 @@
 
 <TabSegment>:
     opacity: 0.45 if self.disabled else 1
+    # In a vertical (sidebar) group the unselected rows shrink so the selected
+    # one dominates and the group is more compact (less 2-state vs 4-state
+    # disparity). Horizontal groups keep full cross-axis height.
+    size_hint_y: (1.0 if self.is_selected else 0.68) if self.edge in ('left', 'right') else 1
 
     canvas.before:
         # Per-segment body fill. Round only the outer corner of the first/last
@@ -28,9 +32,10 @@
             pos: self.pos
             size: self.size
             # Vertical groups round the outer LEFT corners; horizontal groups
-            # round only the outer TOP corners (square bottom so the bottom
-            # accent bar lines up). Segments inside their own box stay square.
-            radius: [0, 0, 0, 0] if not self.round_corners else ([(dp(7) if self.is_first else 0), 0, 0, (dp(7) if self.is_last else 0)] if self.edge == 'right' else ([0, (dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0] if self.edge == 'left' else [(dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0, 0]))
+            # round the outer TOP corners (attached, square bottom so the accent
+            # bar lines up) or ALL outer corners (standalone). Segments inside
+            # their own box stay square.
+            radius: [0, 0, 0, 0] if not self.round_corners else ([(dp(7) if self.is_first else 0), 0, 0, (dp(7) if self.is_last else 0)] if self.edge == 'right' else ([0, (dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0] if self.edge == 'left' else ([(dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0, 0] if self.attached else [(dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), (dp(7) if self.is_last else 0), (dp(7) if self.is_first else 0)])))
 
         # Hairline divider between butted segments (skip the first): a top edge
         # for vertical stacks, a left edge for horizontal rows.
@@ -41,12 +46,14 @@
             width: 1.0
 
         # Crisp accent bar on the inner edge when selected (suppressible for
-        # bordered segmented controls).
+        # bordered segmented controls). Rounds its outer bottom corner to match
+        # a standalone horizontal group's rounded body corner.
         Color:
             rgba: THEME.ACCENT if (self.is_selected and self.show_accent) else [0, 0, 0, 0]
-        Rectangle:
+        RoundedRectangle:
             pos: (self.x, self.y) if self.edge == 'left' else ((self.right - dp(3), self.y) if self.edge == 'right' else ((self.x, self.y) if self.edge == 'bottom' else (self.x, self.top - dp(3))))
             size: (dp(3), self.height) if self.edge in ('left', 'right') else (self.width, dp(3))
+            radius: [0, 0, (dp(7) if (self.edge == 'bottom' and self.is_last and not self.attached) else 0), (dp(7) if (self.edge == 'bottom' and self.is_first and not self.attached) else 0)]
 
     Label:
         # Text glyph (hidden when the segment uses image icons instead).

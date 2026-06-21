@@ -12,12 +12,14 @@
   padding: dp(6), dp(8), 0, dp(8)
   spacing: dp(9)
 
-  # Each group's size_hint_y matches its segment count so every segment is the
-  # same height regardless of how many a group has (otherwise P0–P3 squashed
-  # into a 2-tall slot rendered tiny). Single icon buttons stay 1 unit tall.
+  # Each group's height = sum of its segment weights (selected row 1.0,
+  # unselected 0.68 — see TabSegment). This keeps every selected row the same
+  # height across groups while shrinking the unselected ones, so the 4-state
+  # P0–P3 group isn't simply double the 2-state groups. Single icon buttons
+  # stay ~1 selected-row tall.
   TabSelector:
     width: root.width
-    size_hint_y: 2
+    size_hint_y: 1.68
     orientation: "vertical"
     selected: app.formats.current_format
     on_select: app.formats.toggle() if args[1] != app.formats.current_format else None
@@ -31,7 +33,7 @@
   # P-offset one-hot: tap anywhere cycles P0→P3.
   TabSelector:
     width: root.width
-    size_hint_y: 4
+    size_hint_y: 3.04
     orientation: "vertical"
     selected: app.currentOffset
     on_select: app.currentOffset = args[1]
@@ -50,7 +52,7 @@
 
   TabSelector:
     width: root.width
-    size_hint_y: 2
+    size_hint_y: 1.68
     orientation: "vertical"
     selected: "ABS" if app.abs_mode else "INC"
     on_select: app.setter('abs_mode')(app, args[1] == "ABS")

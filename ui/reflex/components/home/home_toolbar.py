@@ -29,9 +29,11 @@ class HomeToolbar(BoxLayout):
             return
         tabs.clear_widgets()
         modes = self.app.allowed_modes()
-        # Keep per-segment height uniform with the other groups (see KV note):
-        # the group is as tall as it has segments.
-        tabs.size_hint_y = max(len(modes), 1)
+        # Group height = sum of segment weights (selected 1.0 + unselected 0.68
+        # each), matching the static groups in the KV so selected rows stay a
+        # uniform height across the sidebar.
+        n = max(len(modes), 1)
+        tabs.size_hint_y = 1.0 + (n - 1) * 0.68
         for mode_id in modes:
             tabs.add_widget(
                 TabSegment(text=MODE_LABELS.get(mode_id, "?"), value=mode_id)

@@ -6,59 +6,24 @@
 #: import THEME reflex.components.widgets.facelift_theme
 #: import TabSelector reflex.components.widgets.tab_selector
 #: import IconButton reflex.components.widgets.icon_button
+#: import LedCardButton reflex.components.widgets.led_card_button
 
 <ElsBar>:
   orientation: "horizontal"
   size_hint_y: None
   height: 128
   
-  # ── Sync Enable: slate card, cyan status LED top-left when servo enabled ──
-  FloatLayout:
+  # ── Sync Enable: shared LED card (cyan when servo enabled) ──
+  LedCardButton:
     size_hint_x: None
     width: 96
-    Button:
-      # Fill the FloatLayout; without an explicit pos_hint a FloatLayout child
-      # keeps absolute pos (0,0) and its canvas would draw in the window corner.
-      size_hint: 1, 1
-      pos_hint: {'x': 0, 'y': 0}
-      background_color: 0, 0, 0, 0
-      background_normal: ""
-      on_press: app.beep()
-      on_release: app.servo.toggle_enable()
-      canvas.before:
-        Color:
-          rgba: THEME.SLATE_FILL
-        RoundedRectangle:
-          pos: self.x + dp(4), self.y + dp(6)
-          size: self.width - dp(8), self.height - dp(12)
-          radius: [dp(7)]
-        Color:
-          rgba: THEME.ACCENT if app.servo.servoMode else THEME.BORDER_DIM
-        Line:
-          rounded_rectangle: (self.x + dp(4), self.y + dp(6), self.width - dp(8), self.height - dp(12), dp(7))
-          width: 1.2
-        # Status LED, top-left corner.
-        Color:
-          rgba: THEME.ACCENT if app.servo.servoMode else THEME.BORDER_DIM
-        Ellipse:
-          pos: self.x + dp(12), self.top - dp(18)
-          size: dp(8), dp(8)
-    Image:
-      source: "pictures/motor_gears.png"
-      allow_stretch: True
-      keep_ratio: True
-      size_hint: 0.52, 0.42
-      pos_hint: {'center_x': 0.5, 'center_y': 0.58}
-    Label:
-      text: "Sync\nEnable"
-      font_name: THEME.FONT_BOLD
-      font_size: dp(12)
-      color: THEME.TEXT if app.servo.servoMode else THEME.TEXT_DIM
-      halign: 'center'
-      valign: 'middle'
-      size_hint: 1, 0.3
-      pos_hint: {'center_x': 0.5, 'y': 0.06}
-      text_size: self.width, None
+    text: "Sync\nEnable"
+    font_size: dp(12)
+    image_source: "pictures/motor_gears.png"
+    highlighted: bool(app.servo.servoMode)
+    led_color: THEME.ACCENT if app.servo.servoMode else THEME.BORDER_DIM
+    # beep handled by BeepMixin.on_press
+    on_release: app.servo.toggle_enable()
 
   # ── DIR: bordered box — "DIR" header (divider below) over a forward/
   #    reverse one-hot, matching the mockup; margin around the box ──
@@ -100,54 +65,23 @@
           value: "fwd"
           text: "\uf060"
           font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-          show_accent: False
           round_corners: False
         TabSegment:
           value: "rev"
           text: "\uf061"
           font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-          show_accent: False
           round_corners: False
 
-  # ── ADV: slate card; lights cyan (fill + LED) when advanced mode is on ──
-  FloatLayout:
+  # ── ADV: shared LED card; lights cyan when advanced mode is on ──
+  LedCardButton:
     size_hint_x: None
     width: 96
-    Button:
-      size_hint: 1, 1
-      pos_hint: {'x': 0, 'y': 0}
-      background_color: 0, 0, 0, 0
-      background_normal: ""
-      on_press:
-        root.enable_advanced = not root.enable_advanced
-        app.beep()
-      canvas.before:
-        Color:
-          rgba: THEME.ACCENT_BG if root.enable_advanced else THEME.SLATE_FILL
-        RoundedRectangle:
-          pos: self.x + dp(4), self.y + dp(6)
-          size: self.width - dp(8), self.height - dp(12)
-          radius: [dp(7)]
-        Color:
-          rgba: THEME.ACCENT if root.enable_advanced else THEME.BORDER_DIM
-        Line:
-          rounded_rectangle: (self.x + dp(4), self.y + dp(6), self.width - dp(8), self.height - dp(12), dp(7))
-          width: 1.2
-        Color:
-          rgba: THEME.ACCENT if root.enable_advanced else THEME.BORDER_DIM
-        Ellipse:
-          pos: self.x + dp(12), self.top - dp(18)
-          size: dp(8), dp(8)
-    Label:
-      text: "ADV"
-      font_name: THEME.FONT_BOLD
-      font_size: dp(20)
-      color: THEME.ACCENT_TEXT if root.enable_advanced else THEME.TEXT
-      halign: 'center'
-      valign: 'middle'
-      size_hint: 1, 1
-      pos_hint: {'x': 0, 'y': 0}
-      text_size: self.size
+    text: "ADV"
+    font_size: dp(20)
+    highlighted: root.enable_advanced
+    led_color: THEME.ACCENT if root.enable_advanced else THEME.BORDER_DIM
+    # beep handled by BeepMixin.on_press
+    on_release: root.enable_advanced = not root.enable_advanced
 
   # ── Cut type / direction illustration: dark recessed panel (item 5) ──
   Button:
@@ -174,81 +108,93 @@
       allow_stretch: True
       keep_ratio: True
 
-  # ── Feed / Thread: ONE control. The FEED/THREAD indicator + pitch open
-  #    the feeds dialog (which DRIVES the selection); ▲▼ step the table. ──
+  # ── Feed / Thread: ONE bordered control. FEED/THREAD (a read-only one-hot
+  #    styled like the others) + pitch open the feeds modal, which DRIVES
+  #    selection; ▲▼ steppers share the box (divided), per the mockup. ──
   BoxLayout:
     orientation: 'horizontal'
     size_hint_x: None
-    width: dp(168)
+    width: dp(178)
     padding: dp(4), dp(6), dp(4), dp(6)
-    spacing: dp(5)
-    FloatLayout:
-      Button:
-        size_hint: 1, 1
-        pos_hint: {'x': 0, 'y': 0}
-        background_color: 0, 0, 0, 0
-        background_normal: ""
-        on_press: app.beep()
-        on_release: Factory.FeedsTablePopup().show_with_callback(root.set_feed_ratio, current_mode=root.mode_name)
-        canvas.before:
-          Color:
-            rgba: THEME.RECESS_FILL
-          RoundedRectangle:
-            pos: self.pos
-            size: self.size
-            radius: [dp(6)]
-          Color:
-            rgba: THEME.BORDER_DIM
-          Line:
-            rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(6))
-            width: 1.0
+    BoxLayout:
+      orientation: 'horizontal'
+      canvas.after:
+        Color:
+          rgba: THEME.BORDER
+        Line:
+          rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
+          width: 1.0
+      # FEED/THREAD one-hot (read-only) over the pitch value; both open dialog
       BoxLayout:
         orientation: 'vertical'
-        size_hint: 1, 1
-        pos_hint: {'x': 0, 'y': 0}
-        padding: dp(6), dp(6)
-        spacing: dp(2)
-        # FEED / THREAD indicator (read-only; the modal dialog drives it)
-        BoxLayout:
+        TabSelector:
           orientation: 'horizontal'
-          size_hint_y: 0.4
-          Label:
+          size_hint_y: 0.42
+          readonly: True
+          selected: "thread" if ("Thread" in root.mode_name) else "feed"
+          on_select: Factory.FeedsTablePopup().show_with_callback(root.set_feed_ratio, current_mode=root.mode_name)
+          TabSegment:
+            value: "feed"
             text: "FEED"
             font_name: THEME.FONT_BOLD
-            bold: True
-            color: THEME.TEXT_DIM if ("Thread" in root.mode_name) else THEME.ACCENT_TEXT
-            font_size: sp(11) if ("Thread" in root.mode_name) else sp(14)
-            halign: 'center'
-            valign: 'middle'
-            text_size: self.size
-          Label:
+            font_size: sp(13)
+          TabSegment:
+            value: "thread"
             text: "THREAD"
             font_name: THEME.FONT_BOLD
-            bold: True
-            color: THEME.ACCENT_TEXT if ("Thread" in root.mode_name) else THEME.TEXT_DIM
-            font_size: sp(14) if ("Thread" in root.mode_name) else sp(11)
-            halign: 'center'
-            valign: 'middle'
-            text_size: self.size
-        Label:
-          size_hint_y: 0.6
+            font_size: sp(13)
+        Button:
+          size_hint_y: 0.58
+          background_color: 0, 0, 0, 0
+          background_normal: ""
           text: root.feed_name + " " + ("tpi" if root.mode_name == "Thread IN" else ("in" if root.mode_name == "Feed IN" else "mm"))
           font_name: THEME.FONT_MONO
-          font_size: min(self.height * 0.5, self.width * 0.17)
+          font_size: min(self.height * 0.6, self.width * 0.2)
           color: app.formats.display_color
           halign: 'center'
           valign: 'middle'
           text_size: self.size
-    BoxLayout:
-      orientation: 'vertical'
-      size_hint_x: None
-      width: dp(38)
-      spacing: dp(5)
-      IconButton:
-        radius: 6
-        icon: "\uf062"
-        on_release: root.next_feed()
-      IconButton:
-        radius: 6
-        icon: "\uf063"
-        on_release: root.previous_feed()
+          on_press: app.beep()
+          on_release: Factory.FeedsTablePopup().show_with_callback(root.set_feed_ratio, current_mode=root.mode_name)
+      # vertical divider between value and steppers
+      Widget:
+        size_hint_x: None
+        width: dp(1)
+        canvas:
+          Color:
+            rgba: THEME.BORDER_DIM
+          Rectangle:
+            pos: self.x, self.y + dp(5)
+            size: dp(1), self.height - dp(10)
+      # ▲▼ steppers (borderless, divided), inside the same box
+      BoxLayout:
+        orientation: 'vertical'
+        size_hint_x: None
+        width: dp(36)
+        Button:
+          background_color: 0, 0, 0, 0
+          background_normal: ""
+          font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+          text: "\uf062"
+          font_size: self.height * 0.36
+          color: THEME.TEXT
+          on_press: app.beep()
+          on_release: root.next_feed()
+        Widget:
+          size_hint_y: None
+          height: dp(1)
+          canvas:
+            Color:
+              rgba: THEME.BORDER_DIM
+            Rectangle:
+              pos: self.x + dp(5), self.y
+              size: self.width - dp(10), dp(1)
+        Button:
+          background_color: 0, 0, 0, 0
+          background_normal: ""
+          font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+          text: "\uf063"
+          font_size: self.height * 0.36
+          color: THEME.TEXT
+          on_press: app.beep()
+          on_release: root.previous_feed()
