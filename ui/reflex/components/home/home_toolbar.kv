@@ -1,6 +1,7 @@
 #: import ToolbarButton reflex.components.toolbars.toolbar_button
 #: import TwoStateButton reflex.components.toolbars.two_state_button
 #: import TabSelector reflex.components.widgets.tab_selector
+#: import TabButton reflex.components.widgets.tab_button
 #: import IconButton reflex.components.widgets.icon_button
 #: import Factory kivy.factory.Factory
 #: import Keypad reflex.components.popups.keypad
@@ -27,12 +28,14 @@
       value: "IN"
       font_size: min(self.height / 2.5, self.width / 2.5)
 
-  ToolbarButton:
+  TabButton:
     width: root.width
-    text: "P{:d}".format(app.currentOffset)
-    on_release: Factory.Keypad(integer=True).show(app, 'currentOffset')
     size_hint_y: 1
+    text: "P{:d}".format(app.currentOffset)
     font_size: min(self.height/3, self.width/3)
+    # tap cycles P0–P3; long-press opens the keypad for any offset
+    on_short_press: root.cycle_offset()
+    on_long_press: Factory.Keypad(integer=True).show(app, 'currentOffset')
 
   TabSelector:
     width: root.width
@@ -60,13 +63,14 @@
     opacity: 1 if app.formats.show_wizard else 0
     disabled: not app.formats.show_wizard
 
-  ToolbarButton:
+  TabButton:
     width: root.width
-    text: root.current_mode_desc
-    on_release:
-      Factory.ModePopup().show_with_callback(app.set_mode, app.current_mode)
     size_hint_y: 1
+    text: root.current_mode_desc
     font_size: min(self.height/3, self.width/3)
+    # tap cycles allowed modes; long-press opens the full mode popup
+    on_short_press: root.cycle_mode()
+    on_long_press: root.popup_mode()
 
   IconButton:
     width: root.width

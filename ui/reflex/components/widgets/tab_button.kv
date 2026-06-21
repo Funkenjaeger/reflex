@@ -1,0 +1,51 @@
+# Styling for TabButton (see tab_button.py) -- matches a selected TabSegment
+# so the cycling P-offset / mode controls sit visually in the tab strip.
+
+#: import THEME reflex.components.widgets.facelift_theme
+
+<TabButton>:
+    opacity: 0.45 if self.disabled else 1
+
+    canvas.before:
+        # Slate (or cyan-tinted, when active) body rounded on the OUTER (left)
+        # edge and flush on the right -- attached to the screen like a tab.
+        Color:
+            rgba: THEME.ACCENT_BG if self.is_active else THEME.SLATE_FILL
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(7), 0, 0, dp(7)]
+
+        # Soft glow + bright accent bar on the right (inner) edge when active.
+        Color:
+            rgba: THEME.GLOW if self.is_active else [0, 0, 0, 0]
+        Rectangle:
+            pos: (self.right - 6, self.y)
+            size: (6, self.height)
+        Color:
+            rgba: THEME.ACCENT if self.is_active else [0, 0, 0, 0]
+        Rectangle:
+            pos: (self.right - 3, self.y)
+            size: (3, self.height)
+
+        # Subtle top/bottom dividers to separate from neighboring tabs.
+        Color:
+            rgba: THEME.BORDER_DIM
+        Line:
+            points: (self.x, self.top, self.right, self.top)
+            width: 1.0
+        Line:
+            points: (self.x, self.y, self.right, self.y)
+            width: 1.0
+
+    Label:
+        text: root.text
+        font_size: root.font_size
+        font_name: root.font_name
+        bold: True
+        color: THEME.ACCENT_TEXT if root.is_active else THEME.TEXT_DIM
+        size_hint: 1, 1
+        pos_hint: {'x': 0, 'y': 0}
+        text_size: self.size
+        halign: 'center'
+        valign: 'middle'

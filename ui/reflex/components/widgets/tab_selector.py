@@ -63,15 +63,31 @@ class TabSelector(BoxLayout):
 
     __events__ = ("on_select",)
 
-    def on_orientation(self, _instance, value):
-        if self.accent_edge == "auto":
-            # Just trigger a redraw; segments read the resolved edge live.
-            pass
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Push the resolved accent edge onto segments reactively. The edge
+        # depends on orientation/accent_edge, both of which are often set by KV
+        # rules AFTER the child segments are created, so a one-shot read at
+        # build time would latch a stale value -- rebind instead.
+        self.bind(
+            orientation=self._apply_edges,
+            accent_edge=self._apply_edges,
+            children=self._apply_edges,
+        )
+
+    def _apply_edges(self, *_):
+        edge = self.resolved_accent_edge()
+        for child in self.children:
+            if isinstance(child, TabSegment):
+                child.edge = edge
 
     def resolved_accent_edge(self) -> str:
         if self.accent_edge != "auto":
             return self.accent_edge
-        return "left" if self.orientation == "vertical" else "bottom"
+        # Vertical sidebar groups sit at the screen's left edge, so the accent
+        # belongs on the RIGHT (inner) edge of the selected tab -- pointing at
+        # the content it selects. Horizontal toggles accent the bottom.
+        return "right" if self.orientation == "vertical" else "bottom"
 
     def select(self, value):
         """Imperatively select the segment with ``value`` and notify listeners."""
@@ -95,6 +111,9 @@ class TabSegment(BeepMixin, ButtonBehavior, FloatLayout):
     font_size = NumericProperty(18)
     font_name = StringProperty("fonts/Manrope-Bold.ttf")
     is_selected = BooleanProperty(False)
+    # Which edge the cyan accent sits on; pushed by the parent group's
+    # _apply_edges() so it stays in sync with orientation/accent_edge.
+    edge = StringProperty("right")
 
     def _update_selected(self, *_):
         group = self._group()

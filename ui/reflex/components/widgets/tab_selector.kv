@@ -9,23 +9,19 @@
     spacing: 0
 
     canvas.before:
-        # Group backing fill so segments read as one butted strip.
+        # Tab-strip backing: a slate panel rounded on its OUTER (left) corners
+        # and flush/square on the right, so the group reads as a set of tabs
+        # attached to the screen content rather than a free-floating box.
         Color:
-            rgba: THEME.RECESS_FILL
-        Rectangle:
+            rgba: THEME.SLATE_FILL
+        RoundedRectangle:
             pos: self.pos
             size: self.size
-        # Outer border around the whole group.
-        Color:
-            rgba: THEME.BORDER_DIM
-        Line:
-            rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1)
-            width: 1.0
+            radius: [dp(7), 0, 0, dp(7)] if self.orientation == 'vertical' else [dp(7), dp(7), 0, 0]
 
 
 <TabSegment>:
     opacity: 0.45 if self.disabled else 1
-    _edge: self._group().resolved_accent_edge() if self._group() else 'left'
 
     canvas.before:
         # Selected fill (cyan-tinted) vs transparent (group fill shows through).
@@ -39,21 +35,22 @@
         Color:
             rgba: THEME.GLOW if self.is_selected else [0, 0, 0, 0]
         Rectangle:
-            pos: (self.x, self.y) if self._edge == 'left' else ((self.right - 6, self.y) if self._edge == 'right' else ((self.x, self.y) if self._edge == 'bottom' else (self.x, self.top - 6)))
-            size: (6, self.height) if self._edge in ('left', 'right') else (self.width, 6)
+            pos: (self.x, self.y) if self.edge == 'left' else ((self.right - 6, self.y) if self.edge == 'right' else ((self.x, self.y) if self.edge == 'bottom' else (self.x, self.top - 6)))
+            size: (6, self.height) if self.edge in ('left', 'right') else (self.width, 6)
 
         # Bright accent bar on the chosen edge (selected only).
         Color:
             rgba: THEME.ACCENT if self.is_selected else [0, 0, 0, 0]
         Rectangle:
-            pos: (self.x, self.y) if self._edge == 'left' else ((self.right - 3, self.y) if self._edge == 'right' else ((self.x, self.y) if self._edge == 'bottom' else (self.x, self.top - 3)))
-            size: (3, self.height) if self._edge in ('left', 'right') else (self.width, 3)
+            pos: (self.x, self.y) if self.edge == 'left' else ((self.right - 3, self.y) if self.edge == 'right' else ((self.x, self.y) if self.edge == 'bottom' else (self.x, self.top - 3)))
+            size: (3, self.height) if self.edge in ('left', 'right') else (self.width, 3)
 
-        # Thin divider between segments (drawn on inner edge, subtle).
+        # Thin divider between segments (between stacked tabs; on the inner side
+        # for horizontal groups).
         Color:
             rgba: THEME.BORDER_DIM
         Line:
-            points: (self.x, self.top, self.right, self.top) if self._group() and self._group().orientation == 'vertical' else (self.right, self.y, self.right, self.top)
+            points: (self.x, self.top, self.right, self.top) if self.edge in ('left', 'right') else (self.right, self.y, self.right, self.top)
             width: 1.0
 
     Label:

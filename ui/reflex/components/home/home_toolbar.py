@@ -11,6 +11,10 @@ load_kv(__file__)
 class HomeToolbar(BoxLayout):
     current_mode_desc = StringProperty("IDX")
 
+    # P-offset presets quick-cycled by a tap; long-press opens the keypad for
+    # the full offset range. Matches the mockup's P0–P3 tab group.
+    OFFSET_PRESETS = 4
+
     def __init__(self, **kv):
         from reflex.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
@@ -33,3 +37,18 @@ class HomeToolbar(BoxLayout):
 
     def popup_mode(self, *_):
         ModePopup().show_with_callback(self.app.set_mode, self.app.current_mode)
+
+    def cycle_offset(self, *_):
+        """Tap: advance to the next P-offset preset (wraps at OFFSET_PRESETS)."""
+        self.app.currentOffset = (self.app.currentOffset + 1) % self.OFFSET_PRESETS
+
+    def cycle_mode(self, *_):
+        """Tap: advance to the next mode allowed for the current use case."""
+        modes = self.app.allowed_modes()
+        if not modes:
+            return
+        try:
+            i = modes.index(self.app.current_mode)
+        except ValueError:
+            i = -1
+        self.app.set_mode(modes[(i + 1) % len(modes)])
