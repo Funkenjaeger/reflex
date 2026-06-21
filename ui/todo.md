@@ -133,9 +133,10 @@
 - **DIR arrows (elsbar):** still a `TwoStateButton` with FA arrows. Could become a horizontal
   2-segment `TabSelector`, but its `value`/`on_release` semantics are load-bearing — left alone
   to avoid regressions. Convert with care + live testing.
-- **Big DRO readouts stay amber:** the large position numbers use `app.formats.display_color`
-  (a user-saved preference, default amber). Not recolored to cyan — decide whether the facelift
-  should override the saved display color or add a separate "facelift" theme toggle.
+- **Big DRO readouts → cyan: DONE (2026-06-21).** `display_color` default switched amber→cyan
+  (`#40e0ed`) in `dispatchers/formats.py`; local saved `FormatsDispatcher-0.yaml` updated too.
+  Existing user configs keep their saved value until reset. (Optional later: a dedicated
+  "facelift" theme toggle instead of overriding the saved preference.)
 - **`servobar.kv` / `jogbar.kv` / inner `coordbar` Num/Den/feed buttons:** still raw `Button`s
   with grey backgrounds. Lower priority; convert to `StyledButton`/recessed fields once the
   layout proportions are confirmed against the mockup.
@@ -146,6 +147,28 @@
 - **Sidebar P0–P3 / mode buttons:** P-offset and mode are popup/keypad driven (not one-hot),
   so they remain `ToolbarButton`s rather than `TabSelector`s. Could be restyled to match the
   tab strip visually without changing interaction.
+
+### Next batch — queued 2026-06-21 (rollout merged into ui-facelift @ d16c3dc)
+Reviewed the merged result live; these are the remaining gaps vs the mockup, in
+rough priority order:
+- **Restyle the remaining grey buttons** (biggest cohesion win): `ADV`, the `DIR`
+  arrows, the ELS `← →` nav arrows (left/right of the Thread field), and
+  `btn_start_stop`. Visual-only dark-theme restyle — preserve `TwoStateButton`/`value`
+  and `on_release` behavior; test live since several are load-bearing.
+- **Theme polish:** set `Window.clearcolor` to the mockup's near-black blue-grey
+  (~`#0a0e12`) instead of relying on Kivy's default pure black; add a recess/inset
+  frame around the central lathe-graphic panel (currently a grey block).
+- **`Z` / `⌀` axis-letter buttons:** the axis-name buttons (render as `?`/`R` boxes
+  when disconnected) should become `StyledButton`s like the mockup's `Z` and `⌀` keys.
+- **Wire highlights to real state:** `btn_action` (Cut) has `is_highlighted: True`
+  hard-coded to demo the look — drive it from actual action-active/selected state.
+  Audit other `is_highlighted`/selected bindings to ensure they reflect real state.
+
+### Note: dark background is NOT a bug
+The home content area reads as transparent `(0,0,0,0)` in `export_to_png` output; the
+app sets no `Window.clearcolor`, so Kivy's default pure-black shows through at runtime
+(matches the mockup). Do not "fix" a white background — it's a PNG-alpha/matte artifact
+in light-themed image viewers. Composite previews over black before judging.
 
 ### Preview scripts (not for production)
 - `previews/preview_widgets.py`, `previews/preview_probe.py`, `previews/preview_home_live.py`
