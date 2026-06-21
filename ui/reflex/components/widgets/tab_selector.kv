@@ -37,9 +37,10 @@
             points: (self.x, self.top, self.right, self.top) if self.edge in ('left', 'right') else (self.x, self.y, self.x, self.top)
             width: 1.0
 
-        # Crisp accent bar on the inner edge when selected.
+        # Crisp accent bar on the inner edge when selected (suppressible for
+        # bordered segmented controls).
         Color:
-            rgba: THEME.ACCENT if self.is_selected else [0, 0, 0, 0]
+            rgba: THEME.ACCENT if (self.is_selected and self.show_accent) else [0, 0, 0, 0]
         Rectangle:
             pos: (self.x, self.y) if self.edge == 'left' else ((self.right - dp(3), self.y) if self.edge == 'right' else ((self.x, self.y) if self.edge == 'bottom' else (self.x, self.top - dp(3))))
             size: (dp(3), self.height) if self.edge in ('left', 'right') else (self.width, dp(3))

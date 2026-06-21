@@ -1,4 +1,5 @@
 #: import HomeToolbar reflex.components.home.home_toolbar
+#: import THEME reflex.components.widgets.facelift_theme
 <Label>:
   font_name: "fonts/iosevka-regular.ttf"
 
@@ -21,3 +22,10 @@
       id: bars_container
       orientation: "vertical"
       size_hint: 1, 1
+      # Divider in the gap so the sidebar reads as attached, not floating.
+      canvas.before:
+        Color:
+          rgba: THEME.BORDER
+        Rectangle:
+          pos: self.x - dp(3), self.y + dp(2)
+          size: dp(1.5), self.height - dp(4)

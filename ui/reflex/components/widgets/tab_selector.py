@@ -138,6 +138,10 @@ class TabSegment(BeepMixin, ButtonBehavior, FloatLayout):
     font_size = NumericProperty(0)  # 0 = auto-size from segment height
     font_name = StringProperty("fonts/ChakraPetch-SemiBold.ttf")
     is_selected = BooleanProperty(False)
+    # Whether to draw the cyan accent bar on the selected segment. Off for
+    # bordered segmented controls (e.g. DIR) that show selection via fill +
+    # an outer border instead of an attached-edge accent.
+    show_accent = BooleanProperty(True)
     # Which edge the cyan accent sits on; pushed by the parent group's
     # _apply_edges() so it stays in sync with orientation/accent_edge.
     edge = StringProperty("right")
