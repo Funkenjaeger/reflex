@@ -6,7 +6,7 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.button import Button
 from kivy.uix.tabbedpanel import TabbedPanel, TabbedPanelItem
 
-from rcp import feeds
+from reflex import feeds
 from reflex.components.widgets.beep_mixin import BeepMixin
 
 log = Logger.getChild(__name__)

@@ -393,6 +393,15 @@ class ElsUiController(EventDispatcher):
         """Engage/disengage button intent. Drives the domain FSM."""
         if self.engaged:
             self._els_fsm.disable()
+        elif self._els.get_z_axis() is None:
+            # No Z (leadscrew) axis assigned — engaging would arm ELS against a
+            # non-existent axis and crash on_enter_stopped. Refuse instead of
+            # entering an invalid state. Happens when the ELS Z axis hasn't been
+            # mapped in setup (index defaults to -1) or no board is connected.
+            log.warning(
+                "Cannot engage ELS: no Z axis assigned "
+                "(map the ELS Z axis in setup, or connect the controller)"
+            )
         else:
             self._els_fsm.enable()
 

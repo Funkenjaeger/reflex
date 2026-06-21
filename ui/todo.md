@@ -62,3 +62,48 @@
 - **Action:** Remove dead code. Either restore `beep()` or remove it entirely. Fix or remove the `TraceOutput` code path.
 
 ---
+
+---
+
+## UI Facelift (ui-facelift branch)
+
+### StyledButton rollout
+- **Status:** Prototype complete. `StyledButton` (slate + cyan-glow highlight states)
+  is applied to **Engage** and the **Cut/action** button in `els_advbar.kv` only.
+- **Action:** Once the look is approved, roll `StyledButton` out to the remaining
+  buttons to match the mockup: the left sidebar tabs (MM/IN, P0–P3, ABS/INC, ELS/DRO),
+  the Z/⌀/square/DIR/arrow buttons, ADV, Sync Enable, FEED/THREAD, Zero buttons, etc.
+  These live across multiple components (coordbar, servobar, jogbar, toolbars), not
+  just els_advbar.
+- **Note:** `is_highlighted` is currently hard-set `True` on the Cut button to demo the
+  glow. Wire it to real state (e.g. action active / selected) when productionizing.
+
+### Gradients in Kivy (investigation closed)
+- Hermes blamed a missing gradient feature on the Kivy version. Not a version issue:
+  `kivy.graphics.LinearGradient` does **not** exist in any released Kivy (confirmed
+  absent in 2.3.1, the current stable). Upgrading Kivy will NOT add a gradient
+  primitive. Real gradients require a gradient **texture** on a Rectangle/RoundedRectangle
+  or a custom shader. The StyledButton "metal sheen" is faked with stacked shapes
+  instead — no upgrade needed. If true gradients are wanted later, generate a 1xN
+  gradient texture once and assign it to the shape's `texture`.
+
+### Use BoxShadow for the highlight glow (upgrade-free)
+- `kivy.graphics.BoxShadow` exists in Kivy 2.3.1 (added in 2.2.0) — a real soft
+  drop-shadow/glow primitive. The current StyledButton highlight glow is faked with
+  a stacked RoundedRectangle halo in `styled_button.kv`.
+- **Action:** Replace the faked outer-glow rect with a `BoxShadow` instruction for a
+  softer, more mockup-accurate cyan bloom on the highlighted (Cut) state. Less canvas
+  code, better result. No Kivy upgrade required.
+
+### ELS FSM test suite is red at HEAD (pre-existing, unrelated to facelift)
+- `tests/fsms/test_els_fsm.py` and `tests/fsms/test_ui_controller.py` fail/error
+  heavily on a clean HEAD checkout (~26 failed, 23 passed, 18 errors), independent
+  of any UI-facelift changes.
+- **Root cause:** test mock drift after the hard fork / refactors. Example:
+  `_safety_margin_display()` reads `self.servo.leadScrewPitch`, but the test servo
+  fixture is a `types.SimpleNamespace` without that attribute →
+  `AttributeError: 'types.SimpleNamespace' object has no attribute 'leadScrewPitch'`.
+- **Action:** Update the FSM test fixtures/mocks to match the current
+  ElsFsm/ElsUiController/servo interfaces and get the suite green again. Verify the
+  engage-with-no-Z-axis guard (ui_controller.toggle_engage) and the lazy z_axis/x_axis
+  properties (els_fsm) are covered by a regression test once the suite runs.
