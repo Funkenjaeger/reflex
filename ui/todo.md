@@ -87,13 +87,14 @@
   instead — no upgrade needed. If true gradients are wanted later, generate a 1xN
   gradient texture once and assign it to the shape's `texture`.
 
-### Use BoxShadow for the highlight glow (upgrade-free)
-- `kivy.graphics.BoxShadow` exists in Kivy 2.3.1 (added in 2.2.0) — a real soft
-  drop-shadow/glow primitive. The current StyledButton highlight glow is faked with
-  a stacked RoundedRectangle halo in `styled_button.kv`.
-- **Action:** Replace the faked outer-glow rect with a `BoxShadow` instruction for a
-  softer, more mockup-accurate cyan bloom on the highlighted (Cut) state. Less canvas
-  code, better result. No Kivy upgrade required.
+### Highlight glow: BoxShadow — REJECTED (decided 2026-06-21)
+- Prototyped a `kivy.graphics.BoxShadow` soft cyan bloom for the highlighted (Cut)
+  state vs. the existing faked stacked-RoundedRectangle halo. BoxShadow looked nicer
+  but was deemed **too gratuitous for this industrial-style UI**.
+- **Decision:** Keep the faked glow (reads as effectively no bloom — just the cyan
+  border + text + teal fill). No real-glow primitive. Branch `facelift/glow-experiment`
+  and its `glow_mode` API were discarded. Do NOT revisit unless the design direction
+  changes.
 
 ### ELS FSM test suite is red at HEAD (pre-existing, unrelated to facelift)
 - `tests/fsms/test_els_fsm.py` and `tests/fsms/test_ui_controller.py` fail/error
