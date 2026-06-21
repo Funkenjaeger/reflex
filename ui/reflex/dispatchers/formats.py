@@ -40,7 +40,7 @@ class FormatsDispatcher(SavingDispatcher):
     position_format = StringProperty()
     factor = ObjectProperty(Fraction(1, 1))
 
-    display_color = ColorProperty("#ffcc35ff")
+    display_color = ColorProperty("#40e0edff")  # facelift cyan (was amber #ffcc35)
     accept_color = ColorProperty("#32ff32ff")
     cancel_color = ColorProperty("#ff3232ff")
     color_on = ColorProperty("#ffcc32a0")
