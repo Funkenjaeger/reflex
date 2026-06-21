@@ -144,9 +144,11 @@
   (state-colored, disabled logic, image children) — higher layout risk. Restyle later.
 - **Status bar `v1.3.0` pill:** currently a restyled `LedButton`; the mockup wants a plain
   bordered version pill (no LED dot). Minor; add a `no_led` flag to `LedButton` if desired.
-- **Sidebar P0–P3 / mode buttons:** P-offset and mode are popup/keypad driven (not one-hot),
-  so they remain `ToolbarButton`s rather than `TabSelector`s. Could be restyled to match the
-  tab strip visually without changing interaction.
+- **Sidebar P0 / mode buttons: DONE (2026-06-21).** Now `TabButton`s styled like the tab
+  strip (right cyan accent, attached): tap cycles (P0–P3 via `OFFSET_PRESETS`; allowed modes),
+  long-press opens the keypad / mode popup. Sidebar accent moved to the right edge and the
+  `TabSegment` edge made reactive (was a stale one-shot read). Possible later polish: render
+  P0–P3 / ELS–DRO as literal multi-segment groups instead of single cycling tabs.
 
 ### Next batch — queued 2026-06-21 (rollout merged into ui-facelift @ d16c3dc)
 Reviewed the merged result live; these are the remaining gaps vs the mockup, in
