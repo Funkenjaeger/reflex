@@ -5,68 +5,83 @@
   size_hint: 1, None
   height: 38
   orientation: "horizontal"
-  # Inset the gutter off the screen edges; extra right padding so the version
-  # chip floats inside the strip rather than butting the border.
   padding: dp(8), dp(4), dp(8), dp(4)
-  spacing: dp(4)
+  spacing: dp(6)
 
-  canvas.before:
-    # One continuous recessed, rounded status gutter -- the four telemetry
-    # items ride inside it (flat: True) instead of drawing their own pills.
-    Color:
-      rgba: THEME.RECESS_FILL
-    RoundedRectangle:
-      pos: self.x + dp(4), self.y + dp(3)
-      size: max(self.width - dp(8), 0), max(self.height - dp(6), 0)
-      radius: [dp(7)]
-    Color:
-      rgba: THEME.BORDER_DIM
-    Line:
-      rounded_rectangle: (self.x + dp(4), self.y + dp(3), max(self.width - dp(8), 0), max(self.height - dp(6), 0), dp(7))
-      width: 1.0
-
-  LedButton:
-    flat: True
-    font_name: THEME.FONT_MONO
-    label: "COM"
-    checkbox_value: app.board.connected or app.board.blink
-
-  LedButton:
-    flat: True
-    font_name: THEME.FONT_MONO
-    label: "{:0.0f}".format(0 if root.interval == 0 else (100000000 / root.interval))
-
-  LedButton:
-    flat: True
-    font_name: THEME.FONT_MONO
-    label: "{:0.0f}".format(root.fps)
-
-  LedButton:
-    flat: True
-    font_name: THEME.FONT_MONO
-    label: "{:0.0f}".format(root.cycles)
-
-  # Reflex logo, right end of the gutter, next to the version number.
-  Image:
-    source: "pictures/reflex_logo.png"
-    size_hint_x: None
-    width: self.height * 3.6
-    allow_stretch: True
-    keep_ratio: True
-
-  # Version chip: bordered, no LED, pinned to the right end of the gutter.
-  Label:
-    size_hint_x: None
-    width: self.texture_size[0] + dp(22)
-    font_name: THEME.FONT_MONO
-    font_size: 14
-    text: app.version
-    color: THEME.TEXT_DIM
-    halign: 'center'
-    valign: 'middle'
+  # ── Telemetry gutter: its own recessed, rounded box; the four items ride
+  #    inside it (flat: True) instead of drawing their own pills. ──
+  BoxLayout:
+    orientation: "horizontal"
+    padding: dp(4), 0
+    spacing: dp(4)
     canvas.before:
+      Color:
+        rgba: THEME.RECESS_FILL
+      RoundedRectangle:
+        pos: self.pos
+        size: self.size
+        radius: [dp(7)]
       Color:
         rgba: THEME.BORDER_DIM
       Line:
-        rounded_rectangle: (self.x, self.center_y - dp(11), self.width - dp(6), dp(22), dp(5))
+        rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
         width: 1.0
+
+    LedButton:
+      flat: True
+      font_name: THEME.FONT_MONO
+      label: "COM"
+      checkbox_value: app.board.connected or app.board.blink
+
+    LedButton:
+      flat: True
+      font_name: THEME.FONT_MONO
+      label: "{:0.0f}".format(0 if root.interval == 0 else (100000000 / root.interval))
+
+    LedButton:
+      flat: True
+      font_name: THEME.FONT_MONO
+      label: "{:0.0f}".format(root.fps)
+
+    LedButton:
+      flat: True
+      font_name: THEME.FONT_MONO
+      label: "{:0.0f}".format(root.cycles)
+
+  # ── Reflex logo + version: their own recessed box at the right end, with the
+  #    logo filling the box height (per the mockup). ──
+  BoxLayout:
+    orientation: "horizontal"
+    size_hint_x: None
+    width: self.minimum_width
+    padding: dp(10), dp(4)
+    spacing: dp(8)
+    canvas.before:
+      Color:
+        rgba: THEME.RECESS_FILL
+      RoundedRectangle:
+        pos: self.pos
+        size: self.size
+        radius: [dp(7)]
+      Color:
+        rgba: THEME.BORDER_DIM
+      Line:
+        rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
+        width: 1.0
+
+    Image:
+      source: "pictures/reflex_logo.png"
+      size_hint_x: None
+      width: self.height * 3.83
+      allow_stretch: True
+      keep_ratio: True
+
+    Label:
+      size_hint_x: None
+      width: self.texture_size[0] + dp(2)
+      font_name: THEME.FONT_MONO
+      font_size: 14
+      text: app.version
+      color: THEME.TEXT_DIM
+      halign: 'center'
+      valign: 'middle'
