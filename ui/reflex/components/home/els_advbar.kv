@@ -157,7 +157,10 @@
   BoxLayout:
     orientation: "vertical"
     size_hint_x: None
-    width: self.height * 0.7
+    # Left padding gives these two buttons a margin from the action button to
+    # their left; width grows to keep the buttons themselves the same size.
+    width: self.height * 0.7 + dp(12)
+    padding: dp(12), 0, 0, 0
     spacing: 4
 
     # One-hot tri-state operating-mode tab: shows all three states with
@@ -168,7 +171,7 @@
     TabSelector:
       id: btn_mode
       orientation: "horizontal"
-      attached: False
+      shape: "standalone"
       disabled: root.is_running
       selected: root.mode
       on_select: root.apply_mode(args[1])

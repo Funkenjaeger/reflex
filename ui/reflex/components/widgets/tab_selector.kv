@@ -31,11 +31,8 @@
         RoundedRectangle:
             pos: self.pos
             size: self.size
-            # Vertical groups round the outer LEFT corners; horizontal groups
-            # round the outer TOP corners (attached, square bottom so the accent
-            # bar lines up) or ALL outer corners (standalone). Segments inside
-            # their own box stay square.
-            radius: [0, 0, 0, 0] if not self.round_corners else ([(dp(7) if self.is_first else 0), 0, 0, (dp(7) if self.is_last else 0)] if self.edge == 'right' else ([0, (dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0] if self.edge == 'left' else ([(dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), 0, 0] if self.attached else [(dp(7) if self.is_first else 0), (dp(7) if self.is_last else 0), (dp(7) if self.is_last else 0), (dp(7) if self.is_first else 0)])))
+            # Per-segment corner radii computed by the parent group's shape.
+            radius: self.radius
 
         # Hairline divider between butted segments (skip the first): a top edge
         # for vertical stacks, a left edge for horizontal rows.
@@ -46,14 +43,13 @@
             width: 1.0
 
         # Crisp accent bar on the inner edge when selected (suppressible for
-        # bordered segmented controls). Rounds its outer bottom corner to match
-        # a standalone horizontal group's rounded body corner.
+        # bordered segmented controls). On the bottom/top edge it insets by the
+        # body's outer-corner radii so it never pokes past a rounded corner.
         Color:
             rgba: THEME.ACCENT if (self.is_selected and self.show_accent) else [0, 0, 0, 0]
-        RoundedRectangle:
-            pos: (self.x, self.y) if self.edge == 'left' else ((self.right - dp(3), self.y) if self.edge == 'right' else ((self.x, self.y) if self.edge == 'bottom' else (self.x, self.top - dp(3))))
-            size: (dp(3), self.height) if self.edge in ('left', 'right') else (self.width, dp(3))
-            radius: [0, 0, (dp(7) if (self.edge == 'bottom' and self.is_last and not self.attached) else 0), (dp(7) if (self.edge == 'bottom' and self.is_first and not self.attached) else 0)]
+        Rectangle:
+            pos: (self.x, self.y) if self.edge == 'left' else ((self.right - dp(3), self.y) if self.edge == 'right' else ((self.x + self.radius[3], self.y) if self.edge == 'bottom' else (self.x + self.radius[0], self.top - dp(3))))
+            size: (dp(3), self.height) if self.edge in ('left', 'right') else ((self.width - self.radius[3] - self.radius[2], dp(3)) if self.edge == 'bottom' else (self.width - self.radius[0] - self.radius[1], dp(3)))
 
     Label:
         # Text glyph (hidden when the segment uses image icons instead).

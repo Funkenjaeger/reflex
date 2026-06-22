@@ -4,15 +4,28 @@
 <ElsSpindleInfo>:
   orientation: "horizontal"
 
-  # Direction icon (matches axis name button: 96px wide, gray background)
+  # Spindle direction icon: a cell in the dark left gutter (right border +
+  # bottom divider) so it lines up with the axis-label rows above it.
   Button:
     width: 96
     size_hint_x: None
     font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
     font_size: min(self.height / 2, self.width / 2)
-    background_color: [0.3, 0.3, 0.3, 1]
+    background_color: 0, 0, 0, 0
+    background_normal: ""
     color: app.formats.display_color
     text: root.direction_icon
+    canvas.before:
+      Color:
+        rgba: THEME.SLATE_FILL
+      Rectangle:
+        pos: self.pos
+        size: self.size
+      Color:
+        rgba: THEME.BORDER_DIM
+      Line:
+        points: (self.right - 0.5, self.top, self.right - 0.5, self.y, self.x, self.y)
+        width: 1.0
 
   # Main content: RPM value (large) + "RPM" unit label (small), matching axis bar pattern
   BoxLayout:

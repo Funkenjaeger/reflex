@@ -34,6 +34,7 @@ horizontal groups (set ``accent_edge`` to override: 'left' | 'right' |
 """
 
 from kivy.logger import Logger
+from kivy.metrics import dp
 from kivy.properties import (
     StringProperty,
     ObjectProperty,
@@ -67,9 +68,13 @@ class TabSelector(BoxLayout):
     # value). Used by the ELS-bar FEED/THREAD indicator.
     readonly = BooleanProperty(False)
 
-    # Horizontal groups only: True = tabs on content (round top corners);
-    # False = standalone control (round all corners). Pushed to segments.
-    attached = BooleanProperty(True)
+    # Which outer corners the group rounds. "auto" -> vertical groups round the
+    # outer-left corners, horizontal groups round the top ("attached" tabs-on-
+    # content look). Override with "standalone" (round all outer corners, e.g.
+    # the mode tab), "bottom" (round bottom outer only, e.g. arrows anchored to
+    # the bottom of a box like DIR), or "none". The per-segment corner radius is
+    # computed in _apply_edges and the accent bar insets to match.
+    shape = StringProperty("auto")
 
     __events__ = ("on_select",)
 
@@ -82,12 +87,13 @@ class TabSelector(BoxLayout):
         self.bind(
             orientation=self._apply_edges,
             accent_edge=self._apply_edges,
-            attached=self._apply_edges,
+            shape=self._apply_edges,
             children=self._apply_edges,
         )
 
     def _apply_edges(self, *_):
         edge = self.resolved_accent_edge()
+        shape = self.resolved_shape()
         segments = [c for c in reversed(self.children)
                     if isinstance(c, TabSegment)]
         last = len(segments) - 1
@@ -95,7 +101,32 @@ class TabSelector(BoxLayout):
             seg.edge = edge
             seg.is_first = (i == 0)
             seg.is_last = (i == last)
-            seg.attached = self.attached
+            seg.radius = self._segment_radius(shape, edge, i == 0, i == last)
+
+    def resolved_shape(self) -> str:
+        if self.shape != "auto":
+            return self.shape
+        return "attached" if self.orientation == "horizontal" else "vertical"
+
+    @staticmethod
+    def _segment_radius(shape, edge, is_first, is_last):
+        """Per-segment corner radius [top-left, top-right, bottom-right,
+        bottom-left]; only the group's outer corners round."""
+        r = dp(7)
+        if shape == "none":
+            return [0, 0, 0, 0]
+        if edge in ("left", "right"):           # vertical stack
+            if edge == "right":                 # accent on right -> round left
+                return [r if is_first else 0, 0, 0, r if is_last else 0]
+            return [0, r if is_first else 0, r if is_last else 0, 0]
+        # horizontal row
+        if shape == "standalone":               # round all outer corners
+            return [r if is_first else 0, r if is_last else 0,
+                    r if is_last else 0, r if is_first else 0]
+        if shape == "bottom":                   # round bottom outer only
+            return [0, 0, r if is_last else 0, r if is_first else 0]
+        # "attached"/"vertical" default for horizontal -> round top outer
+        return [r if is_first else 0, r if is_last else 0, 0, 0]
 
     def resolved_accent_edge(self) -> str:
         if self.accent_edge != "auto":
@@ -149,17 +180,11 @@ class TabSegment(BeepMixin, ButtonBehavior, FloatLayout):
     font_size = NumericProperty(0)  # 0 = auto-size from segment height
     font_name = StringProperty("fonts/ChakraPetch-SemiBold.ttf")
     is_selected = BooleanProperty(False)
-    # Whether to draw the cyan accent bar on the selected segment. Off for
-    # bordered segmented controls (e.g. DIR) that show selection via fill +
-    # an outer border instead of an attached-edge accent.
+    # Whether to draw the cyan accent bar on the selected segment.
     show_accent = BooleanProperty(True)
-    # Whether the group rounds its outer corners. Off for segments that sit
-    # inside their own bordered box (e.g. DIR), which should stay square.
-    round_corners = BooleanProperty(True)
-    # For horizontal groups: True = sits like tabs on content (round only the
-    # top outer corners); False = a standalone control (round all outer
-    # corners + the accent bar's outer bottom corner). Ignored when vertical.
-    attached = BooleanProperty(True)
+    # Per-corner body radius [TL, TR, BR, BL], computed by the parent group's
+    # _apply_edges() from its shape/orientation. The accent bar insets to match.
+    radius = ListProperty([0, 0, 0, 0])
     # Which edge the cyan accent sits on; pushed by the parent group's
     # _apply_edges() so it stays in sync with orientation/accent_edge.
     edge = StringProperty("right")

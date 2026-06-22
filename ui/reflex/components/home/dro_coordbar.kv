@@ -5,12 +5,28 @@
 <DroCoordBar>:
   orientation: "horizontal"
   size_hint_y: 1
+  # Axis label: a cell in the dark left gutter (not a button), with a right
+  # border + bottom divider so the stacked rows read as one continuous gutter.
   Button:
     width: 96
     size_hint_x: None
     text: root.axis.axis_name if root.axis else "?"
-    font_size: min(self.height / 1.5, self.width/1.5)
-    background_color: [0.3, 0.3, 0.3, 1]
+    font_name: THEME.FONT_BOLD
+    font_size: min(self.height / 1.7, self.width / 1.7)
+    color: THEME.TEXT
+    background_color: 0, 0, 0, 0
+    background_normal: ""
+    canvas.before:
+      Color:
+        rgba: THEME.SLATE_FILL
+      Rectangle:
+        pos: self.pos
+        size: self.size
+      Color:
+        rgba: THEME.BORDER_DIM
+      Line:
+        points: (self.right - 0.5, self.top, self.right - 0.5, self.y, self.x, self.y)
+        width: 1.0
 
   BoxLayout:
     orientation: "vertical"
