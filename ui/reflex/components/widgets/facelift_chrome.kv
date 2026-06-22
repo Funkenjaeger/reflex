@@ -25,20 +25,25 @@
 
 # ── Shared settings-row controls ───────────────────────────────────────────
 # Subtle info/help button (the "i" icon at the left of each settings row).
-<FormHelpButton@Button>:
-    # A plain "?" help affordance. Uses a literal character (not an icon-font
-    # glyph) so it can't be broken by the global <Button> font rule, which would
-    # otherwise swap in a font that lacks the icon glyph (rendering tofu).
+<FormHelpButton@ButtonBehavior+FloatLayout>:
+    # Circle-question help affordance (Font Awesome "circle-question", \uf059).
+    # The glyph lives in a CHILD Label whose font is set here in the parent rule,
+    # so it applies after -- and wins over -- the global <Label>/<Button> font
+    # rules in home_screen.kv (which force iosevka/Manrope and would otherwise
+    # clobber the icon font and render the glyph as tofu). Same pattern as
+    # IconButton; a dynamic class based directly on Label/Button loses that race.
     size_hint_x: None
     width: self.height
-    background_normal: ''
-    background_down: ''
-    background_color: 0, 0, 0, 0
-    font_name: app.theme.font_bold
-    font_size: dp(22)
-    bold: True
-    color: app.theme.text_dim
-    text: "?"
+    Label:
+        text: "\uf059"
+        font_name: app.theme.font_icon
+        font_size: dp(19)
+        color: app.theme.text_dim
+        size_hint: 1, 1
+        pos_hint: {'x': 0, 'y': 0}
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.size
 
 # Row caption: left-aligned, Chakra Petch, light blue-grey.
 <FormLabel@Label>:
