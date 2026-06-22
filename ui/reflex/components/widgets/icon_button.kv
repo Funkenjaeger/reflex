@@ -3,6 +3,8 @@
 
 <IconButton>:
     opacity: 0.4 if self.disabled else 1
+    # Icon glyphs come from the theme's icon font (overridable per-instance).
+    font_name: app.theme.font_icon
 
     canvas.before:
         # Soft outer glow (highlighted, non-tab only).

@@ -59,6 +59,9 @@ class DropDownItem(BoxLayout):
     def delete_all_dropdown_options(self):
         for item in self._options:
             self.dropdown.remove_widget(item)
+        # Drop the stale references too; otherwise the list grows by len(options)
+        # on every rebuild (e.g. each theme switch) and we re-remove dead widgets.
+        self._options.clear()
 
     def on_value(self, instance, value):
         self.main_button.text = value

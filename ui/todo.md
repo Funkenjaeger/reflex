@@ -242,23 +242,27 @@ Real bugs — FIXED in 4a017b8 (2026-06-22):
   (`test_on_action_button_clicked_without_x_axis_does_not_raise`).
 - A3 **Partial-theme switch crash** — DONE. `_sync_theme` (app.py) skips None seeds.
 
-Robustness / polish:
-- A4 Icon font bypasses its own `font_icon` token: ~20 KV sites hardcode
-  `"fonts/Font Awesome 6 Free-Solid-900.otf"` instead of `app.theme.font_icon`.
-- A5 `dropdown_item.delete_all_dropdown_options()` doesn't clear `self._options`
-  → list grows by len(options) per theme switch. One-line `clear()`.
-- A6 A single malformed color line drops the entire theme file (warning only)
-  instead of salvaging via the per-token backfill.
-- A7 `palettes.LABELS` (`[meta] label`, e.g. "Dark Steel") is dead code; the UI
-  Theme dropdown shows raw file names. Wire LABELS into the dropdown or drop it.
+Robustness / polish — FIXED (2026-06-22):
+- A4 **icon-font token** — DONE. Routed the ~21 hardcoded Font Awesome paths to
+  `app.theme.font_icon` across the ELS/servo/plot KV + IconButton/KeypadIconButton.
+  NOTE: only the *icon* font was migrated. The other hardcoded fonts (Manrope/
+  iosevka/ChakraPetch/ShareTech/DSEG literals) remain — a broader role-based pass
+  (each site → font_bold/font_mono/font_seg by the glyphs it needs, verified to
+  avoid tofu) is still open if wanted.
+- A5 **dropdown `_options` leak** — DONE. `delete_all_dropdown_options()` now
+  `clear()`s the list.
+- A6 **malformed color salvage** — DONE. `_load_file` skips a bad color/seed line
+  (logged) so the token backfills from default instead of dropping the theme.
+- A7 **dead LABELS** — DONE (dropped). Removed the unused `[meta] label` parsing
+  and `palettes.LABELS`; the picker keeps showing the file names.
 
-Light-theme contrast tuning:
-- A8 `text_disabled` (0.5,0.52,0.54) ~2.8:1 on surface / ~1.9:1 on recess — below
-  3:1 floor. Darken toward ~0.42,0.44,0.46.
-- A9 Version label uses `text_dim` on the recessed status panel (~3.8:1) — fails
-  normal-text AA (low impact).
-- A10 `text_header_button.kv:14` blink label uses `accent` as text (~3.6:1) where
-  `accent_text` (6.6:1) is the purpose-built token used everywhere else.
+Light-theme contrast tuning — FIXED (2026-06-22):
+- A8 **text_disabled** — DONE. light.ini 0.5,0.52,0.54 → 0.42,0.44,0.46.
+- A9 **version label** — DONE. statusbar.kv now uses `text` (not `text_dim`).
+- A10 **blink header label** — DONE. text_header_button.kv now uses `accent_text`.
+
+Open follow-ups (not bugs):
+- A4-broad: role-based migration of the remaining non-icon hardcoded fonts.
 
 Works-as-specified (note, not bugs):
 - Theme switch re-seeds + persists operator color choices (display_color/color_on/

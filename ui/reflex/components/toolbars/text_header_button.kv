@@ -11,7 +11,9 @@
     font_name: root.font_name
     font_size: self.height / 1.5
     text: root.text_header
-    color: app.theme.accent if root._blink else app.theme.text_dim
+    # accent_text (not accent): the purpose-built high-contrast accent text token
+    # (~6.6:1 light) vs accent's ~3.6:1 when used as a label color.
+    color: app.theme.accent_text if root._blink else app.theme.text_dim
     halign: 'center'
     valign: 'top'
 

@@ -63,18 +63,22 @@ def _parse_color(text: str) -> list[float]:
 
 
 def _load_file(path: str, name: str):
-    """Parse one theme file -> (palette, seeds, label). Raises on bad files.
+    """Parse one theme file -> (palette, seeds). The theme's identity is the
+    file name.
 
-    The theme's identity is the file name; ``[meta] label`` is only its display
-    name."""
+    A single malformed color line is skipped (logged) rather than failing the
+    whole file -- the missing token is then backfilled from the default theme in
+    :func:`_load_all`, so a hand-edited file with one typo still loads."""
     cp = configparser.ConfigParser()
     cp.read(path, encoding="utf-8")
-    label = cp.get("meta", "label", fallback=name.title())
 
     palette = {}
     if cp.has_section("colors"):
         for k, v in cp.items("colors"):
-            palette[k] = _parse_color(v)
+            try:
+                palette[k] = _parse_color(v)
+            except ValueError as e:
+                log.warning(f"Theme '{name}': bad color '{k} = {v}' ({e}); using default")
     if cp.has_section("paths"):
         for k, v in cp.items("paths"):
             palette[k] = v.strip()
@@ -82,8 +86,11 @@ def _load_file(path: str, name: str):
     seeds = {}
     if cp.has_section("seeds"):
         for k, v in cp.items("seeds"):
-            seeds[k] = _parse_color(v)
-    return palette, seeds, label
+            try:
+                seeds[k] = _parse_color(v)
+            except ValueError as e:
+                log.warning(f"Theme '{name}': bad seed '{k} = {v}' ({e}); using default")
+    return palette, seeds
 
 
 def _discover() -> dict[str, str]:
@@ -99,16 +106,15 @@ def _discover() -> dict[str, str]:
 
 
 def _load_all():
-    palettes, recommended, labels = {}, {}, {}
+    palettes, recommended = {}, {}
     for name, path in _discover().items():
         try:
-            palette, seeds, label = _load_file(path, name)
+            palette, seeds = _load_file(path, name)
         except Exception as e:
             log.warning(f"Skipping theme file {path}: {e}")
             continue
         palettes[name] = palette
         recommended[name] = seeds
-        labels[name] = label
 
     if not palettes:
         raise RuntimeError(f"No theme files found in {BUILTIN_DIR}")
@@ -129,7 +135,7 @@ def _load_all():
         for token in SEED_TOKENS:
             recommended[name].setdefault(token, recommended[ref_name].get(token))
 
-    return palettes, recommended, labels, ref_name
+    return palettes, recommended, ref_name
 
 
-PALETTES, FORMATS_RECOMMENDED, LABELS, DEFAULT = _load_all()
+PALETTES, FORMATS_RECOMMENDED, DEFAULT = _load_all()
