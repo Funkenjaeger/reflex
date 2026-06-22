@@ -3,6 +3,7 @@
 #: import BooleanItem reflex.components.widgets.boolean_item
 #: import ColorItem reflex.components.widgets.color_item
 #: import FontItem reflex.components.widgets.font_item
+#: import DropDownItem reflex.components.widgets.dropdown_item
 
 <FormatsScreen>:
   formats: app.formats
@@ -24,6 +25,11 @@
 
         TitleItem:
           name: "Format Settings"
+        DropDownItem:
+          name: "UI Theme"
+          options: ["dark", "light"]
+          value: root.formats.theme
+          on_value: root.formats.theme = self.value
         NumberItem:
           name: "Metric Position Digits"
           value: int(root.formats.metric_position.replace("{:+0.", "").replace("f}", ""))

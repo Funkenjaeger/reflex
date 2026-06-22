@@ -1,6 +1,4 @@
 #: import LedButton reflex.components.toolbars.led_button
-#: import THEME reflex.components.widgets.facelift_theme
-
 <StatusBar>:
   size_hint: 1, None
   height: 38
@@ -16,36 +14,36 @@
     spacing: dp(4)
     canvas.before:
       Color:
-        rgba: THEME.RECESS_FILL
+        rgba: app.theme.recess
       RoundedRectangle:
         pos: self.pos
         size: self.size
         radius: [dp(7)]
       Color:
-        rgba: THEME.BORDER_DIM
+        rgba: app.theme.border_dim
       Line:
         rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
         width: 1.0
 
     LedButton:
       flat: True
-      font_name: THEME.FONT_MONO
+      font_name: app.theme.font_mono
       label: "COM"
       checkbox_value: app.board.connected or app.board.blink
 
     LedButton:
       flat: True
-      font_name: THEME.FONT_MONO
+      font_name: app.theme.font_mono
       label: "{:0.0f}".format(0 if root.interval == 0 else (100000000 / root.interval))
 
     LedButton:
       flat: True
-      font_name: THEME.FONT_MONO
+      font_name: app.theme.font_mono
       label: "{:0.0f}".format(root.fps)
 
     LedButton:
       flat: True
-      font_name: THEME.FONT_MONO
+      font_name: app.theme.font_mono
       label: "{:0.0f}".format(root.cycles)
 
   # ── Reflex logo + version: their own recessed box at the right end, with the
@@ -62,7 +60,7 @@
     # A slightly larger BORDER_DIM pair behind makes the 1px outline.
     canvas.before:
       Color:
-        rgba: THEME.BORDER_DIM
+        rgba: app.theme.border_dim
       RoundedRectangle:
         pos: self.x - 1, self.y - 1
         size: dp(92) + 2, self.height + 2
@@ -72,7 +70,7 @@
         size: self.width - dp(92) + 2, self.height + dp(16) + 2
         radius: [0, dp(7), dp(7), dp(7)]
       Color:
-        rgba: THEME.RECESS_FILL
+        rgba: app.theme.recess
       RoundedRectangle:
         pos: self.x, self.y
         size: dp(92), self.height
@@ -88,7 +86,7 @@
       # (The carve disc reaches past the tangent points and nicks the straight
       # borders, so they must be repainted to stay continuous.)
       Color:
-        rgba: THEME.RECESS_FILL
+        rgba: app.theme.recess
       Rectangle:
         pos: self.x + dp(92) - dp(7), self.y - dp(7)
         size: dp(8), dp(8)
@@ -99,7 +97,7 @@
         size: dp(14), dp(14)
       # Repaint borders on top, half-pixel aligned to the filled-rect outline.
       Color:
-        rgba: THEME.BORDER_DIM
+        rgba: app.theme.border_dim
       Line:
         points: (self.x + dp(60), self.y - 0.5, self.x + dp(92) - dp(7), self.y - 0.5)
         width: 1.0
@@ -112,9 +110,9 @@
 
     Label:
       text: app.version
-      font_name: THEME.FONT_MONO
+      font_name: app.theme.font_mono
       font_size: 16
-      color: THEME.TEXT_DIM
+      color: app.theme.text_dim
       size_hint: None, None
       size: dp(92), self.parent.height
       pos: self.parent.x, self.parent.y

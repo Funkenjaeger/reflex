@@ -2,22 +2,21 @@
 # square-inset status LED, optional status text on that LED's baseline, optional
 # centred image, and a main label.
 
-#: import THEME reflex.components.widgets.facelift_theme
-
 <LedCardButton>:
     opacity: 0.5 if self.disabled else 1
+    status_color: app.theme.text_dim
 
     canvas.before:
         # Card fill (cyan-tinted when highlighted).
         Color:
-            rgba: THEME.ACCENT_BG if root.highlighted else THEME.SLATE_FILL
+            rgba: app.theme.accent_bg if root.highlighted else app.theme.surface
         RoundedRectangle:
             pos: self.x + dp(4), self.y + dp(6)
             size: self.width - dp(8), self.height - dp(12)
             radius: [root.radius]
         # Border.
         Color:
-            rgba: THEME.ACCENT if root.highlighted else THEME.BORDER_DIM
+            rgba: app.theme.accent if root.highlighted else app.theme.border_dim
         Line:
             rounded_rectangle: (self.x + dp(4), self.y + dp(6), self.width - dp(8), self.height - dp(12), root.radius)
             width: 1.2
@@ -31,7 +30,7 @@
     Label:
         # Status text, vertically centred on the LED, just to its right.
         text: root.status_text
-        font_name: THEME.FONT_BOLD
+        font_name: app.theme.font_bold
         font_size: dp(11)
         color: root.status_color
         halign: 'left'
@@ -54,9 +53,9 @@
     Label:
         # Main label (lower when an image sits above it, else centred).
         text: root.text
-        font_name: THEME.FONT_BOLD
+        font_name: app.theme.font_bold
         font_size: root.font_size
-        color: THEME.ACCENT_TEXT if root.highlighted else THEME.TEXT
+        color: app.theme.accent_text if root.highlighted else app.theme.text
         halign: 'center'
         valign: 'middle'
         size_hint: 1, (0.3 if root.image_source else 0.5)

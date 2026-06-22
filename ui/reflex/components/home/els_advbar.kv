@@ -2,7 +2,6 @@
 #: import StyledButton reflex.components.widgets.styled_button
 #: import IconButton reflex.components.widgets.icon_button
 #: import TabSelector reflex.components.widgets.tab_selector
-#: import THEME reflex.components.widgets.facelift_theme
 #: import LedCardButton reflex.components.widgets.led_card_button
 
 <ElsAdvancedBar>:
@@ -18,9 +17,9 @@
     text: "Disengage" if root.controller.engaged else "Engage"
     font_size: dp(17)
     disabled: root.is_running
-    led_color: [0.45, 0.45, 0.45, 1] if not root.controller.engaged else ([0.85, 0.2, 0.2, 1] if root.controller.els_stop_active else [0.2, 0.78, 0.35, 1])
+    led_color: app.theme.led_off if not root.controller.engaged else (app.theme.danger if root.controller.els_stop_active else app.theme.success)
     status_text: "Disabled" if not root.controller.engaged else ("Stopped" if root.controller.els_stop_active else "Armed")
-    status_color: [0.58, 0.58, 0.58, 1] if not root.controller.engaged else ([0.95, 0.45, 0.45, 1] if root.controller.els_stop_active else [0.45, 0.88, 0.55, 1])
+    status_color: app.theme.text_dim if not root.controller.engaged else (app.theme.danger_text if root.controller.els_stop_active else app.theme.success_text)
     # beep handled by BeepMixin.on_press
     on_release: root.toggle_engage()
 
@@ -42,12 +41,12 @@
         # below, matching the facelift theme. The panel is inset at the bottom
         # so a small margin separates it from the controls underneath.
         Color:
-          rgba: THEME.RECESS_FILL
+          rgba: app.theme.recess
         Rectangle:
           pos: self.x, self.y + dp(5)
           size: self.width, self.height - dp(5)
         Color:
-          rgba: THEME.BORDER_DIM
+          rgba: app.theme.border_dim
         Line:
           points: (self.x, self.y + dp(5) + 0.5, self.right, self.y + dp(5) + 0.5)
           width: 1.0
@@ -58,9 +57,9 @@
         text_size: self.size
         size_hint: 1, 1
         pos_hint: {'x': 0, 'y': 0}
-        font_name: THEME.FONT_BOLD
+        font_name: app.theme.font_bold
         font_size: dp(15)
-        color: THEME.ACCENT_TEXT
+        color: app.theme.accent_text
         padding: dp(12), 0
         halign: 'center'
         valign: 'middle'
@@ -72,12 +71,12 @@
         size_hint: None, 1
         width: 200
         pos_hint: {'x': 0, 'y': 0}
-        font_name: THEME.FONT_BOLD
+        font_name: app.theme.font_bold
         font_size: dp(14)
         halign: 'left'
         valign: 'middle'
         padding: dp(12), 0
-        color: [0.4, 1.0, 0.5, 1]
+        color: app.theme.success_text
 
     # ── Controls (varied by mode) ─────────────────────────────────────────────
     BoxLayout:
@@ -96,10 +95,10 @@
         font_size: self.height / 4
         # Only light up (fill/border/glow) when actually enabled.
         is_highlighted: not self.disabled
-        highlight_bg_color: [0.07, 0.20, 0.25, 1] if root.controller.start_not_stop else [0.28, 0.07, 0.07, 1]
-        highlight_border_color: [0.16, 0.82, 0.88, 1] if root.controller.start_not_stop else [0.95, 0.30, 0.30, 1]
-        highlight_text_color: [0.40, 0.92, 0.98, 1] if root.controller.start_not_stop else [1.0, 0.62, 0.62, 1]
-        glow_color: [0.16, 0.82, 0.88, 0.22] if root.controller.start_not_stop else [0.95, 0.25, 0.25, 0.22]
+        highlight_bg_color: app.theme.accent_bg if root.controller.start_not_stop else app.theme.danger_bg
+        highlight_border_color: app.theme.accent if root.controller.start_not_stop else app.theme.danger
+        highlight_text_color: app.theme.accent_text if root.controller.start_not_stop else app.theme.danger_text
+        glow_color: app.theme.glow if root.controller.start_not_stop else app.theme.danger_glow
         on_release: root.controller.on_start_stop_button_clicked()
 
       Widget: # spacer

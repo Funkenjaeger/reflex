@@ -12,7 +12,7 @@ Example (KV)::
     LedCardButton:
         text: "ADV"
         highlighted: root.enable_advanced
-        led_color: THEME.ACCENT if root.enable_advanced else THEME.BORDER_DIM
+        led_color: app.theme.accent if root.enable_advanced else app.theme.border_dim
         on_release: root.enable_advanced = not root.enable_advanced
 """
 

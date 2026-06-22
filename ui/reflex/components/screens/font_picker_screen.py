@@ -31,15 +31,18 @@ class FontPickerEntry(BoxLayout):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        from reflex.app import MainApp
+        self.app = MainApp.get_running_app()
         self.orientation = "horizontal"
         self.size_hint_y = None
         self.height = 50
 
         # Background
         with self.canvas.before:
-            self._bg_color = Color(0.2, 0.2, 0.2, 1)
+            self._bg_color = Color(*self.app.theme.surface)
             self._bg_rect = Rectangle(pos=self.pos, size=self.size)
         self.bind(pos=self._update_bg, size=self._update_bg, selected=self._update_bg)
+        self.app.theme.bind(surface=self._update_bg, accent_bg=self._update_bg)
 
         # Name label on the left
         self._name_label = Label(
@@ -49,8 +52,9 @@ class FontPickerEntry(BoxLayout):
             shorten=True,
             shorten_from="right",
             padding=[10, 0],
-            color=(0.7, 0.7, 0.7, 1),
+            color=self.app.theme.text_dim,
         )
+        self.app.theme.bind(text_dim=lambda _i, v: setattr(self._name_label, "color", v))
         self._name_label.font_name = "fonts/Manrope-Bold.ttf"
         self._name_label.font_size = 18
 
@@ -60,8 +64,10 @@ class FontPickerEntry(BoxLayout):
             text=FONT_PREVIEW_TEXT,
             halign="center",
             valign="middle",
+            color=self.app.theme.text,
         )
         self._preview_label.font_size = 24
+        self.app.theme.bind(text=lambda _i, v: setattr(self._preview_label, "color", v))
 
         self.add_widget(self._name_label)
         self.add_widget(self._preview_label)
@@ -78,9 +84,9 @@ class FontPickerEntry(BoxLayout):
 
     def _update_bg(self, *args):
         if self.selected:
-            self._bg_color.rgba = (0.3, 0.5, 0.8, 0.5)
+            self._bg_color.rgba = self.app.theme.accent_bg
         else:
-            self._bg_color.rgba = (0.2, 0.2, 0.2, 1)
+            self._bg_color.rgba = self.app.theme.surface
         self._bg_rect.pos = self.pos
         self._bg_rect.size = self.size
 

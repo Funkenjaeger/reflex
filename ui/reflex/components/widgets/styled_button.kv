@@ -5,6 +5,17 @@
 
 <StyledButton>:
     opacity: 0.4 if self.disabled else 1
+    # Theme-driven defaults (per-instance overrides still win, e.g. the
+    # Start/Stop button swaps in the danger palette).
+    font_name: app.theme.font_bold
+    slate_fill: app.theme.surface
+    slate_sheen: app.theme.surface_sheen
+    standard_border_color: app.theme.border
+    standard_text_color: app.theme.text
+    highlight_bg_color: app.theme.accent_bg
+    highlight_border_color: app.theme.accent
+    highlight_text_color: app.theme.accent_text
+    glow_color: app.theme.glow
 
     canvas.before:
         # ── Soft outer glow (highlighted + enabled only; a disabled/blank

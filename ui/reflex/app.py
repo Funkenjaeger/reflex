@@ -10,6 +10,7 @@ log = Logger.getChild(__name__)
 
 from reflex.components.appsettings import config
 import reflex.components.widgets.facelift_chrome  # noqa: F401  (installs global Popup/form chrome)
+from reflex.components.widgets.theme_provider import ThemeProvider
 from reflex.dispatchers.axis import AxisDispatcher
 from reflex.dispatchers.board import Board
 from reflex.dispatchers.els import ElsDispatcher
@@ -40,6 +41,9 @@ DEFAULT_USE_CASE = "rotary_table"
 
 class MainApp(App):
     formats = ObjectProperty()
+    # Active UI color theme. Bound to the persisted formats.theme selector so
+    # KV can reference app.theme.<token> and recolor live on switch.
+    theme = ObjectProperty()
     currentOffset = NumericProperty(0)
     abs_mode = BooleanProperty(False)
 
@@ -116,6 +120,26 @@ class MainApp(App):
 
     def build(self):
         self.formats = FormatsDispatcher(id_override="0")
+        # Reactive theme: seed from the persisted selection and keep the two in
+        # sync so the formats-menu picker drives a live recolor. Coerce any
+        # stale/invalid persisted value to the default and write it back, so the
+        # selector, the saved file, and the live theme can never disagree.
+        if self.formats.theme not in ThemeProvider.available_themes():
+            self.formats.theme = ThemeProvider.DEFAULT
+        self.theme = ThemeProvider(name=self.formats.theme)
+
+        def _sync_theme(_inst, value):
+            # Guard: `name` is an OptionProperty, so an unknown value would raise.
+            if value in ThemeProvider.available_themes():
+                self.theme.name = value
+            else:
+                log.warning(f"Ignoring unknown UI theme {value!r}")
+        self.formats.bind(theme=_sync_theme)
+        # The screen background is the Window clearcolor (no widget paints it),
+        # so bind it to the theme so empty areas follow the palette.
+        from kivy.core.window import Window
+        Window.clearcolor = self.theme.background
+        self.theme.bind(background=lambda _inst, value: setattr(Window, "clearcolor", value))
         self.board = Board(formats=self.formats, offset_provider=self)
 
         # Load beep sound

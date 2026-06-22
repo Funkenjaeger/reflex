@@ -11,12 +11,10 @@ from reflex.utils.kv_loader import load_kv
 log = Logger.getChild(__name__)
 load_kv(__file__)
 
-DROPDOWN_OPTION_COLOR = [0.15, 0.3, 0.55, 1]
-
 
 class DropDownItem(BoxLayout):
     name = StringProperty("")
-    value = StringProperty(False)
+    value = StringProperty("")
     options = ListProperty([])
     help_file = StringProperty("")
     dropdown = ObjectProperty()
@@ -24,15 +22,26 @@ class DropDownItem(BoxLayout):
 
     def __init__(self, **kv):
         super().__init__(**kv)
+        from reflex.app import MainApp
+        self.app = MainApp.get_running_app()
         self.dropdown = DropDown()
         self.dropdown.container.padding = [4, 4, 4, 4]
         self.dropdown.container.spacing = 2
         with self.dropdown.canvas.before:
-            Color(0, 0, 0, 0.9)
+            self._bg_color = Color(*self._theme("recess"))
             self._bg_rect = Rectangle()
         self.dropdown.bind(pos=self._update_bg, size=self._update_bg)
         self._options = []
         self.dropdown.bind(on_select=lambda instance, x: setattr(self, 'value', x))
+        # Recolor the open dropdown live when the theme changes.
+        if self.app is not None:
+            self.app.theme.bind(recess=lambda _i, v: setattr(self._bg_color, "rgba", v))
+            self.app.theme.bind(surface=lambda *_: self.on_options(self, self.options))
+
+    def _theme(self, token, default=(0.05, 0.07, 0.09, 1)):
+        if self.app is not None:
+            return getattr(self.app.theme, token)
+        return list(default)
 
     def _update_bg(self, *args):
         self._bg_rect.pos = self.dropdown.pos
@@ -56,7 +65,10 @@ class DropDownItem(BoxLayout):
         for item in self.options:
             btn = Button(
                 text=item, size_hint_y=None, height=60,
-                font_size=font_size, background_color=DROPDOWN_OPTION_COLOR,
+                font_size=font_size, background_normal="", background_down="",
+                background_color=self._theme("surface"),
+                color=self._theme("text"),
+                font_name=self._theme("font_bold", "fonts/ChakraPetch-SemiBold.ttf"),
             )
             btn.bind(on_release=lambda btn: self.dropdown.select(btn.text))
             self.dropdown.add_widget(btn)

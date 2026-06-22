@@ -15,7 +15,7 @@
     font_name: root.font_name
     font_size: root.height / 4
     text: root.label_true
-    color: [1, 1, 1, 1] if root.value else [0.4, 0.4, 0.4, 1]
+    color: app.theme.text if root.value else app.theme.text_disabled
     halign: "center"
     valign: "middle"
 
@@ -23,6 +23,6 @@
     font_name: root.font_name
     font_size: root.height / 4
     text: root.label_false
-    color: [1, 1, 1, 1] if not root.value else [0.4, 0.4, 0.4, 1]
+    color: app.theme.text if not root.value else app.theme.text_disabled
     halign: "center"
     valign: "middle"

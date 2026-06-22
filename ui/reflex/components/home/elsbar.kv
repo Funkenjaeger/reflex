@@ -3,7 +3,6 @@
 #: import FeedsTablePopup reflex.components.popups.feeds_table_popup
 #: import AutoSizeButton reflex.components.widgets.auto_size_button
 #: import TwoStateButton reflex.components.toolbars.two_state_button
-#: import THEME reflex.components.widgets.facelift_theme
 #: import TabSelector reflex.components.widgets.tab_selector
 #: import IconButton reflex.components.widgets.icon_button
 #: import LedCardButton reflex.components.widgets.led_card_button
@@ -21,7 +20,7 @@
     font_size: dp(12)
     image_source: "pictures/motor_gears.png"
     highlighted: bool(app.servo.servoMode)
-    led_color: THEME.ACCENT if app.servo.servoMode else THEME.BORDER_DIM
+    led_color: app.theme.accent if app.servo.servoMode else app.theme.border_dim
     # beep handled by BeepMixin.on_press
     on_release: app.servo.toggle_enable()
 
@@ -36,7 +35,7 @@
       orientation: 'vertical'
       canvas.after:
         Color:
-          rgba: THEME.BORDER
+          rgba: app.theme.border
         Line:
           rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
           width: 1.0
@@ -44,14 +43,14 @@
         id: dir_lbl
         text: "DIR"
         size_hint_y: 0.36
-        font_name: THEME.FONT_BOLD
+        font_name: app.theme.font_bold
         font_size: self.height / 1.7
-        color: THEME.TEXT_DIM
+        color: app.theme.text_dim
         halign: 'center'
         valign: 'middle'
         canvas.after:
           Color:
-            rgba: THEME.BORDER_DIM
+            rgba: app.theme.border_dim
           Line:
             points: (self.x, self.y, self.right, self.y)
             width: 1.0
@@ -78,7 +77,7 @@
     text: "ADV"
     font_size: dp(20)
     highlighted: root.enable_advanced
-    led_color: THEME.ACCENT if root.enable_advanced else THEME.BORDER_DIM
+    led_color: app.theme.accent if root.enable_advanced else app.theme.border_dim
     # beep handled by BeepMixin.on_press
     on_release: root.enable_advanced = not root.enable_advanced
 
@@ -88,13 +87,13 @@
     background_normal: ""
     canvas.before:
       Color:
-        rgba: THEME.RECESS_FILL
+        rgba: app.theme.recess
       RoundedRectangle:
         pos: self.x + dp(4), self.y + dp(4)
         size: self.width - dp(8), self.height - dp(8)
         radius: [dp(7)]
       Color:
-        rgba: THEME.BORDER_DIM
+        rgba: app.theme.border_dim
       Line:
         rounded_rectangle: (self.x + dp(4), self.y + dp(4), self.width - dp(8), self.height - dp(8), dp(7))
         width: 1.0
@@ -119,7 +118,7 @@
       orientation: 'horizontal'
       canvas.after:
         Color:
-          rgba: THEME.BORDER
+          rgba: app.theme.border
         Line:
           rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
           width: 1.0
@@ -135,21 +134,21 @@
           TabSegment:
             value: "feed"
             text: "FEED"
-            font_name: THEME.FONT_BOLD
+            font_name: app.theme.font_bold
             font_size: sp(13)
           TabSegment:
             value: "thread"
             text: "THREAD"
-            font_name: THEME.FONT_BOLD
+            font_name: app.theme.font_bold
             font_size: sp(13)
         Button:
           size_hint_y: 0.58
           background_color: 0, 0, 0, 0
           background_normal: ""
           text: root.feed_name + " " + ("tpi" if root.mode_name == "Thread IN" else ("in" if root.mode_name == "Feed IN" else "mm"))
-          font_name: THEME.FONT_MONO
+          font_name: app.theme.font_mono
           font_size: min(self.height * 0.6, self.width * 0.2)
-          color: app.formats.display_color
+          color: app.theme.readout
           halign: 'center'
           valign: 'middle'
           text_size: self.size
@@ -161,7 +160,7 @@
         width: dp(1)
         canvas:
           Color:
-            rgba: THEME.BORDER_DIM
+            rgba: app.theme.border_dim
           Rectangle:
             pos: self.x, self.y + dp(5)
             size: dp(1), self.height - dp(10)
@@ -176,7 +175,7 @@
           font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
           text: "\uf062"
           font_size: self.height * 0.36
-          color: THEME.TEXT
+          color: app.theme.text
           on_press: app.beep()
           on_release: root.next_feed()
         Widget:
@@ -184,7 +183,7 @@
           height: dp(1)
           canvas:
             Color:
-              rgba: THEME.BORDER_DIM
+              rgba: app.theme.border_dim
             Rectangle:
               pos: self.x + dp(5), self.y
               size: self.width - dp(10), dp(1)
@@ -194,6 +193,6 @@
           font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
           text: "\uf063"
           font_size: self.height * 0.36
-          color: THEME.TEXT
+          color: app.theme.text
           on_press: app.beep()
           on_release: root.previous_feed()

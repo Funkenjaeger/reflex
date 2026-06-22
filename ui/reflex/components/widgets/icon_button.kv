@@ -1,15 +1,13 @@
 # Styling for IconButton (see icon_button.py). Mirrors StyledButton's slate /
 # cyan-glow looks but sized for a square glyph button.
 
-#: import THEME reflex.components.widgets.facelift_theme
-
 <IconButton>:
     opacity: 0.4 if self.disabled else 1
 
     canvas.before:
         # Soft outer glow (highlighted, non-tab only).
         Color:
-            rgba: THEME.GLOW if (root.is_highlighted and not root.tab_style) else [0, 0, 0, 0]
+            rgba: app.theme.glow if (root.is_highlighted and not root.tab_style) else [0, 0, 0, 0]
         RoundedRectangle:
             pos: (self.x - 3, self.y - 3)
             size: (self.width + 6, self.height + 6)
@@ -18,7 +16,7 @@
         # Body fill. Tab style rounds only the outer (left) corners and stays
         # flush on the right so it sits in the sidebar tab strip.
         Color:
-            rgba: THEME.ACCENT_BG if root.is_highlighted else THEME.SLATE_FILL
+            rgba: app.theme.accent_bg if root.is_highlighted else app.theme.surface
         RoundedRectangle:
             pos: self.pos
             size: self.size
@@ -26,14 +24,14 @@
 
         # Border (non-tab only; tabs are borderless like TabSegment).
         Color:
-            rgba: (THEME.ACCENT if root.is_highlighted else THEME.BORDER) if not root.tab_style else [0, 0, 0, 0]
+            rgba: (app.theme.accent if root.is_highlighted else app.theme.border) if not root.tab_style else [0, 0, 0, 0]
         Line:
             rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, root.radius)
             width: 1.5 if root.is_highlighted else 1.0
 
         # Tab style: crisp cyan accent bar on the right edge when highlighted.
         Color:
-            rgba: THEME.ACCENT if (root.tab_style and root.is_highlighted) else [0, 0, 0, 0]
+            rgba: app.theme.accent if (root.tab_style and root.is_highlighted) else [0, 0, 0, 0]
         Rectangle:
             pos: (self.right - dp(3), self.y)
             size: (dp(3), self.height)
@@ -42,7 +40,7 @@
         text: root.icon
         font_name: root.font_name
         font_size: root.font_size if root.font_size else min(self.height, self.width) * 0.42
-        color: (root.icon_color if root.icon_color[3] > 0 else (THEME.ACCENT_TEXT if root.is_highlighted else THEME.TEXT))
+        color: (root.icon_color if root.icon_color[3] > 0 else (app.theme.accent_text if root.is_highlighted else app.theme.text))
         size_hint: 1, 1
         pos_hint: {'x': 0, 'y': 0}
         text_size: self.size

@@ -198,3 +198,20 @@ in light-themed image viewers. Composite previews over black before judging.
     Fix before shipping rotary.
 - **DRO font picker (`formats.font_name`) no longer controls the big numerals** (now pinned
   to DSEG7). It still affects units/other displays. Decide whether to keep/repoint the picker.
+
+## Switchable UI theme (dark cyan ↔ light brushed-aluminum/amber)
+
+Implemented: reactive `ThemeProvider` (`app.theme`) fed by `reflex/components/widgets/palettes.py`
+(DARK/LIGHT); selected via `app.formats.theme` (persisted) + a "UI Theme" dropdown in Format
+Settings. All chrome colors flow through `app.theme.<token>`; no theme conditionals in KV.
+Deferred / decisions to revisit:
+- **DRO digits stay on `app.formats.display_color`** (operator color picker), NOT a theme token.
+  They sit on dark `readout_bg` cells so cyan reads in both themes; in the light/amber theme the
+  big DRO numerals therefore remain cyan by design. Panel numerals/units use `app.theme.readout`
+  (cyan in dark, charcoal in light). Revisit if the DRO should go amber in the light theme.
+- **`formats.color_on`/`color_off`** (amber on/off tints, used by two_state_button + ssid_popup)
+  are still operator-config colors, not theme tokens. They happen to read OK on both themes; fold
+  into tokens if fuller centralization is wanted.
+- **Plot toolbar buttons** (bottom of Plot View) are stock dark-grey toolbar widgets, not themed.
+- **LIGHT `accent` on the bare background** is ~2.88:1 (just under WCAG 3.0) for separators/axis
+  lines; acceptable as decoration. Darken `accent` further only if it must clear 3.0 everywhere.

@@ -1,5 +1,4 @@
 #: import HomeToolbar reflex.components.home.home_toolbar
-#: import THEME reflex.components.widgets.facelift_theme
 <Label>:
   font_name: "fonts/iosevka-regular.ttf"
 
@@ -24,13 +23,13 @@
       canvas:
         # Darker blueish bar...
         Color:
-          rgba: THEME.RECESS_FILL
+          rgba: app.theme.recess
         Rectangle:
           pos: self.x, self.y
           size: self.width, self.height
         # ...with a skinny darker line on its LEFT side (against the tabs).
         Color:
-          rgba: [0.20, 0.25, 0.31, 1]
+          rgba: app.theme.border
         Line:
           points: (self.x + 1, self.y, self.x + 1, self.top)
           width: 1.0

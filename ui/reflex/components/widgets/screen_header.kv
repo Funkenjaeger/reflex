@@ -1,5 +1,3 @@
-#: import THEME reflex.components.widgets.facelift_theme
-
 <ScreenHeader>:
   height: 60
   size_hint_y: None
@@ -15,8 +13,8 @@
         text: root.text
         text_size: root.size
         bold: True
-        font_name: THEME.FONT_BOLD
-        color: THEME.ACCENT_TEXT
+        font_name: app.theme.font_bold
+        color: app.theme.accent_text
         font_size: app.formats.font_size
         valign: root.valign
         halign: root.halign
@@ -33,7 +31,7 @@
       size_hint: None, None
       canvas:
         Color:
-          rgba: THEME.ACCENT
+          rgba: app.theme.accent
         Rectangle:
           size: self.size
           pos: self.pos

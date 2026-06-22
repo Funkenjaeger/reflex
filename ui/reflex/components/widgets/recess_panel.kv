@@ -3,15 +3,13 @@
 # rounded fill, a dark inner top/left edge (inset shadow) and a faint light
 # bottom/right edge -- no LinearGradient required.
 
-#: import THEME reflex.components.widgets.facelift_theme
-
 # Shared inset drawing, expressed once as a dynamic class so both RecessPanel
 # and RecessFrame can reuse the same look. RecessFrame can be placed BEHIND
 # existing content (bind its pos/size to the target widget).
 <RecessFrame@Widget>:
     radius: 8
     inset: 2
-    fill_color: THEME.RECESS_FILL
+    fill_color: app.theme.recess
 
     canvas:
         # Sunken fill.
@@ -24,27 +22,28 @@
 
         # Faint light bottom/right edge (drawn first so the dark edge wins on overlap).
         Color:
-            rgba: THEME.RECESS_EDGE_LIGHT
+            rgba: app.theme.edge_light
         Line:
             rounded_rectangle: (self.x + 1, self.y + 1, self.width - 2, self.height - 2, max(self.radius - 1, 1))
             width: 1.0
 
         # Dark inner top/left edge -- the inset shadow that sells the recess.
         Color:
-            rgba: THEME.RECESS_EDGE_DARK
+            rgba: app.theme.edge_dark
         Line:
             points: (self.x + self.inset, self.y + self.inset, self.x + self.inset, self.top - self.inset, self.right - self.inset, self.top - self.inset)
             width: 1.5
 
         # Outer hairline border to seat it against the background.
         Color:
-            rgba: THEME.BORDER_DIM
+            rgba: app.theme.border_dim
         Line:
             rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, self.radius)
             width: 1.0
 
 
 <RecessPanel>:
+    fill_color: app.theme.recess
     canvas.before:
         Color:
             rgba: root.fill_color
@@ -54,19 +53,19 @@
             radius: [root.radius]
 
         Color:
-            rgba: THEME.RECESS_EDGE_LIGHT
+            rgba: app.theme.edge_light
         Line:
             rounded_rectangle: (self.x + 1, self.y + 1, self.width - 2, self.height - 2, max(root.radius - 1, 1))
             width: 1.0
 
         Color:
-            rgba: THEME.RECESS_EDGE_DARK
+            rgba: app.theme.edge_dark
         Line:
             points: (self.x + root.inset, self.y + root.inset, self.x + root.inset, self.top - root.inset, self.right - root.inset, self.top - root.inset)
             width: 1.5
 
         Color:
-            rgba: THEME.BORDER_DIM
+            rgba: app.theme.border_dim
         Line:
             rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, root.radius)
             width: 1.0

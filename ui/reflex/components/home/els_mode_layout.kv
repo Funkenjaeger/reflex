@@ -1,4 +1,3 @@
-#: import THEME reflex.components.widgets.facelift_theme
 #: import AutoSizeButton reflex.components.widgets.auto_size_button
 
 <ElsSpindleInfo>:
@@ -13,16 +12,16 @@
     font_size: min(self.height / 2, self.width / 2)
     background_color: 0, 0, 0, 0
     background_normal: ""
-    color: app.formats.display_color
+    color: app.theme.readout
     text: root.direction_icon
     canvas.before:
       Color:
-        rgba: THEME.SLATE_FILL
+        rgba: app.theme.surface
       Rectangle:
         pos: self.pos
         size: self.size
       Color:
-        rgba: THEME.BORDER_DIM
+        rgba: app.theme.border_dim
       Line:
         points: (self.right - 0.5, self.top, self.right - 0.5, self.y, self.x, self.y)
         width: 1.0
@@ -32,10 +31,10 @@
     orientation: "horizontal"
     Label:
       id: rpm_label
-      font_name: THEME.FONT_SEG
+      font_name: app.theme.font_seg
       font_size: min(self.height / 1.1, self.width / 5)
       font_style: "bold"
-      color: app.formats.display_color
+      color: app.theme.readout
       text: root.spindle_rpm.replace("+", "")
       text_size: self.size
       halign: 'right'
@@ -45,7 +44,7 @@
       width: self.texture_size[0] + 4
       font_name: app.formats.font_name
       font_size: rpm_label.font_size / 4
-      color: app.formats.display_color
+      color: app.theme.readout
       text: "RPM"
       valign: 'center'
 
