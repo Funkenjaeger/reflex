@@ -27,7 +27,7 @@
           name: "Format Settings"
         DropDownItem:
           name: "UI Theme"
-          options: ["dark", "light"]
+          options: app.theme.available_themes()
           value: root.formats.theme
           on_value: root.formats.theme = self.value
         NumberItem:

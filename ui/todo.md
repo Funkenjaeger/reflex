@@ -215,3 +215,15 @@ Deferred / decisions to revisit:
 - **Plot toolbar buttons** (bottom of Plot View) are stock dark-grey toolbar widgets, not themed.
 - **LIGHT `accent` on the bare background** is ~2.88:1 (just under WCAG 3.0) for separators/axis
   lines; acceptable as decoration. Darken `accent` further only if it must clear 3.0 everywhere.
+
+### Theme definitions moved to per-theme INI files
+
+Themes are now defined in `reflex/themes/<name>.ini` (built-in: dark, light) and
+`~/.config/reflex/themes/<name>.ini` (user-added; a file reusing a built-in name
+overrides it). Each file is a stdlib-`configparser` INI with `[meta]` (label),
+`[colors]` (rgba 0..1 tokens), `[paths]` (logo + fonts) and `[seeds]` (the
+operator color recommendations applied on theme switch). `palettes.py` discovers
+and loads them (filename = theme identity; missing tokens inherit the default
+theme). The Format Settings "UI Theme" dropdown auto-lists discovered themes.
+To add a theme: copy a built-in .ini into the user dir, edit, restart. (Themes
+load once at startup — no hot-reload.)

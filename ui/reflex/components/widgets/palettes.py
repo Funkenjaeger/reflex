@@ -1,127 +1,135 @@
-"""Theme palettes — the single source of truth mapping each theme to concrete
-colors. Consumed by :class:`reflex.components.widgets.theme_provider.ThemeProvider`.
+"""Theme palettes — discovered from per-theme ``.ini`` files (one theme per file)
+so users can tweak colors in a text editor and exchange themes as single files.
 
-Two visually distinct, color-only themes:
+Themes are loaded from two directories:
 
-- ``dark``  — the dark-steel / cyan "facelift" look (current default).
-- ``light`` — a light brushed-aluminum look with amber/yellow highlights.
+- **built-in**: ``reflex/themes/*.ini`` (shipped: dark, light)
+- **user**:     ``~/.config/reflex/themes/*.ini`` (drop a file here to add or, by
+                reusing a built-in name, override a theme)
 
-Every palette MUST define every token declared on ``ThemeProvider`` (colors as
-``[r, g, b, a]``; fonts as paths). Keep the two palettes structurally identical;
-only values differ.
+Each file is a small INI (parsed with the stdlib ``configparser`` — the same
+INI family already used for ``config.ini``; no new dependency, comment-friendly,
+and forgiving for hand-editing color tuples). Sections:
+
+    [meta]    name, label
+    [colors]  every color token = r, g, b, a   (0..1)
+    [paths]   logo + font_* asset paths
+    [seeds]   operator color seeds applied on theme switch (display_color,
+              color_on, color_off)
+
+This module preserves its old public API — ``PALETTES`` (name -> palette dict of
+all tokens), ``FORMATS_RECOMMENDED`` (name -> seed colors), ``DEFAULT`` — so the
+``ThemeProvider`` and app wiring are unchanged. A theme missing a token inherits
+it from the default theme (logged), so a partial user file still loads.
 """
 
-# Fonts are theme-invariant (the brief is color-only) but are exposed through
-# the provider so KV references a single namespace (``app.theme.font_bold``).
-FONTS = {
-    "font_bold": "fonts/ChakraPetch-SemiBold.ttf",
-    "font_mono": "fonts/ShareTechMono-Regular.ttf",
-    "font_seg": "fonts/DSEG7Classic-Regular.ttf",
-    "font_icon": "fonts/Font Awesome 6 Free-Solid-900.otf",
-}
+import os
+import configparser
 
-# ── Dark steel / cyan ──────────────────────────────────────────────────────
-DARK = {
-    # surfaces
-    "background": [0.03, 0.05, 0.07, 1],
-    "surface": [0.10, 0.13, 0.17, 1],
-    "surface_sheen": [0.22, 0.27, 0.32, 1],
-    "recess": [0.05, 0.07, 0.09, 1],
-    "logo": "pictures/reflex_logo.png",
-    # accent (cyan)
-    "accent": [0.16, 0.82, 0.88, 1],
-    "accent_text": [0.40, 0.92, 0.98, 1],
-    "accent_bg": [0.07, 0.20, 0.25, 1],
-    "glow": [0.16, 0.82, 0.88, 0.22],
-    # borders / edges
-    "border": [0.27, 0.34, 0.41, 1],
-    "border_dim": [0.16, 0.20, 0.25, 1],
-    "edge_dark": [0.0, 0.0, 0.0, 0.55],
-    "edge_light": [0.30, 0.36, 0.42, 0.35],
-    # text
-    "text": [0.62, 0.78, 0.85, 1],
-    "text_dim": [0.38, 0.46, 0.53, 1],
-    "text_disabled": [0.40, 0.44, 0.48, 1],
-    # status
-    "success": [0.20, 0.78, 0.35, 1],
-    "success_text": [0.45, 0.88, 0.55, 1],
-    "success_bg": [0.10, 0.20, 0.12, 1],
-    "danger": [0.85, 0.20, 0.20, 1],
-    "danger_text": [1.0, 0.62, 0.62, 1],
-    "danger_bg": [0.28, 0.07, 0.07, 1],
-    "danger_glow": [0.95, 0.25, 0.25, 0.22],
-    "warning": [1.0, 0.80, 0.21, 1],
-    "led_off": [0.45, 0.45, 0.45, 1],
-    # plot / scene
-    "plot_bg": [0.102, 0.102, 0.180, 1],
-    "plot_grid": [0.165, 0.165, 0.243, 1],
-    "plot_tool": [1.0, 0.42, 0.42, 1],
-    **FONTS,
-}
+from kivy.logger import Logger
 
-# ── Light brushed aluminum / amber ─────────────────────────────────────────
-LIGHT = {
-    # surfaces: cool light greys, surfaces slightly brighter than the base so
-    # raised controls read; recess slightly darker.
-    "background": [0.77, 0.79, 0.81, 1],
-    "surface": [0.86, 0.88, 0.90, 1],
-    "surface_sheen": [0.96, 0.97, 0.98, 1],
-    "recess": [0.70, 0.72, 0.74, 1],
-    "logo": "pictures/reflex_logo_light.png",
-    # accent (amber): deep amber reads as a line/border/indicator on light grey
-    # (a lighter amber failed contrast as a separator/axis line).
-    "accent": [0.68, 0.37, 0.0, 1],
-    "accent_text": [0.42, 0.26, 0.0, 1],   # deep amber/brown text
-    "accent_bg": [0.99, 0.88, 0.66, 1],    # light amber active fill
-    "glow": [0.95, 0.62, 0.11, 0.30],
-    # borders / edges
-    "border": [0.42, 0.45, 0.48, 1],
-    "border_dim": [0.55, 0.58, 0.61, 1],
-    "edge_dark": [0.0, 0.0, 0.0, 0.22],
-    "edge_light": [1.0, 1.0, 1.0, 0.55],
-    # text: charcoal on aluminum
-    "text": [0.13, 0.15, 0.17, 1],
-    "text_dim": [0.30, 0.33, 0.36, 1],
-    "text_disabled": [0.50, 0.52, 0.54, 1],
-    # status (tuned for light backgrounds)
-    "success": [0.08, 0.48, 0.18, 1],
-    "success_text": [0.06, 0.34, 0.13, 1],
-    "success_bg": [0.78, 0.90, 0.78, 1],
-    "danger": [0.74, 0.10, 0.10, 1],
-    "danger_text": [0.50, 0.04, 0.04, 1],
-    "danger_bg": [0.96, 0.80, 0.78, 1],
-    "danger_glow": [0.80, 0.12, 0.12, 0.26],
-    "warning": [0.64, 0.33, 0.0, 1],
-    "led_off": [0.58, 0.60, 0.62, 1],
-    # plot / scene
-    "plot_bg": [0.82, 0.84, 0.86, 1],
-    "plot_grid": [0.66, 0.68, 0.70, 1],
-    "plot_tool": [0.80, 0.18, 0.18, 1],
-    **FONTS,
-}
+import reflex
 
-PALETTES = {
-    "dark": DARK,
-    "light": LIGHT,
-}
+log = Logger.getChild(__name__)
+
+# Canonical token sets (kept in lockstep with ThemeProvider's properties).
+COLOR_TOKENS = [
+    "background", "surface", "surface_sheen", "recess",
+    "accent", "accent_text", "accent_bg", "glow",
+    "border", "border_dim", "edge_dark", "edge_light",
+    "text", "text_dim", "text_disabled",
+    "success", "success_text", "success_bg",
+    "danger", "danger_text", "danger_bg", "danger_glow",
+    "warning", "led_off",
+    "plot_bg", "plot_grid", "plot_tool",
+]
+PATH_TOKENS = ["logo", "font_bold", "font_mono", "font_seg", "font_icon"]
+SEED_TOKENS = ["display_color", "color_on", "color_off"]
 
 DEFAULT = "dark"
 
-# Recommended values for the operator-configurable format colors (the DRO digit
-# color and the indicator on/off lamp colors). These are *seeds*: switching the
-# theme pushes these into app.formats so the readouts/LEDs match the new theme,
-# but the operator can still override them afterwards (the override persists
-# until the next theme switch). These are NOT theme tokens — KV reads the
-# formats values directly so the operator's choice is honored.
-FORMATS_RECOMMENDED = {
-    "dark": {
-        "display_color": [0.251, 0.878, 0.929, 1],   # cyan seven-seg
-        "color_on": [0.16, 0.82, 0.88, 1],           # cyan indicator
-        "color_off": [0.25, 0.30, 0.36, 1],          # dim slate
-    },
-    "light": {
-        "display_color": [0.58, 0.32, 0.0, 1],       # deep amber seven-seg
-        "color_on": [0.85, 0.52, 0.0, 1],            # amber indicator
-        "color_off": [0.55, 0.58, 0.61, 1],          # grey
-    },
-}
+BUILTIN_DIR = os.path.join(os.path.dirname(reflex.__file__), "themes")
+USER_DIR = os.path.expanduser("~/.config/reflex/themes")
+
+
+def _parse_color(text: str) -> list[float]:
+    parts = [p for p in text.replace(";", ",").split(",") if p.strip() != ""]
+    vals = [float(p) for p in parts]
+    if len(vals) == 3:
+        vals.append(1.0)
+    if len(vals) != 4:
+        raise ValueError(f"expected 3 or 4 numbers, got {text!r}")
+    return vals
+
+
+def _load_file(path: str, name: str):
+    """Parse one theme file -> (palette, seeds, label). Raises on bad files.
+
+    The theme's identity is the file name; ``[meta] label`` is only its display
+    name."""
+    cp = configparser.ConfigParser()
+    cp.read(path, encoding="utf-8")
+    label = cp.get("meta", "label", fallback=name.title())
+
+    palette = {}
+    if cp.has_section("colors"):
+        for k, v in cp.items("colors"):
+            palette[k] = _parse_color(v)
+    if cp.has_section("paths"):
+        for k, v in cp.items("paths"):
+            palette[k] = v.strip()
+
+    seeds = {}
+    if cp.has_section("seeds"):
+        for k, v in cp.items("seeds"):
+            seeds[k] = _parse_color(v)
+    return palette, seeds, label
+
+
+def _discover() -> dict[str, str]:
+    """Map theme name -> file path. User files override built-ins by name."""
+    found = {}
+    for d in (BUILTIN_DIR, USER_DIR):
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if fn.endswith(".ini"):
+                found[os.path.splitext(fn)[0]] = os.path.join(d, fn)
+    return found
+
+
+def _load_all():
+    palettes, recommended, labels = {}, {}, {}
+    for name, path in _discover().items():
+        try:
+            palette, seeds, label = _load_file(path, name)
+        except Exception as e:
+            log.warning(f"Skipping theme file {path}: {e}")
+            continue
+        palettes[name] = palette
+        recommended[name] = seeds
+        labels[name] = label
+
+    if not palettes:
+        raise RuntimeError(f"No theme files found in {BUILTIN_DIR}")
+
+    # Pick a default reference to backfill any tokens a theme omits.
+    ref_name = DEFAULT if DEFAULT in palettes else next(iter(palettes))
+    ref = palettes[ref_name]
+    missing_ref = [t for t in COLOR_TOKENS + PATH_TOKENS if t not in ref]
+    if missing_ref:
+        raise RuntimeError(
+            f"Built-in default theme '{ref_name}' is missing tokens: {missing_ref}"
+        )
+    for name, palette in palettes.items():
+        for token in COLOR_TOKENS + PATH_TOKENS:
+            if token not in palette:
+                log.warning(f"Theme '{name}' missing '{token}'; using '{ref_name}' value")
+                palette[token] = ref[token]
+        for token in SEED_TOKENS:
+            recommended[name].setdefault(token, recommended[ref_name].get(token))
+
+    return palettes, recommended, labels, ref_name
+
+
+PALETTES, FORMATS_RECOMMENDED, LABELS, DEFAULT = _load_all()
