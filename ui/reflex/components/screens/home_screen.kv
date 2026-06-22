@@ -12,20 +12,30 @@
 <HomePage>:
   BoxLayout:
     orientation: "horizontal"
-    # Small gap so the sidebar tabs don't touch the next column of widgets.
-    spacing: dp(6)
 
     HomeToolbar:
       id: home_toolbar
+
+    # Divider rail: touches the sidebar tabs on the left and the content on the
+    # right (mockup variant).
+    Widget:
+      size_hint_x: None
+      width: dp(7)
+      canvas:
+        # Darker blueish bar...
+        Color:
+          rgba: THEME.RECESS_FILL
+        Rectangle:
+          pos: self.x, self.y
+          size: self.width, self.height
+        # ...with a skinny darker line on its LEFT side (against the tabs).
+        Color:
+          rgba: [0.20, 0.25, 0.31, 1]
+        Line:
+          points: (self.x + 1, self.y, self.x + 1, self.top)
+          width: 1.0
 
     BoxLayout:
       id: bars_container
       orientation: "vertical"
       size_hint: 1, 1
-      # Divider in the gap so the sidebar reads as attached, not floating.
-      canvas.before:
-        Color:
-          rgba: THEME.BORDER
-        Rectangle:
-          pos: self.x - dp(3), self.y + dp(2)
-          size: dp(1.5), self.height - dp(4)
