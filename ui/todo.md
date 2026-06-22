@@ -227,3 +227,47 @@ and loads them (filename = theme identity; missing tokens inherit the default
 theme). The Format Settings "UI Theme" dropdown auto-lists discovered themes.
 To add a theme: copy a built-in .ini into the user dir, edit, restart. (Themes
 load once at startup — no hot-reload.)
+
+## UI facelift — adversarial-review findings (pre-merge to main, 2026-06-22)
+
+Surfaced by a second-pass adversarial review of the `switchable-themes` branch
+(see `ui-facelift-review.html` at repo root). Triaged; not yet fixed.
+
+Real bugs (fix before/with merge):
+- A2 **X-axis None-deref crash**: `ui_controller.on_action_button_clicked` does
+  `get_x_axis().scaledPosition` (and the Z twin) with no None guard. Map Z, leave
+  X unmapped, run a wizard to `set_start_dia`/`set_stop_dia`, press action → crash.
+  Symmetric to the Z engage-guard fix that DID land. Add None-guards + a regression
+  test with x_axis=None reaching `set_start_dia`.
+- A1 **Plot stale-token repaint**: `plot/scene.py` binds repaint to `plot_bg` but
+  reads `plot_grid`/`plot_tool`, which `ThemeProvider.apply()` sets later in the
+  sweep → grid/tool paint one theme behind for a frame on switch. Fix: repaint via
+  `Clock.schedule_once` (same pattern used in `dropdown_item.py`).
+- A3 **Partial-theme switch crash**: a user theme with `[colors]` but no `[seeds]`
+  backfills seeds to None; `_sync_theme` does `setattr(formats,'display_color',None)`
+  → ValueError. Fix: skip None seeds in `_sync_theme` (app.py) and/or validate ref
+  theme has all seed tokens.
+
+Robustness / polish:
+- A4 Icon font bypasses its own `font_icon` token: ~20 KV sites hardcode
+  `"fonts/Font Awesome 6 Free-Solid-900.otf"` instead of `app.theme.font_icon`.
+- A5 `dropdown_item.delete_all_dropdown_options()` doesn't clear `self._options`
+  → list grows by len(options) per theme switch. One-line `clear()`.
+- A6 A single malformed color line drops the entire theme file (warning only)
+  instead of salvaging via the per-token backfill.
+- A7 `palettes.LABELS` (`[meta] label`, e.g. "Dark Steel") is dead code; the UI
+  Theme dropdown shows raw file names. Wire LABELS into the dropdown or drop it.
+
+Light-theme contrast tuning:
+- A8 `text_disabled` (0.5,0.52,0.54) ~2.8:1 on surface / ~1.9:1 on recess — below
+  3:1 floor. Darken toward ~0.42,0.44,0.46.
+- A9 Version label uses `text_dim` on the recessed status panel (~3.8:1) — fails
+  normal-text AA (low impact).
+- A10 `text_header_button.kv:14` blink label uses `accent` as text (~3.6:1) where
+  `accent_text` (6.6:1) is the purpose-built token used everywhere else.
+
+Works-as-specified (note, not bugs):
+- Theme switch re-seeds + persists operator color choices (display_color/color_on/
+  color_off) — matches the requested behavior, but previewing the other theme
+  clobbers a customization with no undo. Consider confirm-or-revert if it matters.
+- Engage-refused-no-Z is log-only; consider an operator-visible toast/alarm line.

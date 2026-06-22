@@ -136,8 +136,13 @@ class MainApp(App):
             self.theme.name = value
             # Seed the operator-configurable readout/indicator colors with the
             # new theme's recommendations (the operator can re-override after).
+            # Skip any seed that backfilled to None (a user theme may omit the
+            # [seeds] section); a None would raise from ColorProperty and abort
+            # the switch mid-loop.
             from reflex.components.widgets import palettes
             for prop, color in palettes.FORMATS_RECOMMENDED.get(value, {}).items():
+                if color is None:
+                    continue
                 setattr(self.formats, prop, color)
         self.formats.bind(theme=_sync_theme)
         # The screen background is the Window clearcolor (no widget paints it),

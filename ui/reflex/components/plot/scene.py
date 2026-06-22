@@ -1,5 +1,6 @@
 import math
 
+from kivy.clock import Clock
 from kivy.logger import Logger
 from kivy.uix.floatlayout import FloatLayout
 from kivy.properties import BooleanProperty, NumericProperty, ListProperty
@@ -44,9 +45,17 @@ class Scene(FloatLayout, StencilView):
         self.bind(tool_x=self._update_tool)
         self.bind(tool_y=self._update_tool)
         self.bind(at_position=self._update_tool)
-        # Recolor live on theme switch (every token changes; watch one).
-        self.app.theme.bind(plot_bg=self._update_static)
-        self.app.theme.bind(plot_bg=self._update_tool)
+        # Recolor live on theme switch. ThemeProvider.apply() sets tokens one at
+        # a time, so a synchronous repaint fired by plot_bg would read the other
+        # plot tokens (plot_grid/plot_tool/accent/warning) while they're still
+        # the previous theme's values. Defer to the next frame (a trigger also
+        # dedupes the two updates into one repaint) so the whole sweep finishes.
+        self._repaint_trigger = Clock.create_trigger(self._repaint, 0)
+        self.app.theme.bind(plot_bg=lambda *_: self._repaint_trigger())
+
+    def _repaint(self, *args):
+        self._update_static()
+        self._update_tool()
 
     def _update_static(self, *args):
         self.scaled_points = [

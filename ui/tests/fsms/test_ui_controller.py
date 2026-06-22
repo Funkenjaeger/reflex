@@ -418,6 +418,21 @@ def test_on_action_button_clicked_captures_diameters_in_wizard():
     assert c._ui_fsm.state == "confirm"
 
 
+def test_on_action_button_clicked_without_x_axis_does_not_raise():
+    """Operator mapped Z (so the wizard runs) but left X unmapped. Reaching the
+    diameter step and pressing the action button must NOT dereference a None
+    axis (mirrors the engage-time Z guard); it should warn and stay put."""
+    board, els = _make_collaborators(z_axis=_make_z_axis(), x_axis=None)
+    c = ElsUiController(els=els, board=board)
+    c.wizard_enabled = True
+    _pump()
+    _engage(c)
+    c._ui_fsm.fsm.set_state("set_start_dia")
+    c._apply_policy()
+    c.on_action_button_clicked()       # X axis is None → must not raise
+    assert c._ui_fsm.state == "set_start_dia"   # did not advance
+
+
 def test_on_action_button_clicked_in_waiting_to_cut_enters_cutting(ctrl):
     """Non-wizard cycle: action button drives waiting_to_cut → cutting."""
     z = ctrl._els.get_z_axis()

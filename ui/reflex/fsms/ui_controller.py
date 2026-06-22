@@ -448,15 +448,30 @@ class ElsUiController(EventDispatcher):
         # conditions (e.g. retract_z_valid: retract_z > stop_z) evaluate
         # against the freshly-captured value, not the stale one carried
         # over from the previous visit to this wizard step.
-        if self._ui_fsm.state == "set_stop_z":
-            self.stop_z = self._els.get_z_axis().scaledPosition
-        elif self._ui_fsm.state == "set_retract_z":
-            self.retract_z = self._els.get_z_axis().scaledPosition
-        elif self._ui_fsm.state == "set_start_dia":
-            self.start_dia = self._els.get_x_axis().scaledPosition
-        elif self._ui_fsm.state == "set_stop_dia":
-            self.stop_dia = self._els.get_x_axis().scaledPosition
-        elif self._ui_fsm.state == "confirm":
+        #
+        # The axis may be unmapped (None) if the operator hasn't assigned it in
+        # ELS settings -- bail with a warning rather than dereferencing None
+        # (mirrors the engage-time Z guard in toggle_engage).
+        state = self._ui_fsm.state
+        if state in ("set_stop_z", "set_retract_z"):
+            axis = self._els.get_z_axis()
+            if axis is None:
+                log.warning(f"action button: no Z (saddle) axis assigned in state '{state}'")
+                return
+            if state == "set_stop_z":
+                self.stop_z = axis.scaledPosition
+            else:
+                self.retract_z = axis.scaledPosition
+        elif state in ("set_start_dia", "set_stop_dia"):
+            axis = self._els.get_x_axis()
+            if axis is None:
+                log.warning(f"action button: no X (cross-slide) axis assigned in state '{state}'")
+                return
+            if state == "set_start_dia":
+                self.start_dia = axis.scaledPosition
+            else:
+                self.stop_dia = axis.scaledPosition
+        elif state == "confirm":
             # write stop z down to FW
             pass
         # State-specific safety gate (e.g. threading + X still at depth).
