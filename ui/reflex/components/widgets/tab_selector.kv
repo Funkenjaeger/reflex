@@ -42,14 +42,26 @@
             points: (self.x, self.top, self.right, self.top) if self.edge in ('left', 'right') else (self.x, self.y, self.x, self.top)
             width: 1.0
 
-        # Crisp accent bar on the inner edge when selected (suppressible for
-        # bordered segmented controls). On the bottom/top edge it insets by the
-        # body's outer-corner radii so it never pokes past a rounded corner.
+        # Crisp accent bar on the inner edge when selected. Drawn full length
+        # but stencil-clipped to the body's rounded rectangle, so it follows
+        # (and is cropped by) any rounded corner -- no poke, no gap.
+        StencilPush
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: self.radius
+        StencilUse
         Color:
             rgba: THEME.ACCENT if (self.is_selected and self.show_accent) else [0, 0, 0, 0]
         Rectangle:
-            pos: (self.x, self.y) if self.edge == 'left' else ((self.right - dp(3), self.y) if self.edge == 'right' else ((self.x + self.radius[3], self.y) if self.edge == 'bottom' else (self.x + self.radius[0], self.top - dp(3))))
-            size: (dp(3), self.height) if self.edge in ('left', 'right') else ((self.width - self.radius[3] - self.radius[2], dp(3)) if self.edge == 'bottom' else (self.width - self.radius[0] - self.radius[1], dp(3)))
+            pos: (self.x, self.y) if self.edge == 'left' else ((self.right - dp(3), self.y) if self.edge == 'right' else ((self.x, self.y) if self.edge == 'bottom' else (self.x, self.top - dp(3))))
+            size: (dp(3), self.height) if self.edge in ('left', 'right') else (self.width, dp(3))
+        StencilUnUse
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: self.radius
+        StencilPop
 
     Label:
         # Text glyph (hidden when the segment uses image icons instead).
