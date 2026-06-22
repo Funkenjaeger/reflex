@@ -66,7 +66,7 @@
       RoundedRectangle:
         pos: self.x - 1, self.y - 1
         size: dp(92) + 2, self.height + 2
-        radius: [dp(7), 0, dp(7), dp(7)]
+        radius: [dp(7), 0, 0, dp(7)]
       RoundedRectangle:
         pos: self.x + dp(92) - 1, self.y - dp(16) - 1
         size: self.width - dp(92) + 2, self.height + dp(16) + 2
@@ -76,11 +76,30 @@
       RoundedRectangle:
         pos: self.x, self.y
         size: dp(92), self.height
-        radius: [dp(7), 0, dp(7), dp(7)]
+        radius: [dp(7), 0, 0, dp(7)]
       RoundedRectangle:
         pos: self.x + dp(92), self.y - dp(16)
         size: self.width - dp(92), self.height + dp(16)
         radius: [0, dp(7), dp(7), dp(7)]
+
+      # Concave fillet at the inner (step) corner: fill the corner square, then
+      # carve a background disc so the reentrant corner reads as a smooth
+      # concave curve (a fillet, not a convex round).
+      Color:
+        rgba: THEME.RECESS_FILL
+      Rectangle:
+        pos: self.x + dp(92) - dp(7), self.y - dp(7)
+        size: dp(8), dp(8)
+      Color:
+        rgba: 0, 0, 0, 1
+      Ellipse:
+        pos: self.x + dp(92) - dp(14), self.y - dp(14)
+        size: dp(14), dp(14)
+      Color:
+        rgba: THEME.BORDER_DIM
+      Line:
+        circle: (self.x + dp(92) - dp(7), self.y - dp(7), dp(7), 0, 90)
+        width: 1.0
 
     Label:
       text: app.version
