@@ -23,7 +23,7 @@
       text_size: self.size
       size_hint_y: 0.15
       font_size: 16
-      color: app.theme.readout
+      color: app.formats.display_color
       halign: 'center'
       valign: 'top'
     AutoSizeButton:
@@ -32,7 +32,7 @@
       max_font_size: min(self.height / 1.5, self.width/5)
       font_style: "bold"
       background_color: app.theme.surface
-      color: app.theme.readout
+      color: app.formats.display_color
       text: app.servo.formattedPosition
       text_size: self.size
       halign: 'center'
@@ -52,7 +52,7 @@
       text_size: self.size
       size_hint_y: 0.15
       font_size: 16
-      color: app.theme.readout
+      color: app.formats.display_color
       halign: 'center'
       valign: 'top'
     Button:
@@ -61,7 +61,7 @@
       font_size: 32
       font_style: "bold"
       background_color: app.theme.surface
-      color: app.theme.readout
+      color: app.formats.display_color
       text: app.formats.angle_format.format(app.servo.offset)
       text_size: self.size
       halign: 'center'
@@ -75,7 +75,7 @@
       text_size: self.size
       size_hint_y: 0.15
       font_size: 16
-      color: app.theme.readout
+      color: app.formats.display_color
       halign: 'center'
       valign: 'top'
     Button:
@@ -84,7 +84,7 @@
       font_size: 32
       font_style: "bold"
       background_color: app.theme.surface
-      color: app.theme.readout
+      color: app.formats.display_color
       text: str(int(app.servo.divisions))
       text_size: self.size
       halign: 'center'
@@ -122,7 +122,7 @@
         text_size: self.size
         size_hint_y: 0.15
         font_size: 16
-        color: app.theme.readout
+        color: app.formats.display_color
         halign: 'center'
         valign: 'top'
       Button:
@@ -131,7 +131,7 @@
         font_size: 32
         font_style: "bold"
         background_color: app.theme.surface
-        color: app.theme.readout
+        color: app.formats.display_color
         text: str(int(app.servo.index))
         text_size: self.size
         halign: 'center'

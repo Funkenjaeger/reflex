@@ -41,7 +41,7 @@
         orientation: "horizontal"
         size_hint_y: 0.7
         AutoSizeButton:
-          background_color: app.theme.readout_bg
+          background_color: 0, 0, 0, 0
           id: pos_label
           font_name: app.theme.font_seg
           max_font_size: min(self.height / 1.1, self.parent.width/5)
@@ -57,7 +57,7 @@
           width: self.texture_size[0] + 4
           font_name: app.formats.font_name
           font_size: pos_label.font_size / 4
-          color: app.theme.readout
+          color: app.formats.display_color
           text: root.axis.position_unit if root.axis else ""
           valign: 'center'
       BoxLayout:
@@ -73,7 +73,7 @@
           font_name: app.formats.font_name
           font_size: self.height / 1.5
           font_style: "bold"
-          color: app.theme.readout
+          color: app.formats.display_color
           text: root.axis.formattedSpeed if root.axis else "--"
           text_size: self.size
           halign: 'right'
@@ -83,7 +83,7 @@
           width: self.texture_size[0] + 4
           font_name: app.formats.font_name
           font_size: self.height / 1.5 / 4
-          color: app.theme.readout
+          color: app.formats.display_color
           text: root.axis.speed_unit if root.axis else ""
           valign: 'top'
 
@@ -95,7 +95,7 @@
         text: "Num"
         font_size: self.height / 1.5
         size_hint_y: 0.3
-        color: app.theme.readout
+        color: app.formats.display_color
         halign: 'center'
         valign: 'top'
       Button:
@@ -104,7 +104,7 @@
         font_size: self.width / 3
         font_style: "bold"
         background_color: app.theme.surface
-        color: app.theme.readout
+        color: app.formats.display_color
         text: str(int(root.axis.syncRatioNum)) if root.axis else "--"
         text_size: self.size
         halign: 'center'
@@ -120,7 +120,7 @@
         text: "Den"
         font_size: self.height / 1.5
         size_hint_y: 0.3
-        color: app.theme.readout
+        color: app.formats.display_color
         halign: 'center'
         valign: 'top'
       Button:
@@ -129,7 +129,7 @@
         font_size: self.width / 3
         font_style: "bold"
         background_color: app.theme.surface
-        color: app.theme.readout
+        color: app.formats.display_color
         text: str(int(root.axis.syncRatioDen)) if root.axis else "--"
         text_size: self.size
         halign: 'center'

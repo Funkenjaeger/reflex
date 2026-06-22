@@ -40,10 +40,6 @@ class ThemeProvider(EventDispatcher):
     surface = ColorProperty()          # raised control fill
     surface_sheen = ColorProperty()    # subtle top bevel on a surface
     recess = ColorProperty()           # sunken / inset panel fill
-    readout_bg = ColorProperty()       # DRO / instrument window backing
-    readout = ColorProperty()          # secondary numerals/units on panels
-                                       # (the main DRO digits keep the operator-
-                                       # configurable formats.display_color)
 
     # ── Accent (primary highlight: cyan in dark, amber in light) ───────────
     accent = ColorProperty()           # primary accent line/border/indicator
@@ -77,6 +73,9 @@ class ThemeProvider(EventDispatcher):
     plot_bg = ColorProperty()          # plot canvas background
     plot_grid = ColorProperty()        # plot grid lines
     plot_tool = ColorProperty()        # tool marker
+
+    # ── Assets ─────────────────────────────────────────────────────────────
+    logo = StringProperty()            # Reflex wordmark image for this theme
 
     # ── Fonts (theme-invariant for now, exposed uniformly) ─────────────────
     font_bold = StringProperty()

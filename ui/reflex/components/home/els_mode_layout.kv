@@ -12,7 +12,7 @@
     font_size: min(self.height / 2, self.width / 2)
     background_color: 0, 0, 0, 0
     background_normal: ""
-    color: app.theme.readout
+    color: app.formats.display_color
     text: root.direction_icon
     canvas.before:
       Color:
@@ -34,7 +34,7 @@
       font_name: app.theme.font_seg
       font_size: min(self.height / 1.1, self.width / 5)
       font_style: "bold"
-      color: app.theme.readout
+      color: app.formats.display_color
       text: root.spindle_rpm.replace("+", "")
       text_size: self.size
       halign: 'right'
@@ -44,7 +44,7 @@
       width: self.texture_size[0] + 4
       font_name: app.formats.font_name
       font_size: rpm_label.font_size / 4
-      color: app.theme.readout
+      color: app.formats.display_color
       text: "RPM"
       valign: 'center'
 

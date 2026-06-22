@@ -91,7 +91,7 @@
         pos: self.x + dp(92) - dp(7), self.y - dp(7)
         size: dp(8), dp(8)
       Color:
-        rgba: 0, 0, 0, 1
+        rgba: app.theme.background
       Ellipse:
         pos: self.x + dp(92) - dp(14), self.y - dp(14)
         size: dp(14), dp(14)
@@ -121,7 +121,7 @@
       text_size: self.size
 
     Image:
-      source: "pictures/reflex_logo.png"
+      source: app.theme.logo
       mipmap: True
       size_hint: None, None
       height: dp(37)

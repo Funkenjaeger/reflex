@@ -130,10 +130,15 @@ class MainApp(App):
 
         def _sync_theme(_inst, value):
             # Guard: `name` is an OptionProperty, so an unknown value would raise.
-            if value in ThemeProvider.available_themes():
-                self.theme.name = value
-            else:
+            if value not in ThemeProvider.available_themes():
                 log.warning(f"Ignoring unknown UI theme {value!r}")
+                return
+            self.theme.name = value
+            # Seed the operator-configurable readout/indicator colors with the
+            # new theme's recommendations (the operator can re-override after).
+            from reflex.components.widgets import palettes
+            for prop, color in palettes.FORMATS_RECOMMENDED.get(value, {}).items():
+                setattr(self.formats, prop, color)
         self.formats.bind(theme=_sync_theme)
         # The screen background is the Window clearcolor (no widget paints it),
         # so bind it to the theme so empty areas follow the palette.

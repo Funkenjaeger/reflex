@@ -5,201 +5,206 @@
 #: import LedCardButton reflex.components.widgets.led_card_button
 
 <ElsAdvancedBar>:
-  orientation: "horizontal"
+  orientation: "vertical"
   size_hint_y: None
   height: 128
 
-  # ── Engage/Disengage: shared LED card with the tri-state ELS-stop indicator
-  #    (grey Disabled / red Stopped / green Armed) integrated as the LED+text ──
-  LedCardButton:
-    size_hint_x: None
-    width: 96
-    text: "Disengage" if root.controller.engaged else "Engage"
-    font_size: dp(17)
-    disabled: root.is_running
-    led_color: app.theme.led_off if not root.controller.engaged else (app.theme.danger if root.controller.els_stop_active else app.theme.success)
-    status_text: "Disabled" if not root.controller.engaged else ("Stopped" if root.controller.els_stop_active else "Armed")
-    status_color: app.theme.text_dim if not root.controller.engaged else (app.theme.danger_text if root.controller.els_stop_active else app.theme.success_text)
-    # beep handled by BeepMixin.on_press
-    on_release: root.toggle_engage()
+  # ── Wizard instruction bar ─────────────────────────────────────────────────
+  # Full-width strip across the top of the bar (over every control column) so
+  # the control row below — Engage, Start, the value fields and the mode
+  # selector — all share one aligned top edge. Wizard-only: hidden in stop-only
+  # and stop+retract modes (those rely on action-button labels + validity gating
+  # for operator guidance instead).
+  FloatLayout:
+    size_hint_y: 0.2 if root.enable_wizard else 0
+    opacity: 1 if root.enable_wizard else 0
+    disabled: not root.enable_wizard
+    canvas.before:
+      # Recessed instruction strip with a hairline divider below; inset at the
+      # bottom so a small margin separates it from the controls underneath.
+      Color:
+        rgba: app.theme.recess
+      Rectangle:
+        pos: self.x, self.y + dp(5)
+        size: self.width, self.height - dp(5)
+      Color:
+        rgba: app.theme.border_dim
+      Line:
+        points: (self.x, self.y + dp(5) + 0.5, self.right, self.y + dp(5) + 0.5)
+        width: 1.0
 
+    Label:
+      id: label_instruction
+      text: root.controller.instruction_text
+      text_size: self.size
+      size_hint: 1, 1
+      pos_hint: {'x': 0, 'y': 0}
+      font_name: app.theme.font_bold
+      font_size: dp(15)
+      color: app.theme.accent_text
+      padding: dp(12), 0
+      halign: 'center'
+      valign: 'middle'
+
+    Label:
+      id: label_depth_reached
+      text: "Stop ø reached" if root.controller.depth_reached else ""
+      text_size: self.size
+      size_hint: None, 1
+      width: 200
+      pos_hint: {'x': 0, 'y': 0}
+      font_name: app.theme.font_bold
+      font_size: dp(14)
+      halign: 'left'
+      valign: 'middle'
+      padding: dp(12), 0
+      color: app.theme.success_text
+
+  # ── Control row: Engage + Start/values/action + mode selector, all sharing
+  #    one top/bottom edge ─────────────────────────────────────────────────
   BoxLayout:
-    orientation: 'vertical'
+    orientation: 'horizontal'
+    size_hint_y: 0.8 if root.enable_wizard else 1.0
 
-    # ── Wizard instruction bar ─────────────────────────────────────────────────
-    # Wizard-only: hidden in stop-only and stop+retract modes (those rely on
-    # action-button labels + validity gating for operator guidance instead).
-    # depth_reached indicator is an overlay (FloatLayout child) so it can
-    # extend past the Stop-button column on the left without stealing width
-    # from the centered instruction text.
-    FloatLayout:
-      size_hint_y: 0.2 if root.enable_wizard else 0
+    # ── Engage/Disengage: shared LED card with the tri-state ELS-stop indicator
+    #    (grey Disabled / red Stopped / green Armed) integrated as the LED+text ──
+    LedCardButton:
+      size_hint_x: None
+      width: 96
+      text: "Disengage" if root.controller.engaged else "Engage"
+      font_size: dp(17)
+      disabled: root.is_running
+      led_color: app.theme.led_off if not root.controller.engaged else (app.theme.danger if root.controller.els_stop_active else app.theme.success)
+      status_text: "Disabled" if not root.controller.engaged else ("Stopped" if root.controller.els_stop_active else "Armed")
+      status_color: app.theme.text_dim if not root.controller.engaged else (app.theme.danger_text if root.controller.els_stop_active else app.theme.success_text)
+      # beep handled by BeepMixin.on_press
+      on_release: root.toggle_engage()
+
+    # ── Start / Stop (wizard only) — facelift StyledButton: cyan for Start,
+    #    red for the running Stop state ──
+    StyledButton:
+      id: btn_start_stop
+      width: 96 if root.enable_wizard else 0
+      size_hint_x: None
+      margin_x: dp(4)
+      margin_y: dp(6)
       opacity: 1 if root.enable_wizard else 0
-      disabled: not root.enable_wizard
-      canvas.before:
-        # Recessed instruction strip: dark inset panel with a hairline divider
-        # below, matching the facelift theme. The panel is inset at the bottom
-        # so a small margin separates it from the controls underneath.
-        Color:
-          rgba: app.theme.recess
-        Rectangle:
-          pos: self.x, self.y + dp(5)
-          size: self.width, self.height - dp(5)
-        Color:
-          rgba: app.theme.border_dim
-        Line:
-          points: (self.x, self.y + dp(5) + 0.5, self.right, self.y + dp(5) + 0.5)
-          width: 1.0
+      disabled: not ( root.controller.start_stop_enabled and root.enable_wizard )
+      text: "Start" if root.controller.start_not_stop else "Stop"
+      font_size: self.height / 4
+      # Only light up (fill/border/glow) when actually enabled.
+      is_highlighted: not self.disabled
+      highlight_bg_color: app.theme.accent_bg if root.controller.start_not_stop else app.theme.danger_bg
+      highlight_border_color: app.theme.accent if root.controller.start_not_stop else app.theme.danger
+      highlight_text_color: app.theme.accent_text if root.controller.start_not_stop else app.theme.danger_text
+      glow_color: app.theme.glow if root.controller.start_not_stop else app.theme.danger_glow
+      on_release: root.controller.on_start_stop_button_clicked()
 
-      Label:
-        id: label_instruction
-        text: root.controller.instruction_text
-        text_size: self.size
-        size_hint: 1, 1
-        pos_hint: {'x': 0, 'y': 0}
-        font_name: app.theme.font_bold
-        font_size: dp(15)
-        color: app.theme.accent_text
-        padding: dp(12), 0
-        halign: 'center'
-        valign: 'middle'
+    Widget: # spacer
 
-      Label:
-        id: label_depth_reached
-        text: "Stop ø reached" if root.controller.depth_reached else ""
-        text_size: self.size
-        size_hint: None, 1
-        width: 200
-        pos_hint: {'x': 0, 'y': 0}
-        font_name: app.theme.font_bold
-        font_size: dp(14)
-        halign: 'left'
-        valign: 'middle'
-        padding: dp(12), 0
-        color: app.theme.success_text
+    TextHeaderButton:
+      id: btn_stop_z
+      text_header: "Stop Z"
+      text_button: app.formats.position_format.format(root.controller.stop_z)
+      blink_enable: root.controller.active_input == "stop_z"
+      width: self.height
+      disabled: not root.controller.x_z_inputs_enabled
+      on_short_press: root.on_value_button_released("stop_z")
+      on_long_press: root.on_value_long_press("stop_z")
 
-    # ── Controls (varied by mode) ─────────────────────────────────────────────
+    TextHeaderButton:
+      id: btn_start_z
+      text_header: "Start Z"
+      text_button: app.formats.position_format.format(root.controller.retract_z)
+      blink_enable: root.controller.active_input == "start_z"
+      width: self.height if (root.enable_retract or root.enable_wizard) else 0
+      opacity: 1 if (root.enable_retract or root.enable_wizard) else 0
+      disabled:  not (root.controller.x_z_inputs_enabled and (root.enable_retract or root.enable_wizard) )
+      on_short_press: root.on_value_button_released("start_z")
+      on_long_press: root.on_value_long_press("start_z")
+
+    Widget: # spacer
+
+    TextHeaderButton:
+      id: btn_major_dia
+      text_header: "Major ø"
+      text_button: app.formats.position_format.format(root.controller.start_dia)
+      blink_enable: root.controller.active_input == "major_dia"
+      width: self.height if root.enable_wizard else 0
+      opacity: 1 if root.enable_wizard else 0
+      disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
+      on_short_press: root.on_value_button_released("major_dia")
+      on_long_press: root.on_value_long_press("major_dia")
+
+    TextHeaderButton:
+      id: btn_minor_dia
+      text_header: "Minor ø"
+      text_button: app.formats.position_format.format(root.controller.stop_dia)
+      blink_enable: root.controller.active_input == "minor_dia"
+      width: self.height if root.enable_wizard else 0
+      opacity: 1 if root.enable_wizard else 0
+      disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
+      on_short_press: root.on_value_button_released("minor_dia")
+      on_long_press: root.on_value_long_press("minor_dia")
+
+    Widget: # spacer
+
+    # ── Action button (Set / Cut / Retract / Confirm). Visible in all
+    # modes; non-wizard modes use it for Cut/Retract within in_cycle.
+    StyledButton:
+      id: btn_action
+      width: self.height
+      size_hint_x: None
+      margin_x: dp(4)
+      margin_y: dp(6)
+      # Only light up (cyan fill/border/glow) when there's an action to take;
+      # a disabled/blank action button stays a quiet slate box.
+      is_highlighted: bool(root.controller.action_button_text) and root.controller.action_allowed
+      disabled: not root.controller.action_button_text or not root.controller.action_allowed
+      text: root.controller.action_button_text
+      font_size: self.height / 4
+      on_release: root.controller.on_action_button_clicked()
+
+    # ── Mode selector + settings ───────────────────────────────────────────
     BoxLayout:
-      orientation: 'horizontal'
-      size_hint_y: 0.8 if root.enable_wizard else 1.0
+      orientation: "vertical"
+      size_hint_x: None
+      # Fixed width (independent of the wizard-collapsed row height) so the mode
+      # tabs stay a consistent size; left padding keeps a margin from the action
+      # button to their left. The tri-state tab takes the larger share; the
+      # settings cog sits below it.
+      width: dp(100)
+      padding: dp(12), dp(6), 0, dp(6)
+      spacing: 4
 
-      # ── Start / Stop (wizard only) — facelift StyledButton: cyan for Start,
-      #    red for the running Stop state ──
-      StyledButton:
-        id: btn_start_stop
-        width: 96 if root.enable_wizard else 0
-        size_hint_x: None
-        opacity: 1 if root.enable_wizard else 0
-        disabled: not ( root.controller.start_stop_enabled and root.enable_wizard )
-        text: "Start" if root.controller.start_not_stop else "Stop"
-        font_size: self.height / 4
-        # Only light up (fill/border/glow) when actually enabled.
-        is_highlighted: not self.disabled
-        highlight_bg_color: app.theme.accent_bg if root.controller.start_not_stop else app.theme.danger_bg
-        highlight_border_color: app.theme.accent if root.controller.start_not_stop else app.theme.danger
-        highlight_text_color: app.theme.accent_text if root.controller.start_not_stop else app.theme.danger_text
-        glow_color: app.theme.glow if root.controller.start_not_stop else app.theme.danger_glow
-        on_release: root.controller.on_start_stop_button_clicked()
+      # One-hot tri-state operating-mode tab: shows all three states with
+      # the active one highlighted, like the sidebar tabs but horizontal
+      # (matching this button's aspect). Tap anywhere cycles wizard →
+      # stop+retract → stop. Wizard is the wand glyph; the stop modes use
+      # the stop-sign / U-arrow SVG icons (stacked when both are shown).
+      TabSelector:
+        id: btn_mode
+        size_hint_y: 0.62
+        orientation: "horizontal"
+        shape: "standalone"
+        disabled: root.is_running
+        selected: root.mode
+        on_select: root.apply_mode(args[1])
+        TabSegment:
+          value: "wizard"
+          text: ""
+          font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+          font_size: min(self.height * 0.6, self.width * 0.52)
+        TabSegment:
+          value: "stop_retract"
+          icons: ["pictures/stop_retract.png"]
+        TabSegment:
+          value: "stop"
+          icons: ["pictures/stop_sign.png"]
 
-      Widget: # spacer
-
-      TextHeaderButton:
-        id: btn_stop_z
-        text_header: "Stop Z"
-        text_button: app.formats.position_format.format(root.controller.stop_z)
-        blink_enable: root.controller.active_input == "stop_z"
-        width: self.height
-        disabled: not root.controller.x_z_inputs_enabled
-        on_short_press: root.on_value_button_released("stop_z")
-        on_long_press: root.on_value_long_press("stop_z")
-
-      TextHeaderButton:
-        id: btn_start_z
-        text_header: "Start Z"
-        text_button: app.formats.position_format.format(root.controller.retract_z)
-        blink_enable: root.controller.active_input == "start_z"
-        width: self.height if (root.enable_retract or root.enable_wizard) else 0
-        opacity: 1 if (root.enable_retract or root.enable_wizard) else 0
-        disabled:  not (root.controller.x_z_inputs_enabled and (root.enable_retract or root.enable_wizard) )
-        on_short_press: root.on_value_button_released("start_z")
-        on_long_press: root.on_value_long_press("start_z")
-
-      Widget: # spacer
-
-      TextHeaderButton:
-        id: btn_major_dia
-        text_header: "Major \u00f8"
-        text_button: app.formats.position_format.format(root.controller.start_dia)
-        blink_enable: root.controller.active_input == "major_dia"
-        width: self.height if root.enable_wizard else 0
-        opacity: 1 if root.enable_wizard else 0
-        disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
-        on_short_press: root.on_value_button_released("major_dia")
-        on_long_press: root.on_value_long_press("major_dia")
-
-      TextHeaderButton:
-        id: btn_minor_dia
-        text_header: "Minor \u00f8"
-        text_button: app.formats.position_format.format(root.controller.stop_dia)
-        blink_enable: root.controller.active_input == "minor_dia"
-        width: self.height if root.enable_wizard else 0
-        opacity: 1 if root.enable_wizard else 0
-        disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
-        on_short_press: root.on_value_button_released("minor_dia")
-        on_long_press: root.on_value_long_press("minor_dia")
-
-      Widget: # spacer
-
-      # ── Action button (Set / Cut / Retract / Confirm). Visible in all
-      # modes; non-wizard modes use it for Cut/Retract within in_cycle.
-      StyledButton:
-        id: btn_action
-        width: self.height
-        size_hint_x: None
-        # Only light up (cyan fill/border/glow) when there's an action to take;
-        # a disabled/blank action button stays a quiet slate box.
-        is_highlighted: bool(root.controller.action_button_text) and root.controller.action_allowed
-        disabled: not root.controller.action_button_text or not root.controller.action_allowed
-        text: root.controller.action_button_text
-        font_size: self.height / 4
-        on_release: root.controller.on_action_button_clicked()
-
-  # ── Mode selector + settings ───────────────────────────────────────────
-  BoxLayout:
-    orientation: "vertical"
-    size_hint_x: None
-    # Left padding gives these two buttons a margin from the action button to
-    # their left; width grows to keep the buttons themselves the same size.
-    width: self.height * 0.7 + dp(12)
-    padding: dp(12), 0, 0, 0
-    spacing: 4
-
-    # One-hot tri-state operating-mode tab: shows all three states with
-    # the active one highlighted, like the sidebar tabs but horizontal
-    # (matching this button's aspect). Tap anywhere cycles wizard →
-    # stop+retract → stop. Wizard is the wand glyph; the stop modes use
-    # the stop-sign / U-arrow SVG icons (stacked when both are shown).
-    TabSelector:
-      id: btn_mode
-      orientation: "horizontal"
-      shape: "standalone"
-      disabled: root.is_running
-      selected: root.mode
-      on_select: root.apply_mode(args[1])
-      TabSegment:
-        value: "wizard"
-        text: "\ue2ca"
-        font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-        font_size: min(self.height * 0.6, self.width * 0.52)
-      TabSegment:
-        value: "stop_retract"
-        icons: ["pictures/stop_retract.png"]
-      TabSegment:
-        value: "stop"
-        icons: ["pictures/stop_sign.png"]
-
-    IconButton:
-      id: btn_settings
-      icon: "\uf013"
-      disabled: root.is_running
-      on_release: root.open_settings()
+      IconButton:
+        id: btn_settings
+        size_hint_y: 0.38
+        icon: ""
+        disabled: root.is_running
+        on_release: root.open_settings()

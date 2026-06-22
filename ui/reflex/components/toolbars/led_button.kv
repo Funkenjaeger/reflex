@@ -6,8 +6,8 @@
 <LedButton>:
   # Default LED color: cyan when "on", dim slate when "off". Callers that set
   # current_color directly (e.g. els_advbar tri-state) override this.
-  color_on: app.theme.accent
-  color_off: app.theme.led_off
+  color_on: app.formats.color_on
+  color_off: app.formats.color_off
   current_color: self.color_on if self.checkbox_value else self.color_off
   label: ""
   checkbox_value: True

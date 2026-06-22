@@ -27,8 +27,7 @@ DARK = {
     "surface": [0.10, 0.13, 0.17, 1],
     "surface_sheen": [0.22, 0.27, 0.32, 1],
     "recess": [0.05, 0.07, 0.09, 1],
-    "readout_bg": [0.0, 0.0, 0.0, 1],
-    "readout": [0.251, 0.878, 0.929, 1],   # cyan, matches display_color default
+    "logo": "pictures/reflex_logo.png",
     # accent (cyan)
     "accent": [0.16, 0.82, 0.88, 1],
     "accent_text": [0.40, 0.92, 0.98, 1],
@@ -68,8 +67,7 @@ LIGHT = {
     "surface": [0.86, 0.88, 0.90, 1],
     "surface_sheen": [0.96, 0.97, 0.98, 1],
     "recess": [0.70, 0.72, 0.74, 1],
-    "readout_bg": [0.10, 0.11, 0.12, 1],   # dark instrument window in the panel
-    "readout": [0.20, 0.22, 0.25, 1],      # charcoal numerals on light panels
+    "logo": "pictures/reflex_logo_light.png",
     # accent (amber): deep amber reads as a line/border/indicator on light grey
     # (a lighter amber failed contrast as a separator/axis line).
     "accent": [0.68, 0.37, 0.0, 1],
@@ -108,3 +106,22 @@ PALETTES = {
 }
 
 DEFAULT = "dark"
+
+# Recommended values for the operator-configurable format colors (the DRO digit
+# color and the indicator on/off lamp colors). These are *seeds*: switching the
+# theme pushes these into app.formats so the readouts/LEDs match the new theme,
+# but the operator can still override them afterwards (the override persists
+# until the next theme switch). These are NOT theme tokens — KV reads the
+# formats values directly so the operator's choice is honored.
+FORMATS_RECOMMENDED = {
+    "dark": {
+        "display_color": [0.251, 0.878, 0.929, 1],   # cyan seven-seg
+        "color_on": [0.16, 0.82, 0.88, 1],           # cyan indicator
+        "color_off": [0.25, 0.30, 0.36, 1],          # dim slate
+    },
+    "light": {
+        "display_color": [0.58, 0.32, 0.0, 1],       # deep amber seven-seg
+        "color_on": [0.85, 0.52, 0.0, 1],            # amber indicator
+        "color_off": [0.55, 0.58, 0.61, 1],          # grey
+    },
+}

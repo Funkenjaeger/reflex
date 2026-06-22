@@ -31,6 +31,10 @@ class StyledButton(BeepMixin, ButtonBehavior, FloatLayout):
     font_size = NumericProperty(20)
     font_name = StringProperty("fonts/ChakraPetch-SemiBold.ttf")
     radius = NumericProperty(8)
+    # Inset the drawn box from the widget's cell, so a StyledButton can share a
+    # uniform gutter with the inset LED cards in the same row.
+    margin_x = NumericProperty(0)
+    margin_y = NumericProperty(0)
 
     # When True, render the cyan accent / glow style instead of the slate style.
     is_highlighted = BooleanProperty(False)
