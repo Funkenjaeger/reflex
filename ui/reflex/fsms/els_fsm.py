@@ -40,8 +40,6 @@ class ElsFsm:
         self.servo = board.servo
         self.hal = hal
         self.controller = controller
-        self.z_axis = self.els.get_z_axis()
-        self.x_axis = self.els.get_x_axis()
 
         self.fsm = Machine(
             model=self,
@@ -245,6 +243,22 @@ class ElsFsm:
                     self.retract_done()
 
     # ——— convenience properties ———
+
+    @property
+    def z_axis(self):
+        """Resolve the ELS Z axis live.
+
+        Axis assignment can change after the FSM is built (config load, setup
+        edits) and defaults to -1/unassigned until the operator maps it, so we
+        never cache it. on_enter_stopped used to dereference a stale None here
+        and crash when no Z axis was assigned.
+        """
+        return self.els.get_z_axis()
+
+    @property
+    def x_axis(self):
+        """Resolve the ELS X axis live (see :attr:`z_axis`)."""
+        return self.els.get_x_axis()
 
     @property
     def _saddle_input(self):

@@ -63,21 +63,43 @@ def _make_els(*, z_axis=None, x_axis=None, spindle=None,
     return els
 
 
-def _make_board():
+def _make_servo(ratio_num=1, ratio_den=1, lead_screw_pitch=0.0,
+                lead_screw_pitch_in=False):
+    """Mock ServoDispatcher surface used by ElsFsm.
+
+    _scale_counts_to_steps / push_thread_geometry read ratioNum/ratioDen;
+    _safety_margin_display additionally reads leadScrewPitch /
+    leadScrewPitchIn. Default leadScrewPitch=0.0 keeps the safety margin at
+    zero so existing geometry/step assertions stay exact — tests that care
+    about the margin set it explicitly.
+    """
+    return SimpleNamespace(
+        ratioNum=ratio_num, ratioDen=ratio_den,
+        leadScrewPitch=lead_screw_pitch,
+        leadScrewPitchIn=lead_screw_pitch_in,
+    )
+
+
+def _make_board(servo=None):
     board = MagicMock()
     board.connected = True
-    board.servo = SimpleNamespace(ratioNum=1, ratioDen=1)
+    board.servo = servo if servo is not None else _make_servo()
+    # _safety_margin_display reads board.formats.factor (display-unit scale).
+    board.formats = SimpleNamespace(factor=1)
     return board
 
 
 def _make_controller(*, stop_z=10.0, retract_z=20.0,
                      wizard_enabled=False, retract_enabled=False,
-                     els_forward=True):
+                     els_forward=True, is_threading=False):
     return SimpleNamespace(
         stop_z=stop_z, retract_z=retract_z,
         wizard_enabled=wizard_enabled,
         retract_enabled=retract_enabled,
         els_forward=els_forward,
+        # on_enter_cutting branches on is_threading to decide whether to push
+        # thread geometry vs. clear it; default to feed (non-threading) mode.
+        is_threading=is_threading,
     )
 
 
@@ -250,7 +272,10 @@ def test_set_stop_z_writes_encoder_position_to_hal():
 def test_on_enter_cutting_arms_and_writes_thread_geometry():
     z, z_inp = _make_z_axis()
     hal = MagicMock()
-    controller = _make_controller(retract_enabled=True)
+    # is_threading=True so on_enter_cutting takes the thread-geometry branch
+    # (pushes pitch/counts-per-pitch and the real backlash_steps); the feed
+    # branch would instead zero them.
+    controller = _make_controller(retract_enabled=True, is_threading=True)
     fsm = _build_fsm(
         z=z, hal=hal, controller=controller,
         els_extra={"els_backlash_steps": 42},
@@ -493,3 +518,44 @@ def test_scale_counts_to_steps_rounds_magnitude_away_from_zero():
     fsm = _build_fsm(z=z)
     assert fsm._scale_counts_to_steps(1) == 1
     assert fsm._scale_counts_to_steps(-1) == -1
+
+
+# ─── Regression: z_axis / x_axis resolve live (not cached at construction) ──
+
+def test_z_axis_reflects_later_axis_assignment():
+    """Axis mapping can change after the FSM is built (config load, setup
+    edits) and defaults to unassigned until the operator maps it. ElsFsm.z_axis
+    must dereference els.get_z_axis() on every access, not cache it at __init__
+    — otherwise a None captured at construction would persist and crash
+    on_enter_stopped."""
+    hal = MagicMock()
+    els = _make_els(z_axis=None, x_axis=None)
+    board = _make_board()
+    controller = _make_controller()
+    fsm = ElsFsm(els=els, board=board, hal=hal, controller=controller)
+
+    # Built with no axis → property reflects None.
+    assert fsm.z_axis is None
+
+    # Operator maps the ELS Z axis after construction.
+    z, _ = _make_z_axis(scaled_position=3.0)
+    els.get_z_axis.return_value = z
+    assert fsm.z_axis is z
+    assert fsm.z_axis.scaledPosition == 3.0
+
+    # Re-mapping again is also reflected (proves no one-shot caching).
+    z2, _ = _make_z_axis(scaled_position=9.0)
+    els.get_z_axis.return_value = z2
+    assert fsm.z_axis is z2
+
+
+def test_x_axis_reflects_later_axis_assignment():
+    """Companion to z_axis: the X-axis property is also resolved live."""
+    hal = MagicMock()
+    els = _make_els(z_axis=None, x_axis=None)
+    fsm = ElsFsm(els=els, board=_make_board(), hal=hal,
+                 controller=_make_controller())
+    assert fsm.x_axis is None
+    x, _ = _make_x_axis()
+    els.get_x_axis.return_value = x
+    assert fsm.x_axis is x

@@ -65,7 +65,17 @@ def _make_x_axis(scaled_position=0.0):
 def _make_collaborators(*, z_axis=None, x_axis=None, connected=False):
     board = MagicMock()
     board.connected = connected
-    board.servo = SimpleNamespace(ratioNum=1, ratioDen=1)
+    # ElsFsm._safety_margin_display reads leadScrewPitch / leadScrewPitchIn /
+    # ratioNum / ratioDen off board.servo. leadScrewPitch=0.0 keeps the margin
+    # at zero, matching these tests' assumption that "safe side of stop_z"
+    # means strictly-before with no extra clearance band.
+    board.servo = SimpleNamespace(
+        ratioNum=1, ratioDen=1,
+        leadScrewPitch=0.0, leadScrewPitchIn=False,
+    )
+    # _safety_margin_display converts the margin to display units via
+    # board.formats.factor.
+    board.formats = SimpleNamespace(factor=1)
     els = MagicMock()
     els.get_z_axis.return_value = z_axis
     els.get_x_axis.return_value = x_axis
@@ -220,12 +230,18 @@ def test_retract_z_validator():
         z_axis=_make_z_axis(), x_axis=_make_x_axis(),
     )
     c = ElsUiController(els=els, board=board)
-    # retract_z > stop_z required
+    # _validate_retract_z is direction-agnostic: with zero safety margin
+    # (leadScrewPitch=0 in the fixture) it requires only that retract_z be a
+    # non-zero distance from stop_z — retracting in the negative direction is
+    # valid (mirrors ElsFsm.is_retracted's negative-span handling).
     c.stop_z = 10.0
-    c.retract_z = 5.0
+    c.retract_z = 10.0       # equal to stop_z → zero span → invalid
     assert c.retract_z_valid is False
     assert c.retract_z_error
-    c.retract_z = 20.0
+    c.retract_z = 5.0        # below stop_z, but non-zero span → valid
+    assert c.retract_z_valid is True
+    assert c.retract_z_error == ""
+    c.retract_z = 20.0       # above stop_z → also valid
     assert c.retract_z_valid is True
     assert c.retract_z_error == ""
 
@@ -294,6 +310,64 @@ def test_toggle_engage_drives_domain_fsm(ctrl):
     assert ctrl.engaged is False
 
 
+# ─── Regression: engage gating when no Z axis is assigned ──────────────────
+
+def test_toggle_engage_without_z_axis_does_not_raise_and_stays_disengaged(caplog):
+    """Regression for the on_enter_stopped crash.
+
+    With no ELS Z axis mapped, els.get_z_axis() returns None. toggle_engage()
+    must refuse to engage (logging a warning) rather than driving the domain
+    FSM into 'stopped', whose on_enter_stopped would dereference the missing
+    axis and crash with "'NoneType' object has no attribute 'scaledPosition'".
+    """
+    board, els = _make_collaborators(z_axis=None, x_axis=_make_x_axis())
+    c = ElsUiController(els=els, board=board)
+    _pump()
+    assert c.engaged is False
+    assert c._els_fsm.state == "disabled"
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        c.toggle_engage()      # must NOT raise
+    _pump()
+
+    # Engage was refused: FSM stayed disabled, engaged stayed False.
+    assert c._els_fsm.state == "disabled"
+    assert c.engaged is False
+    assert any("no Z axis" in rec.getMessage() for rec in caplog.records)
+
+
+def test_toggle_engage_with_z_axis_drives_fsm_out_of_disabled():
+    """The companion to the no-axis case: when a valid Z axis IS present,
+    toggle_engage() still engages the domain FSM (out of 'disabled')."""
+    board, els = _make_collaborators(z_axis=_make_z_axis(), x_axis=_make_x_axis())
+    c = ElsUiController(els=els, board=board)
+    _pump()
+    assert c._els_fsm.state == "disabled"
+    c.toggle_engage()
+    _pump()
+    assert c._els_fsm.state != "disabled"
+    assert c._els_fsm.state == "stopped"
+    assert c.engaged is True
+
+
+def test_toggle_engage_engages_after_z_axis_assigned_late():
+    """get_z_axis() is resolved live on every toggle, so an axis mapped AFTER
+    the controller is built still lets the operator engage (no stale None)."""
+    board, els = _make_collaborators(z_axis=None, x_axis=_make_x_axis())
+    c = ElsUiController(els=els, board=board)
+    _pump()
+    c.toggle_engage()          # refused: no axis yet
+    _pump()
+    assert c._els_fsm.state == "disabled"
+    # Operator maps the ELS Z axis in setup after construction.
+    els.get_z_axis.return_value = _make_z_axis()
+    c.toggle_engage()
+    _pump()
+    assert c._els_fsm.state == "stopped"
+    assert c.engaged is True
+
+
 def test_start_stop_button_in_wizard_idle_starts_wizard(ctrl):
     ctrl.wizard_enabled = True
     _pump()
@@ -342,6 +416,21 @@ def test_on_action_button_clicked_captures_diameters_in_wizard():
     c.on_action_button_clicked()
     assert c.stop_dia == 5.0
     assert c._ui_fsm.state == "confirm"
+
+
+def test_on_action_button_clicked_without_x_axis_does_not_raise():
+    """Operator mapped Z (so the wizard runs) but left X unmapped. Reaching the
+    diameter step and pressing the action button must NOT dereference a None
+    axis (mirrors the engage-time Z guard); it should warn and stay put."""
+    board, els = _make_collaborators(z_axis=_make_z_axis(), x_axis=None)
+    c = ElsUiController(els=els, board=board)
+    c.wizard_enabled = True
+    _pump()
+    _engage(c)
+    c._ui_fsm.fsm.set_state("set_start_dia")
+    c._apply_policy()
+    c.on_action_button_clicked()       # X axis is None → must not raise
+    assert c._ui_fsm.state == "set_start_dia"   # did not advance
 
 
 def test_on_action_button_clicked_in_waiting_to_cut_enters_cutting(ctrl):
