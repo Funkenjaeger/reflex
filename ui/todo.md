@@ -231,22 +231,16 @@ load once at startup — no hot-reload.)
 ## UI facelift — adversarial-review findings (pre-merge to main, 2026-06-22)
 
 Surfaced by a second-pass adversarial review of the `switchable-themes` branch
-(see `ui-facelift-review.html` at repo root). Triaged; not yet fixed.
+(see `ui-facelift-review.html` at repo root). A1–A3 fixed; A4+ deferred pending
+report review.
 
-Real bugs (fix before/with merge):
-- A2 **X-axis None-deref crash**: `ui_controller.on_action_button_clicked` does
-  `get_x_axis().scaledPosition` (and the Z twin) with no None guard. Map Z, leave
-  X unmapped, run a wizard to `set_start_dia`/`set_stop_dia`, press action → crash.
-  Symmetric to the Z engage-guard fix that DID land. Add None-guards + a regression
-  test with x_axis=None reaching `set_start_dia`.
-- A1 **Plot stale-token repaint**: `plot/scene.py` binds repaint to `plot_bg` but
-  reads `plot_grid`/`plot_tool`, which `ThemeProvider.apply()` sets later in the
-  sweep → grid/tool paint one theme behind for a frame on switch. Fix: repaint via
-  `Clock.schedule_once` (same pattern used in `dropdown_item.py`).
-- A3 **Partial-theme switch crash**: a user theme with `[colors]` but no `[seeds]`
-  backfills seeds to None; `_sync_theme` does `setattr(formats,'display_color',None)`
-  → ValueError. Fix: skip None seeds in `_sync_theme` (app.py) and/or validate ref
-  theme has all seed tokens.
+Real bugs — FIXED in 4a017b8 (2026-06-22):
+- A1 **Plot stale-token repaint** — DONE. `plot/scene.py` now defers the repaint
+  to the next frame via a Clock trigger so the full token sweep finishes first.
+- A2 **X-axis None-deref crash** — DONE. `ui_controller.on_action_button_clicked`
+  now None-guards both axes (warns + bails); regression test added
+  (`test_on_action_button_clicked_without_x_axis_does_not_raise`).
+- A3 **Partial-theme switch crash** — DONE. `_sync_theme` (app.py) skips None seeds.
 
 Robustness / polish:
 - A4 Icon font bypasses its own `font_icon` token: ~20 KV sites hardcode
