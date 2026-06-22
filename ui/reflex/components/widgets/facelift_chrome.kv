@@ -1,0 +1,157 @@
+#: import THEME reflex.components.widgets.facelift_theme
+
+# ── Popup chrome ───────────────────────────────────────────────────────────
+# Restyle every stock Kivy Popup into the facelift look: dark-steel frame,
+# cyan Chakra-Petch title, and a crisp cyan separator under it.
+<Popup>:
+    title_color: THEME.ACCENT_TEXT
+    title_font: THEME.FONT_BOLD
+    title_size: '18sp'
+    separator_color: THEME.ACCENT
+    separator_height: dp(2)
+    background: ''
+    background_color: 0, 0, 0, 0
+    canvas.before:
+        Color:
+            rgba: THEME.BORDER
+        RoundedRectangle:
+            pos: self.x - dp(1), self.y - dp(1)
+            size: self.width + dp(2), self.height + dp(2)
+            radius: [dp(9)]
+        Color:
+            rgba: THEME.BACKGROUND
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(8)]
+
+# ── Shared settings-row controls ───────────────────────────────────────────
+# Subtle info/help button (the "i" icon at the left of each settings row).
+<FormHelpButton@Button>:
+    size_hint_x: None
+    width: self.height
+    background_normal: ''
+    background_down: ''
+    background_color: 0, 0, 0, 0
+    font_name: THEME.FONT_ICON
+    font_size: dp(19)
+    color: THEME.TEXT_DIM
+    text: "\uf129"
+
+# Row caption: left-aligned, Chakra Petch, light blue-grey.
+<FormLabel@Label>:
+    color: THEME.TEXT
+    font_name: THEME.FONT_BOLD
+    font_size: app.formats.font_size
+    halign: 'left'
+    valign: 'middle'
+    text_size: self.size
+    padding: dp(16), 0
+
+# Themed value control on the right side of a settings row (a recessed slate
+# pill with a border; cyan-tinted while pressed/active).
+<FormValueButton@Button>:
+    background_normal: ''
+    background_down: ''
+    background_color: 0, 0, 0, 0
+    font_name: THEME.FONT_BOLD
+    font_size: app.formats.font_size
+    color: THEME.ACCENT_TEXT
+    canvas.before:
+        Color:
+            rgba: THEME.ACCENT_BG if self.state == 'down' else THEME.SLATE_FILL
+        RoundedRectangle:
+            pos: self.x + dp(4), self.y + dp(5)
+            size: self.width - dp(8), self.height - dp(10)
+            radius: [dp(5)]
+        Color:
+            rgba: THEME.ACCENT if self.state == 'down' else THEME.BORDER
+        Line:
+            rounded_rectangle: (self.x + dp(4) + 0.5, self.y + dp(5) + 0.5, self.width - dp(8) - 1, self.height - dp(10) - 1, dp(5))
+            width: 1.0
+
+# ON/OFF toggle: green-cyan accent fill when on, quiet slate when off.
+<FormToggle@ToggleButton>:
+    background_normal: ''
+    background_down: ''
+    background_color: 0, 0, 0, 0
+    font_name: THEME.FONT_BOLD
+    font_size: app.formats.font_size
+    color: THEME.ACCENT_TEXT if self.state == 'down' else THEME.TEXT_DIM
+    canvas.before:
+        Color:
+            rgba: THEME.ACCENT_BG if self.state == 'down' else THEME.SLATE_FILL
+        RoundedRectangle:
+            pos: self.x + dp(4), self.y + dp(5)
+            size: self.width - dp(8), self.height - dp(10)
+            radius: [dp(5)]
+        Color:
+            rgba: THEME.ACCENT if self.state == 'down' else THEME.BORDER
+        Line:
+            rounded_rectangle: (self.x + dp(4) + 0.5, self.y + dp(5) + 0.5, self.width - dp(8) - 1, self.height - dp(10) - 1, dp(5))
+            width: 1.0
+
+# Themed single-line text entry for string settings.
+<FormTextInput@TextInput>:
+    background_normal: ''
+    background_active: ''
+    background_color: THEME.RECESS_FILL
+    foreground_color: THEME.TEXT
+    cursor_color: THEME.ACCENT
+    font_name: THEME.FONT_BOLD
+    padding: [dp(12), (self.height - self.line_height) / 2 if self.height > self.line_height else dp(6)]
+
+# ── Feeds selector (TabbedPanel + grid of FeedButton) ──────────────────────
+# Only the feed/thread picker uses TabbedPanel, so theming these globally is
+# safe and keeps the picker consistent with the rest of the facelift.
+<TabbedPanel>:
+    background_color: THEME.BACKGROUND
+    border: [0, 0, 0, 0]
+
+<TabbedPanelStrip>:
+    canvas.before:
+        Color:
+            rgba: THEME.RECESS_FILL
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+<TabbedPanelHeader>:
+    background_normal: ''
+    background_down: ''
+    background_disabled_normal: ''
+    background_disabled_down: ''
+    background_color: 0, 0, 0, 0
+    font_name: THEME.FONT_BOLD
+    color: THEME.ACCENT_TEXT if self.state == 'down' else THEME.TEXT_DIM
+    canvas.before:
+        Color:
+            rgba: THEME.ACCENT_BG if self.state == 'down' else THEME.SLATE_FILL
+        Rectangle:
+            pos: self.x + dp(2), self.y + dp(2)
+            size: self.width - dp(4), self.height - dp(4)
+        Color:
+            rgba: THEME.ACCENT if self.state == 'down' else [0, 0, 0, 0]
+        Rectangle:
+            pos: self.x + dp(2), self.y + dp(2)
+            size: self.width - dp(4), dp(2)
+
+# Feed/pitch value tile in the picker grid.
+<FeedButton>:
+    background_normal: ''
+    background_down: ''
+    background_color: 0, 0, 0, 0
+    color: THEME.ACCENT_TEXT if self.state == 'down' else THEME.TEXT
+    font_name: THEME.FONT_BOLD
+    canvas.before:
+        Color:
+            rgba: THEME.ACCENT_BG if self.state == 'down' else THEME.SLATE_FILL
+        RoundedRectangle:
+            pos: self.x + dp(3), self.y + dp(3)
+            size: self.width - dp(6), self.height - dp(6)
+            radius: [dp(5)]
+        Color:
+            rgba: THEME.ACCENT if self.state == 'down' else THEME.BORDER
+        Line:
+            rounded_rectangle: (self.x + dp(3) + 0.5, self.y + dp(3) + 0.5, self.width - dp(6) - 1, self.height - dp(6) - 1, dp(5))
+            width: 1.0

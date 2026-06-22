@@ -9,6 +9,7 @@ from kivy.logger import Logger
 log = Logger.getChild(__name__)
 
 from reflex.components.appsettings import config
+import reflex.components.widgets.facelift_chrome  # noqa: F401  (installs global Popup/form chrome)
 from reflex.dispatchers.axis import AxisDispatcher
 from reflex.dispatchers.board import Board
 from reflex.dispatchers.els import ElsDispatcher

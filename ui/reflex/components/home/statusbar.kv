@@ -82,9 +82,11 @@
         size: self.width - dp(92), self.height + dp(16)
         radius: [0, dp(7), dp(7), dp(7)]
 
-      # Concave fillet at the inner (step) corner: fill the corner square, then
-      # carve a background disc so the reentrant corner reads as a smooth
-      # concave curve (a fillet, not a convex round).
+      # Concave fillet at the inner (step) corner: add a wedge of RECESS into
+      # the notch, carve a disc so the reentrant corner reads as a smooth
+      # concave curve, then redraw the two straight borders + the arc ON TOP.
+      # (The carve disc reaches past the tangent points and nicks the straight
+      # borders, so they must be repainted to stay continuous.)
       Color:
         rgba: THEME.RECESS_FILL
       Rectangle:
@@ -95,10 +97,17 @@
       Ellipse:
         pos: self.x + dp(92) - dp(14), self.y - dp(14)
         size: dp(14), dp(14)
+      # Repaint borders on top, half-pixel aligned to the filled-rect outline.
       Color:
         rgba: THEME.BORDER_DIM
       Line:
-        circle: (self.x + dp(92) - dp(7), self.y - dp(7), dp(7), 0, 90)
+        points: (self.x + dp(60), self.y - 0.5, self.x + dp(92) - dp(7), self.y - 0.5)
+        width: 1.0
+      Line:
+        points: (self.x + dp(92) - 0.5, self.y - dp(7), self.x + dp(92) - 0.5, self.y - dp(16) + dp(2))
+        width: 1.0
+      Line:
+        circle: (self.x + dp(92) - dp(7) - 0.5, self.y - dp(7) - 0.5, dp(7), 0, 90)
         width: 1.0
 
     Label:

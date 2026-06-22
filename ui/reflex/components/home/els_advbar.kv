@@ -38,11 +38,19 @@
       opacity: 1 if root.enable_wizard else 0
       disabled: not root.enable_wizard
       canvas.before:
+        # Recessed instruction strip: dark inset panel with a hairline divider
+        # below, matching the facelift theme. The panel is inset at the bottom
+        # so a small margin separates it from the controls underneath.
         Color:
-          rgba: [0.2, 0.2, 0.2, 1]
+          rgba: THEME.RECESS_FILL
         Rectangle:
-          pos: self.pos
-          size: self.size
+          pos: self.x, self.y + dp(5)
+          size: self.width, self.height - dp(5)
+        Color:
+          rgba: THEME.BORDER_DIM
+        Line:
+          points: (self.x, self.y + dp(5) + 0.5, self.right, self.y + dp(5) + 0.5)
+          width: 1.0
 
       Label:
         id: label_instruction
@@ -50,22 +58,26 @@
         text_size: self.size
         size_hint: 1, 1
         pos_hint: {'x': 0, 'y': 0}
-        font_size: 16
+        font_name: THEME.FONT_BOLD
+        font_size: dp(15)
+        color: THEME.ACCENT_TEXT
+        padding: dp(12), 0
         halign: 'center'
-        valign: 'top'
+        valign: 'middle'
 
       Label:
         id: label_depth_reached
         text: "Stop ø reached" if root.controller.depth_reached else ""
         text_size: self.size
-        size_hint: None, None
-        size: 200, 24
-        pos_hint: {'x': 0, 'top': 1}
-        font_size: 16
+        size_hint: None, 1
+        width: 200
+        pos_hint: {'x': 0, 'y': 0}
+        font_name: THEME.FONT_BOLD
+        font_size: dp(14)
         halign: 'left'
         valign: 'middle'
-        padding: 8, 0
-        color: [0.4, 1.0, 0.4, 1]
+        padding: dp(12), 0
+        color: [0.4, 1.0, 0.5, 1]
 
     # ── Controls (varied by mode) ─────────────────────────────────────────────
     BoxLayout:
@@ -179,6 +191,7 @@
         value: "wizard"
         text: "\ue2ca"
         font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+        font_size: min(self.height * 0.6, self.width * 0.52)
       TabSegment:
         value: "stop_retract"
         icons: ["pictures/stop_retract.png"]

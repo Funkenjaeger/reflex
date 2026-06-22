@@ -1,3 +1,5 @@
+#: import THEME reflex.components.widgets.facelift_theme
+
 <TitleItem>:
   height: 36
   size_hint_y: None
@@ -6,8 +8,9 @@
     Label:
       text: root.name
       text_size: root.size
+      font_name: THEME.FONT_BOLD
+      color: THEME.ACCENT_TEXT
       font_size: app.formats.font_size
-#      font_size: self.height / 2.5
       valign: root.valign
       halign: root.halign
     Widget:
@@ -16,7 +19,7 @@
       size_hint: None, None
       canvas:
         Color:
-          rgba: 0.75, 0.75, 0.75, 1
+          rgba: THEME.BORDER
         Rectangle:
           size: self.size
           pos: self.pos

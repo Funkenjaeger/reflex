@@ -1,3 +1,5 @@
+#: import THEME reflex.components.widgets.facelift_theme
+
 <ScreenHeader>:
   height: 60
   size_hint_y: None
@@ -13,24 +15,25 @@
         text: root.text
         text_size: root.size
         bold: True
+        font_name: THEME.FONT_BOLD
+        color: THEME.ACCENT_TEXT
         font_size: app.formats.font_size
         valign: root.valign
         halign: root.halign
-      Button:
+      FormValueButton:
         size_hint_x: None
         width: 250
         text: "Back"
-        font_size: app.formats.font_size
         on_press: app.beep()
         on_release:
           app.manager.back()
     Widget:
-      height: 3
+      height: 2
       width: root.width
       size_hint: None, None
       canvas:
         Color:
-          rgba: 0.25, 0.25, 0.75, 1
+          rgba: THEME.ACCENT
         Rectangle:
           size: self.size
           pos: self.pos

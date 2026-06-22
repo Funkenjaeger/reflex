@@ -13,11 +13,11 @@ log = Logger.getChild(__name__)
 
 
 class FeedButton(BeepMixin, Button):
+    # Visual styling (themed slate pill, cyan text) lives in the global
+    # `<FeedButton>` rule in facelift_chrome.kv so it matches the rest of the
+    # facelift. Keep only behaviour/data here.
     text_halign = "center"
-    font_style = "bold"
-    font_name = StringProperty("fonts/Manrope-Bold.ttf")
     halign = "center"
-    background_color = [1, 1, 1, 1]
     return_value = ObjectProperty(None)
 
     def __init__(self, **kwargs):

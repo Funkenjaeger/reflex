@@ -1,5 +1,24 @@
+#: import THEME reflex.components.widgets.facelift_theme
+
+# Font Awesome glyph (set in keypad_icon_button.py). The fill is a themed slate
+# pill like the other keypad keys; the accept/cancel keys pass a semantic icon
+# `color` (green/red) from the format provider.
 <KeypadIconButton@Button>:
   text_halign: "center"
-  font_style: "bold"
-  font_size: app.formats.font_size
   halign: "center"
+  font_size: app.formats.font_size
+  background_normal: ''
+  background_down: ''
+  background_color: 0, 0, 0, 0
+  canvas.before:
+    Color:
+      rgba: THEME.ACCENT_BG if self.state == 'down' else THEME.SLATE_FILL
+    RoundedRectangle:
+      pos: self.x + dp(3), self.y + dp(3)
+      size: self.width - dp(6), self.height - dp(6)
+      radius: [dp(6)]
+    Color:
+      rgba: THEME.ACCENT if self.state == 'down' else THEME.BORDER
+    Line:
+      rounded_rectangle: (self.x + dp(3) + 0.5, self.y + dp(3) + 0.5, self.width - dp(6) - 1, self.height - dp(6) - 1, dp(6))
+      width: 1.0

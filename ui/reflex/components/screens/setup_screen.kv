@@ -1,10 +1,28 @@
 #: import ScreenHeader reflex.components.widgets.screen_header
+#: import THEME reflex.components.widgets.facelift_theme
 #: import MODE_ELS reflex.app.MODE_ELS
 #: import USE_CASE_MODES reflex.app.USE_CASE_MODES
 
 <SetupButton@Button>:
+  font_name: THEME.FONT_BOLD
   font_size: app.formats.font_size
+  color: THEME.ACCENT_TEXT if self.state == 'down' else THEME.TEXT
+  background_normal: ''
+  background_down: ''
+  background_color: 0, 0, 0, 0
   on_press: app.beep()
+  canvas.before:
+    Color:
+      rgba: THEME.ACCENT_BG if self.state == 'down' else THEME.SLATE_FILL
+    RoundedRectangle:
+      pos: self.pos
+      size: self.size
+      radius: [dp(8)]
+    Color:
+      rgba: THEME.ACCENT if self.state == 'down' else THEME.BORDER
+    Line:
+      rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(8))
+      width: 1.0
 
 <SetupScreen>:
   BoxLayout:
