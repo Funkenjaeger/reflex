@@ -39,6 +39,14 @@ class StyledButton(BeepMixin, ButtonBehavior, FloatLayout):
     # When True, render the cyan accent / glow style instead of the slate style.
     is_highlighted = BooleanProperty(False)
 
+    # When True, the button is fully hidden (opacity 0). Use this -- not an
+    # instance-level ``opacity:`` rule -- to collapse a StyledButton, because the
+    # class kv already binds ``opacity`` to ``disabled``. A second ``opacity:``
+    # binding would fight that one, and the disabled-dim (0.4) can win, leaving a
+    # faint zero-width ghost of the label. Folding both into one expression keeps
+    # a single opacity binding.
+    hidden = BooleanProperty(False)
+
     # ── Slate (default) palette ────────────────────────────────────────────
     slate_fill = ColorProperty([0.10, 0.13, 0.17, 1])
     slate_sheen = ColorProperty([0.22, 0.27, 0.32, 1])  # subtle inner top bevel

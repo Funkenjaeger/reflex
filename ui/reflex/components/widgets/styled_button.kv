@@ -4,7 +4,10 @@
 # faked with stacked RoundedRectangle / Line instructions.
 
 <StyledButton>:
-    opacity: 0.4 if self.disabled else 1
+    # Single source of truth for opacity: hidden wins, then the disabled dim.
+    # Do NOT add a second `opacity:` rule on an instance -- collapse via `hidden`
+    # instead, or the two bindings fight and the dim can leave a faint ghost.
+    opacity: 0 if self.hidden else (0.4 if self.disabled else 1)
     # Theme-driven defaults (per-instance overrides still win, e.g. the
     # Start/Stop button swaps in the danger palette).
     font_name: app.theme.font_bold

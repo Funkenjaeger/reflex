@@ -1,3 +1,4 @@
+from kivy.clock import Clock
 from kivy.graphics import Color, Rectangle
 from kivy.logger import Logger
 from kivy.properties import StringProperty, ListProperty, ObjectProperty
@@ -36,7 +37,15 @@ class DropDownItem(BoxLayout):
         # Recolor the open dropdown live when the theme changes.
         if self.app is not None:
             self.app.theme.bind(recess=lambda _i, v: setattr(self._bg_color, "rgba", v))
-            self.app.theme.bind(surface=lambda *_: self.on_options(self, self.options))
+            # Rebuild the options on a theme switch, but DEFER it: ThemeProvider
+            # applies its tokens one at a time, so a synchronous rebuild fired by
+            # `surface` would read a still-stale `text` (the dark theme's cyan) and
+            # bake low-contrast option labels. Scheduling for next frame lets the
+            # whole token sweep finish first.
+            self.app.theme.bind(surface=self._schedule_rebuild)
+
+    def _schedule_rebuild(self, *args):
+        Clock.schedule_once(lambda _dt: self.on_options(self, self.options), 0)
 
     def _theme(self, token, default=(0.05, 0.07, 0.09, 1)):
         if self.app is not None:
