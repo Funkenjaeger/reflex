@@ -56,23 +56,31 @@
   # but extends below it -- the DRO leaves that area transparent so it shows.
   FloatLayout:
     size_hint_x: None
-    width: dp(272)
-    # jog_x: where the box steps down; kept right of the DRO value background so
-    # it doesn't get clipped by the last digit (which read as a double dogleg).
+    width: dp(248)
+    # Dogleg drawn as two rounded rects (rounded outer corners, matching the
+    # other boxes). The step (jog_x) is kept right of the DRO value background.
+    # A slightly larger BORDER_DIM pair behind makes the 1px outline.
     canvas.before:
       Color:
+        rgba: THEME.BORDER_DIM
+      RoundedRectangle:
+        pos: self.x - 1, self.y - 1
+        size: dp(92) + 2, self.height + 2
+        radius: [dp(7), 0, 0, dp(7)]
+      RoundedRectangle:
+        pos: self.x + dp(92) - 1, self.y - dp(16) - 1
+        size: self.width - dp(92) + 2, self.height + dp(16) + 2
+        radius: [0, dp(7), dp(7), dp(7)]
+      Color:
         rgba: THEME.RECESS_FILL
-      Rectangle:
+      RoundedRectangle:
         pos: self.x, self.y
         size: dp(92), self.height
-      Rectangle:
-        pos: self.x + dp(92), self.y - dp(20)
-        size: self.width - dp(92), self.height + dp(20)
-      Color:
-        rgba: THEME.BORDER_DIM
-      Line:
-        points: (self.x, self.top, self.right, self.top, self.right, self.y - dp(20), self.x + dp(92), self.y - dp(20), self.x + dp(92), self.y, self.x, self.y, self.x, self.top)
-        width: 1.0
+        radius: [dp(7), 0, 0, dp(7)]
+      RoundedRectangle:
+        pos: self.x + dp(92), self.y - dp(16)
+        size: self.width - dp(92), self.height + dp(16)
+        radius: [0, dp(7), dp(7), dp(7)]
 
     Label:
       text: app.version
@@ -90,8 +98,8 @@
       source: "pictures/reflex_logo.png"
       mipmap: True
       size_hint: None, None
-      height: dp(46)
+      height: dp(37)
       width: self.height * 3.83
-      pos: self.parent.right - self.width - dp(8), self.parent.y - dp(14)
+      pos: self.parent.right - self.width - dp(9), self.parent.y - dp(9)
       allow_stretch: True
       keep_ratio: True

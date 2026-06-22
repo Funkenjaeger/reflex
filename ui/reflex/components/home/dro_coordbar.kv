@@ -80,11 +80,12 @@
         text: root.axis.speed_unit if root.axis else ""
         valign: 'top'
 
-  # Zero key: a small centered circle (not a full-height disc) with margin to
-  # the screen edge, matching the mockup.
+  # Zero key: a small circle centered in the dead space between the units
+  # display and the right screen edge. The wider column (vs the value cell)
+  # also nudges the readouts left, giving the dogleg logo box room.
   AnchorLayout:
     size_hint_x: None
-    width: dp(108)
+    width: dp(172)
     anchor_x: 'center'
     anchor_y: 'center'
     CircularButton:
@@ -96,9 +97,3 @@
       # beep handled by BeepMixin.on_press
       on_press: root.on_zero_press()
       on_release: root.on_zero_release()
-
-  # Subtle right margin so the readouts sit a touch left, giving the dogleg
-  # logo box enough width to stay legible.
-  Widget:
-    size_hint_x: None
-    width: dp(64)
