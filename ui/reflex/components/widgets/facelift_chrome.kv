@@ -26,15 +26,19 @@
 # ── Shared settings-row controls ───────────────────────────────────────────
 # Subtle info/help button (the "i" icon at the left of each settings row).
 <FormHelpButton@Button>:
+    # A plain "?" help affordance. Uses a literal character (not an icon-font
+    # glyph) so it can't be broken by the global <Button> font rule, which would
+    # otherwise swap in a font that lacks the icon glyph (rendering tofu).
     size_hint_x: None
     width: self.height
     background_normal: ''
     background_down: ''
     background_color: 0, 0, 0, 0
-    font_name: app.theme.font_icon
-    font_size: dp(19)
+    font_name: app.theme.font_bold
+    font_size: dp(22)
+    bold: True
     color: app.theme.text_dim
-    text: "\uf129"
+    text: "?"
 
 # Row caption: left-aligned, Chakra Petch, light blue-grey.
 <FormLabel@Label>:
