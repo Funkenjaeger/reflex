@@ -1,22 +1,68 @@
+# Restyled LedButton (see led_button.py): recessed dark slate pill, a small
+# glowing LED dot on the left, an optional Font Awesome icon, then the label.
+# Public API unchanged -- existing call sites (StatusBar, els_advbar) still
+# just set label / checkbox_value / current_color.
+
 <LedButton>:
+  # Default LED color: cyan when "on", dim slate when "off". Callers that set
+  # current_color directly (e.g. els_advbar tri-state) override this.
   color_on: app.formats.color_on
   color_off: app.formats.color_off
   current_color: self.color_on if self.checkbox_value else self.color_off
   label: ""
   checkbox_value: True
-  font_name: "fonts/Manrope-Bold.ttf"
+  font_name: app.theme.font_bold
   font_size: 16
 
-  BoxLayout:
-    canvas.before:
-      Color:
-        rgba: root.current_color
-      Rectangle:
-        pos: self.pos[0] + 4, self.pos[1] + 4
-        size: self.size[0] - 9, self.size[1] - 8
+  canvas.before:
+    # Recessed slate pill (suppressed in flat mode -- the dot + label then sit
+    # bare in a shared parent gutter).
+    Color:
+      rgba: [0, 0, 0, 0] if root.flat else app.theme.recess
+    RoundedRectangle:
+      pos: self.x + 3, self.y + 3
+      size: max(self.width - 6, 0), max(self.height - 6, 0)
+      radius: [6]
+    Color:
+      rgba: [0, 0, 0, 0] if root.flat else app.theme.border_dim
+    Line:
+      rounded_rectangle: (self.x + 3, self.y + 3, max(self.width - 6, 0), max(self.height - 6, 0), 6)
+      width: 1.0
 
-    orientation: "vertical"
-    Label:
-      font_name: root.font_name
-      font_size: root.font_size
-      text: root.label
+    # LED glow + dot, vertically centered near the left edge.
+    Color:
+      rgba: (root.current_color[0], root.current_color[1], root.current_color[2], 0.25)
+    Ellipse:
+      pos: self.x + 12 - min(8, self.height * 0.18) - 2, self.center_y - min(8, self.height * 0.18) - 2
+      size: (min(8, self.height * 0.18) + 2) * 2, (min(8, self.height * 0.18) + 2) * 2
+    Color:
+      rgba: root.current_color
+    Ellipse:
+      pos: self.x + 12 - min(8, self.height * 0.18), self.center_y - min(8, self.height * 0.18)
+      size: min(8, self.height * 0.18) * 2, min(8, self.height * 0.18) * 2
+
+  Widget:
+    # Left gutter reserving room for the LED dot.
+    size_hint_x: None
+    width: 24
+
+  Label:
+    # Optional Font Awesome icon -- needs the FA font, so it lives in its own
+    # label. Collapses to zero width when no icon is set.
+    font_name: app.theme.font_icon
+    font_size: root.font_size
+    text: root.icon
+    color: app.theme.text
+    size_hint_x: None
+    width: (self.texture_size[0] + 8) if root.icon else 0
+    halign: 'center'
+    valign: 'middle'
+
+  Label:
+    font_name: root.font_name
+    font_size: root.font_size
+    text: root.label
+    color: app.theme.text
+    halign: 'left' if (root.two_line or root.flat) else 'center'
+    valign: 'middle'
+    text_size: (self.width, None) if (root.two_line or root.flat) else (None, None)

@@ -6,8 +6,9 @@
     Label:
       text: root.name
       text_size: root.size
+      font_name: app.theme.font_bold
+      color: app.theme.accent_text
       font_size: app.formats.font_size
-#      font_size: self.height / 2.5
       valign: root.valign
       halign: root.halign
     Widget:
@@ -16,7 +17,7 @@
       size_hint: None, None
       canvas:
         Color:
-          rgba: 0.75, 0.75, 0.75, 1
+          rgba: app.theme.border
         Rectangle:
           size: self.size
           pos: self.pos

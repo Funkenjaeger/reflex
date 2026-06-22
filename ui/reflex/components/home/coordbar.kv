@@ -1,18 +1,36 @@
 #: import Factory kivy.factory.Factory
 #: import Keypad reflex.components.popups.keypad
 #: import AutoSizeButton reflex.components.widgets.auto_size_button
+#: import CircularButton reflex.components.widgets.circular_button
 
 <CoordBar>:
   orientation: "horizontal"
   size_hint_y: 1
+  # Axis label: a cell in the dark left gutter (right border + bottom divider so
+  # the rows merge into one gutter). Still toggles sync; a green letter + faint
+  # green fill tint signals sync enabled.
   Button:
     width: 96
     size_hint_x: None
     text: root.axis.axis_name if root.axis else "?"
-    font_size: min(self.height / 1.5, self.width/1.5)
-    background_color: [0.2, 1, 0.2, 1] if (root.axis and root.axis.syncEnable) else [0.3, 0.3, 0.3, 1]
+    font_name: app.theme.font_bold
+    font_size: min(self.height / 1.7, self.width / 1.7)
+    color: app.theme.success if (root.axis and root.axis.syncEnable) else app.theme.text
+    background_color: 0, 0, 0, 0
+    background_normal: ""
     on_press: app.beep()
     on_release: root.toggle_sync()
+    canvas.before:
+      Color:
+        rgba: app.theme.success_bg if (root.axis and root.axis.syncEnable) else app.theme.surface
+      Rectangle:
+        pos: self.pos
+        size: self.size
+      Color:
+        rgba: app.theme.border_dim
+      Line:
+        points: (self.right - 0.5, self.top, self.right - 0.5, self.y, self.x, self.y)
+        width: 1.0
 
   BoxLayout:
     orientation: "horizontal"
@@ -23,13 +41,13 @@
         orientation: "horizontal"
         size_hint_y: 0.7
         AutoSizeButton:
-          background_color: (0, 0, 0, 1)
+          background_color: 0, 0, 0, 0
           id: pos_label
-          font_name: app.formats.font_name
+          font_name: app.theme.font_seg
           max_font_size: min(self.height / 1.1, self.parent.width/5)
           font_style: "bold"
           color: app.formats.display_color
-          text: root.axis.formattedPosition if root.axis else "--"
+          text: (root.axis.formattedPosition).replace("+", "") if root.axis else "--"
           text_size: self.size
           halign: 'right'
           valign: 'center'
@@ -85,7 +103,7 @@
         font_name: app.formats.font_name
         font_size: self.width / 3
         font_style: "bold"
-        background_color: [0.3, 0.3, 0.3, 1]
+        background_color: app.theme.surface
         color: app.formats.display_color
         text: str(int(root.axis.syncRatioNum)) if root.axis else "--"
         text_size: self.size
@@ -110,7 +128,7 @@
         font_name: app.formats.font_name
         font_size: self.width / 3
         font_style: "bold"
-        background_color: [0.3, 0.3, 0.3, 1]
+        background_color: app.theme.surface
         color: app.formats.display_color
         text: str(int(root.axis.syncRatioDen)) if root.axis else "--"
         text_size: self.size
@@ -119,14 +137,19 @@
         on_press: app.beep()
         on_release: Factory.Keypad(integer=True).show(root.axis, 'syncRatioDen') if root.axis else None
 
-  Button:
-    text: "Zero"
-    font_size: 24
-    font_style: "bold"
-    background_color: [0.5, 0.5, 0.5, 1]
-    width: self.height
+  # Zero key: a small centered circle (not a full-height disc) with margin to
+  # the screen edge, matching the mockup.
+  AnchorLayout:
     size_hint_x: None
-    on_press:
-      app.beep()
-      root.on_zero_press()
-    on_release: root.on_zero_release()
+    width: dp(108)
+    anchor_x: 'center'
+    anchor_y: 'center'
+    CircularButton:
+      text: "Zero"
+      size_hint: None, None
+      height: min(self.parent.height * 0.62, dp(76))
+      width: self.height
+      font_size: self.height * 0.30
+      # beep handled by BeepMixin.on_press
+      on_press: root.on_zero_press()
+      on_release: root.on_zero_release()

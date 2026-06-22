@@ -1,5 +1,10 @@
 from kivy.logger import Logger
-from kivy.properties import NumericProperty, BooleanProperty, StringProperty
+from kivy.properties import (
+    NumericProperty,
+    BooleanProperty,
+    StringProperty,
+    AliasProperty,
+)
 from kivy.uix.boxlayout import BoxLayout
 
 from reflex.components.home.thread_type import ThreadType
@@ -21,6 +26,32 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     enable_stop = BooleanProperty(True)
     enable_retract = BooleanProperty(True)
     enable_wizard = BooleanProperty(True)
+
+    # ── One-hot tri-state operating mode (derived from the flags above) ───────
+    # The single mode button in the advanced bar cycles through these three:
+    #   "wizard"        -> guided multi-step cut (enable_wizard)
+    #   "stop_retract"  -> stop target + auto-retract
+    #   "stop"          -> stop target only
+    def _get_mode(self):
+        if self.enable_wizard:
+            return "wizard"
+        if self.enable_retract:
+            return "stop_retract"
+        return "stop"
+
+    mode = AliasProperty(_get_mode, None, bind=["enable_wizard", "enable_retract"])
+
+    def apply_mode(self, value):
+        """Set the operating mode from the one-hot mode tab's selected value."""
+        if value == "wizard":
+            self.enable_wizard = True
+            self.enable_retract = True
+        elif value == "stop_retract":
+            self.enable_wizard = False
+            self.enable_retract = True
+        else:  # "stop"
+            self.enable_wizard = False
+            self.enable_retract = False
 
     # ── Per-job thread settings (persisted) ──────────────────────────────────
     thread_profile_type = StringProperty("ISO_METRIC")

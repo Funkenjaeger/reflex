@@ -5,7 +5,7 @@
     font_size: 14
     halign: "left"
     text_size: self.size
-    color: [1, 1, 1, 0.5]
+    color: app.theme.text_dim
 
 <CoordsValue@Label>:
     size_hint_y: None
@@ -14,7 +14,7 @@
     font_size: 14
     halign: "left"
     text_size: self.size
-    color: [1, 1, 1, 1]
+    color: app.theme.text
 
 <CoordsOverlay>:
     orientation: 'vertical'
@@ -23,7 +23,7 @@
 
     canvas.before:
         Color:
-            rgba: 0.102, 0.102, 0.180, 0.85
+            rgba: app.theme.recess[0], app.theme.recess[1], app.theme.recess[2], 0.85
         RoundedRectangle:
             size: self.size
             pos: self.pos

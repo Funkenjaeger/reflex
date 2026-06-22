@@ -3,8 +3,25 @@
 #: import USE_CASE_MODES reflex.app.USE_CASE_MODES
 
 <SetupButton@Button>:
+  font_name: app.theme.font_bold
   font_size: app.formats.font_size
+  color: app.theme.accent_text if self.state == 'down' else app.theme.text
+  background_normal: ''
+  background_down: ''
+  background_color: 0, 0, 0, 0
   on_press: app.beep()
+  canvas.before:
+    Color:
+      rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
+    RoundedRectangle:
+      pos: self.pos
+      size: self.size
+      radius: [dp(8)]
+    Color:
+      rgba: app.theme.accent if self.state == 'down' else app.theme.border
+    Line:
+      rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(8))
+      width: 1.0
 
 <SetupScreen>:
   BoxLayout:

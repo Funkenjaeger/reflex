@@ -1,0 +1,65 @@
+# Styling for LedCardButton (see led_card_button.py). Shared slate card with a
+# square-inset status LED, optional status text on that LED's baseline, optional
+# centred image, and a main label.
+
+<LedCardButton>:
+    opacity: 0.5 if self.disabled else 1
+    status_color: app.theme.text_dim
+
+    canvas.before:
+        # Card fill (cyan-tinted when highlighted).
+        Color:
+            rgba: app.theme.accent_bg if root.highlighted else app.theme.surface
+        RoundedRectangle:
+            pos: self.x + dp(4), self.y + dp(6)
+            size: self.width - dp(8), self.height - dp(12)
+            radius: [root.radius]
+        # Border.
+        Color:
+            rgba: app.theme.accent if root.highlighted else app.theme.border_dim
+        Line:
+            rounded_rectangle: (self.x + dp(4), self.y + dp(6), self.width - dp(8), self.height - dp(12), root.radius)
+            width: 1.2
+        # Status LED, inset a square dp(8) from the card's top-left corner.
+        Color:
+            rgba: root.led_color
+        Ellipse:
+            pos: self.x + dp(12), self.top - dp(23)
+            size: dp(9), dp(9)
+
+    Label:
+        # Status text, vertically centred on the LED, just to its right.
+        text: root.status_text
+        font_name: app.theme.font_bold
+        font_size: dp(11)
+        color: root.status_color
+        halign: 'left'
+        valign: 'middle'
+        size_hint: None, None
+        size: root.width - dp(30), dp(16)
+        x: root.x + dp(27)
+        center_y: root.top - dp(18)
+        text_size: self.size
+
+    Image:
+        # Optional centred image (upper area, above the main label). White
+        # source art is tinted to the card's text color so it follows the theme.
+        source: root.image_source
+        allow_stretch: True
+        keep_ratio: True
+        color: app.theme.accent_text if root.highlighted else app.theme.text
+        opacity: 1 if root.image_source else 0
+        size_hint: 0.5, 0.4
+        pos_hint: {'center_x': 0.5, 'center_y': 0.56}
+
+    Label:
+        # Main label (lower when an image sits above it, else centred).
+        text: root.text
+        font_name: app.theme.font_bold
+        font_size: root.font_size
+        color: app.theme.accent_text if root.highlighted else app.theme.text
+        halign: 'center'
+        valign: 'middle'
+        size_hint: 1, (0.3 if root.image_source else 0.5)
+        pos_hint: {'center_x': 0.5, 'center_y': (0.18 if root.image_source else 0.4)}
+        text_size: self.size

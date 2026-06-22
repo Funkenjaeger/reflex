@@ -1,5 +1,6 @@
 import math
 
+from kivy.clock import Clock
 from kivy.logger import Logger
 from kivy.uix.floatlayout import FloatLayout
 from kivy.properties import BooleanProperty, NumericProperty, ListProperty
@@ -11,16 +12,8 @@ from reflex.utils.kv_loader import load_kv
 log = Logger.getChild(__name__)
 load_kv(__file__)
 
-# CNC Dark color theme
-BG_COLOR = (0.102, 0.102, 0.180, 1)          # #1a1a2e
-GRID_COLOR = (0.165, 0.165, 0.243, 1)        # #2a2a3e
-AXIS_COLOR = (0.306, 0.804, 0.769, 1)        # #4ecdc4
-ORIGIN_COLOR = (0.306, 0.804, 0.769, 1)      # #4ecdc4
-SELECTED_COLOR = (1.0, 0.8, 0.208, 1)        # #ffcc35
-UNSELECTED_COLOR = (0.306, 0.804, 0.769, 0.4)  # #4ecdc4 @ 40%
-TOOL_COLOR = (1.0, 0.42, 0.42, 1)            # #ff6b6b
-AT_POSITION_COLOR = (0.2, 1.0, 0.2, 1)      # bright green
-
+# Plot colors come from the active theme (app.theme.*); see _update_static/
+# _update_tool. Only non-color geometry constants live here.
 GRID_SPACING = 50  # world-space mm
 
 
@@ -52,6 +45,17 @@ class Scene(FloatLayout, StencilView):
         self.bind(tool_x=self._update_tool)
         self.bind(tool_y=self._update_tool)
         self.bind(at_position=self._update_tool)
+        # Recolor live on theme switch. ThemeProvider.apply() sets tokens one at
+        # a time, so a synchronous repaint fired by plot_bg would read the other
+        # plot tokens (plot_grid/plot_tool/accent/warning) while they're still
+        # the previous theme's values. Defer to the next frame (a trigger also
+        # dedupes the two updates into one repaint) so the whole sweep finishes.
+        self._repaint_trigger = Clock.create_trigger(self._repaint, 0)
+        self.app.theme.bind(plot_bg=lambda *_: self._repaint_trigger())
+
+    def _repaint(self, *args):
+        self._update_static()
+        self._update_tool()
 
     def _update_static(self, *args):
         self.scaled_points = [
@@ -67,11 +71,11 @@ class Scene(FloatLayout, StencilView):
         self._static_group.clear()
 
         # 1. Background fill
-        self._static_group.add(Color(*BG_COLOR))
+        self._static_group.add(Color(*self.app.theme.plot_bg))
         self._static_group.add(Rectangle(pos=(0, 0), size=(self.width, self.height)))
 
         # 2. Grid lines at GRID_SPACING world-space intervals
-        self._static_group.add(Color(*GRID_COLOR))
+        self._static_group.add(Color(*self.app.theme.plot_grid))
         spacing = GRID_SPACING * self.zoom
         if spacing > 2:  # skip grid when zoomed out too far
             # Vertical grid lines
@@ -93,12 +97,12 @@ class Scene(FloatLayout, StencilView):
                 self._static_group.add(Line(points=[0, y, self.width, y], width=1))
 
         # 3. Axes — teal, full widget span
-        self._static_group.add(Color(*AXIS_COLOR))
+        self._static_group.add(Color(*self.app.theme.accent))
         self._static_group.add(Line(points=[cx, 0, cx, self.height], width=1))
         self._static_group.add(Line(points=[0, cy, self.width, cy], width=1))
 
         # 4. Origin marker — teal cross (±15px)
-        self._static_group.add(Color(*ORIGIN_COLOR))
+        self._static_group.add(Color(*self.app.theme.accent))
         arm = 15
         self._static_group.add(Line(points=[cx - arm, cy, cx + arm, cy], width=1.5))
         self._static_group.add(Line(points=[cx, cy - arm, cx, cy + arm], width=1.5))
@@ -108,11 +112,11 @@ class Scene(FloatLayout, StencilView):
             px = p[0] + cx
             py = p[1] + cy
             if i == self.selected_point:
-                self._static_group.add(Color(*SELECTED_COLOR))
+                self._static_group.add(Color(*self.app.theme.warning))
                 arm = 12
                 w = 1.5
             else:
-                self._static_group.add(Color(*UNSELECTED_COLOR))
+                self._static_group.add(Color(*self.app.theme.accent[:3], 0.4))
                 arm = 8
                 w = 1
             # Center dot
@@ -129,7 +133,7 @@ class Scene(FloatLayout, StencilView):
         self._tool_group.clear()
 
         # 6. Tool position — diamond (green when at position, coral red otherwise)
-        self._tool_group.add(Color(*(AT_POSITION_COLOR if self.at_position else TOOL_COLOR)))
+        self._tool_group.add(Color(*(self.app.theme.success if self.at_position else self.app.theme.plot_tool)))
         tx = self.tool_x * self.zoom + cx
         ty = self.tool_y * self.zoom + cy
         r = self.dot_size * 0.7  # diamond half-size

@@ -7,7 +7,7 @@ from kivy.lang.parser import Parser, ParserException
 
 def get_kv_files():
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return glob.glob(os.path.join(project_root, "rcp", "**", "*.kv"), recursive=True)
+    return glob.glob(os.path.join(project_root, "reflex", "**", "*.kv"), recursive=True)
 
 
 @pytest.mark.parametrize("kv_file", get_kv_files(), ids=lambda p: os.path.relpath(p))

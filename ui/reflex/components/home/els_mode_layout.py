@@ -1,4 +1,5 @@
 from kivy.clock import Clock
+from kivy.metrics import dp
 from kivy.properties import StringProperty
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.widget import Widget
@@ -115,8 +116,12 @@ class ElsModeLayout(ModeLayout):
         if num_rows == 0:
             return
 
+        # Reserve a small margin between the DRO section and the ELS bars,
+        # symmetric with the gap under the top status bar. The spacer (which
+        # absorbs leftover space) ends up exactly this gap on the target res.
+        dro_els_gap = dp(8)
         available = self.height - self.els_bar.height - self.els_adv_bar.height
-        row_height = min(available / num_rows, self.app.formats.max_row_height)
+        row_height = min((available - dro_els_gap) / num_rows, self.app.formats.max_row_height)
 
         self.spindle_info.size_hint_y = None
         self.spindle_info.height = row_height

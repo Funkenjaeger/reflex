@@ -5,16 +5,11 @@
 
   BoxLayout:
     orientation: "horizontal"
-    Button:
-      size_hint_x: None
-      width: self.height
-      font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-      font_size: 21
-      text: "\uf129"
+    FormHelpButton:
       disabled: not root.help_file
       on_press: app.beep()
       on_release: Factory.HelpPopup.show_help(root.help_file)
-    Label:
+    FormLabel:
       size_hint_x: 0.7
       text: root.name
       font_size: app.formats.font_size
@@ -23,13 +18,14 @@
       width: 250
 
       orientation: "vertical"
-      Button:
+      FormValueButton:
         canvas.after:
           Color:
             rgba: root.color
-          Rectangle:
-            pos: self.pos[0] + 4, self.pos[1] + 4
-            size: self.size[0] - 9, self.size[1] - 8
+          RoundedRectangle:
+            pos: self.x + dp(8), self.y + dp(9)
+            size: self.width - dp(16), self.height - dp(18)
+            radius: [dp(3)]
         on_press: app.beep()
         on_release:
           app.color_picker.callback = root.set_color

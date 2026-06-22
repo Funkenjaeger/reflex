@@ -14,4 +14,3 @@ class KeypadButton(BeepMixin, Button):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.font_name = "fonts/Manrope-Bold.ttf"

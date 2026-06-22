@@ -4,7 +4,7 @@ from kivy.properties import StringProperty, ObjectProperty, NumericProperty, Boo
 from kivy.uix.boxlayout import BoxLayout
 from pydantic import BaseModel
 
-from rcp import feeds
+from reflex import feeds
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
 from reflex.utils.kv_loader import load_kv
 

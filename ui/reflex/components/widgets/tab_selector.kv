@@ -1,0 +1,100 @@
+# Styling for TabSelector / TabSegment (see tab_selector.py).
+#
+# Each segment paints its OWN rounded background, so selected and unselected
+# segments share identical geometry -- no separate group "backing" layer to
+# peek out from under a square selected fill (which caused the corner notch +
+# square-selected-corner artifacts). The outer (screen-side) corner is rounded
+# only on the first/last segment so the butted group reads as one rounded-left
+# strip. The inner edge stays flush and carries a crisp cyan accent bar when
+# selected (no soft glow -> no ghosting/misalignment).
+
+<TabSelector>:
+    spacing: 0
+
+
+<TabSegment>:
+    opacity: 0.45 if self.disabled else 1
+    # In a vertical (sidebar) group the unselected rows shrink so the selected
+    # one dominates and the group is more compact (less 2-state vs 4-state
+    # disparity). Horizontal groups keep full cross-axis height.
+    size_hint_y: (1.0 if self.is_selected else 0.68) if self.edge in ('left', 'right') else 1
+
+    canvas.before:
+        # Per-segment body fill. Round only the outer corner of the first/last
+        # segment so a butted group reads as one rounded strip: left corners for
+        # a right-accent (vertical) group, right corners for a left-accent one,
+        # and the leading/trailing ends for a horizontal (top/bottom) group.
+        Color:
+            rgba: app.theme.accent_bg if self.is_selected else app.theme.surface
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            # Per-segment corner radii computed by the parent group's shape.
+            radius: self.radius
+
+        # Hairline divider between butted segments (skip the first): a top edge
+        # for vertical stacks, a left edge for horizontal rows.
+        Color:
+            rgba: app.theme.border_dim if not self.is_first else [0, 0, 0, 0]
+        Line:
+            points: (self.x, self.top, self.right, self.top) if self.edge in ('left', 'right') else (self.x, self.y, self.x, self.top)
+            width: 1.0
+
+        # Crisp accent bar on the inner edge when selected. Drawn full length
+        # but stencil-clipped to the body's rounded rectangle, so it follows
+        # (and is cropped by) any rounded corner -- no poke, no gap.
+        StencilPush
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: self.radius
+        StencilUse
+        Color:
+            rgba: app.theme.accent if (self.is_selected and self.show_accent) else [0, 0, 0, 0]
+        Rectangle:
+            pos: (self.x, self.y) if self.edge == 'left' else ((self.right - dp(3), self.y) if self.edge == 'right' else ((self.x, self.y) if self.edge == 'bottom' else (self.x, self.top - dp(3))))
+            size: (dp(3), self.height) if self.edge in ('left', 'right') else (self.width, dp(3))
+        StencilUnUse
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: self.radius
+        StencilPop
+
+    Label:
+        # Text glyph (hidden when the segment uses image icons instead).
+        text: root.text
+        font_name: root.font_name
+        # Unselected segments use a smaller font so the selected one stands out.
+        font_size: (root.font_size if root.font_size else min(self.height * 0.5, self.width * 0.42, sp(30))) * (1.0 if root.is_selected else 0.68)
+        bold: True
+        color: app.theme.accent_text if root.is_selected else app.theme.text_dim
+        opacity: 0 if root.icons else 1
+        size_hint: 1, 1
+        pos_hint: {'x': 0, 'y': 0}
+        text_size: self.size
+        halign: 'center'
+        valign: 'middle'
+
+    Image:
+        # Primary icon (e.g. stop sign). Centered + larger when it's the only
+        # icon; raised + smaller when paired with a second stacked icon.
+        source: root.icons[0] if root.icons else ''
+        allow_stretch: True
+        keep_ratio: True
+        # White icons tinted to match the text-glyph segments so image-based
+        # segments follow the theme too (selected = accent, else dim).
+        color: app.theme.accent_text if root.is_selected else app.theme.text_dim
+        opacity: 1 if root.icons else 0
+        size_hint: (0.6, 0.4) if len(root.icons) > 1 else (0.8, 0.8)
+        pos_hint: {'center_x': 0.5, 'center_y': 0.72 if len(root.icons) > 1 else 0.5}
+
+    Image:
+        # Secondary icon (e.g. retract arrow), only when two icons are stacked.
+        source: root.icons[1] if len(root.icons) > 1 else ''
+        allow_stretch: True
+        keep_ratio: True
+        color: app.theme.accent_text if root.is_selected else app.theme.text_dim
+        opacity: 1 if len(root.icons) > 1 else 0
+        size_hint: 0.6, 0.4
+        pos_hint: {'center_x': 0.5, 'center_y': 0.28}

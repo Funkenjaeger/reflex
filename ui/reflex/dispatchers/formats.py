@@ -40,11 +40,14 @@ class FormatsDispatcher(SavingDispatcher):
     position_format = StringProperty()
     factor = ObjectProperty(Fraction(1, 1))
 
-    display_color = ColorProperty("#ffcc35ff")
+    # Active UI color theme (drives app.theme). Auto-persisted as a string.
+    theme = StringProperty("dark")
+
+    display_color = ColorProperty("#40e0edff")  # facelift cyan (was amber #ffcc35)
     accept_color = ColorProperty("#32ff32ff")
     cancel_color = ColorProperty("#ff3232ff")
-    color_on = ColorProperty("#ffcc32a0")
-    color_off = ColorProperty("#ffcc3220")
+    color_on = ColorProperty([0.16, 0.82, 0.88, 1])
+    color_off = ColorProperty([0.25, 0.30, 0.36, 1])
 
     volume = NumericProperty(0.2)
 

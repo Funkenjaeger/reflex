@@ -3,62 +3,100 @@
 #: import FeedsTablePopup reflex.components.popups.feeds_table_popup
 #: import AutoSizeButton reflex.components.widgets.auto_size_button
 #: import TwoStateButton reflex.components.toolbars.two_state_button
+#: import TabSelector reflex.components.widgets.tab_selector
+#: import IconButton reflex.components.widgets.icon_button
+#: import LedCardButton reflex.components.widgets.led_card_button
 
 <ElsBar>:
   orientation: "horizontal"
   size_hint_y: None
   height: 128
   
-  Button:
-    width: 96
+  # ── Sync Enable: shared LED card (cyan when servo enabled) ──
+  LedCardButton:
     size_hint_x: None
-    background_color: [0.2, 1, 0.2, 1] if app.servo.servoMode else [0.3, 0.3, 0.3, 1]
-    background_normal: ""
-    on_press: app.beep()
+    width: 96
+    text: "Sync\nEnable"
+    font_size: dp(12)
+    image_source: "pictures/motor_gears.png"
+    highlighted: bool(app.servo.servoMode)
+    led_color: app.formats.color_on if app.servo.servoMode else app.formats.color_off
+    # beep handled by BeepMixin.on_press
     on_release: app.servo.toggle_enable()
-    Image:
-      source: "pictures/motor_gears.png"
-      x: self.parent.x + self.parent.width * 0.1
-      y: self.parent.y + self.parent.height * 0.1
-      width: self.parent.width * 0.8
-      height: self.parent.height * 0.8
-      allow_stretch: True
-      keep_ratio: True
-  
-  BoxLayout: # Direction button
+
+  # ── DIR: bordered box — "DIR" header (divider below) over a forward/
+  #    reverse one-hot, matching the mockup; margin around the box ──
+  BoxLayout:
     orientation: 'vertical'
     size_hint_x: None
     width: 96
-    Label:
-      id: dir_lbl
-      text: "DIR"
-      font_size: self.height / 1.5
-      size_hint_y: 0.3
-      color: app.formats.display_color
-      halign: 'center'
-      valign: 'top'
-    TwoStateButton:
-      orientation: "horizontal"
-      width: self.parent.width
-      size_hint_y: 0.7
-      font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-      label_true: "\uf060"
-      label_false: "\uf061"
-      value: root.els_forward
-      on_release: root.toggle_move_direction()
-      disabled: app.els.spindle_is_running
+    padding: dp(4), dp(6), dp(4), dp(6)
+    BoxLayout:
+      orientation: 'vertical'
+      canvas.after:
+        Color:
+          rgba: app.theme.border
+        Line:
+          rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
+          width: 1.0
+      Label:
+        id: dir_lbl
+        text: "DIR"
+        size_hint_y: 0.36
+        font_name: app.theme.font_bold
+        font_size: self.height / 1.7
+        color: app.theme.text_dim
+        halign: 'center'
+        valign: 'middle'
+        canvas.after:
+          Color:
+            rgba: app.theme.border_dim
+          Line:
+            points: (self.x, self.y, self.right, self.y)
+            width: 1.0
+      TabSelector:
+        orientation: "horizontal"
+        shape: "bottom"
+        size_hint_y: 0.64
+        disabled: app.els.spindle_is_running
+        selected: "fwd" if root.els_forward else "rev"
+        on_select: root.els_forward = (args[1] == "fwd")
+        TabSegment:
+          value: "fwd"
+          text: "\uf060"
+          font_name: app.theme.font_icon
+        TabSegment:
+          value: "rev"
+          text: "\uf061"
+          font_name: app.theme.font_icon
 
-  Button:
-    width: 96
+  # ── ADV: shared LED card; lights cyan when advanced mode is on ──
+  LedCardButton:
     size_hint_x: None
+    width: 96
     text: "ADV"
-    on_press:
-      root.enable_advanced = not root.enable_advanced
-      app.beep()
+    font_size: dp(20)
+    highlighted: root.enable_advanced
+    led_color: app.formats.color_on if root.enable_advanced else app.formats.color_off
+    # beep handled by BeepMixin.on_press
+    on_release: root.enable_advanced = not root.enable_advanced
 
+  # ── Cut type / direction illustration: dark recessed panel (item 5) ──
   Button:
-    background_color: [0.5, 0.5, 0.5, 1]
+    background_color: 0, 0, 0, 0
     background_normal: ""
+    canvas.before:
+      Color:
+        rgba: app.theme.recess
+      RoundedRectangle:
+        pos: self.x + dp(4), self.y + dp(6)
+        size: self.width - dp(8), self.height - dp(12)
+        radius: [dp(7)]
+      Color:
+        rgba: app.theme.border_dim
+      Line:
+        rounded_rectangle: (self.x + dp(4), self.y + dp(6), self.width - dp(8), self.height - dp(12), dp(7))
+        width: 1.0
     Image:
       source: "pictures/" + root.move_type + ".png"
       x: self.parent.x + self.parent.width * 0.1
@@ -68,52 +106,93 @@
       allow_stretch: True
       keep_ratio: True
 
-  Button:
-    width: self.height / 2
-    size_hint_x: None
-    font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-    text: "\uf060"
-    text_halign: "center"
-    font_size: self.height / 4
-    font_style: "bold"
-    halign: "center"
-    on_press: app.beep()
-    on_release: root.previous_feed()
-
+  # ── Feed / Thread: ONE bordered control. FEED/THREAD (a read-only one-hot
+  #    styled like the others) + pitch open the feeds modal, which DRIVES
+  #    selection; ▲▼ steppers share the box (divided), per the mockup. ──
   BoxLayout:
+    orientation: 'horizontal'
     size_hint_x: None
-    width: max(mode_lbl.texture_size[0], feed_btn.texture_size[0]) + 16
-    orientation: 'vertical'
-    Label:
-      id: mode_lbl
-      text: root.mode_name
-      font_size: self.height / 1.5
-      size_hint_y: 0.3
-      color: app.formats.display_color
-      halign: 'center'
-      valign: 'top'
-    Button:
-      id: feed_btn
-      size_hint_y: 0.7
-      font_name: app.formats.font_name
-      font_size: self.height / 2
-      font_style: "bold"
-      background_color: [0.3, 0.3, 0.3, 1]
-      color: app.formats.display_color
-      text: root.feed_name
-      halign: 'center'
-      valign: 'middle'
-      on_press: app.beep()
-      on_release: Factory.FeedsTablePopup().show_with_callback(root.set_feed_ratio, current_mode=root.mode_name)
-
-  Button:
-    width: self.height / 2
-    size_hint_x: None
-    font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
-    text: "\uf061"
-    text_halign: "center"
-    font_size: self.height / 4
-    font_style: "bold"
-    halign: "center"
-    on_press: app.beep()
-    on_release: root.next_feed()
+    width: dp(178)
+    padding: dp(4), dp(6), dp(4), dp(6)
+    BoxLayout:
+      orientation: 'horizontal'
+      canvas.after:
+        Color:
+          rgba: app.theme.border
+        Line:
+          rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
+          width: 1.0
+      # FEED/THREAD one-hot (read-only) over the pitch value; both open dialog
+      BoxLayout:
+        orientation: 'vertical'
+        TabSelector:
+          orientation: 'horizontal'
+          size_hint_y: 0.42
+          readonly: True
+          selected: "thread" if ("Thread" in root.mode_name) else "feed"
+          on_select: Factory.FeedsTablePopup().show_with_callback(root.set_feed_ratio, current_mode=root.mode_name)
+          TabSegment:
+            value: "feed"
+            text: "FEED"
+            font_name: app.theme.font_bold
+            font_size: sp(13)
+          TabSegment:
+            value: "thread"
+            text: "THREAD"
+            font_name: app.theme.font_bold
+            font_size: sp(13)
+        Button:
+          size_hint_y: 0.58
+          background_color: 0, 0, 0, 0
+          background_normal: ""
+          text: root.feed_name + " " + ("tpi" if root.mode_name == "Thread IN" else ("in" if root.mode_name == "Feed IN" else "mm"))
+          font_name: app.theme.font_mono
+          font_size: min(self.height * 0.6, self.width * 0.2)
+          color: app.formats.display_color
+          halign: 'center'
+          valign: 'middle'
+          text_size: self.size
+          on_press: app.beep()
+          on_release: Factory.FeedsTablePopup().show_with_callback(root.set_feed_ratio, current_mode=root.mode_name)
+      # vertical divider between value and steppers
+      Widget:
+        size_hint_x: None
+        width: dp(1)
+        canvas:
+          Color:
+            rgba: app.theme.border_dim
+          Rectangle:
+            pos: self.x, self.y + dp(5)
+            size: dp(1), self.height - dp(10)
+      # ▲▼ steppers (borderless, divided), inside the same box
+      BoxLayout:
+        orientation: 'vertical'
+        size_hint_x: None
+        width: dp(36)
+        Button:
+          background_color: 0, 0, 0, 0
+          background_normal: ""
+          font_name: app.theme.font_icon
+          text: "\uf062"
+          font_size: self.height * 0.36
+          color: app.theme.text
+          on_press: app.beep()
+          on_release: root.next_feed()
+        Widget:
+          size_hint_y: None
+          height: dp(1)
+          canvas:
+            Color:
+              rgba: app.theme.border_dim
+            Rectangle:
+              pos: self.x + dp(5), self.y
+              size: self.width - dp(10), dp(1)
+        Button:
+          background_color: 0, 0, 0, 0
+          background_normal: ""
+          font_name: app.theme.font_icon
+          text: "\uf063"
+          font_size: self.height * 0.36
+          color: app.theme.text
+          on_press: app.beep()
+          on_release: root.previous_feed()

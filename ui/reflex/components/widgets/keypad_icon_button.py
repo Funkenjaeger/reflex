@@ -10,8 +10,6 @@ load_kv(__file__)
 
 class KeypadIconButton(BeepMixin, Button):
     return_value = NumericProperty(0)
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.font_name = "fonts/Font Awesome 6 Free-Solid-900.otf"
+    # The icon font is set from the theme token in keypad_icon_button.kv
+    # (font_name: app.theme.font_icon).
 

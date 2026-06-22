@@ -1,0 +1,67 @@
+# Styling for StyledButton (see styled_button.py).
+# Pure-KV canvas drawing so it works on the project's current Kivy version
+# without LinearGradient. The "slate" sheen and the "highlight" glow are both
+# faked with stacked RoundedRectangle / Line instructions.
+
+<StyledButton>:
+    # Single source of truth for opacity: hidden wins, then the disabled dim.
+    # Do NOT add a second `opacity:` rule on an instance -- collapse via `hidden`
+    # instead, or the two bindings fight and the dim can leave a faint ghost.
+    opacity: 0 if self.hidden else (0.4 if self.disabled else 1)
+    # Theme-driven defaults (per-instance overrides still win, e.g. the
+    # Start/Stop button swaps in the danger palette).
+    font_name: app.theme.font_bold
+    slate_fill: app.theme.surface
+    slate_sheen: app.theme.surface_sheen
+    standard_border_color: app.theme.border
+    standard_text_color: app.theme.text
+    highlight_bg_color: app.theme.accent_bg
+    highlight_border_color: app.theme.accent
+    highlight_text_color: app.theme.accent_text
+    glow_color: app.theme.glow
+
+    # The drawn box is inset by margin_x/margin_y so a StyledButton can share a
+    # uniform gutter with neighbouring inset cards.
+    canvas.before:
+        # ── Soft outer glow (highlighted + enabled only; a disabled/blank
+        #    action button like an unavailable "Cut" should not glow) ────────
+        Color:
+            rgba: root.glow_color if (root.is_highlighted and not root.disabled) else [0, 0, 0, 0]
+        RoundedRectangle:
+            pos: (self.x + self.margin_x - 3, self.y + self.margin_y - 3)
+            size: (self.width - 2 * self.margin_x + 6, self.height - 2 * self.margin_y + 6)
+            radius: [root.radius + 3]
+
+        # ── Body fill ─────────────────────────────────────────────────────
+        Color:
+            rgba: root.highlight_bg_color if root.is_highlighted else root.slate_fill
+        RoundedRectangle:
+            pos: self.x + self.margin_x, self.y + self.margin_y
+            size: self.width - 2 * self.margin_x, self.height - 2 * self.margin_y
+            radius: [root.radius]
+
+        # ── Subtle inner top bevel (slate state only) ─────────────────────
+        Color:
+            rgba: root.slate_sheen if not root.is_highlighted else [0, 0, 0, 0]
+        Line:
+            rounded_rectangle: (self.x + self.margin_x + 1.5, self.y + self.margin_y + 1.5, self.width - 2 * self.margin_x - 3, self.height - 2 * self.margin_y - 3, max(root.radius - 1, 1))
+            width: 1.0
+
+        # ── Border ────────────────────────────────────────────────────────
+        Color:
+            rgba: root.highlight_border_color if root.is_highlighted else root.standard_border_color
+        Line:
+            rounded_rectangle: (self.x + self.margin_x + 0.5, self.y + self.margin_y + 0.5, self.width - 2 * self.margin_x - 1, self.height - 2 * self.margin_y - 1, root.radius)
+            width: 1.5 if root.is_highlighted else 1.0
+
+    Label:
+        text: root.text
+        font_size: root.font_size
+        font_name: root.font_name
+        bold: True
+        color: root.highlight_text_color if root.is_highlighted else root.standard_text_color
+        size_hint: 1, 1
+        pos_hint: {'x': 0, 'y': 0}
+        text_size: self.size
+        halign: 'center'
+        valign: 'middle'

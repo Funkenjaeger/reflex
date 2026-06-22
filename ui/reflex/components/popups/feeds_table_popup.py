@@ -6,18 +6,18 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.button import Button
 from kivy.uix.tabbedpanel import TabbedPanel, TabbedPanelItem
 
-from rcp import feeds
+from reflex import feeds
 from reflex.components.widgets.beep_mixin import BeepMixin
 
 log = Logger.getChild(__name__)
 
 
 class FeedButton(BeepMixin, Button):
+    # Visual styling (themed slate pill, cyan text) lives in the global
+    # `<FeedButton>` rule in facelift_chrome.kv so it matches the rest of the
+    # facelift. Keep only behaviour/data here.
     text_halign = "center"
-    font_style = "bold"
-    font_name = StringProperty("fonts/Manrope-Bold.ttf")
     halign = "center"
-    background_color = [1, 1, 1, 1]
     return_value = ObjectProperty(None)
 
     def __init__(self, **kwargs):
