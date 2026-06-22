@@ -66,7 +66,7 @@
       RoundedRectangle:
         pos: self.x - 1, self.y - 1
         size: dp(92) + 2, self.height + 2
-        radius: [dp(7), 0, 0, dp(7)]
+        radius: [dp(7), 0, dp(7), dp(7)]
       RoundedRectangle:
         pos: self.x + dp(92) - 1, self.y - dp(16) - 1
         size: self.width - dp(92) + 2, self.height + dp(16) + 2
@@ -76,7 +76,7 @@
       RoundedRectangle:
         pos: self.x, self.y
         size: dp(92), self.height
-        radius: [dp(7), 0, 0, dp(7)]
+        radius: [dp(7), 0, dp(7), dp(7)]
       RoundedRectangle:
         pos: self.x + dp(92), self.y - dp(16)
         size: self.width - dp(92), self.height + dp(16)
@@ -85,7 +85,7 @@
     Label:
       text: app.version
       font_name: THEME.FONT_MONO
-      font_size: 13
+      font_size: 16
       color: THEME.TEXT_DIM
       size_hint: None, None
       size: dp(92), self.parent.height
@@ -100,6 +100,7 @@
       size_hint: None, None
       height: dp(37)
       width: self.height * 3.83
-      pos: self.parent.right - self.width - dp(9), self.parent.y - dp(9)
+      # centered horizontally in the lower (tall-right) part for even margins
+      pos: (self.parent.x + dp(92) + self.parent.right - self.width) / 2, self.parent.y - dp(9)
       allow_stretch: True
       keep_ratio: True
