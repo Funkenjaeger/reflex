@@ -5,6 +5,19 @@
     opacity: 0.4 if self.disabled else 1
 
     canvas.before:
+        # Drop shadow: two stacked offset discs (3px then 2px) for a softer
+        # bottom shadow so the Zero key clearly sits on the surface.
+        Color:
+            rgba: app.theme.shadow
+        Ellipse:
+            pos: (self.center_x - (min(self.width, self.height) - 6) / 2 - 1, self.center_y - (min(self.width, self.height) - 6) / 2 - dp(3))
+            size: (min(self.width, self.height) - 6 + 2, min(self.width, self.height) - 6)
+        Color:
+            rgba: app.theme.shadow
+        Ellipse:
+            pos: (self.center_x - (min(self.width, self.height) - 6) / 2, self.center_y - (min(self.width, self.height) - 6) / 2 - dp(2))
+            size: (min(self.width, self.height) - 6, min(self.width, self.height) - 6)
+
         # Soft glow behind the ring when active.
         Color:
             rgba: app.theme.glow if (root.is_highlighted or root.state == 'down') else [0, 0, 0, 0]
@@ -12,19 +25,42 @@
             pos: (self.center_x - (min(self.width, self.height) - 6) / 2 - 3, self.center_y - (min(self.width, self.height) - 6) / 2 - 3)
             size: (min(self.width, self.height) - 6 + 6, min(self.width, self.height) - 6 + 6)
 
-        # Disc fill: faint cyan tint when active, dark slate otherwise.
-        Color:
-            rgba: app.theme.accent_bg if (root.is_highlighted or root.state == 'down') else app.theme.surface
+        # Disc face: active = flat accent tint; else a raised vertical gradient
+        # painted on a stencil-clipped flat Rectangle (an Ellipse texture maps
+        # radially and pillows), so the Zero key reads domed, not flat.
+        StencilPush
         Ellipse:
             pos: (self.center_x - (min(self.width, self.height) - 6) / 2, self.center_y - (min(self.width, self.height) - 6) / 2)
             size: (min(self.width, self.height) - 6, min(self.width, self.height) - 6)
+        StencilUse
+        Color:
+            rgba: app.theme.accent_bg if (root.is_highlighted or root.state == 'down') else [1, 1, 1, 1]
+        Rectangle:
+            texture: None if (root.is_highlighted or root.state == 'down') else app.theme.surface_texture
+            pos: (self.center_x - (min(self.width, self.height) - 6) / 2, self.center_y - (min(self.width, self.height) - 6) / 2)
+            size: (min(self.width, self.height) - 6, min(self.width, self.height) - 6)
+        StencilUnUse
+        Ellipse:
+            pos: (self.center_x - (min(self.width, self.height) - 6) / 2, self.center_y - (min(self.width, self.height) - 6) / 2)
+            size: (min(self.width, self.height) - 6, min(self.width, self.height) - 6)
+        StencilPop
+
+        # Top inner highlight arc (raised cue), skipped when active.
+        Color:
+            rgba: app.theme.surface_sheen if not (root.is_highlighted or root.state == 'down') else [0, 0, 0, 0]
+        Line:
+            circle: (self.center_x, self.center_y, (min(self.width, self.height) - 6) / 2 - 1.5, 300, 360)
+            width: 1.2
+        Line:
+            circle: (self.center_x, self.center_y, (min(self.width, self.height) - 6) / 2 - 1.5, 0, 60)
+            width: 1.2
 
         # Outline ring.
         Color:
             rgba: app.theme.accent
         Line:
             circle: (self.center_x, self.center_y, (min(self.width, self.height) - 6) / 2)
-            width: 1.8 if (root.is_highlighted or root.state == 'down') else 1.3
+            width: 2.2 if (root.is_highlighted or root.state == 'down') else 2.0
 
     Label:
         text: root.text

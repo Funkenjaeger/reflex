@@ -145,11 +145,28 @@ class MainApp(App):
                     continue
                 setattr(self.formats, prop, color)
         self.formats.bind(theme=_sync_theme)
-        # The screen background is the Window clearcolor (no widget paints it),
-        # so bind it to the theme so empty areas follow the palette.
+        # The screen background: clearcolor is the flat fallback, and a gradient
+        # texture is painted over it on the Window's own canvas (before any
+        # screen) so empty areas read with a faint top-down lift instead of a
+        # flat slab. No widget owns the backdrop, so the Window canvas is the
+        # one place that covers every screen at once.
         from kivy.core.window import Window
+        from kivy.graphics import Color, Rectangle
         Window.clearcolor = self.theme.background
         self.theme.bind(background=lambda _inst, value: setattr(Window, "clearcolor", value))
+        with Window.canvas.before:
+            self._bg_color = Color(1, 1, 1, 1)
+            self._bg_rect = Rectangle(
+                pos=(0, 0), size=Window.size, texture=self.theme.background_texture
+            )
+
+        def _resize_bg(*_):
+            self._bg_rect.pos = (0, 0)
+            self._bg_rect.size = Window.size
+        Window.bind(size=_resize_bg)
+        self.theme.bind(
+            background_texture=lambda _i, v: setattr(self._bg_rect, "texture", v)
+        )
         self.board = Board(formats=self.formats, offset_provider=self)
 
         # Load beep sound

@@ -74,6 +74,7 @@
       text: "Disengage" if root.controller.engaged else "Engage"
       font_size: dp(17)
       disabled: root.is_running
+      led_on: root.controller.engaged
       led_color: app.theme.led_off if not root.controller.engaged else (app.theme.danger if root.controller.els_stop_active else app.theme.success)
       status_text: "Disabled" if not root.controller.engaged else ("Stopped" if root.controller.els_stop_active else "Armed")
       status_color: app.theme.text_dim if not root.controller.engaged else (app.theme.danger_text if root.controller.els_stop_active else app.theme.success_text)
@@ -97,7 +98,7 @@
       font_size: self.height / 4
       # Only light up (fill/border/glow) when actually enabled.
       is_highlighted: not self.disabled
-      highlight_bg_color: app.theme.accent_bg if root.controller.start_not_stop else app.theme.danger_bg
+      highlight_bg_color: app.theme.accent_soft if root.controller.start_not_stop else app.theme.danger_bg
       highlight_border_color: app.theme.accent if root.controller.start_not_stop else app.theme.danger
       highlight_text_color: app.theme.accent_text if root.controller.start_not_stop else app.theme.danger_text
       glow_color: app.theme.glow if root.controller.start_not_stop else app.theme.danger_glow
@@ -160,8 +161,11 @@
       size_hint_x: None
       margin_x: dp(4)
       margin_y: dp(6)
-      # Only light up (cyan fill/border/glow) when there's an action to take;
-      # a disabled/blank action button stays a quiet slate box.
+      # When blank this reads as a recessed well (not a raised slate), per the
+      # styling brief; it lights up (accent_soft fill + border) only when
+      # there's an action to take.
+      slate_fill: app.theme.recess
+      standard_border_color: app.theme.border_dim
       is_highlighted: bool(root.controller.action_button_text) and root.controller.action_allowed
       disabled: not root.controller.action_button_text or not root.controller.action_allowed
       text: root.controller.action_button_text
@@ -190,6 +194,27 @@
         size_hint_y: 0.62
         orientation: "horizontal"
         shape: "standalone"
+        # Sit the one-hot in a recessed well (inset by padding so the carved
+        # frame shows around the segments).
+        padding: dp(3)
+        canvas.before:
+          Color:
+            rgba: app.theme.recess
+          RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(7)]
+          Color:
+            rgba: 1, 1, 1, 1
+          Rectangle:
+            texture: app.theme.recess_shadow
+            pos: self.x + dp(4), self.top - 1 - dp(6)
+            size: max(self.width - dp(8), 0), dp(6)
+          Color:
+            rgba: app.theme.border_dim
+          Line:
+            rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
+            width: 1.0
         disabled: root.is_running
         selected: root.mode
         on_select: root.apply_mode(args[1])

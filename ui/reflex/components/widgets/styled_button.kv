@@ -15,7 +15,9 @@
     slate_sheen: app.theme.surface_sheen
     standard_border_color: app.theme.border
     standard_text_color: app.theme.text
-    highlight_bg_color: app.theme.accent_bg
+    # Active fill is the translucent accent tint (flat) -- e.g. Cut reads as a
+    # quiet accent_soft panel + accent border, not a saturated block.
+    highlight_bg_color: app.theme.accent_soft
     highlight_border_color: app.theme.accent
     highlight_text_color: app.theme.accent_text
     glow_color: app.theme.glow
@@ -32,7 +34,19 @@
             size: (self.width - 2 * self.margin_x + 6, self.height - 2 * self.margin_y + 6)
             radius: [root.radius + 3]
 
-        # ── Body fill ─────────────────────────────────────────────────────
+        # ── Drop shadow (raised lift; ~0 alpha in dark, visible in light) ──
+        # Skip when the slate is a recessed well (a blank action panel sits IN
+        # the surface, not on it -- its slate_fill is then the recess color).
+        Color:
+            rgba: app.theme.shadow if root.slate_fill != app.theme.recess else [0, 0, 0, 0]
+        RoundedRectangle:
+            pos: self.x + self.margin_x, self.y + self.margin_y - dp(2)
+            size: self.width - 2 * self.margin_x, self.height - 2 * self.margin_y
+            radius: [root.radius]
+
+        # ── Body fill (FLAT) ──────────────────────────────────────────────
+        # Slate state is a flat surface (disabled action buttons read as a
+        # quiet box, dimmed via opacity); active is a flat accent_soft tint.
         Color:
             rgba: root.highlight_bg_color if root.is_highlighted else root.slate_fill
         RoundedRectangle:
@@ -40,19 +54,19 @@
             size: self.width - 2 * self.margin_x, self.height - 2 * self.margin_y
             radius: [root.radius]
 
-        # ── Subtle inner top bevel (slate state only) ─────────────────────
+        # ── 1px top inner highlight line (slate/raised state only) ─────────
         Color:
             rgba: root.slate_sheen if not root.is_highlighted else [0, 0, 0, 0]
         Line:
-            rounded_rectangle: (self.x + self.margin_x + 1.5, self.y + self.margin_y + 1.5, self.width - 2 * self.margin_x - 3, self.height - 2 * self.margin_y - 3, max(root.radius - 1, 1))
+            points: (self.x + self.margin_x + root.radius, self.y + self.height - self.margin_y - 1, self.x + self.width - self.margin_x - root.radius, self.y + self.height - self.margin_y - 1)
             width: 1.0
 
-        # ── Border ────────────────────────────────────────────────────────
+        # ── Border (2px when active, e.g. Cut) ─────────────────────────────
         Color:
             rgba: root.highlight_border_color if root.is_highlighted else root.standard_border_color
         Line:
             rounded_rectangle: (self.x + self.margin_x + 0.5, self.y + self.margin_y + 0.5, self.width - 2 * self.margin_x - 1, self.height - 2 * self.margin_y - 1, root.radius)
-            width: 1.5 if root.is_highlighted else 1.0
+            width: 2.0 if root.is_highlighted else 1.0
 
     Label:
         text: root.text

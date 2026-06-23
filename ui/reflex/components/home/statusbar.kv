@@ -19,6 +19,18 @@
         pos: self.pos
         size: self.size
         radius: [dp(7)]
+      # Carved-in: soft top inner shadow + 1px bottom inner highlight.
+      Color:
+        rgba: 1, 1, 1, 1
+      Rectangle:
+        texture: app.theme.recess_shadow
+        pos: self.x + dp(4), self.top - 1 - dp(7)
+        size: max(self.width - dp(8), 0), dp(7)
+      Color:
+        rgba: app.theme.edge_light
+      Rectangle:
+        pos: self.x + dp(4), self.y + 1
+        size: max(self.width - dp(8), 0), 1
       Color:
         rgba: app.theme.border_dim
       Line:

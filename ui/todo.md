@@ -269,3 +269,15 @@ Works-as-specified (note, not bugs):
   color_off) — matches the requested behavior, but previewing the other theme
   clobbers a customization with no undo. Consider confirm-or-revert if it matters.
 - Engage-refused-no-Z is log-only; consider an operator-visible toast/alarm line.
+
+---
+
+## Deployment automation
+
+- **Script the Pi deployment.** The full manual procedure for deploying reflex-ui to a
+  fresh OSPI install is documented in `deploy/DEPLOYMENT.md` (with `deploy/start.sh` and
+  `deploy/reflex-ui.service` as the artifacts). Turn this into a one-shot deploy —
+  preferably an **Ansible playbook** (idempotent: install uv, create `/reflex-ui`, sync
+  deps, install unit, disable rcp + enable reflex-ui), or a bash script as a simpler
+  fallback. Should parameterize host/branch and support the committed-push and rsync
+  transfer modes.

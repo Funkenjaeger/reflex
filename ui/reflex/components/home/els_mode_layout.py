@@ -22,6 +22,11 @@ LONG_PRESS_THRESHOLD = 1.0
 class ElsSpindleInfo(BoxLayout):
     """Displays spindle speed with direction icon and absolute position with zero button."""
     spindle_rpm = StringProperty("--")
+    # spindle_rpm with the leading sign stripped (DSEG7 has no "+" glyph). A
+    # real property rather than an inline `.replace()` in the kv binding: when a
+    # direct root property is the *receiver* of a method call, Kivy fails to
+    # track it as a dependency, so the readout would freeze at its first value.
+    display_rpm = StringProperty("--")
     direction_icon = StringProperty(ICON_STOP)
 
     def __init__(self, **kwargs):
@@ -30,6 +35,9 @@ class ElsSpindleInfo(BoxLayout):
         self._long_press_event = None
         super().__init__(**kwargs)
         self.app.board.bind(update_tick=self._update_spindle)
+
+    def on_spindle_rpm(self, *_):
+        self.display_rpm = self.spindle_rpm.replace("+", "")
 
     def _update_spindle(self, *args):
         axis = self.app.els.get_spindle_axis()

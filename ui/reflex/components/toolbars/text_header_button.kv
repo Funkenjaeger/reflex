@@ -21,11 +21,13 @@
     size_hint_y: 0.7
     font_name: app.theme.font_seg
     font_size: self.height / 3
-    text: root.text_button.replace("+", "")
+    text: root.display_value
     color: app.formats.display_color
     halign: "center"
     valign: "middle"
-    # Recessed inset value field.
+    # Recessed inset value field. Reads as carved-in via a soft top inner
+    # shadow + a bottom inner highlight (no hard inner outline), over a fill
+    # that's a touch darker than the panel behind it.
     canvas.before:
       Color:
         rgba: app.theme.recess
@@ -33,11 +35,19 @@
         pos: self.x + 2, self.y + dp(6)
         size: max(self.width - 4, 0), max(self.height - dp(7), 0)
         radius: [5]
+      # Top inner shadow: a short dark band fading down from under the top lip.
       Color:
-        rgba: app.theme.edge_dark
-      Line:
-        points: (self.x + 4, self.y + dp(8), self.x + 4, self.top - 3, self.right - 4, self.top - 3)
-        width: 1.0
+        rgba: 1, 1, 1, 1
+      Rectangle:
+        texture: app.theme.recess_shadow
+        pos: self.x + dp(4), self.top - 1 - dp(8)
+        size: max(self.width - dp(8), 0), dp(8)
+      # Bottom inner highlight: a 1px light line along the inside bottom edge.
+      Color:
+        rgba: app.theme.edge_light
+      Rectangle:
+        pos: self.x + dp(4), self.y + dp(6) + 1
+        size: max(self.width - dp(8), 0), 1
       Color:
         rgba: app.theme.accent if root._blink else app.theme.border_dim
       Line:

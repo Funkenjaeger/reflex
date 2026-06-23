@@ -20,6 +20,11 @@ class TextHeaderButton(BeepMixin, ButtonBehavior, BoxLayout):
 
     text_header = StringProperty("")
     text_button = StringProperty("")
+    # text_button with the leading sign stripped (DSEG7 has no "+" glyph). Kept
+    # as a real property -- doing the .replace() inline in the kv binding
+    # silently breaks Kivy's dependency tracking (the watched property becomes
+    # the method receiver, never the bound value), so the field never updates.
+    display_value = StringProperty("")
     blink_enable = BooleanProperty(False)
     _blink = BooleanProperty(False)
     font_name = StringProperty("fonts/Manrope-Bold.ttf")
@@ -32,6 +37,9 @@ class TextHeaderButton(BeepMixin, ButtonBehavior, BoxLayout):
         Clock.schedule_interval(self.blinker, 1.0 / 4)
         self._long_press_event = None
         self._long_press_fired = False
+
+    def on_text_button(self, *_):
+        self.display_value = self.text_button.replace("+", "")
 
     def blinker(self, *args):
         self._blink = not self._blink if self.blink_enable else False

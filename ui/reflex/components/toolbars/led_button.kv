@@ -1,7 +1,8 @@
 # Restyled LedButton (see led_button.py): recessed dark slate pill, a small
-# glowing LED dot on the left, an optional Font Awesome icon, then the label.
-# Public API unchanged -- existing call sites (StatusBar, els_advbar) still
-# just set label / checkbox_value / current_color.
+# glowing domed-lens LED on the left, an optional Font Awesome icon, then the
+# label. Public API unchanged -- existing call sites (StatusBar, els_advbar)
+# still just set label / checkbox_value / current_color.
+#: import LedDot reflex.components.widgets.led_dot.LedDot
 
 <LedButton>:
   # Default LED color: cyan when "on", dim slate when "off". Callers that set
@@ -29,22 +30,23 @@
       rounded_rectangle: (self.x + 3, self.y + 3, max(self.width - 6, 0), max(self.height - 6, 0), 6)
       width: 1.0
 
-    # LED glow + dot, vertically centered near the left edge.
+    # LED soft glow halo + dot, vertically centered near the left edge. The halo
+    # is gated on the LED being "on" (no grey glow on an off LED) and spans well
+    # beyond the dot so it reads even on the near-black status bar.
     Color:
-      rgba: (root.current_color[0], root.current_color[1], root.current_color[2], 0.25)
-    Ellipse:
-      pos: self.x + 12 - min(8, self.height * 0.18) - 2, self.center_y - min(8, self.height * 0.18) - 2
-      size: (min(8, self.height * 0.18) + 2) * 2, (min(8, self.height * 0.18) + 2) * 2
-    Color:
-      rgba: root.current_color
-    Ellipse:
-      pos: self.x + 12 - min(8, self.height * 0.18), self.center_y - min(8, self.height * 0.18)
-      size: min(8, self.height * 0.18) * 2, min(8, self.height * 0.18) * 2
-
-  Widget:
-    # Left gutter reserving room for the LED dot.
+      rgba: (root.current_color[0], root.current_color[1], root.current_color[2], 0.75) if root.checkbox_value else [0, 0, 0, 0]
+    Rectangle:
+      texture: app.theme.glow_texture
+      pos: self.x + 12 - min(8, self.height * 0.18) * 2.3, self.center_y - min(8, self.height * 0.18) * 2.3
+      size: min(8, self.height * 0.18) * 2.3 * 2, min(8, self.height * 0.18) * 2.3 * 2
+  # Domed-lens LED in the left gutter (also reserves the dot's room). Sits over
+  # the glow drawn in canvas.before; the dot is centred in this 24px-wide cell.
+  LedDot:
     size_hint_x: None
     width: 24
+    led_color: root.current_color
+    lit: root.checkbox_value
+    diameter: min(8, root.height * 0.18) * 2
 
   Label:
     # Optional Font Awesome icon -- needs the FA font, so it lives in its own

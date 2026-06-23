@@ -20,6 +20,7 @@
     font_size: dp(12)
     image_source: "pictures/motor_gears.png"
     highlighted: bool(app.servo.servoMode)
+    led_on: bool(app.servo.servoMode)
     led_color: app.formats.color_on if app.servo.servoMode else app.formats.color_off
     # beep handled by BeepMixin.on_press
     on_release: app.servo.toggle_enable()
@@ -33,6 +34,26 @@
     padding: dp(4), dp(6), dp(4), dp(6)
     BoxLayout:
       orientation: 'vertical'
+      # Recessed well: fill darker than the bar + a soft top inner shadow and a
+      # 1px bottom inner highlight, so the DIR one-hot sits in a carved box.
+      canvas.before:
+        Color:
+          rgba: app.theme.recess
+        RoundedRectangle:
+          pos: self.pos
+          size: self.size
+          radius: [dp(7)]
+        Color:
+          rgba: 1, 1, 1, 1
+        Rectangle:
+          texture: app.theme.recess_shadow
+          pos: self.x + dp(4), self.top - 1 - dp(7)
+          size: max(self.width - dp(8), 0), dp(7)
+        Color:
+          rgba: app.theme.edge_light
+        Rectangle:
+          pos: self.x + dp(4), self.y + 1
+          size: max(self.width - dp(8), 0), 1
       canvas.after:
         Color:
           rgba: app.theme.border
@@ -77,6 +98,7 @@
     text: "ADV"
     font_size: dp(20)
     highlighted: root.enable_advanced
+    led_on: root.enable_advanced
     led_color: app.formats.color_on if root.enable_advanced else app.formats.color_off
     # beep handled by BeepMixin.on_press
     on_release: root.enable_advanced = not root.enable_advanced
@@ -92,6 +114,13 @@
         pos: self.x + dp(4), self.y + dp(6)
         size: self.width - dp(8), self.height - dp(12)
         radius: [dp(7)]
+      # Top inner shadow tucked under the lip (sunken visualization well).
+      Color:
+        rgba: 1, 1, 1, 1
+      Rectangle:
+        texture: app.theme.recess_shadow
+        pos: self.x + dp(7), self.top - dp(6) - dp(11)
+        size: self.width - dp(14), dp(11)
       Color:
         rgba: app.theme.border_dim
       Line:
@@ -116,6 +145,26 @@
     padding: dp(4), dp(6), dp(4), dp(6)
     BoxLayout:
       orientation: 'horizontal'
+      # Recessed well (see DIR): carved box holding the FEED/THREAD one-hot,
+      # the pitch value and the steppers.
+      canvas.before:
+        Color:
+          rgba: app.theme.recess
+        RoundedRectangle:
+          pos: self.pos
+          size: self.size
+          radius: [dp(7)]
+        Color:
+          rgba: 1, 1, 1, 1
+        Rectangle:
+          texture: app.theme.recess_shadow
+          pos: self.x + dp(4), self.top - 1 - dp(7)
+          size: max(self.width - dp(8), 0), dp(7)
+        Color:
+          rgba: app.theme.edge_light
+        Rectangle:
+          pos: self.x + dp(4), self.y + 1
+          size: max(self.width - dp(8), 0), 1
       canvas.after:
         Color:
           rgba: app.theme.border
