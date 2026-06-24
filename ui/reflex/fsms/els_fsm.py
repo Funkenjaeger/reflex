@@ -72,6 +72,13 @@ class ElsFsm:
         # diagnostics once per resync. Remove when the investigation closes.
         self._diag_last_correction = None
 
+        # TEMP heavy instrumentation: previous values of the firmware's elsDiag
+        # event sequence counters, so we log each stop / takeup / correction
+        # snapshot exactly once. Remove with the firmware elsDiag block.
+        self._diag_stop_seq = None
+        self._diag_takeup_seq = None
+        self._diag_corr_seq = None
+
 
     # ——— transition side effects ———
 
@@ -249,32 +256,66 @@ class ElsFsm:
                     self.retract_done()
 
     def _log_resync_diagnostics(self):
-        """DEBUG (ELS multi-pass phase-offset investigation).
+        """TEMP heavy instrumentation (ELS multi-pass thread-phase investigation).
 
-        The firmware updates elsStop.last{Ideal,Actual}Advance / lastPhaseError /
-        lastCorrection each time applyPhaseCorrection runs (once per re-sync at a
-        cut start). Poll lastCorrection cheaply each tick and, when it changes,
-        emit one log line with all four values paired with the configured
-        backlash. Used to determine how the backlash distance leaks into the
-        thread phase. Remove once the investigation closes.
+        Bulk-reads the firmware's appended elsDiag block once per tick and logs a
+        line for each new event (edge-detected via the per-event sequence
+        counters). Three event types:
+
+          STOP   — groove phase at the shoulder: stopSpindle relative to
+                   stopLatchedSpindle is the per-pass phase; pairs with backlash.
+          TAKEUP — Z-DRO vs leadscrew during the backlash takeup: dSteps is the
+                   commanded leadscrew move, dZ is what the DRO captured; their
+                   relationship reveals how the real lash split the takeup.
+          CORR   — applyPhaseCorrection inputs: deltaSpindle, deltaZ, steps added,
+                   plus the firmware's ideal/actual/phaseError/correction.
+
+        Remove (here + devices.py ElsDiag + firmware elsDiag block) once the root
+        cause is found.
         """
         if not self.board.connected:
             return
         try:
-            corr = self.hal.read_last_correction()
+            d = self.board.device['elsDiag'].refresh()
         except Exception:
             return
-        if corr == self._diag_last_correction:
-            return
-        self._diag_last_correction = corr
-        log.info(
-            "ELS resync diag: "
-            f"backlash_steps={int(self.els.els_backlash_steps)} "
-            f"idealAdvance={self.hal.read_last_ideal_advance():.3f} "
-            f"actualAdvance={self.hal.read_last_actual_advance():.3f} "
-            f"phaseError={self.hal.read_last_phase_error():.3f} "
-            f"correction={corr:.3f}"
-        )
+
+        if d.get('stopSeq') != self._diag_stop_seq:
+            self._diag_stop_seq = d.get('stopSeq')
+            log.info(
+                "ELS diag STOP: "
+                f"seq={d['stopSeq']} backlash={d['stopBacklash']} "
+                f"stopSpindle={d['stopSpindle']} stopZ={d['stopZ']} "
+                f"latchedSpindle={d['stopLatchedSpindle']} latchedZ={d['stopLatchedZ']} "
+                f"phaseFromRef={d['stopSpindle'] - d['stopLatchedSpindle']}"
+            )
+
+        if d.get('takeupSeq') != self._diag_takeup_seq:
+            self._diag_takeup_seq = d.get('takeupSeq')
+            d_steps = d['takeupDoneSteps'] - d['takeupArmSteps']
+            d_z = d['takeupDoneZ'] - d['takeupArmZ']
+            d_sp = d['takeupDoneSpindle'] - d['takeupArmSpindle']
+            log.info(
+                "ELS diag TAKEUP: "
+                f"seq={d['takeupSeq']} backlash={int(self.els.els_backlash_steps)} "
+                f"armSteps={d['takeupArmSteps']} doneSteps={d['takeupDoneSteps']} "
+                f"target={d['takeupTarget']} dSteps={d_steps} "
+                f"armZ={d['takeupArmZ']} doneZ={d['takeupDoneZ']} dZ={d_z} "
+                f"dSpindle={d_sp}"
+            )
+
+        if d.get('corrSeq') != self._diag_corr_seq:
+            self._diag_corr_seq = d.get('corrSeq')
+            log.info(
+                "ELS diag CORR: "
+                f"seq={d['corrSeq']} backlash={int(self.els.els_backlash_steps)} "
+                f"deltaSpindle={d['corrDeltaSpindle']} deltaZ={d['corrDeltaZ']} "
+                f"stepsAdded={d['corrStepsAdded']} "
+                f"idealAdvance={self.hal.read_last_ideal_advance():.3f} "
+                f"actualAdvance={self.hal.read_last_actual_advance():.3f} "
+                f"phaseError={self.hal.read_last_phase_error():.3f} "
+                f"correction={self.hal.read_last_correction():.3f}"
+            )
 
     # ——— convenience properties ———
 
