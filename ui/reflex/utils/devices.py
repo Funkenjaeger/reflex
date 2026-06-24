@@ -142,6 +142,7 @@ typedef struct {
   int32_t  stopBacklash;
   int32_t  stopLatchedSpindle;
   int32_t  stopLatchedZ;
+  int32_t  stopServoSteps;
   uint32_t takeupSeq;
   int32_t  takeupArmSteps;
   int32_t  takeupArmZ;

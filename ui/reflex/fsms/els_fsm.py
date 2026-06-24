@@ -287,6 +287,7 @@ class ElsFsm:
                 f"seq={d['stopSeq']} backlash={d['stopBacklash']} "
                 f"stopSpindle={d['stopSpindle']} stopZ={d['stopZ']} "
                 f"latchedSpindle={d['stopLatchedSpindle']} latchedZ={d['stopLatchedZ']} "
+                f"servoSteps={d['stopServoSteps']} "
                 f"phaseFromRef={d['stopSpindle'] - d['stopLatchedSpindle']}"
             )
 
