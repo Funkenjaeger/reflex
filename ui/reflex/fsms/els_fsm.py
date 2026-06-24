@@ -67,6 +67,11 @@ class ElsFsm:
         # on_enter_stopped know to arm ELS with a fresh stopPosition.
         self._engaging = False
 
+        # DEBUG (ELS multi-pass phase-offset investigation): last logged value
+        # of elsStop.lastCorrection, used to log the firmware's phase-correction
+        # diagnostics once per resync. Remove when the investigation closes.
+        self._diag_last_correction = None
+
 
     # ——— transition side effects ———
 
@@ -233,6 +238,7 @@ class ElsFsm:
 
     # bound to update_tick during moves
     def _on_board_update(self, *args, **kv):
+        self._log_resync_diagnostics()
         if self.hal.read_active():
             if self.state == 'cutting':
                 bus.publish("els_stop_activated")
@@ -241,6 +247,34 @@ class ElsFsm:
                 if self.hal.is_move_done():
                     bus.publish("els_retract_done")
                     self.retract_done()
+
+    def _log_resync_diagnostics(self):
+        """DEBUG (ELS multi-pass phase-offset investigation).
+
+        The firmware updates elsStop.last{Ideal,Actual}Advance / lastPhaseError /
+        lastCorrection each time applyPhaseCorrection runs (once per re-sync at a
+        cut start). Poll lastCorrection cheaply each tick and, when it changes,
+        emit one log line with all four values paired with the configured
+        backlash. Used to determine how the backlash distance leaks into the
+        thread phase. Remove once the investigation closes.
+        """
+        if not self.board.connected:
+            return
+        try:
+            corr = self.hal.read_last_correction()
+        except Exception:
+            return
+        if corr == self._diag_last_correction:
+            return
+        self._diag_last_correction = corr
+        log.info(
+            "ELS resync diag: "
+            f"backlash_steps={int(self.els.els_backlash_steps)} "
+            f"idealAdvance={self.hal.read_last_ideal_advance():.3f} "
+            f"actualAdvance={self.hal.read_last_actual_advance():.3f} "
+            f"phaseError={self.hal.read_last_phase_error():.3f} "
+            f"correction={corr:.3f}"
+        )
 
     # ——— convenience properties ———
 
