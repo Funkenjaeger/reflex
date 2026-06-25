@@ -130,35 +130,6 @@ typedef struct {
 """
 
 
-class ElsDiag(BaseDevice):
-    # TEMPORARY heavy instrumentation for the ELS thread-phase investigation.
-    # Mirrors elsDiag_t appended at the END of the firmware's rampsSharedData_t
-    # (offsets of all prior fields are preserved). Remove with the firmware block.
-    definition = """
-typedef struct {
-  uint32_t stopSeq;
-  int32_t  stopSpindle;
-  int32_t  stopZ;
-  int32_t  stopBacklash;
-  int32_t  stopLatchedSpindle;
-  int32_t  stopLatchedZ;
-  int32_t  stopServoSteps;
-  uint32_t takeupSeq;
-  int32_t  takeupArmSteps;
-  int32_t  takeupArmZ;
-  int32_t  takeupArmSpindle;
-  int32_t  takeupTarget;
-  int32_t  takeupDoneSteps;
-  int32_t  takeupDoneZ;
-  int32_t  takeupDoneSpindle;
-  uint32_t corrSeq;
-  int32_t  corrDeltaSpindle;
-  int32_t  corrDeltaZ;
-  int32_t  corrStepsAdded;
-} elsDiag_t;
-"""
-
-
 class Global(BaseDevice):
     root_structure = True
     definition = """
@@ -171,6 +142,5 @@ typedef struct {
   input_t scales[4];
   fastData_t fastData;
   elsStop_t elsStop;
-  elsDiag_t elsDiag;
 } rampsSharedData_t;
 """
