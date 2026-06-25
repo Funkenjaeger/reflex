@@ -1,6 +1,6 @@
 [project]
 name = "reflex"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 description = "Reflex UI"
 authors = [
     { name = "Stefano Bertelli", email = "stefano@provvedo.com" },
