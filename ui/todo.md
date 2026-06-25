@@ -281,3 +281,29 @@ Works-as-specified (note, not bugs):
   deps, install unit, disable rcp + enable reflex-ui), or a bash script as a simpler
   fallback. Should parameterize host/branch and support the committed-push and rsync
   transfer modes.
+
+---
+
+## README auto-updating screenshots
+
+- **Approach: committed images, not release assets.** README screenshots live in
+  `docs/screenshots/` and are referenced by relative path. CI regenerates them and
+  semantic-release commits them as part of the release commit (via its `assets` config
+  in `pyproject.toml`). Chosen over release assets because (a) the repo is private and
+  GitHub's Camo proxy can't fetch private release assets, so asset URLs wouldn't render,
+  while relative-path images do; (b) per-branch bespoke (main vs dev) for free; (c) PSR
+  already makes a commit each release, so this adds no extra commit; (d) still no loop
+  (the release commit is pushed via `GITHUB_TOKEN`, which doesn't re-trigger workflows).
+- **Update cadence = release cadence.** Screenshots only refresh when a version-bumping
+  push cuts a release (that's when PSR commits the assets). Pushes that don't bump a
+  version won't update them. Accept; revisit if per-push freshness is needed.
+- **Headless GL fallback.** Capture runs under `xvfb-run` + Mesa software GL
+  (`LIBGL_ALWAYS_SOFTWARE=1`). If CI rendering proves flaky, that env var is the first
+  lever.
+- **Capture script config isolation.** `scripts/capture_readme_screenshots.py` runs
+  against an isolated temp `HOME`, so dispatcher YAML writes (theme, axes, ELS indices)
+  never touch a developer's real `~/.config/reflex`; it configures the showcase
+  (use_case=lathe, Z/X/S axes, ELS axis indices) deterministically at runtime. One
+  residual: `app.use_case` persists to the repo-root `config.ini` (path is hardcoded
+  relative to the module, not under HOME) — gitignored and harmless, but a local run
+  will set `use_case=lathe` there.

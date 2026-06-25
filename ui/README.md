@@ -7,6 +7,18 @@ This project (along with the corresponding FW project) was hard forked from the 
 
 ---
 
+## 📸 Screenshots
+
+Home screen in ELS (Electronic Lead Screw) mode with the advanced bar expanded. These images are
+regenerated automatically by CI and committed with each release, so they always reflect the
+current UI on this branch.
+
+| Dark | Light |
+|------|-------|
+| ![ELS mode — dark theme](docs/screenshots/home_els_dark.png) | ![ELS mode — light theme](docs/screenshots/home_els_light.png) |
+
+---
+
 ## 🚀 Features
 
 * Responsive touch-capable UI built with **Kivy**
