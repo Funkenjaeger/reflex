@@ -37,6 +37,7 @@ class LedCardButton(BeepMixin, ButtonBehavior, FloatLayout):
     font_size = NumericProperty(17)
     image_source = StringProperty("")       # optional centred image
     led_color = ColorProperty([0, 0, 0, 0])  # alpha 0 -> LED hidden
+    led_on = BooleanProperty(False)         # True -> draw the LED glow halo
     status_text = StringProperty("")        # optional text beside the LED
     status_color = ColorProperty([0.6, 0.6, 0.6, 1])
     highlighted = BooleanProperty(False)    # cyan-tinted fill + border + label

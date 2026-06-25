@@ -34,13 +34,13 @@ log = Logger.getChild(__name__)
 
 # Canonical token sets (kept in lockstep with ThemeProvider's properties).
 COLOR_TOKENS = [
-    "background", "surface", "surface_sheen", "recess",
-    "accent", "accent_text", "accent_bg", "glow",
-    "border", "border_dim", "edge_dark", "edge_light",
+    "background", "surface", "surface_sheen", "recess", "tab_bg",
+    "accent", "accent_text", "accent_bg", "accent_soft", "glow",
+    "border", "border_dim", "edge_dark", "edge_light", "shadow", "edge_shadow",
     "text", "text_dim", "text_disabled",
     "success", "success_text", "success_bg",
     "danger", "danger_text", "danger_bg", "danger_glow",
-    "warning", "led_off",
+    "warning", "led_off", "readout_ghost",
     "plot_bg", "plot_grid", "plot_tool",
 ]
 PATH_TOKENS = ["logo", "font_bold", "font_mono", "font_seg", "font_icon"]

@@ -21,16 +21,44 @@
     on_press: app.beep()
     on_release: root.toggle_sync()
     canvas.before:
+      # Raised axis button: drop shadow, then a stencil-clipped planar gradient
+      # face (success tint when synced), a top highlight line and a full border
+      # -- so Z/X lift off the surface like the mockup, instead of reading as a
+      # flat gutter cell.
       Color:
-        rgba: app.theme.success_bg if (root.axis and root.axis.syncEnable) else app.theme.surface
+        rgba: app.theme.shadow
+      RoundedRectangle:
+        pos: self.x + dp(4), self.y + dp(6) - dp(2)
+        size: self.width - dp(8), self.height - dp(12)
+        radius: [dp(8)]
+      StencilPush
+      RoundedRectangle:
+        pos: self.x + dp(4), self.y + dp(6)
+        size: self.width - dp(8), self.height - dp(12)
+        radius: [dp(8)]
+      StencilUse
+      Color:
+        rgba: app.theme.success_bg if (root.axis and root.axis.syncEnable) else [1, 1, 1, 1]
       Rectangle:
-        pos: self.pos
-        size: self.size
+        texture: None if (root.axis and root.axis.syncEnable) else app.theme.surface_texture
+        pos: self.x + dp(4), self.y + dp(6)
+        size: self.width - dp(8), self.height - dp(12)
+      StencilUnUse
+      RoundedRectangle:
+        pos: self.x + dp(4), self.y + dp(6)
+        size: self.width - dp(8), self.height - dp(12)
+        radius: [dp(8)]
+      StencilPop
       Color:
-        rgba: app.theme.border_dim
+        rgba: app.theme.surface_sheen if not (root.axis and root.axis.syncEnable) else [0, 0, 0, 0]
       Line:
-        points: (self.right - 0.5, self.top, self.right - 0.5, self.y, self.x, self.y)
+        points: (self.x + dp(12), self.top - dp(6) - 1, self.right - dp(12), self.top - dp(6) - 1)
         width: 1.0
+      Color:
+        rgba: app.theme.success if (root.axis and root.axis.syncEnable) else app.theme.border
+      Line:
+        rounded_rectangle: (self.x + dp(4), self.y + dp(6), self.width - dp(8), self.height - dp(12), dp(8))
+        width: 1.2
 
   BoxLayout:
     orientation: "horizontal"
@@ -46,12 +74,35 @@
           font_name: app.theme.font_seg
           max_font_size: min(self.height / 1.1, self.parent.width/5)
           font_style: "bold"
-          color: app.formats.display_color
-          text: (root.axis.formattedPosition).replace("+", "") if root.axis else "--"
+          # This button renders the dim "all segments on" ghost; the live value
+          # is overlaid by the child Label below so unlit segments show through
+          # faintly (authentic 7-seg LCD). Auto-sizing on the all-8s ghost keeps
+          # the digit size stable as the value changes (DSEG7 is monospaced).
+          # readout_ghost is theme-aware so the ghost reads on light AND dark.
+          color: app.theme.readout_ghost
+          # Strip the leading "+": DSEG7Classic has no "+" glyph (renders tofu);
+          # negatives keep their "-". The ghost masks digits to 8 after that.
+          text: root.all_segments((root.axis.formattedPosition).replace("+", "")) if root.axis else "--"
           text_size: self.size
           halign: 'right'
           valign: 'center'
           on_release: root.update_position()
+          Label:
+            # Live value, overlaid on the ghost at full brightness; shares the
+            # button's geometry and fitted font size so the digits line up.
+            # pos_label is a Button (not a layout), so bind geometry explicitly
+            # rather than rely on size_hint/pos_hint (which a layout would honor).
+            font_name: app.theme.font_seg
+            font_size: pos_label.font_size
+            bold: True
+            color: app.formats.display_color
+            text: (root.axis.formattedPosition).replace("+", "") if root.axis else "--"
+            size_hint: None, None
+            size: pos_label.size
+            pos: pos_label.pos
+            text_size: self.size
+            halign: 'right'
+            valign: 'center'
         Label:
           size_hint_x: None
           width: self.texture_size[0] + 4

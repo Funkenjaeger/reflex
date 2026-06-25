@@ -18,11 +18,23 @@ Adding a theme = add a palette dict to ``palettes.py``. Adding a token = add a
 
 from kivy.event import EventDispatcher
 from kivy.logger import Logger
-from kivy.properties import ColorProperty, StringProperty, OptionProperty
+from kivy.properties import (
+    ColorProperty, StringProperty, OptionProperty, ObjectProperty,
+)
 
 from reflex.components.widgets import palettes
+from reflex.components.widgets.gradients import (
+    vgrad_texture, top_shadow_texture, side_shadow_texture, radial_glow_texture,
+)
 
 log = Logger.getChild(__name__)
+
+
+def _lerp(rgba, target: float, t: float):
+    """Blend an rgba toward a grey ``target`` (0=black, 1=white) by ``t``,
+    preserving alpha. Used to derive gradient stops from a single base color so
+    every theme -- including user-authored ones -- gets depth for free."""
+    return [rgba[i] + (target - rgba[i]) * t for i in range(3)] + [rgba[3]]
 
 
 class ThemeProvider(EventDispatcher):
@@ -37,21 +49,25 @@ class ThemeProvider(EventDispatcher):
 
     # ── Surfaces ───────────────────────────────────────────────────────────
     background = ColorProperty()       # screen background
-    surface = ColorProperty()          # raised control fill
-    surface_sheen = ColorProperty()    # subtle top bevel on a surface
-    recess = ColorProperty()           # sunken / inset panel fill
+    surface = ColorProperty()          # raised control fill (gradient top)
+    surface_sheen = ColorProperty()    # 1px top inner highlight line (low-alpha)
+    recess = ColorProperty()           # sunken / inset panel fill (FLAT)
+    tab_bg = ColorProperty()           # mode-tab face (FLAT, darker than surface)
 
     # ── Accent (primary highlight: cyan in dark, amber in light) ───────────
     accent = ColorProperty()           # primary accent line/border/indicator
     accent_text = ColorProperty()      # high-emphasis accent-colored text
-    accent_bg = ColorProperty()        # accent-tinted active fill
+    accent_bg = ColorProperty()        # accent-tinted active fill (opaque)
+    accent_soft = ColorProperty()      # translucent accent tint (active seg/Cut)
     glow = ColorProperty()             # soft accent glow (low-alpha)
 
     # ── Borders / edges ────────────────────────────────────────────────────
     border = ColorProperty()           # standard control border
     border_dim = ColorProperty()       # faint divider
-    edge_dark = ColorProperty()        # inset shadow edge (top/left)
-    edge_light = ColorProperty()       # inset highlight edge (bottom/right)
+    edge_dark = ColorProperty()        # recessed top inner-shadow color
+    edge_light = ColorProperty()       # recessed bottom inner-highlight color
+    shadow = ColorProperty()           # raised drop-shadow (mostly light theme)
+    edge_shadow = ColorProperty()      # strong directional shadow (tab spine)
 
     # ── Text ───────────────────────────────────────────────────────────────
     text = ColorProperty()             # body text
@@ -69,6 +85,9 @@ class ThemeProvider(EventDispatcher):
     warning = ColorProperty()          # caution / out-of-range
     led_off = ColorProperty()          # inactive indicator lamp
 
+    # ── Readout ────────────────────────────────────────────────────────────
+    readout_ghost = ColorProperty()    # off-segment "ghost" behind 7-seg digits
+
     # ── Plot / scene ───────────────────────────────────────────────────────
     plot_bg = ColorProperty()          # plot canvas background
     plot_grid = ColorProperty()        # plot grid lines
@@ -82,6 +101,18 @@ class ThemeProvider(EventDispatcher):
     font_mono = StringProperty()
     font_seg = StringProperty()
     font_icon = StringProperty()
+
+    # ── Derived depth textures (rebuilt at the end of apply()) ─────────────
+    # Cheap gradient/shadow textures derived from the base color tokens so
+    # raised faces read domed and wells read sunken without box-shadow. KV
+    # paints these with a white Color so the texture shows its own colors;
+    # the active/pressed state swaps the texture for a flat accent fill.
+    surface_texture = ObjectProperty(None, allownone=True)     # raised button face
+    tab_texture = ObjectProperty(None, allownone=True)         # mode-tab face
+    background_texture = ObjectProperty(None, allownone=True)  # app background
+    recess_shadow = ObjectProperty(None, allownone=True)       # well top inner-shadow
+    spine_shadow = ObjectProperty(None, allownone=True)        # tab-spine right edge
+    glow_texture = ObjectProperty(None, allownone=True)        # soft LED halo (white)
 
     def __init__(self, name: str | None = None, **kwargs):
         super().__init__(**kwargs)
@@ -120,3 +151,34 @@ class ThemeProvider(EventDispatcher):
         """
         for token, value in palette.items():
             setattr(self, token, value)
+        # Rebuild derived textures from the *final* token values -- after the
+        # whole loop, so we never read a half-applied palette (the same stale-
+        # mid-sweep hazard the dropdown rebuild guards against).
+        self._rebuild_textures()
+
+    def _rebuild_textures(self):
+        # Raised face: a GENTLE 2-stop vertical wash -- top == surface, base a
+        # touch darker. Small delta, single direction (the texture is painted
+        # on a stencil-clipped flat Rectangle in KV so it stays planar; a
+        # RoundedRectangle would map it radially and pillow). No over-bright top.
+        self.surface_texture = vgrad_texture(
+            _lerp(self.surface, 0.0, 0.14),   # base: slightly darker
+            self.surface,                     # top: equals surface
+        )
+        # Tab face: same gentle dome, derived from the (darker) tab_bg so tabs
+        # read as their own surface against the recessed spine.
+        self.tab_texture = vgrad_texture(
+            _lerp(self.tab_bg, 0.0, 0.10),
+            _lerp(self.tab_bg, 1.0, 0.06),
+        )
+        # App background: a barely-there top-down lift, not a feature.
+        self.background_texture = vgrad_texture(
+            _lerp(self.background, 0.0, 0.05),
+            self.background,
+        )
+        # Recessed wells: a short dark band tucked under the top lip only.
+        self.recess_shadow = top_shadow_texture(self.edge_dark)
+        # Tab spine: a narrow shadow ramping to dark at the column's right edge.
+        self.spine_shadow = side_shadow_texture(self.edge_shadow)
+        # Soft LED halo (theme-invariant white; tinted per-LED at draw time).
+        self.glow_texture = radial_glow_texture()

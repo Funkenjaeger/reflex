@@ -6,6 +6,21 @@
   width: self.height / 6
   size_hint_x: None
   size_hint_y: 1
+  # Recessed spine: fill the column a touch darker than the app bg so the tabs
+  # read as sitting in a sunken channel, with a shadow ramping to dark at the
+  # column's right (inner) edge -- the tabs emerge from that recess.
+  canvas.before:
+    Color:
+      rgba: app.theme.recess
+    Rectangle:
+      pos: self.pos
+      size: self.size
+    Color:
+      rgba: 1, 1, 1, 1
+    Rectangle:
+      texture: app.theme.spine_shadow
+      pos: self.right - dp(12), self.y
+      size: dp(12), self.height
   # Breathing room: inset off the top/bottom/left edges and gaps between the
   # tab groups so they don't crowd each other or the screen edge. Right stays
   # flush so the tabs read as attached to the content.
@@ -92,7 +107,7 @@
 
   IconButton:
     width: root.width
-    icon: "\uf085"
+    icon: "\uf013"
     tab_style: True
     on_release: app.manager.goto("setup_screen")
     size_hint_y: 1

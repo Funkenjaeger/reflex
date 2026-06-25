@@ -20,24 +20,43 @@
     size_hint_y: (1.0 if self.is_selected else 0.68) if self.edge in ('left', 'right') else 1
 
     canvas.before:
-        # Per-segment body fill. Round only the outer corner of the first/last
-        # segment so a butted group reads as one rounded strip: left corners for
-        # a right-accent (vertical) group, right corners for a left-accent one,
-        # and the leading/trailing ends for a horizontal (top/bottom) group.
-        Color:
-            rgba: app.theme.accent_bg if self.is_selected else app.theme.surface
+        # Per-segment body face. A gentle vertical gradient (planar, via a
+        # stencil-clipped flat Rectangle -- a textured RoundedRectangle pillows)
+        # so each tab reads as its own surface against the recessed spine; the
+        # selected accent_soft tint draws over it inside the same clip. Round
+        # only the outer corner of the first/last segment so a butted group
+        # reads as one rounded strip.
+        StencilPush
         RoundedRectangle:
             pos: self.pos
             size: self.size
             # Per-segment corner radii computed by the parent group's shape.
             radius: self.radius
-
-        # Hairline divider between butted segments (skip the first): a top edge
-        # for vertical stacks, a left edge for horizontal rows.
+        StencilUse
         Color:
-            rgba: app.theme.border_dim if not self.is_first else [0, 0, 0, 0]
+            rgba: 1, 1, 1, 1
+        Rectangle:
+            texture: app.theme.tab_texture
+            pos: self.pos
+            size: self.size
+        Color:
+            rgba: app.theme.accent_soft if self.is_selected else [0, 0, 0, 0]
+        Rectangle:
+            pos: self.pos
+            size: self.size
+        StencilUnUse
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: self.radius
+        StencilPop
+
+        # 1px border so each tab reads as its own surface against the spine
+        # (the butted edges double as the inter-segment dividers).
+        Color:
+            rgba: app.theme.border_dim
         Line:
-            points: (self.x, self.top, self.right, self.top) if self.edge in ('left', 'right') else (self.x, self.y, self.x, self.top)
+            rounded_rectangle: [self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1] + self.radius
             width: 1.0
 
         # Crisp accent bar on the inner edge when selected. Drawn full length

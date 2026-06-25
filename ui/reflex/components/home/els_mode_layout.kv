@@ -1,4 +1,5 @@
 #: import AutoSizeButton reflex.components.widgets.auto_size_button
+#: import all_segments reflex.components.home.coordbar.all_segments
 
 <ElsSpindleInfo>:
   orientation: "horizontal"
@@ -34,11 +35,27 @@
       font_name: app.theme.font_seg
       font_size: min(self.height / 1.1, self.width / 5)
       font_style: "bold"
-      color: app.formats.display_color
-      text: root.spindle_rpm.replace("+", "")
+      # Dim all-segments ghost; the live RPM overlays it (see DRO rows).
+      color: app.theme.readout_ghost
+      text: all_segments(root.display_rpm)
       text_size: self.size
       halign: 'right'
       valign: 'center'
+      Label:
+        # Overlay the live value on the ghost. rpm_label is a plain Label (not
+        # a layout), so it won't position a child via size_hint/pos_hint --
+        # bind geometry to the parent explicitly or the value floats to (0,0).
+        font_name: app.theme.font_seg
+        font_size: rpm_label.font_size
+        bold: True
+        color: app.formats.display_color
+        text: root.display_rpm
+        size_hint: None, None
+        size: rpm_label.size
+        pos: rpm_label.pos
+        text_size: self.size
+        halign: 'right'
+        valign: 'center'
     Label:
       size_hint_x: None
       width: self.texture_size[0] + 4
