@@ -78,7 +78,11 @@ class ElsFsm:
     def on_enter_retracting(self):
         enc_current = self._saddle_input.encoderCurrent
         enc_target = self.z_axis.position_to_encoder(self.controller.retract_z)
-        enc_delta = enc_target - enc_current
+        # Invert the delta: DRO and servo have opposite polarity on the lathe.
+        # Positive servo steps move toward the shoulder (cutting direction), so
+        # retracting requires negative steps even when the DRO position is larger
+        # at retract_z than at stop_z.
+        enc_delta = enc_current - enc_target
         step_delta = self._scale_counts_to_steps(enc_delta)
 
         # On the FIRST retract after a cut, the leadscrew nut is at the

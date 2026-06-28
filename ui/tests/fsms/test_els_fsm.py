@@ -336,9 +336,9 @@ def test_on_enter_retracting_pushes_steps_to_go():
     """retract_z=20, stop_z=10, encoder offset 0:
        encoder_target = position_to_encoder(20) = 20
        encoder_current = 0 (z._primary_input().encoderCurrent default)
-       enc_delta = 20 - 0 = 20
-       step_delta = scale_counts_to_steps(20)
-         Fraction(20) * 1/1 / 1/1 = 20; sign +1; magnitude 20 → +20"""
+       enc_delta = 0 - 20 = -20  (inverted: DRO and servo have opposite polarity)
+       step_delta = scale_counts_to_steps(-20)
+         Fraction(-20) * 1/1 / 1/1 = -20; sign -1; magnitude 20 → -20"""
     z, _ = _make_z_axis()
     hal = MagicMock()
     controller = _make_controller(stop_z=10.0, retract_z=20.0)
@@ -347,7 +347,7 @@ def test_on_enter_retracting_pushes_steps_to_go():
     hal.reset_mock()
     fsm.retract()   # is_ready_to_retract: check_x_retract defaults False → allowed
     assert fsm.state == "retracting"
-    hal.set_steps_to_go.assert_called_once_with(20)
+    hal.set_steps_to_go.assert_called_once_with(-20)
 
 
 # ─── retract backlash compensation ─────────────────────────────────────────
@@ -372,9 +372,9 @@ def test_first_retract_after_cut_adds_backlash_to_step_delta():
     _set_carriage(z, inp, 10.0)   # carriage parked at stop_z after cut
     hal.reset_mock()
     fsm.retract()
-    # enc_delta = 20 - 10 = 10 → raw step_delta = +10 (sign × ceil);
-    # backlash of 5 applied in the same sign → +15.
-    hal.set_steps_to_go.assert_called_once_with(15)
+    # enc_delta = 10 - 20 = -10 → raw step_delta = -10 (retract direction);
+    # backlash of 5 applied in same sign → -15.
+    hal.set_steps_to_go.assert_called_once_with(-15)
 
 
 def test_self_loop_retract_does_not_add_backlash_twice():
@@ -399,9 +399,9 @@ def test_self_loop_retract_does_not_add_backlash_twice():
     _set_carriage(z, inp, 18.0)
     hal.reset_mock()
     fsm.retract_done()
-    # Self-loop landed back in retracting. enc_delta = 20 - 18 = 2 →
-    # step_delta = +2 (no backlash compensation).
-    hal.set_steps_to_go.assert_called_once_with(2)
+    # Self-loop landed back in retracting. enc_delta = 18 - 20 = -2 →
+    # step_delta = -2 (retract direction, no backlash compensation).
+    hal.set_steps_to_go.assert_called_once_with(-2)
 
 
 def test_retract_backlash_resets_on_next_cut():
@@ -429,9 +429,9 @@ def test_retract_backlash_resets_on_next_cut():
     _set_carriage(z, inp, 10.0)
     hal.reset_mock()
     fsm.retract()
-    # enc_delta = 10 → raw step_delta = +10; backlash applied again on
-    # this fresh first-retract-of-cycle → +15.
-    hal.set_steps_to_go.assert_called_once_with(15)
+    # enc_delta = 10 - 20 = -10 → raw step_delta = -10; backlash applied again on
+    # this fresh first-retract-of-cycle → -15.
+    hal.set_steps_to_go.assert_called_once_with(-15)
 
 
 def test_retract_with_zero_backlash_setting_is_unchanged():
@@ -445,7 +445,7 @@ def test_retract_with_zero_backlash_setting_is_unchanged():
     fsm.enable()
     hal.reset_mock()
     fsm.retract()
-    hal.set_steps_to_go.assert_called_once_with(20)
+    hal.set_steps_to_go.assert_called_once_with(-20)
 
 
 # ─── is_retracted: position predicate semantics ────────────────────────────
