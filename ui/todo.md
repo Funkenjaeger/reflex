@@ -151,6 +151,39 @@
   resolved by commissioning the harness servo like the real machine (`servo_reverse=true`,
   `maxSpeed=10000`). Task 9 now passes with no product change. See commit 3568921.
 
+### Safety audit results (2026-07-10, emulator-driven, branch `fix/els-safety`)
+Adversarial control-ordering probes against the real controller/FSM stack + emulator.
+Findings (probes were temporary; regression tests land with each fix):
+
+- **DOMINANT ROOT CAUSE — sync feed is decoupled from the ELS stop.** The
+  servo/Sync-Enable feed runs free whenever `syncEnable=1` + spindle turning + nothing
+  actively gating (no armed stop, or ELS disarmed). Reproduced two ways: (H2b) enabling
+  Sync-Enable standalone with no ELS armed → carriage fed ~11,965 counts freely; (H6)
+  engage+cut normally then **disengage ELS** while Sync-Enable stays on → the stop is
+  removed but the feed continues (~9,700 counts in 6 s). This is the core of the
+  "no-stop-armed feed guard" item — broadened: cover BOTH enable-without-stop AND
+  disarm-while-feeding. **DECISION (Evan): confirm-to-override on enabling feed with no
+  armed stop (advanced ELS mode); disengaging ELS also stops an active sync feed; basic
+  bare power feed unaffected.**
+- **CONFIRMED — no feed-distance bound (H1).** A `stop_z` far ahead (stale/mis-entered)
+  is accepted; the guard checks only safe-side + margin, never distance. An 8,000-count
+  stop was accepted and fed with no warning. Add a distance sanity/confirm.
+- **CONFIRMED — 'Cutting…' lockup (H3).** Deterministically reproduced: when the domain
+  cut is refused, the UI parks in `in_cycle.cutting` (blank action, Stop disabled) with
+  no exit but the Engage toggle. Fix: gate the UI `waiting_to_cut→cutting` transition on
+  `may_cut()` / roll back on refusal.
+- **SAFE (guards hold):** H2a (engage→sync doesn't feed — arming gates it); H4
+  (mid-engage DIR flip → cut guard blocks).
+- **DEFERRED to hardware verification (Evan's decision) — post-stop overshoot.** The
+  carriage overshoots the stop because a servo step backlog flushes after the stop latches
+  (pulse generation isn't gated by `elsStop.active`). Large at the emulator's 10 kHz ISR
+  (~4,600 counts past an 8,000 feed); ~10× smaller expected on real 100 kHz hardware. NO
+  firmware change this release — measure actual overshoot on the real lathe first; fix in
+  reflex-fw only if hardware shows a real problem.
+- **LOW PRIORITY — H5 backlash takeup.** The cut-start takeup is bounded by
+  `els_backlash_steps` (config). Inconclusive in the emulator; add a config-range
+  validation rather than treat as a control-flow bug.
+
 ## Dead Code and Cleanup
 
 ### 8. Dead/Commented-Out Code
