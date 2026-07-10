@@ -51,6 +51,67 @@
 
 ---
 
+## Safety / ELS guards
+
+### Warn/prompt when enabling power feed with no ELS stop armed
+- **Context (verified 2026-07-09, emulator-backed investigation):** feed is gated entirely by
+  `syncEnable` on a scale — firmware `Ramps.c:626-631` auto-sets `servoMode=1` whenever any
+  `scales[i].syncEnable != 0` (and ELS not already stopped), and the servo then follows the
+  spindle. `syncEnable` is only set by deliberate operator action (`ServoDispatcher.toggle_enable`
+  servo-enable button, `AxisDispatcher.toggle_sync` power-feed toggle, or the ELS engage→cut
+  flow). Confirmed empirically that merely connecting — raw or full UI, spindle running — does NOT
+  set `syncEnable` or move the carriage (so there is **no** uncontrolled feed on connect).
+- **The gap:** nothing requires an ELS stop (`elsStop.enable` + a valid `stopPosition` on the
+  cutting side) to be armed before the operator enables power feed. So an operator can start a
+  sync feed toward the chuck/headstock with no auto-stop — the only protections are travel limits
+  and the operator's own attention. That's normal for a bare power feed, but risky on this machine.
+- **Why a prompt is reasonable (Evan, 2026-07-09):** in **advanced ELS mode**, *every* submode
+  includes the stop function — so if the operator is in advanced ELS mode, it's reasonable to
+  infer they intend to have an ELS stop set. Enabling feed there without an armed stop is likely a
+  mistake, not an intentional bare power feed.
+- **Action:** when enabling sync/power feed (servo enable / sync toggle) in advanced ELS mode with
+  no valid ELS stop armed, prompt/confirm (or at least surface a visible warning) before allowing
+  the feed — rather than silently feeding. Decide the exact UX (block-until-confirmed vs.
+  warn-and-allow) and whether it applies only in advanced ELS mode or more broadly. The
+  emulator-backed system-test suite (`.hermes/plans/2026-07-09_emulator-backed-system-tests.md`)
+  is a natural place to add a regression test for whatever guard lands.
+
+### Audit for unexpected large feed moves from arbitrary control ordering (broader than connect)
+- **Concern (Evan, 2026-07-09):** the connect case is clean, but that's only one entry point. The
+  UI exposes *separate, independently pressable* controls — servo/**Sync Enable**, **advanced ELS
+  enable/engage**, ELS submode, DIR, and stop-Z entry — with no enforced ordering. Risk likely
+  hides in the state combinations reachable by pressing them in an unexpected order, especially the
+  interaction between the standalone Sync-Enable path and the ELS-engage path (both ultimately set
+  `syncEnable`, the firmware feed master switch). Goal: find any sequence that produces an
+  **unexpectedly large** feed (drives into chuck/headstock), not just a wrong-direction one.
+- **Specific hypotheses to check (not yet investigated):**
+  1. **Stale/default `stop_z`.** `controller.stop_z` defaults to 0.0. Engage with the carriage far
+     from 0 and no stop_z entered → ELS arms against a stopPosition far away → a large feed to
+     "reach" the stop when cut is pressed. Confirm what stop_z is used if never set this cycle.
+  2. **Sync-Enable vs. ELS-engage interaction.** Pressing servo/Sync-Enable (sets `servoMode`→
+     `_sync_spindle_to_servo` sets spindle `syncEnable`) while ELS is engaged-and-armed
+     (`active=1` holding) — does the arming hold survive, or does the sync write release/override it
+     and start feeding? And vice-versa (engage while a manual sync feed is already running).
+  3. **Manual axis power-feed coupling.** `AxisDispatcher.toggle_sync` on a non-spindle DRO axis:
+     does the ELS `_sync_spindle_to_servo` coupling turn an intended small manual feed into a
+     full ELS-rate spindle-synced feed?
+  4. **Mid-engaged mode/direction change.** Flipping `els_forward`/DIR or ELS submode while engaged
+     (`_on_modes_changed` pushes a new `stopDirection`) — can it move the stop to the far side of
+     the current position so the next cut feeds a long way (or the wrong way) before stopping?
+  5. **Backlash-takeup / thread re-sync magnitude.** `on_enter_cutting`/`push_thread_geometry` can
+     command a takeup or phase-correction move; check whether a stale `els_backlash_steps`,
+     `threadPitchSteps`, or `zCountsPerPitch` (e.g. left over from a prior threading job, or an
+     unmapped axis) can make that move unexpectedly large.
+  6. **Re-engagement after an auto-stop.** After ELS fires and the operator re-engages, verify the
+     resume can't command a large move (wrong reference latch / stale stopPosition).
+- **Method:** once the emulator-backed system suite can drive a cut (Task 7+), add an adversarial
+  "button-ordering" test group that drives these sequences against the real FSM + emulator and
+  asserts the total feed travel stays bounded (no move exceeds the intended cut span + margin).
+  This is the natural regression harness for whatever guards result.
+- **Relationship:** this is the broader version of the "enable feed with no stop armed" item above;
+  that guard may cover some cases, but this audit should enumerate the full reachable state space
+  first so we know what the guard(s) must cover.
+
 ## Dead Code and Cleanup
 
 ### 8. Dead/Commented-Out Code

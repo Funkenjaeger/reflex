@@ -30,6 +30,12 @@ dev = [
     "pillow>=10.0.0",
 ]
 
+[tool.pytest.ini_options]
+addopts = "-m 'not system'"  # explicit `-m system` on the CLI overrides this
+markers = [
+    "system: emulator-backed end-to-end system tests (requires the reflex-fw emulator; slow, excluded from default `uv run pytest` runs -- invoke explicitly with `-m system`)",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
