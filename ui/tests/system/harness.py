@@ -226,6 +226,27 @@ class SystemHarness:
     def set_servo_reverse(self, reverse: bool):
         self.board.servo.reverse = reverse
 
+    def commission_servo(self, *, reverse: bool = True, max_speed: float = 10000,
+                         acceleration: float = 20000):
+        """Apply the real machine's servo commissioning (see elspi's ServoBar-0:
+        reverse=true, maxSpeed=10000, acceleration=20000).
+
+        Two reasons a test needs this instead of the hermetic defaults:
+          * ``reverse`` sets servoDir=-1. The direct-servo retract move
+            (``stepsToGo``) depends on servoDir, so without the real polarity it
+            drives the carriage the WRONG way (the EMU_RPM sign band-aid only
+            fixes the sync-mediated cut, not the retract).
+          * ``max_speed`` at the real 10000 (vs the hermetic 1000 default) keeps
+            the emulated servo up with the sync feed. At 1000 a cut-time step
+            backlog flushes after the ELS stop and drags the carriage past it —
+            an emulator 10 kHz-ISR artifact, negligible on ~100 kHz hardware.
+        All go through the production property write-path (fires the real
+        on_reverse / on_maxSpeed / on_acceleration handlers)."""
+        self.board.servo.reverse = reverse
+        self.board.servo.maxSpeed = max_speed
+        self.board.servo.acceleration = acceleration
+        self.pump()
+
     def set_input_reverse(self, scale_index: int, reverse: bool):
         for inp in self.board.inputs:
             if inp.inputIndex == scale_index:
