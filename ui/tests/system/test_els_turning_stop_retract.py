@@ -23,11 +23,15 @@ _ENV = {"env": {"EMU_RPM": "-30", "EMU_NO_AUTO_RETRACT": "1"}}
 
 
 @pytest.mark.xfail(
-    reason="Task 9 WIP: host-driven retract does not complete — sync feed keeps "
-    "driving the carriage while the spindle turns (sync not paused during the "
-    "retract), and the EMU_RPM=-30 spindle-convention workaround (Task 7) likely "
-    "inverts the retract sign. Needs the firmware active/sync/indexing interaction "
-    "worked out + the spindle-direction convention resolved. See plan Task 9.",
+    reason="Task 9 WIP: the retract COMMAND is correct (enc_delta~-41, stepsToGo~-37, "
+    "right direction), but a servo-rate backlog artifact makes it hang. The emulator's "
+    "10kHz ISR + reflex-ui overwriting the serve-mode maxSpeed with its low default (1000) "
+    "throttles the emulated servo below the sync feed demand, so desiredSteps runs ~11500 "
+    "steps ahead of currentSteps during the cut; the stop fires but currentSteps keeps "
+    "chasing the backlog afterward, drifting the carriage past the stop and swamping the "
+    "retract. Needs the servo-rate/feed calibration resolved (naive maxSpeed=100000 clears "
+    "the backlog but slows the feed). Decoupled from the spindle-convention question. "
+    "See plan Task 9 + .hermes/2026-07-09_morning-coffee.md #3.",
     strict=False,
 )
 @pytest.mark.parametrize("emulator_process", [_ENV], indirect=True)
