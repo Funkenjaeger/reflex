@@ -30,10 +30,14 @@ def test_servo_reverse_toggle_writes_through_production_path(harness):
     """Setting ServoDispatcher.reverse fires its real handler and flips the
     servoDir register the firmware reads -- the exact write-path production
     uses (Open Item 2 acceptance criterion), not a direct register poke."""
-    harness.set_servo_reverse(False)
-    harness.pump()
-    assert harness.register("servo", "servoDir") == 1
-
+    # reverse defaults False (servoDir=+1 on connect). Toggle True THEN back to
+    # False so both writes actually fire the _on_reverse_changed handler -- a
+    # set_servo_reverse(False) first would be a no-op (no property change) and
+    # only re-read the on-connect write.
     harness.set_servo_reverse(True)
     harness.pump()
     assert harness.register("servo", "servoDir") == -1
+
+    harness.set_servo_reverse(False)
+    harness.pump()
+    assert harness.register("servo", "servoDir") == 1

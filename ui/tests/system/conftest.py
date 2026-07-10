@@ -81,9 +81,10 @@ def _emulator_sources_newer_than(mtime: float) -> bool:
     """
     candidates = []
 
-    src_dir = EMULATOR_DIR / "src"
-    if src_dir.is_dir():
-        candidates.extend(src_dir.rglob("*"))
+    for sub in ("src", "shim"):
+        d = EMULATOR_DIR / sub
+        if d.is_dir():
+            candidates.extend(d.rglob("*"))
 
     cmakelists = EMULATOR_DIR / "CMakeLists.txt"
     if cmakelists.is_file():
@@ -122,8 +123,7 @@ def emulator_binary():
             f"reflex-fw not found at {REFLEX_FW_DIR}; set REFLEX_FW_DIR to run system tests"
         )
 
-    print(f"\nreflex-fw SHA: {_reflex_fw_sha()}")
-
+    # (The reflex-fw SHA is surfaced via pytest_report_header for run provenance.)
     needs_build = not EMULATOR_BIN.exists()
     if not needs_build:
         try:
@@ -283,7 +283,11 @@ def wiring_cut_harness(request, emulator_binary, tmp_path, monkeypatch):
     base_toml = EMULATOR_DIR / "config" / "lathe.toml"
     config = make_config(base_toml, perm.overrides, tmp_path / f"wiring_{perm.id}.toml")
 
-    proc, pty_path = _start_emulator(emulator_binary, config, {"EMU_RPM": "-30"})
+    # EMU_NO_AUTO_RETRACT: after the ELS stop the carriage stays put (no
+    # simulated hand-retract), so the test reads the resting stop position with
+    # no race against the emulator's 400 ms retract.
+    proc, pty_path = _start_emulator(
+        emulator_binary, config, {"EMU_RPM": "-30", "EMU_NO_AUTO_RETRACT": "1"})
     h = None
     try:
         h = SystemHarness(pty_path)

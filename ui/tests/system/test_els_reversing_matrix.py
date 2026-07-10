@@ -41,24 +41,15 @@ def _run_stop_only_cut(h):
     h.cut()
     assert h.els_fsm.state == "cutting", f"cut did not start: {h.els_fsm.state}"
 
-    # Capture the FURTHEST excursion during the cut (== the stop point). In serve
-    # mode the emulator auto-retracts the carriage to home on each ELS stop, so we
-    # must NOT wait/settle after the stop (that reads the post-retract position);
-    # the deepest point reached is where the ELS halted the feed.
-    deepest = z_start
-
-    def _poll():
-        nonlocal deepest
-        z = h.z_scaled_position()
-        deepest = min(deepest, z)          # cut moves -Z; deepest = most negative
-        return h.els_fsm.state == "stopped"
-
-    reached = h.wait_until(_poll, timeout_s=20)
+    # The wiring_cut_harness fixture runs the emulator with EMU_NO_AUTO_RETRACT,
+    # so once the ELS stop fires the carriage stays put (no simulated retract to
+    # race). Read the resting stop position directly.
+    reached = h.wait_until(lambda: h.els_fsm.state == "stopped", timeout_s=20)
     assert reached, (
         f"cut never stopped; state={h.els_fsm.state} "
         f"z_now={h.z_scaled_position()} stop_z={stop_z}"
     )
-    return z_start, stop_z, deepest, span
+    return z_start, stop_z, h.z_scaled_position(), span
 
 
 def test_valid_wiring_reaches_stop_z(wiring_cut_harness):

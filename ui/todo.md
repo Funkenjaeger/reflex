@@ -112,6 +112,30 @@
   that guard may cover some cases, but this audit should enumerate the full reachable state space
   first so we know what the guard(s) must cover.
 
+### UI FSM can lock in "Cutting…" with Stop disabled (TOCTOU on is_ready_to_cut)
+- **Found:** overnight review of the system-test work (2026-07-09).
+- **Issue:** `ui_fsm.py:40` transitions `in_cycle.waiting_to_cut → in_cycle.cutting`
+  UNCONDITIONALLY on the action button; `on_enter_in_cycle_cutting` (`ui_fsm.py:102-104`) then
+  calls `ElsFsm.cut()`, whose `is_ready_to_cut` guard can REFUSE (e.g. Z drifted past the safety
+  margin between the last `_apply_policy` tick and the click — a time-of-check/time-of-use gap).
+  Result: UI FSM sits in `in_cycle.cutting` (`can_stop=False`, blank action button per
+  `ui_controller.py:22`) while the domain FSM is still `stopped`. No `stop_active` ever fires, so
+  there's no FSM path out except toggling Engage. No motion occurs (firmware `active=1` still
+  holds), so it's a lockup, not a crash — but a lathe UI that says "Cutting…" while disabling Stop
+  is bad. **Action:** gate the UI `waiting_to_cut → cutting` transition on `els_fsm.may_cut()` (or
+  roll the UI FSM back to `waiting_to_cut` when `ElsFsm.cut()` is refused). Add a regression test.
+
+### ELS safety-critical register writes are fire-and-forget (no read-back / abort)
+- **Found:** overnight review (2026-07-09).
+- **Issue:** the `reflex/utils/communication.py` write helpers swallow all exceptions (log only),
+  and reads return 0 on failure. In `ElsFsm.on_enter_cutting` (`els_fsm.py:117-136`) the sequence
+  writes `stopPosition`/`stopDirection`/`enable` then clears `active` to release the cut. If the
+  `stopPosition` write fails on a transient Modbus timeout but the link recovers before
+  `set_active(False)`, the cut resumes against the PREVIOUS pass's stop position — a wrong-shoulder
+  cut. **Action:** consider read-back verification (or aborting the state transition / raising the
+  ELS alarm) for the safety-critical `elsStop` writes (`stopPosition`, `stopDirection`, `enable`)
+  before releasing `active`. Weigh against the added Modbus round-trips per cut.
+
 ## Dead Code and Cleanup
 
 ### 8. Dead/Commented-Out Code

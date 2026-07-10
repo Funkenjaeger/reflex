@@ -60,9 +60,11 @@ def test_emulator_launches(emulator_process):
     assert re.fullmatch(r"/dev/pts/\d+", pty_path)
 
 
-def test_servo_dir_matches_config_default(emulator_process):
-    """Sanity check the register-access pattern itself: servo.servoDir should
-    read back the launched config's default (lathe.toml [servo] dir = 1)."""
+def test_servo_dir_reads_canonical_default(emulator_process):
+    """Sanity check the register-access pattern itself: servo.servoDir reads back
+    the firmware's canonical +1 default (RampsStart). The scaleDir/servoDir
+    registers are the HOST's canonicalization space (default +1); physical wiring
+    lives in the physics model, not these registers."""
     _, pty_path = emulator_process
     cm = _connect(pty_path)
     try:

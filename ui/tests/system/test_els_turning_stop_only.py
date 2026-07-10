@@ -11,12 +11,16 @@ import pytest
 pytestmark = pytest.mark.system
 
 
-# The emulator's default +30 rpm spindle feeds the carriage AWAY from an
-# els_forward=True stop (the emulator's default spindle-rotation sign is opposite
-# the UI's "forward" feed convention). Run the baseline with the spindle turning
-# the direction consistent with els_forward=True so the cut approaches the stop.
-# (Reconciling which sign is "canonical" is a Task 8 polarity question.)
-@pytest.mark.parametrize("emulator_process", [{"env": {"EMU_RPM": "-30"}}], indirect=True)
+# EMU_RPM=-30: the emulator's default +30 rpm spindle feeds the carriage AWAY
+# from an els_forward=True stop (the emulator's default spindle-rotation sign is
+# opposite the UI's "forward" feed convention). Run the baseline with the spindle
+# turning the direction consistent with els_forward=True so the cut approaches
+# the stop. (Reconciling which sign is "canonical" is an open polarity question.)
+# EMU_NO_AUTO_RETRACT: the carriage stays at the stop after the ELS fires (no
+# simulated hand-retract), so the final read isn't racing the 400 ms retract.
+@pytest.mark.parametrize(
+    "emulator_process", [{"env": {"EMU_RPM": "-30", "EMU_NO_AUTO_RETRACT": "1"}}],
+    indirect=True)
 def test_turning_stop_only_reaches_stop_z(harness):
     h = harness
     h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
@@ -49,7 +53,11 @@ def test_turning_stop_only_reaches_stop_z(harness):
     )
 
     z_final = h.z_scaled_position()
-    # The carriage actually fed a meaningful distance toward the stop...
+    # The carriage fed in the correct (-Z, toward-the-shoulder) direction...
+    assert (z_final - z_start) < 0, (
+        f"cut fed the WRONG way (away from the stop): start={z_start} final={z_final}"
+    )
+    # ...a meaningful distance toward the stop...
     assert abs(z_final - z_start) > span * 0.5, (
         f"carriage barely moved: start={z_start} final={z_final} span={span}"
     )

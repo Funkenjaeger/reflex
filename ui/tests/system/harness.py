@@ -74,8 +74,9 @@ class _FakeApp:
 class SystemHarness:
     """Assembles and drives the real ELS stack against the emulator PTY."""
 
-    Z_SCALE_INDEX = 1  # scales[1] = Z axis (emulator main.cpp:479-480)
-    SPINDLE_SCALE_INDEX = 0
+    SPINDLE_SCALE_INDEX = 0  # scales[0] = spindle
+    Z_SCALE_INDEX = 1        # scales[1] = Z axis (emulator main.cpp)
+    X_SCALE_INDEX = 2        # scales[2] = X / cross-slide
 
     def __init__(self, pty_path: str, address: int = 17, baudrate: int = 115200):
         self.pty_path = pty_path
@@ -88,6 +89,7 @@ class SystemHarness:
         self.ui_fsm = None
         self.hal = None
         self._fake_app = None
+        self._orig_get_running_app = None
 
     def connect(self):
         # Point Board's ConnectionManager at the emulator PTY before Board is
@@ -104,8 +106,12 @@ class SystemHarness:
 
         # Register the fake app BEFORE ElsDispatcher (its __init__ calls
         # App.get_running_app()). MainApp inherits get_running_app from App.
+        # Capture the original so disconnect() can restore it — otherwise a
+        # later non-system test in the same process gets a stale _FakeApp
+        # bound to a dead board instead of None.
         import kivy.app
         self._fake_app = _FakeApp(self.board)
+        self._orig_get_running_app = kivy.app.App.get_running_app
         kivy.app.App.get_running_app = staticmethod(lambda: self._fake_app)
 
         from reflex.dispatchers.els import ElsDispatcher
@@ -120,7 +126,10 @@ class SystemHarness:
         # Establish the link: Board.update() flips board.connected True on the
         # first successful refresh, which fires the dispatchers' on-connect
         # handlers (ServoDispatcher servoDir / InputDispatcher scaleDir writes).
-        self.wait_until(lambda: self.connected, timeout_s=5)
+        if not self.wait_until(lambda: self.connected, timeout_s=5):
+            raise RuntimeError(
+                f"harness never established a Modbus connection to {self.pty_path}"
+            )
         return self
 
     @property
@@ -128,16 +137,16 @@ class SystemHarness:
         return bool(self.board and self.board.connected)
 
     # ── headless clock pumping ────────────────────────────────────────────
-    def pump(self, seconds: float = 0.0):
+    def pump(self):
         """Advance the Kivy clock and run one Board update, so register reads
-        and update_tick-bound handlers fire without a running App loop."""
+        and update_tick-bound handlers fire without a running App loop.
+
+        Board.update() handles its own Modbus/comms failures internally; we do
+        NOT swallow exceptions here so a genuine crash in an update_tick-bound
+        handler (ElsFsm._on_board_update, controller polls — the code under
+        test) surfaces loudly instead of hiding as a generic wait_until timeout."""
         Clock.tick()
-        try:
-            self.board.update()
-        except Exception:
-            pass
-        if seconds:
-            time.sleep(seconds)
+        self.board.update()
 
     def wait_until(self, predicate, timeout_s: float, poll_s: float = 0.02) -> bool:
         deadline = time.monotonic() + timeout_s
@@ -224,8 +233,6 @@ class SystemHarness:
                 return
         raise KeyError(f"no InputDispatcher for scale index {scale_index}")
 
-    X_SCALE_INDEX = 2
-
     def apply_wiring_toggles(self, toggles: dict):
         """Set the four operator reverse toggles to CANCEL a wiring permutation,
         through the production write path (fires the real reverse handlers).
@@ -242,11 +249,14 @@ class SystemHarness:
         # Clean up GLOBAL state so parametrized/batched tests don't accumulate
         # stale Clock intervals + event-bus subscribers (which slow every pump
         # and cause cross-test drift). Kivy Clock.unschedule(cb) removes a
-        # callback with no stored handle needed; Board schedules update+blinker.
+        # callback with no stored handle needed; Board schedules update+blinker,
+        # and each InputDispatcher schedules a 25 Hz _speed_task.
         if self.board is not None:
             try:
                 Clock.unschedule(self.board.update)
                 Clock.unschedule(self.board.blinker)
+                for inp in self.board.inputs:
+                    Clock.unschedule(inp._speed_task)
             except Exception:
                 pass
         try:
@@ -254,6 +264,15 @@ class SystemHarness:
             fsm_event_bus._subs.clear()
         except Exception:
             pass
+        # Restore the App.get_running_app we monkeypatched in connect(), so a
+        # later (non-system) test doesn't inherit a stale _FakeApp.
+        if self._orig_get_running_app is not None:
+            try:
+                import kivy.app
+                kivy.app.App.get_running_app = self._orig_get_running_app
+            except Exception:
+                pass
+            self._orig_get_running_app = None
         if self.board is not None:
             try:
                 self.board.connection_manager.disconnect()
