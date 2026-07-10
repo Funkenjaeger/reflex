@@ -24,6 +24,9 @@ def _make_controller(**overrides):
         # need them to exist as no-ops.
         start_cut=lambda: None,
         start_retract=lambda: None,
+        # Gates the waiting_to_cut→cutting transition (fresh domain readiness).
+        # Default ready; refusal is exercised explicitly where relevant.
+        may_cut=lambda: True,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -265,3 +268,21 @@ def test_entering_in_cycle_retracting_calls_controller_start_retract():
     # The sequence should land in retracting and have triggered both callbacks.
     assert calls == ["start_cut", "start_retract"]
     assert fsm.state == "in_cycle.retracting"
+
+
+def test_action_refused_when_domain_not_ready_does_not_enter_cutting():
+    """Guard for the 'Cutting…' lockup: waiting_to_cut→cutting is gated on
+    controller.may_cut(). When the domain FSM would refuse, the action is a
+    no-op and the UI stays in waiting_to_cut (never enters the blank/locked
+    cutting state), and start_cut is never called."""
+    calls = []
+    controller = _make_controller(
+        may_cut=lambda: False,
+        start_cut=lambda: calls.append("start_cut"),
+    )
+    fsm = ElsUiFsm(controller)
+    fsm.start()                        # idle → in_cycle.waiting_to_cut
+    assert fsm.state == "in_cycle.waiting_to_cut"
+    fsm.action()                       # refused by may_cut → no transition
+    assert fsm.state == "in_cycle.waiting_to_cut"
+    assert calls == []                 # start_cut never fired

@@ -520,6 +520,18 @@ class ElsUiController(EventDispatcher):
         self.stop_dia_error = "" if self.stop_dia_valid else "Invalid stop diameter setting"
 
     # ——— UI FSM —> ELS FSM methods ———
+    def may_cut(self) -> bool:
+        """True iff the domain FSM would accept a cut right now — a FRESH check
+        (not the cached action_allowed policy). Gates the UI
+        waiting_to_cut→cutting transition so a stale click can't lock the UI in
+        'Cutting…' (Stop disabled, no exit) when ElsFsm.cut() refuses. Any error
+        → refuse, so the UI stays put rather than entering an unrecoverable state."""
+        try:
+            return self._els_fsm.is_ready_to_cut()
+        except Exception:
+            log.debug("may_cut: is_ready_to_cut raised → refusing the cut")
+            return False
+
     def start_cut(self):
         self._els_fsm.set_stop_z(self.stop_z)
         self._els_fsm.cut()

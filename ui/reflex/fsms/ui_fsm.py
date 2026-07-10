@@ -37,7 +37,13 @@ UI_TRANSITIONS = [
     {"trigger": "action", "source": "set_start_dia", "dest": "set_stop_dia", "conditions": "start_dia_valid"},
     {"trigger": "action", "source": "set_stop_dia", "dest": "confirm", "conditions": "stop_dia_valid"},
     {"trigger": "action", "source": "confirm", "dest": "in_cycle"},
-    {"trigger": "action", "source": "in_cycle.waiting_to_cut", "dest": "in_cycle.cutting"},
+    # Gated on a FRESH domain-readiness check (not the cached action_allowed
+    # policy) so a stale click can't drive the UI into `cutting` when
+    # ElsFsm.cut() would refuse — that left the UI locked in "Cutting…" with
+    # Stop disabled and no exit (TOCTOU on is_ready_to_cut). If refused, the
+    # trigger is a no-op and the UI stays in waiting_to_cut.
+    {"trigger": "action", "source": "in_cycle.waiting_to_cut",
+     "dest": "in_cycle.cutting", "conditions": "cut_ready"},
     # ─── End-of-cut routing: retract-enabled modes go to waiting_to_retract;
     # stop-only loops straight back to waiting_to_cut so the operator can
     # set up the next cut without the UI parking in a retract state that
@@ -97,6 +103,7 @@ class ElsUiFsm:
     def stop_dia_valid(self):   return self.controller.stop_dia_valid
     def wizard_enabled(self):   return self.controller.wizard_enabled
     def retract_enabled(self):  return self.controller.retract_enabled
+    def cut_ready(self):        return self.controller.may_cut()
 
     # ——— state change methods ———
     def on_enter_in_cycle_cutting(self):
