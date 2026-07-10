@@ -7,18 +7,20 @@ engaged and does NOT simulate the manual retract — the host owns the retract.
 
 Commissioning note (this is what makes Task 9 pass — see below):
   This test uses the REAL machine's commissioning (elspi): a forward +30 spindle
-  with the SERVO reversed (servo_reverse=true, servoDir=-1) and els_forward=true,
-  NOT the EMU_RPM=-30 band-aid the stop-only / reversing-matrix tests use.
+  with the SERVO reversed (servo_reverse=true, servoDir=-1) and els_forward=true.
+  (The whole system suite now uses this real commissioning; an earlier EMU_RPM=-30
+  spindle band-aid was retired once this diagnosis landed.)
 
-  Why it matters: the cut is spindle-SYNC-mediated, so reversing the spindle
-  (EMU_RPM=-30) is an equivalent way to get the cut feeding toward the stop. But
-  the retract is a DIRECT servo indexing move (elsStop → servo.stepsToGo), whose
-  direction depends on servoDir, not the spindle sign. The spindle band-aid never
-  corrects it, so under all-default toggles the retract drives the carriage the
-  WRONG way (toward the shoulder) and — via the retract self-loop recomputing an
-  ever-larger delta — runs away. Commissioning servo_reverse=true (as the real
-  lathe does) fixes both cut and retract. maxSpeed is also raised to the real
-  10000 (vs the hermetic 1000 default) so no cut-time step backlog flushes after
+  Why the retract specifically needs it: the cut is spindle-SYNC-mediated, so
+  reversing the spindle (the old EMU_RPM=-30 band-aid) was an equivalent way to
+  get the cut feeding toward the stop. But the retract is a DIRECT servo indexing
+  move (elsStop → servo.stepsToGo), whose direction depends on servoDir, not the
+  spindle sign. The spindle band-aid never corrected it, so under all-default
+  toggles the retract drove the carriage the WRONG way (toward the shoulder) and
+  — via the retract self-loop recomputing an ever-larger delta — ran away.
+  Commissioning servo_reverse=true (as the real lathe does) fixes both cut and
+  retract. maxSpeed is also raised to the real 10000 (vs the hermetic 1000
+  default) so no cut-time step backlog flushes after
   the stop; see SystemHarness.commission_servo.
 
 Includes the c69b02a regression: that commit fixed the retract servo direction

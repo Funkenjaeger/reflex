@@ -19,6 +19,7 @@ from tests.system.wiring import (
     WIRING_PERMUTATIONS,
     canceling_toggles,
     make_config,
+    real_commissioning_toggles,
 )
 
 REFLEX_FW_DIR = Path(os.environ.get("REFLEX_FW_DIR", "/mnt/c/projects/embedded/reflex-fw"))
@@ -121,6 +122,63 @@ def test_canceling_toggles_rule(overrides, expected_toggles):
 def test_every_permutation_toggles_match_canceling_rule():
     for permutation in WIRING_PERMUTATIONS:
         assert permutation.toggles == canceling_toggles(permutation.overrides)
+
+
+# ---------------------------------------------------------------------------
+# real_commissioning_toggles(): pure cancel, but servo toggle XOR the servo_reverse
+# baseline (forward +30 spindle needs the servo reversed to cut correctly).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "overrides, expected_toggles",
+    [
+        # All-normal wiring: inputs stay un-reversed, but the servo carries the
+        # commissioning reverse (unlike the band-aid path where it stays False).
+        (
+            {
+                "spindle.scale_dir": 1,
+                "z_axis.scale_dir": 1,
+                "cross_slide.scale_dir": 1,
+                "servo.dir": 1,
+            },
+            {
+                "spindle_reverse": False,
+                "z_reverse": False,
+                "x_reverse": False,
+                "servo_reverse": True,
+            },
+        ),
+        # Flipped servo wiring cancels the commissioning reverse -> servo False;
+        # inputs unchanged from the pure rule.
+        (
+            {
+                "spindle.scale_dir": -1,
+                "z_axis.scale_dir": 1,
+                "cross_slide.scale_dir": 1,
+                "servo.dir": -1,
+            },
+            {
+                "spindle_reverse": True,
+                "z_reverse": False,
+                "x_reverse": False,
+                "servo_reverse": False,
+            },
+        ),
+    ],
+)
+def test_real_commissioning_toggles_rule(overrides, expected_toggles):
+    assert real_commissioning_toggles(overrides) == expected_toggles
+
+
+def test_real_commissioning_only_inverts_servo_vs_pure_cancel():
+    # For every permutation the three input toggles match the pure rule and only
+    # the servo toggle differs (by exactly the commissioning XOR).
+    for permutation in WIRING_PERMUTATIONS:
+        pure = canceling_toggles(permutation.overrides)
+        commissioned = real_commissioning_toggles(permutation.overrides)
+        for key in ("spindle_reverse", "z_reverse", "x_reverse"):
+            assert commissioned[key] == pure[key]
+        assert commissioned["servo_reverse"] == (not pure["servo_reverse"])
 
 
 # ---------------------------------------------------------------------------

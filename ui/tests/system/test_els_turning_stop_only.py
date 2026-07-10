@@ -11,20 +11,20 @@ import pytest
 pytestmark = pytest.mark.system
 
 
-# EMU_RPM=-30: the emulator's default +30 rpm spindle feeds the carriage AWAY
-# from an els_forward=True stop (the emulator's default spindle-rotation sign is
-# opposite the UI's "forward" feed convention). Run the baseline with the spindle
-# turning the direction consistent with els_forward=True so the cut approaches
-# the stop. (Reconciling which sign is "canonical" is an open polarity question.)
+# Real machine commissioning (elspi): a forward +30 rpm spindle (EMU_RPM=30) cuts
+# correctly toward an els_forward=True stop only with the SERVO reversed
+# (servo_reverse=true) — see the Task 9 retract test + morning-coffee #1. That's
+# what commission_servo applies below (also raising maxSpeed to the real 10000).
 # EMU_NO_AUTO_RETRACT: the carriage stays at the stop after the ELS fires (no
 # simulated hand-retract), so the final read isn't racing the 400 ms retract.
 @pytest.mark.parametrize(
-    "emulator_process", [{"env": {"EMU_RPM": "-30", "EMU_NO_AUTO_RETRACT": "1"}}],
+    "emulator_process", [{"env": {"EMU_RPM": "30", "EMU_NO_AUTO_RETRACT": "1"}}],
     indirect=True)
 def test_turning_stop_only_reaches_stop_z(harness):
     h = harness
     h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
                 els_forward=True)
+    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
 
     # Stop target on the cutting side (els_forward=True => cut_dir=-1 => cut moves
     # in the -scaledPosition direction). Must clear the safety margin.
@@ -62,15 +62,18 @@ def test_turning_stop_only_reaches_stop_z(harness):
         f"carriage barely moved: start={z_start} final={z_final} span={span}"
     )
     # ...and halted in the stop_z vicinity. Tolerance is generous: stop-only mode
-    # uses a loose firmware hysteresis and the feed is wall-clock paced, so the
-    # exact halt point jitters a few units run-to-run. Sub-unit stop precision /
-    # no-overshoot is Task 8b's job, not this smoke test's.
-    assert z_final == pytest.approx(stop_z, abs=15.0), (
+    # uses a loose firmware hysteresis, the feed is wall-clock paced, and at the
+    # real servo speed (maxSpeed=10000) the carriage carries ~0.15 mm (~60 counts)
+    # past a position-triggered stop before it halts. Sub-unit stop precision /
+    # no-overshoot is Task 8b's job, not this smoke test's — this just pins that
+    # the cut halts in the target's vicinity rather than running away.
+    assert z_final == pytest.approx(stop_z, abs=90.0), (
         f"stopped off target: final={z_final} stop_z={stop_z}"
     )
-    # It must not have blown PAST the stop toward the chuck by more than the
-    # loose hysteresis (a crude overshoot sanity check; els_forward=True cuts in
-    # the -Z direction, so overshoot is more-negative than stop_z).
-    assert z_final >= stop_z - 20.0, (
+    # It must not have blown far PAST the stop toward the chuck (a coarse overshoot
+    # sanity check; els_forward=True cuts in the -Z direction, so overshoot is
+    # more-negative than stop_z). Bounds the realistic ~60-count overshoot well
+    # below a failure-to-stop runaway.
+    assert z_final >= stop_z - 90.0, (
         f"overshot the stop: final={z_final} stop_z={stop_z}"
     )

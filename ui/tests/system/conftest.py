@@ -267,34 +267,44 @@ def harness(emulator_process, tmp_path, monkeypatch):
 def wiring_cut_harness(request, emulator_binary, tmp_path, monkeypatch):
     """Parametrized over all 16 physical-wiring permutations: launches an
     emulator on the permutation's generated config, connects a harness, sets the
-    stop-only turning modes, and applies the CANCELING UI toggles (production
-    write path). Yields (harness, permutation).
+    stop-only turning modes, commissions the servo like the real machine, and
+    applies the CANCELING UI toggles (production write path). Yields (harness,
+    permutation).
 
-    EMU_RPM=-30 so the spindle turns the direction consistent with the UI's
-    els_forward=True "forward" feed convention (see Task 7 finding), for every
-    permutation — the canceling toggles neutralize the physical wiring, so all 16
-    valid configs should behave like the all-normal baseline.
+    Runs against the REAL machine commissioning (elspi): a forward +30 spindle
+    (EMU_RPM=30) with the servo reversed (servo_reverse baseline) + maxSpeed=10000,
+    NOT the earlier EMU_RPM=-30 spindle band-aid. `real_commissioning_toggles`
+    folds that servo baseline into the per-permutation canceling toggles (the
+    servo toggle does double duty — cancel physical wiring AND carry the
+    commissioning polarity). The canceling toggles neutralize the physical wiring,
+    so all 16 valid configs behave like the all-normal commissioned baseline.
+
+    EMU_NO_AUTO_RETRACT: after the ELS stop the carriage stays put (no simulated
+    hand-retract), so the test reads the resting stop position with no race
+    against the emulator's 400 ms retract.
     """
     from tests.system.harness import SystemHarness
-    from tests.system.wiring import make_config
+    from tests.system.wiring import make_config, real_commissioning_toggles
 
     perm = request.param
     monkeypatch.setenv("HOME", str(tmp_path))
     base_toml = EMULATOR_DIR / "config" / "lathe.toml"
     config = make_config(base_toml, perm.overrides, tmp_path / f"wiring_{perm.id}.toml")
 
-    # EMU_NO_AUTO_RETRACT: after the ELS stop the carriage stays put (no
-    # simulated hand-retract), so the test reads the resting stop position with
-    # no race against the emulator's 400 ms retract.
     proc, pty_path = _start_emulator(
-        emulator_binary, config, {"EMU_RPM": "-30", "EMU_NO_AUTO_RETRACT": "1"})
+        emulator_binary, config, {"EMU_RPM": "30", "EMU_NO_AUTO_RETRACT": "1"})
     h = None
     try:
         h = SystemHarness(pty_path)
         h.connect()
         h.configure(is_threading=False, retract_enabled=False,
                     wizard_enabled=False, els_forward=True)
-        h.apply_wiring_toggles(perm.toggles)
+        # Real servo speed (vs the hermetic 1000 default) — keeps the emulated
+        # servo up with the sync feed so the cut tracks cleanly to the stop.
+        h.board.servo.maxSpeed = 10000
+        h.board.servo.acceleration = 20000
+        h.pump()
+        h.apply_wiring_toggles(real_commissioning_toggles(perm.overrides))
         yield h, perm
     finally:
         if h is not None:

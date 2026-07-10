@@ -169,6 +169,33 @@ def canceling_toggles(overrides: Mapping[str, int]) -> dict[str, bool]:
     return toggles
 
 
+# The real machine (elspi) commissions a FORWARD spindle that cuts correctly only
+# with the SERVO reversed (servo_reverse=true) — verified on the real lathe and in
+# the Task 9 retract test. The matrix can run against that real commissioning
+# (EMU_RPM=+30) instead of the EMU_RPM=-30 spindle band-aid; when it does, the
+# servo reverse toggle does DOUBLE DUTY: it cancels the physical servo wiring AND
+# carries this commissioning polarity. The three INPUT axes have no commissioning
+# offset (all inputs un-reversed at commissioning), so only the servo toggle is
+# XOR'd with the baseline. This keeps the pure `canceling_toggles` model (and its
+# tests) intact for the band-aid path.
+SERVO_COMMISSION_REVERSE = True
+
+
+def real_commissioning_toggles(overrides: Mapping[str, int]) -> dict[str, bool]:
+    """UI toggles that cancel ``overrides`` under the REAL machine commissioning
+    (forward +30 spindle + ``servo_reverse`` baseline), for the EMU_RPM=+30 path.
+
+    Identical to :func:`canceling_toggles` for the spindle/Z/X input toggles; the
+    servo toggle is the pure cancel XOR the commissioning reverse. So all-normal
+    wiring → ``servo_reverse=True`` (the commissioned baseline), and a flipped
+    ``servo.dir`` → ``servo_reverse=False`` (the flip cancels the commissioning).
+    """
+    toggles = canceling_toggles(overrides)
+    if SERVO_COMMISSION_REVERSE:
+        toggles["servo_reverse"] = not toggles["servo_reverse"]
+    return toggles
+
+
 @dataclass(frozen=True)
 class WiringPermutation:
     """One of the 16 physical-wiring permutations for the Task 8/9 matrix."""
