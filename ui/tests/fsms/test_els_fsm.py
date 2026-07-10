@@ -77,6 +77,9 @@ def _make_servo(ratio_num=1, ratio_den=1, lead_screw_pitch=0.0,
         ratioNum=ratio_num, ratioDen=ratio_den,
         leadScrewPitch=lead_screw_pitch,
         leadScrewPitchIn=lead_screw_pitch_in,
+        servoMode=0,
+        # ElsFsm.on_enter_disabled calls board.servo.stop_feed() as a safety stop.
+        stop_feed=lambda: None,
     )
 
 

@@ -16,6 +16,10 @@ class CustomPopup(BoxLayout):
     title = StringProperty("")
     message = StringProperty("")
     button_text = StringProperty("OK")
+    # When non-empty, a second (cancel) button is shown alongside the primary
+    # button, turning the dialog into a confirm/cancel. Cancel just dismisses;
+    # the primary button fires on_dismiss_callback (the confirm action).
+    cancel_text = StringProperty("")
     on_dismiss_callback = ObjectProperty(None, allownone=True)
 
     def __init__(self, **kwargs):
@@ -37,4 +41,8 @@ class CustomPopup(BoxLayout):
     def on_button_press(self):
         if self.on_dismiss_callback:
             self.on_dismiss_callback()
+        self.dismiss()
+
+    def on_cancel_press(self):
+        # Cancel just closes the dialog without firing the confirm callback.
         self.dismiss()

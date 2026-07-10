@@ -274,6 +274,13 @@ class ServoDispatcher(SavingDispatcher):
         else:
             self.servoMode = 1
 
+    def stop_feed(self):
+        """Force the sync feed off (servoMode=0), idempotent. Used as a safety
+        stop when ELS disengages so a running spindle-synced feed doesn't keep
+        driving the carriage with no ELS stop to arrest it."""
+        if self.servoMode != 0:
+            self.servoMode = 0
+
     def set_current_position(self, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)
         self.position = int(value / ratio)

@@ -180,6 +180,10 @@ class ElsFsm:
         self._retract_backlash_applied = False
         self.board.unbind(update_tick=self._on_board_update)
         self.hal.set_enable(False)
+        # Safety: disengaging ELS removes the stop that was gating the feed, so
+        # also stop any running sync feed — otherwise a spindle-synced feed keeps
+        # driving the carriage with no auto-stop (audit H6). Idempotent.
+        self.board.servo.stop_feed()
 
     # ——— condition-checking methods ———    
     def is_ready_to_retract(self):

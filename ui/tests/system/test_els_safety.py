@@ -2,11 +2,25 @@
 audit results'). Each test drives the REAL controller + FSM stack against the
 emulator and pins a guard that the audit showed was missing.
 """
+import time
+
 import pytest
 
 pytestmark = pytest.mark.system
 
 _ENV = {"env": {"EMU_RPM": "30", "EMU_NO_AUTO_RETRACT": "1"}}
+
+
+def _max_travel(h, watch_s):
+    """Pump for watch_s, return the max |z - z_at_call| excursion."""
+    z0 = h.z_scaled_position()
+    mx = 0.0
+    deadline = time.monotonic() + watch_s
+    while time.monotonic() < deadline:
+        h.pump()
+        mx = max(mx, abs(h.z_scaled_position() - z0))
+        time.sleep(0.01)
+    return mx
 
 
 def _commission(h, *, els_forward=True, retract_enabled=False, is_threading=False):
@@ -51,3 +65,80 @@ def test_refused_cut_does_not_lock_ui(harness):
     # Sanity: the action button still offers "Cut" and Stop is enabled — not the
     # blank/locked "Cutting…" policy.
     assert h.controller.action_button_text == "Cut"
+
+
+# ── H2b: enabling feed with no armed ELS stop must require confirmation ───────
+@pytest.mark.parametrize("emulator_process", [_ENV], indirect=True)
+def test_feed_enable_requires_confirm_without_armed_stop(harness):
+    """Audit H2b: enabling the sync feed with no ELS stop armed would feed the
+    carriage freely toward the chuck. request_feed_enable must refuse (return
+    False, feed NOT enabled) until confirmed; then it enables."""
+    h = harness
+    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
+                els_forward=True)
+    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+
+    # Not engaged → no armed stop.
+    assert h.controller.feed_without_armed_stop() is True
+    assert h.board.servo.servoMode == 0
+
+    # First request refuses and does NOT start the feed.
+    enabled = h.controller.request_feed_enable(confirmed=False)
+    h.pump()
+    assert enabled is False
+    assert h.board.servo.servoMode == 0, "feed must not start without confirmation"
+    # And nothing moved.
+    assert _max_travel(h, 1.5) < 50.0, "carriage moved despite feed being refused"
+
+    # Confirming enables the feed.
+    enabled = h.controller.request_feed_enable(confirmed=True)
+    h.pump()
+    assert enabled is True
+    assert h.board.servo.servoMode == 1
+
+
+@pytest.mark.parametrize("emulator_process", [_ENV], indirect=True)
+def test_feed_enable_allowed_with_armed_stop(harness):
+    """With ELS engaged and a stop armed, enabling the feed needs no confirm."""
+    h = harness
+    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
+                els_forward=True)
+    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    z0 = h.z_scaled_position()
+    h.set_stop_z(z0 - 300.0)
+    h.engage()                      # arms the stop (Z on safe side)
+    assert h.controller.feed_without_armed_stop() is False
+    enabled = h.controller.request_feed_enable(confirmed=False)
+    h.pump()
+    assert enabled is True
+    assert h.board.servo.servoMode == 1
+
+
+# ── H6: disengaging ELS while a feed is running must stop the feed ────────────
+@pytest.mark.parametrize("emulator_process", [_ENV], indirect=True)
+def test_disengage_stops_feed(harness):
+    """Audit H6: engage + feed, then disengage ELS. The feed must stop
+    (servoMode 0) and the carriage must not keep marching toward the chuck."""
+    h = harness
+    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
+                els_forward=True)
+    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    z0 = h.z_scaled_position()
+    h.set_stop_z(z0 - 5000.0)       # far stop so the feed is genuinely running
+    h.engage()
+    h.enable_sync()
+    # Let the feed run briefly, then disengage.
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        h.pump(); time.sleep(0.01)
+    assert h.board.servo.servoMode == 1, "precondition: feed should be running"
+
+    h.controller.toggle_engage()    # disengage
+    h.pump()
+    assert h.els_fsm.state == "disabled"
+    assert h.board.servo.servoMode == 0, "disengage must stop the feed"
+    # After disengage the carriage must settle quickly, not keep marching.
+    settle = _max_travel(h, 3.0)
+    assert settle < 500.0, (
+        f"carriage kept feeding after disengage: {settle:.0f} counts"
+    )

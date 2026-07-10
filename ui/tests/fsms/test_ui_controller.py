@@ -72,6 +72,9 @@ def _make_collaborators(*, z_axis=None, x_axis=None, connected=False):
     board.servo = SimpleNamespace(
         ratioNum=1, ratioDen=1,
         leadScrewPitch=0.0, leadScrewPitchIn=False,
+        servoMode=0,
+        # ElsFsm.on_enter_disabled calls board.servo.stop_feed() as a safety stop.
+        stop_feed=lambda: None,
     )
     # _safety_margin_display converts the margin to display units via
     # board.formats.factor.

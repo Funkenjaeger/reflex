@@ -115,6 +115,31 @@ class MainApp(App):
         # to DRO (common to all use cases and the most benign).
         self.set_mode(self.current_mode)
 
+    def on_servo_enable_pressed(self):
+        """Sync-Enable (servo power-feed) button intent, with the ELS feed guard.
+
+        In advanced ELS mode, enabling the feed with no armed ELS stop would run
+        the carriage with no automatic stop (audit H2b/H6) — so ask for explicit
+        confirmation first. In every other mode (basic power feed) and when a
+        stop is armed, toggle the feed directly. Disabling is never gated."""
+        if self.current_mode != MODE_ELS or self.els_uic is None:
+            self.servo.toggle_enable()
+            return
+        if self.els_uic.request_feed_enable():
+            return  # enabled directly (feed off, or a stop is armed)
+        # Refused: no armed stop. Confirm to override.
+        from reflex.components.popups.custom_popup import CustomPopup
+        CustomPopup(
+            title="No ELS Stop Armed",
+            message=(
+                "No ELS stop is set. Enabling the feed will drive the carriage "
+                "with no automatic stop.\n\nEnable feed anyway?"
+            ),
+            button_text="Enable Feed",
+            cancel_text="Cancel",
+            on_dismiss_callback=lambda: self.els_uic.request_feed_enable(confirmed=True),
+        ).open()
+
     def get_spindle_axis(self):
         return self.board.get_spindle_axis()
 

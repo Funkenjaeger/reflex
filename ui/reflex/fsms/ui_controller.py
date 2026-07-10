@@ -532,6 +532,33 @@ class ElsUiController(EventDispatcher):
             log.debug("may_cut: is_ready_to_cut raised → refusing the cut")
             return False
 
+    def feed_without_armed_stop(self) -> bool:
+        """True iff enabling a sync feed right now would run with NO ELS stop to
+        arrest it: ELS not engaged, or engaged but no armed stop
+        (``elsStop.enable`` cleared, e.g. Z on the wrong side at engage). Used to
+        decide whether a feed-enable needs operator confirmation (audit H2b/H6)."""
+        if not self.engaged:
+            return True
+        try:
+            return not bool(self._board.device['elsStop']['enable'])
+        except Exception:
+            return True  # can't tell → treat as unsafe, confirm
+
+    def request_feed_enable(self, confirmed: bool = False) -> bool:
+        """Operator asked to enable the sync/power feed (advanced ELS context).
+
+        Returns True if the feed was toggled, False if it needs confirmation
+        first — i.e. turning the feed ON with no armed ELS stop. The caller
+        (UI) should then show a confirm dialog and, on confirm, call again with
+        ``confirmed=True``. Turning the feed OFF is never gated."""
+        servo = self._board.servo
+        turning_on = servo.servoMode == 0
+        if turning_on and not confirmed and self.feed_without_armed_stop():
+            log.info("request_feed_enable: no armed ELS stop — confirmation required")
+            return False
+        servo.toggle_enable()
+        return True
+
     def start_cut(self):
         self._els_fsm.set_stop_z(self.stop_z)
         self._els_fsm.cut()
