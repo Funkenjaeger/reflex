@@ -195,9 +195,22 @@ class SystemHarness:
         self.controller.stop_z = value
         self.pump()
 
+    def set_retract_z(self, value: float):
+        self.controller.retract_z = value
+        self.pump()
+
     def cut(self):
-        """Release the armed stop so the carriage feeds to stop_z."""
-        self.controller.start_cut()
+        """Press the action button to start the cut. Drives it through the UI
+        FSM (waiting_to_cut -> cutting -> start_cut) so the UI FSM is in
+        `cutting` when the stop fires and the cut_done/retract cascade can run
+        (start_cut alone drives only the domain FSM)."""
+        self.controller.on_action_button_clicked()
+        self.pump()
+
+    def trigger_retract(self):
+        """Press the action button in waiting_to_retract to start the retract
+        (retracting -> start_retract -> ElsFsm.retract)."""
+        self.controller.on_action_button_clicked()
         self.pump()
 
     # ── production write-path toggle setters (fire the real handlers) ─────
