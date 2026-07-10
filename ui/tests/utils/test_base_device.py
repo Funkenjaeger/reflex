@@ -122,8 +122,9 @@ class TestBaseDeviceParsing:
 
         device = Servo(mock_cm, base_address=0)
         assert device.size > 0
-        # Servo: 4 floats (2 each) + 1 int32 (2) + 3 uint32 (2 each) = 16
-        assert device.size == 16
+        # Servo: 4 floats (2 each) + 1 int32 (2) + 3 uint32 (2 each)
+        #        + 2 int16 (servoDir, _pad; 1 each) = 18
+        assert device.size == 18
 
 
 class TestRegisterType:
@@ -152,12 +153,13 @@ class TestSetFastData:
         mock_cm.definitions.append(servo_type)
 
         device = Servo(mock_cm, base_address=0)
-        # Servo has 8 fields; provide matching values
-        values = [1.0, 2.0, 3.0, 4.0, 5, 6, 7, 8]
+        # Servo has 10 fields (incl. servoDir + _pad); provide one value per field
+        values = [1.0, 2.0, 3.0, 4.0, 5, 6, 7, 8, 9, 10]
         result = device.set_fast_data(values)
         assert result["maxSpeed"] == 1.0
         assert result["currentSpeed"] == 2.0
         assert result["stepsToGo"] == 5
+        assert result["servoDir"] == 9
 
     def test_array_field(self, mock_cm):
         """Array fields should produce lists in fast_data."""
