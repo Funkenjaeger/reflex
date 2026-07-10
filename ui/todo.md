@@ -136,6 +136,22 @@
   ELS alarm) for the safety-critical `elsStop` writes (`stopPosition`, `stopDirection`, `enable`)
   before releasing `active`. Weigh against the added Modbus round-trips per cut.
 
+### Investigate: does changing servo maxSpeed at runtime corrupt the ELS sync ratio?
+- **Found:** overnight (2026-07-10) while diagnosing the emulator system-test retract (morning-coffee #3).
+- **Observation:** in the headless system-test harness, writing `board.servo.maxSpeed` AFTER the
+  axis sync ratio was already computed changes `scales[0].syncRatioDen` from 25 to 25000 (1000×),
+  collapsing the ELS feed. i.e. the ServoDispatcher/AxisDispatcher sync-ratio recomputation appears
+  coupled to `maxSpeed` (or to the ordering of when maxSpeed is written relative to the axis ratio
+  setup). Trace `ServoDispatcher.on_maxSpeed` / `configure_lead_screw_ratio` →
+  `AxisDispatcher` sync-ratio computation (`reflex/dispatchers/axis.py` ~245-266).
+- **Why it might be a real bug (not just a test artifact):** if an operator changes the servo max
+  speed live (Settings) on a real machine, does the ELS sync ratio silently recompute wrong? On the
+  real machine maxSpeed is loaded once from config (ServoBar `maxSpeed: 10000`) before the axis
+  ratio, so it may only bite the runtime-change path. **Action:** confirm whether a live maxSpeed
+  change recomputes/corrupts `syncRatioNum/Den`; if so, fix the recomputation to be independent of
+  maxSpeed (or recompute the sync ratio correctly after a maxSpeed change). Safety-relevant: a wrong
+  sync ratio means wrong feed-per-rev (thread pitch / feed rate).
+
 ## Dead Code and Cleanup
 
 ### 8. Dead/Commented-Out Code
