@@ -170,8 +170,15 @@ Findings (probes were temporary; regression tests land with each fix):
   check was rejected (legit cuts can be multiple inches; the hazard is a WRONG stop_z, not a
   large one). **FIXED (f5a6913):** `stop_z_valid` now means "operator actually set a stop_z"
   — starts False, the action gate blocks the cut, the field shows "--". Invalidated on ELS
-  Z-axis remap. Follow-up to weigh: also invalidate on a Z DRO zero/offset change (stored
-  scaled stop_z then points to a different physical spot) — needs offset-provider wiring.
+  Z-axis remap.
+  - **FOLLOW-UP DONE (effa7f5, 7bd9297, 71a55db):** the DRO re-zero / units-switch corruption
+    is now fixed structurally — `stop_z`/`retract_z` (and `start_dia`/`stop_dia`) are anchored
+    to the raw leadscrew/X encoder captured at Set, with the scaled value a live-derived
+    display mirror; the cut writes the frozen encoder. A re-zero / units switch just
+    re-references the display (physical target unchanged), matching the DRO. Only never-set +
+    axis remap invalidate. Optional per-machine notify (`ElsDispatcher.stop_z_reframe_notify`
+    = silent/warn/confirm) flags an offset/coordinate re-reference (not units). UI (settings
+    dropdown, notice strip) needs an on-device smoke test.
 - **CONFIRMED — 'Cutting…' lockup (H3).** Deterministically reproduced: when the domain
   cut is refused, the UI parks in `in_cycle.cutting` (blank action, Stop disabled) with
   no exit but the Engage toggle. Fix: gate the UI `waiting_to_cut→cutting` transition on
