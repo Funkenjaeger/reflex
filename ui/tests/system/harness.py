@@ -201,11 +201,13 @@ class SystemHarness:
         self.pump()
 
     def set_stop_z(self, value: float):
-        self.controller.stop_z = value
+        # Route through the operator commit path so the stop is anchored to the
+        # physical encoder (not just the scaled display mirror).
+        self.controller.commit_standalone_stop_z(value)
         self.pump()
 
     def set_retract_z(self, value: float):
-        self.controller.retract_z = value
+        self.controller.commit_standalone_retract_z(value)
         self.pump()
 
     def cut(self):

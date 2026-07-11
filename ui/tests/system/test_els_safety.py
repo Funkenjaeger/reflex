@@ -11,6 +11,43 @@ pytestmark = pytest.mark.system
 _ENV = {"env": {"EMU_RPM": "30", "EMU_NO_AUTO_RETRACT": "1"}}
 
 
+def test_stop_z_survives_dro_rezero(harness):
+    """The stop is anchored to the PHYSICAL leadscrew encoder, so re-zeroing the
+    Z DRO (an offset change) must NOT move where the tool actually stops — the
+    displayed value re-references but the firmware target (encoder) is unchanged.
+    This is the whole point of encoder-backing (the old scaled storage would have
+    silently moved the physical stop)."""
+    h = harness
+    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
+                els_forward=True)
+    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    z0 = h.z_scaled_position()
+    h.set_stop_z(z0 - 100.0)
+
+    enc_before = h.controller.stop_z_encoder
+    scaled_before = h.controller.stop_z
+    assert enc_before is not None
+
+    # Re-zero the Z DRO at the current carriage position (changes the offset).
+    z_axis = h.els.get_z_axis()
+    z_axis.set_current_position(0.0)
+    for _ in range(3):
+        h.pump()
+
+    # Physical stop (encoder) unchanged; the displayed value re-referenced.
+    assert h.controller.stop_z_encoder == enc_before, (
+        "re-zero moved the physical stop encoder!"
+    )
+    assert h.controller.stop_z != scaled_before, (
+        "displayed stop_z should have re-referenced to the new frame"
+    )
+    # Arming writes the FROZEN encoder to firmware, not the re-referenced scaled.
+    h.engage()
+    assert h.board.device['elsStop']['stopPosition'] == enc_before, (
+        "firmware stop was re-referenced instead of held at the physical target"
+    )
+
+
 def _max_travel(h, watch_s):
     """Pump for watch_s, return the max |z - z_at_call| excursion."""
     z0 = h.z_scaled_position()
@@ -46,8 +83,8 @@ def test_refused_cut_does_not_lock_ui(harness):
     assert h.els_fsm.is_ready_to_cut(), "precondition: cut should be ready here"
 
     # TOCTOU: move stop_z onto the carriage so the domain FSM would refuse the cut.
-    h.els_fsm.set_stop_z(z0)
-    h.controller.stop_z = z0
+    h.controller.commit_standalone_stop_z(z0)
+    h.pump()
     assert not h.els_fsm.is_ready_to_cut(), "domain should now refuse the cut"
 
     # Simulate the stale-cache click firing the UI action directly (what

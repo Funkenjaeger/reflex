@@ -233,6 +233,27 @@ class AxisDispatcher(SavingDispatcher):
         p -= self.offsets[current_offset]
         return int(p * inp.ratioDen / inp.ratioNum)
 
+    def scaled_from_encoder(self, encoder_counts: int) -> float:
+        """Inverse of position_to_encoder: a raw encoder count → the scaled
+        display value in the CURRENT frame (units + offsets).
+
+        Used to hold a position anchored to the PHYSICAL axis (an encoder count)
+        while still displaying/comparing it in whatever frame is current — the
+        encoder is fixed, so re-zeroing or switching units just re-renders it,
+        matching how the DRO itself behaves (offsets are stored canonically; see
+        the module docstring).
+        """
+        if self.spindleMode:
+            log.warning("Cannot convert encoder to scaled for spindle axis")
+            return 0.0
+        inp = self.inputs[self._transform.primary_input]
+        factor = float(self.formats.factor)
+        current_offset = self.offset_provider.currentOffset
+        p = encoder_counts * inp.ratioNum / inp.ratioDen
+        p += self.abs_offset
+        p += self.offsets[current_offset]
+        return p * factor
+
     # ── Sync ratio ───────────────────────────────────────────────────
 
     def _set_sync_ratio(self, *args, **kv):

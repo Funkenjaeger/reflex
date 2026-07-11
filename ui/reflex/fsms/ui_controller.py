@@ -91,31 +91,31 @@ class ElsUiController(EventDispatcher):
         self._board = board
         self._hal = ElsStopHal(board)
 
-        # Whether the operator has actually SET a stop_z (vs the 0.0 default).
-        # stop_z_valid tracks this, so a never-set stop can't silently be used
-        # for a cut (audit H1). Invalidated on a new ELS Z-axis mapping (below).
-        # NOT cleared by a plain disengage — same-setup re-engage is common and
-        # the value is still meaningful.
-        # KNOWN GAP (todo.md): stop_z is stored as a SCALED position, so a Z DRO
-        # zero/offset change or a mm↔in format switch also moves the physical
-        # target it refers to — those should invalidate it too, but that needs
-        # offset-provider / formats wiring and isn't done yet. (Pre-existing —
-        # stop_z_valid was unconditionally True before H1; this is still a strict
-        # improvement.)
+        # ── Encoder-anchored ELS targets ─────────────────────────────────────
+        # stop_z / retract_z are stored as the PHYSICAL Z-leadscrew encoder count
+        # captured when the operator set them (source of truth), NOT the scaled
+        # display value. The `stop_z`/`retract_z` NumericProperties are a live
+        # DERIVED mirror (re-rendered each tick from the frozen encoder in the
+        # current frame) used only for display + safe-side comparisons; the cut
+        # writes the frozen encoder straight to firmware. This makes an ELS stop
+        # behave like every other position in the app (offsets are stored
+        # canonically, see axis.py): a DRO re-zero or a mm↔in switch just
+        # re-renders it — the physical shoulder never moves — instead of
+        # silently corrupting it (the old scaled-storage bug). `*_valid` gates a
+        # never-set target; only never-set and an ELS Z-axis remap invalidate.
+        self._stop_z_encoder = None       # int leadscrew encoder count, or None
+        self._retract_z_encoder = None
         self._stop_z_committed = False
+        self._retract_z_committed = False
 
-        # 1. Wire validation bindings before anything observes *_valid flags.
-        #    A stop_z write marks it committed (operator entered a value), then
-        #    validates + propagates.
-        self.bind(stop_z=self._on_stop_z_changed,
-                  retract_z=lambda *_: self._validate_retract_z(),
-                  start_dia=lambda *_: self._validate_start_dia(),
+        # 1. Wire validation bindings (start_dia/stop_dia get the same encoder
+        #    treatment in a follow-up; keep their scaled validators for now).
+        self.bind(start_dia=lambda *_: self._validate_start_dia(),
                   stop_dia=lambda *_: self._validate_stop_dia())
 
-        # Invalidate the stored stop_z when the ELS Z-axis mapping changes — the
-        # value was captured against a different axis and no longer refers to a
-        # known physical position.
-        self._els.bind(z_axis_index=lambda *_: self.invalidate_stop_z())
+        # Invalidate the stored targets when the ELS Z-axis mapping changes — the
+        # captured encoder belongs to a different physical axis now.
+        self._els.bind(z_axis_index=lambda *_: self._invalidate_z_targets())
 
         # 2. Build domain FSM (HAL injected; controller doubles as modes source).
         self._els_fsm = ElsFsm(els, board, self._hal, self)
@@ -140,6 +140,7 @@ class ElsUiController(EventDispatcher):
         self._board.bind(update_tick=self._poll_els_stop_active)
         self._board.bind(update_tick=self._poll_carriage_retracted)
         self._board.bind(update_tick=self._poll_apply_policy)
+        self._board.bind(update_tick=self._poll_reframe_targets)
 
         # 7. Re-arm HAL when mode flags change so firmware tracks the operator.
         self.bind(retract_enabled=self._on_modes_changed,
@@ -455,24 +456,16 @@ class ElsUiController(EventDispatcher):
     def commit_standalone_stop_z(self, stop_z_value: float):
         """Stop-Z entered via the standalone keypad or long-press capture.
 
-        Stashes the value on the controller only — no firmware writes here.
-        The action button is the sole initiator of motion: when the cycle
-        advances to in_cycle.cutting, ElsFsm.start_cut() pushes stop_z to
-        firmware via the HAL.
+        Anchors the stop to the physical encoder for that display value (in the
+        current frame). The action button is the sole initiator of motion; the
+        cut writes the frozen encoder to firmware.
         """
-        # Mark committed explicitly so setting the value the operator wants —
-        # even if it equals the current stop_z (e.g. 0.0) — validates it. The
-        # property-change binding only fires on an actual change.
-        self._stop_z_committed = True
-        self.stop_z = stop_z_value
-        self._validate_stop_z()
+        self._commit_stop_z(stop_z_value)
 
     def commit_standalone_retract_z(self, retract_z_value: float):
-        """Start-Z (retract target) entered outside the wizard. retract_z is
-        only consumed by ElsFsm.on_enter_retracting, so we just stash it on
-        the controller — no firmware write here.
-        """
-        self.retract_z = retract_z_value
+        """Start-Z (retract target) entered outside the wizard — anchored to the
+        physical encoder (consumed by ElsFsm.on_enter_retracting)."""
+        self._commit_retract_z(retract_z_value)
 
     def try_advance_wizard(self):
         """If the UI FSM is on a wizard configuration step, advance to the
@@ -511,14 +504,10 @@ class ElsUiController(EventDispatcher):
                 log.warning(f"action button: no Z (saddle) axis assigned in state '{state}'")
                 return
             if state == "set_stop_z":
-                # Force-commit so capturing the live position works even when it
-                # equals the current stop_z (e.g. zero-at-the-shoulder → Set with
-                # Z reading 0.0); a same-value property write wouldn't dispatch.
-                self._stop_z_committed = True
-                self.stop_z = axis.scaledPosition
-                self._validate_stop_z()
+                # Anchor the stop to the physical encoder at the captured Z.
+                self._commit_stop_z(axis.scaledPosition)
             else:
-                self.retract_z = axis.scaledPosition
+                self._commit_retract_z(axis.scaledPosition)
         elif state in ("set_start_dia", "set_stop_dia"):
             axis = self._els.get_x_axis()
             if axis is None:
@@ -555,19 +544,79 @@ class ElsUiController(EventDispatcher):
     def on_ack_alarm(self):
         self._ui_fsm.ack_alarm()
 
-    # ——— stop_z commit / invalidation ———
-    def _on_stop_z_changed(self, *_):
-        # Any explicit write to stop_z means the operator set a value.
+    # ——— encoder-anchored stop_z / retract_z ———
+    @property
+    def stop_z_encoder(self):
+        """Frozen leadscrew encoder count for the stop (physical target), or
+        None if not set. This is what the cut writes to firmware — immune to any
+        display-frame change after it was captured."""
+        return self._stop_z_encoder if self._stop_z_committed else None
+
+    @property
+    def retract_z_encoder(self):
+        return self._retract_z_encoder if self._retract_z_committed else None
+
+    def _commit_stop_z(self, scaled_value: float):
+        """Freeze the stop from a display-unit value (keypad entry or the live Z
+        position captured at 'Set'): convert to a raw encoder count ONCE, in the
+        current frame, and anchor to that. The scaled `stop_z` becomes a derived
+        display mirror."""
+        z = self._els.get_z_axis()
+        if z is None:
+            log.warning("_commit_stop_z: no ELS Z axis assigned")
+            return
+        self._stop_z_encoder = z.position_to_encoder(scaled_value)
         self._stop_z_committed = True
+        self.stop_z = z.scaled_from_encoder(self._stop_z_encoder)
         self._validate_stop_z()
+        self._validate_retract_z()
         self._propagate_stop_z_to_firmware()
+
+    def _commit_retract_z(self, scaled_value: float):
+        z = self._els.get_z_axis()
+        if z is None:
+            log.warning("_commit_retract_z: no ELS Z axis assigned")
+            return
+        self._retract_z_encoder = z.position_to_encoder(scaled_value)
+        self._retract_z_committed = True
+        self.retract_z = z.scaled_from_encoder(self._retract_z_encoder)
+        self._validate_retract_z()
+
+    def _poll_reframe_targets(self, *args):
+        """Re-render the derived scaled stop_z/retract_z from their frozen
+        encoders each tick, so a DRO re-zero or units switch just re-displays the
+        physical target (the encoder never moves) — the same way the DRO itself
+        reframes. (Reframe-notify hooks in here in a follow-up.)"""
+        z = self._els.get_z_axis()
+        if z is None:
+            return
+        if self._stop_z_committed:
+            new = z.scaled_from_encoder(self._stop_z_encoder)
+            if new != self.stop_z:
+                self.stop_z = new
+                self._validate_retract_z()
+        if self._retract_z_committed:
+            new = z.scaled_from_encoder(self._retract_z_encoder)
+            if new != self.retract_z:
+                self.retract_z = new
 
     def invalidate_stop_z(self):
         """Mark the stored stop_z as no longer a known target, so a cut is
-        blocked until the operator sets it again. Called when the value's frame
-        of reference changes (e.g. the ELS Z-axis mapping)."""
+        blocked until the operator sets it again (never-set or an ELS Z-axis
+        remap — a display-frame change does NOT invalidate; it just reframes)."""
         self._stop_z_committed = False
+        self._stop_z_encoder = None
         self._validate_stop_z()
+
+    def invalidate_retract_z(self):
+        self._retract_z_committed = False
+        self._retract_z_encoder = None
+        self._validate_retract_z()
+
+    def _invalidate_z_targets(self, *_):
+        # An ELS Z-axis remap makes both captured encoders meaningless.
+        self.invalidate_stop_z()
+        self.invalidate_retract_z()
 
     # ——— validators ———
     def _validate_stop_z(self):
@@ -578,6 +627,10 @@ class ElsUiController(EventDispatcher):
         self.stop_z_error = "" if self.stop_z_valid else "Stop Z not set"
 
     def _validate_retract_z(self):
+        if not self._retract_z_committed:
+            self.retract_z_valid = False
+            self.retract_z_error = "Start Z not set"
+            return
         margin = self._els_fsm._safety_margin_display()
         span = abs(self.retract_z - self.stop_z)
         self.retract_z_valid = span >= margin if margin > 0 else self.retract_z != self.stop_z

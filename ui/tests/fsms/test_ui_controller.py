@@ -45,7 +45,10 @@ def _engage(ctrl):
 def _make_z_axis(scaled_position=0.0, encoder_offset=0):
     axis = MagicMock()
     axis.scaledPosition = scaled_position
-    axis.position_to_encoder.side_effect = lambda mm: int(mm) + encoder_offset
+    # Scale by 1000 so the display↔encoder round-trip preserves sub-mm decimals
+    # (a real leadscrew has finer resolution than 1 count/mm).
+    axis.position_to_encoder.side_effect = lambda mm: round(mm * 1000) + encoder_offset
+    axis.scaled_from_encoder.side_effect = lambda enc: (enc - encoder_offset) / 1000.0
     inp = SimpleNamespace(
         inputIndex=2, ratioNum=1, ratioDen=1, encoderCurrent=0,
     )
@@ -151,7 +154,7 @@ def test_stop_only_action_allowed_with_valid_stop_z(ctrl):
     when Z is on the safe side of stop_z."""
     # Z=0, stop_z=0 → Z at stop → blocked by _z_safe_for_cut.
     # Set stop_z so Z is on the safe side (cut_dir=+1, so Z < stop_z is safe).
-    ctrl.stop_z = 10.0
+    ctrl.commit_standalone_stop_z(10.0)
     _engage(ctrl)
     # Non-wizard mode auto-advances to in_cycle.waiting_to_cut at startup,
     # so no need to call start() here.
@@ -173,8 +176,8 @@ def test_stop_retract_action_blocked_until_retract_z_set(ctrl):
 def test_stop_retract_action_allows_after_setting_retract_z(ctrl):
     _engage(ctrl)
     ctrl.retract_enabled = True
-    ctrl.stop_z = 5.0
-    ctrl.retract_z = 10.0
+    ctrl.commit_standalone_stop_z(5.0)
+    ctrl.commit_standalone_retract_z(10.0)
     _pump()
     assert ctrl.retract_z_valid is True
     assert ctrl.action_allowed is True
@@ -197,7 +200,7 @@ def test_engaging_enables_action(ctrl):
     at startup. Before engage, action is blocked by 'not engaged'. After
     engage, action is enabled when Z is on the safe side of stop_z."""
     assert ctrl.action_allowed is False  # not engaged
-    ctrl.stop_z = 10.0  # Z=0 < stop_z=10 → safe for cut
+    ctrl.commit_standalone_stop_z(10.0)  # Z=0 < stop_z=10 → safe for cut
     _engage(ctrl)
     assert ctrl.engaged is True
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
@@ -218,7 +221,7 @@ def test_start_stop_disabled_when_not_engaged_in_wizard_mode(ctrl):
 def test_disengaging_mid_cycle_disables_action(ctrl):
     """If the operator disengages mid-cycle, the action button must
     immediately disable so they can't press it and crash the FSM."""
-    ctrl.stop_z = 10.0  # Z=0 < stop_z=10 → safe for cut
+    ctrl.commit_standalone_stop_z(10.0)  # Z=0 < stop_z=10 → safe for cut
     _engage(ctrl)
     assert ctrl.action_allowed is True
     ctrl.toggle_engage()   # back to disabled
@@ -238,14 +241,14 @@ def test_retract_z_validator():
     # (leadScrewPitch=0 in the fixture) it requires only that retract_z be a
     # non-zero distance from stop_z — retracting in the negative direction is
     # valid (mirrors ElsFsm.is_retracted's negative-span handling).
-    c.stop_z = 10.0
-    c.retract_z = 10.0       # equal to stop_z → zero span → invalid
+    c.commit_standalone_stop_z(10.0)
+    c.commit_standalone_retract_z(10.0)  # equal to stop_z → zero span → invalid
     assert c.retract_z_valid is False
     assert c.retract_z_error
-    c.retract_z = 5.0        # below stop_z, but non-zero span → valid
+    c.commit_standalone_retract_z(5.0)  # below stop_z, but non-zero span → valid
     assert c.retract_z_valid is True
     assert c.retract_z_error == ""
-    c.retract_z = 20.0       # above stop_z → also valid
+    c.commit_standalone_retract_z(20.0)  # above stop_z → also valid
     assert c.retract_z_valid is True
     assert c.retract_z_error == ""
 
@@ -269,7 +272,7 @@ def test_stop_z_and_start_dia_validators_always_pass():
     )
     c = ElsUiController(els=els, board=board)
     for v in (-100.0, 0.0, 42.0):
-        c.stop_z = v
+        c.commit_standalone_stop_z(v)
         c.start_dia = v
         assert c.stop_z_valid is True
         assert c.start_dia_valid is True
@@ -277,9 +280,10 @@ def test_stop_z_and_start_dia_validators_always_pass():
 
 # ─── commit_standalone_* ───────────────────────────────────────────────────
 
-def test_commit_standalone_stop_z_only_sets_property():
-    """The action button is the sole initiator of motion; entering Stop Z
-    must not push anything to the HAL or trigger an encoder lookup."""
+def test_commit_standalone_stop_z_anchors_to_encoder():
+    """Entering Stop Z freezes it to the physical encoder (converts once) and
+    sets the derived display value + validity — but the action button remains
+    the sole initiator of motion (nothing is fed here)."""
     z = _make_z_axis(encoder_offset=0)
     board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(),
                                      connected=True)
@@ -287,7 +291,9 @@ def test_commit_standalone_stop_z_only_sets_property():
     z.position_to_encoder.reset_mock()
     c.commit_standalone_stop_z(42.0)
     assert c.stop_z == 42.0
-    z.position_to_encoder.assert_not_called()
+    assert c.stop_z_valid is True
+    assert c.stop_z_encoder is not None          # anchored to a physical encoder
+    z.position_to_encoder.assert_called_once_with(42.0)
 
 
 def test_commit_standalone_retract_z_only_sets_property(ctrl):
@@ -441,7 +447,7 @@ def test_on_action_button_clicked_in_waiting_to_cut_enters_cutting(ctrl):
     """Non-wizard cycle: action button drives waiting_to_cut → cutting."""
     z = ctrl._els.get_z_axis()
     z.scaledPosition = 0.0
-    ctrl.stop_z = 10.0  # Z=0 < stop_z=10 → safe for cut
+    ctrl.commit_standalone_stop_z(10.0)  # Z=0 < stop_z=10 → safe for cut
     ctrl.toggle_engage()
     _pump()
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
@@ -509,7 +515,7 @@ def test_try_advance_wizard_advances_when_in_matching_state():
     _pump()
     _engage(c)
     c._ui_fsm.start()
-    c.stop_z = 4.0  # keypad-style entry; bypasses live capture
+    c.commit_standalone_stop_z(4.0)  # keypad-style entry; bypasses live capture
     c.try_advance_wizard()
     assert c._ui_fsm.state == "set_retract_z"
 
@@ -520,7 +526,7 @@ def test_try_advance_wizard_noop_in_non_wizard_cycle_state(ctrl):
     capture would auto-fire the action transition and start a cut,
     bypassing the requirement that the action button is the only
     motion initiator."""
-    ctrl.stop_z = 10.0  # Z=0 < stop_z=10 → safe for cut
+    ctrl.commit_standalone_stop_z(10.0)  # Z=0 < stop_z=10 → safe for cut
     _engage(ctrl)
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
     assert ctrl.action_allowed is True
@@ -539,8 +545,8 @@ def test_try_advance_wizard_noop_when_action_not_allowed():
     c.is_inner = False
     c.start_dia = 10.0
     c.stop_dia = 5.0
-    c.retract_z = 5.0
-    c.stop_z = 1.0
+    c.commit_standalone_retract_z(5.0)
+    c.commit_standalone_stop_z(1.0)
     _pump()
     # set_state bypasses the FSM's after_state_change broadcast, so call
     # _apply_policy() explicitly to recompute action_allowed for the new state.
@@ -563,8 +569,8 @@ def test_depth_reached_latches_in_waiting_to_retract_when_x_reaches_stop():
     c.is_inner = False
     c.start_dia = 10.0
     c.stop_dia = 5.0
-    c.retract_z = 5.0
-    c.stop_z = 1.0
+    c.commit_standalone_retract_z(5.0)
+    c.commit_standalone_stop_z(1.0)
     _pump()
     assert not c.depth_reached
     c._ui_fsm.fsm.set_state("in_cycle.waiting_to_retract")
@@ -582,7 +588,7 @@ def test_depth_reached_clears_when_returning_to_idle():
     c = ElsUiController(els=els, board=board)
     c.wizard_enabled = True
     c.start_dia = 10.0; c.stop_dia = 5.0
-    c.retract_z = 5.0; c.stop_z = 1.0
+    c.commit_standalone_retract_z(5.0); c.commit_standalone_stop_z(1.0)
     _pump()
     c._ui_fsm.fsm.set_state("in_cycle.waiting_to_retract")
     c._apply_policy()
@@ -696,7 +702,7 @@ def test_action_button_disabled_when_z_at_stop_in_stop_only_mode():
     z = _make_z_axis(scaled_position=10.0)
     board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
     c = ElsUiController(els=els, board=board)
-    c.stop_z = 10.0
+    c.commit_standalone_stop_z(10.0)
     _pump()
     c.toggle_engage()
     _pump()
@@ -716,7 +722,7 @@ def test_fsm_cut_blocked_when_z_at_stop_in_stop_only_mode():
     z = _make_z_axis(scaled_position=10.0)
     board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis())
     c = ElsUiController(els=els, board=board)
-    c.stop_z = 10.0
+    c.commit_standalone_stop_z(10.0)
     _pump()
     # Z=10.0, stop_z=10.0 → exactly at stop → not ready to cut
     assert not c._els_fsm.is_ready_to_cut()

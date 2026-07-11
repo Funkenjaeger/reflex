@@ -97,6 +97,9 @@ def _make_controller(*, stop_z=10.0, retract_z=20.0,
                      els_forward=True, is_threading=False):
     return SimpleNamespace(
         stop_z=stop_z, retract_z=retract_z,
+        # Frozen encoder counts the FSM now writes to firmware. The mock z_axis's
+        # position_to_encoder is identity (int(mm)), so mirror that here.
+        stop_z_encoder=int(stop_z), retract_z_encoder=int(retract_z),
         wizard_enabled=wizard_enabled,
         retract_enabled=retract_enabled,
         els_forward=els_forward,
@@ -211,14 +214,13 @@ def test_on_enter_stopped_writes_stop_position_and_arms_on_engage():
     """When entering stopped from disabled (enable trigger), ELS should be
     armed with a fresh stopPosition from controller.stop_z, and active=1
     so it starts in STOPPED state."""
-    z, _ = _make_z_axis(encoder_offset=100)
+    z, _ = _make_z_axis()
     hal = MagicMock()
-    controller = _make_controller(stop_z=42.0)
+    controller = _make_controller(stop_z=42.0)  # frozen stop_z_encoder = 42
     fsm = _build_fsm(z=z, hal=hal, controller=controller)
     fsm.enable()  # disabled → stopped (fires on_enter_stopped with _engaging=True)
-    # stopPosition should be written from controller.stop_z
-    # position_to_encoder(42.0) → 42 + 100 = 142
-    hal.set_stop_position.assert_called_with(142)
+    # stopPosition is written from the operator's FROZEN stop encoder.
+    hal.set_stop_position.assert_called_with(controller.stop_z_encoder)
     hal.set_enable.assert_called_with(True)
     # active should be set True (stopped state), NOT cleared to False
     hal.set_active.assert_called_once_with(True)
@@ -260,13 +262,13 @@ def test_on_enter_stopped_does_not_arm_when_z_past_stop():
 
 # ─── set_stop_z: HAL writes stopPosition + scaleIndex ──────────────────────
 
-def test_set_stop_z_writes_encoder_position_to_hal():
-    z, z_inp = _make_z_axis(encoder_offset=100)
+def test_set_stop_z_writes_frozen_encoder_to_hal():
+    z, z_inp = _make_z_axis()
     hal = MagicMock()
-    fsm = _build_fsm(z=z, hal=hal)
-    fsm.set_stop_z(42.0)
-    # position_to_encoder(42.0) → 42 + 100 = 142
-    hal.set_stop_position.assert_called_once_with(142)
+    controller = _make_controller(stop_z=42.0)  # frozen stop_z_encoder = 42
+    fsm = _build_fsm(z=z, hal=hal, controller=controller)
+    fsm.set_stop_z()  # writes the operator's frozen encoder (arg ignored)
+    hal.set_stop_position.assert_called_once_with(controller.stop_z_encoder)
     hal.set_scale_index.assert_called_with(z_inp.inputIndex)
 
 
