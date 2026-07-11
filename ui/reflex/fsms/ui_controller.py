@@ -93,11 +93,15 @@ class ElsUiController(EventDispatcher):
 
         # Whether the operator has actually SET a stop_z (vs the 0.0 default).
         # stop_z_valid tracks this, so a never-set stop can't silently be used
-        # for a cut (audit H1). Invalidated when the stored value becomes
-        # meaningless: a new ELS Z-axis mapping, or a Z DRO zero/offset change
-        # (stop_z is a scaled position, so re-zeroing the DRO moves the physical
-        # target). NOT cleared by a plain disengage — same-setup re-engage is
-        # common and the value is still meaningful.
+        # for a cut (audit H1). Invalidated on a new ELS Z-axis mapping (below).
+        # NOT cleared by a plain disengage — same-setup re-engage is common and
+        # the value is still meaningful.
+        # KNOWN GAP (todo.md): stop_z is stored as a SCALED position, so a Z DRO
+        # zero/offset change or a mm↔in format switch also moves the physical
+        # target it refers to — those should invalidate it too, but that needs
+        # offset-provider / formats wiring and isn't done yet. (Pre-existing —
+        # stop_z_valid was unconditionally True before H1; this is still a strict
+        # improvement.)
         self._stop_z_committed = False
 
         # 1. Wire validation bindings before anything observes *_valid flags.
@@ -287,7 +291,13 @@ class ElsUiController(EventDispatcher):
         # those states are reachable before the operator has entered values).
         text = p["instruction_text"]
         allowed = True
-        if not self.engaged:
+        if state == "alarm":
+            # Surface the fault reason so the bar isn't a silent dead end; the
+            # operator clears it with Disengage (the domain FSM allows disable
+            # from 'alarm' → 'disabled').
+            allowed = False
+            text = self.alarm_text or "ELS fault — disengage to clear"
+        elif not self.engaged:
             allowed = False
             text = "Engage to begin"
         elif state == "in_cycle.waiting_to_cut":
@@ -404,7 +414,15 @@ class ElsUiController(EventDispatcher):
     def toggle_engage(self):
         """Engage/disengage button intent. Drives the domain FSM."""
         if self.engaged:
-            self._els_fsm.disable()
+            # Guard the trigger: disable() is only valid from stopped/retracting/
+            # alarm. The button is disabled mid-cycle, but check anyway so a
+            # stray press can never raise MachineError inside a kv handler.
+            if self._els_fsm.may_disable():
+                self._els_fsm.disable()
+            else:
+                log.warning(
+                    f"Disengage ignored — not valid from '{self._els_fsm.state}'"
+                )
         elif self._els.get_z_axis() is None:
             # No Z (leadscrew) axis assigned — engaging would arm ELS against a
             # non-existent axis and crash on_enter_stopped. Refuse instead of
@@ -476,7 +494,12 @@ class ElsUiController(EventDispatcher):
                 log.warning(f"action button: no Z (saddle) axis assigned in state '{state}'")
                 return
             if state == "set_stop_z":
+                # Force-commit so capturing the live position works even when it
+                # equals the current stop_z (e.g. zero-at-the-shoulder → Set with
+                # Z reading 0.0); a same-value property write wouldn't dispatch.
+                self._stop_z_committed = True
                 self.stop_z = axis.scaledPosition
+                self._validate_stop_z()
             else:
                 self.retract_z = axis.scaledPosition
         elif state in ("set_start_dia", "set_stop_dia"):
@@ -557,12 +580,14 @@ class ElsUiController(EventDispatcher):
         """True iff the domain FSM would accept a cut right now — a FRESH check
         (not the cached action_allowed policy). Gates the UI
         waiting_to_cut→cutting transition so a stale click can't lock the UI in
-        'Cutting…' (Stop disabled, no exit) when ElsFsm.cut() refuses. Any error
-        → refuse, so the UI stays put rather than entering an unrecoverable state."""
+        'Cutting…' (Stop disabled, no exit) when ElsFsm.cut() refuses. Uses the
+        transitions-generated may_cut(), which checks BOTH the source state
+        (must be 'stopped' — not e.g. 'alarm') AND is_ready_to_cut, so a cut is
+        never driven from a faulted domain FSM. Any error → refuse."""
         try:
-            return self._els_fsm.is_ready_to_cut()
+            return bool(self._els_fsm.may_cut())
         except Exception:
-            log.debug("may_cut: is_ready_to_cut raised → refusing the cut")
+            log.debug("may_cut: domain may_cut() raised → refusing the cut")
             return False
 
     def feed_without_armed_stop(self) -> bool:
@@ -578,15 +603,22 @@ class ElsUiController(EventDispatcher):
             return True  # can't tell → treat as unsafe, confirm
 
     def request_feed_enable(self, confirmed: bool = False) -> bool:
-        """Operator asked to enable the sync/power feed (advanced ELS context).
+        """Operator asked to toggle the sync/power feed (advanced ELS context).
 
-        Returns True if the feed was toggled, False if it needs confirmation
-        first — i.e. turning the feed ON with no armed ELS stop. The caller
-        (UI) should then show a confirm dialog and, on confirm, call again with
+        Returns True if handled, False if enabling needs confirmation first —
+        i.e. turning the feed ON with no armed ELS stop. The caller (UI) should
+        then show a confirm dialog and, on confirm, call again with
         ``confirmed=True``. Turning the feed OFF is never gated."""
         servo = self._board.servo
         turning_on = servo.servoMode == 0
-        if turning_on and not confirmed and self.feed_without_armed_stop():
+        if not turning_on:
+            # Feed already on. A plain press toggles it OFF (never gated); a
+            # confirm callback is a no-op (the feed the operator wanted is on —
+            # don't toggle it off just because it was enabled meanwhile).
+            if not confirmed:
+                servo.toggle_enable()
+            return True
+        if not confirmed and self.feed_without_armed_stop():
             log.info("request_feed_enable: no armed ELS stop — confirmation required")
             return False
         servo.toggle_enable()

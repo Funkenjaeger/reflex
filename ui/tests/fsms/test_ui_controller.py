@@ -659,6 +659,36 @@ def test_stop_z_invalid_until_set_blocks_cut():
     assert c.stop_z_valid is False
 
 
+def test_wizard_set_stop_z_commits_even_when_value_unchanged():
+    """Review finding 4: capturing the live Z at the wizard 'Set' step must commit
+    stop_z even when it equals the current value (e.g. zero-at-the-shoulder → Set
+    with Z reading 0.0), so the wizard can advance instead of dead-ending."""
+    z = _make_z_axis(scaled_position=0.0)  # capture equals the 0.0 default
+    board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
+    c = ElsUiController(els=els, board=board)
+    c.wizard_enabled = True
+    _pump()
+    c._ui_fsm.start()                       # idle → set_stop_z
+    c.toggle_engage()                       # engage so the Set button isn't gated
+    _pump()
+    assert c._ui_fsm.state == "set_stop_z"
+    assert c.stop_z_valid is False
+    c.on_action_button_clicked()            # Set: capture Z=0.0 (== default)
+    assert c.stop_z_valid is True
+    assert c._ui_fsm.state == "set_retract_z", "wizard did not advance past Set"
+
+
+def test_confirm_feed_enable_is_noop_when_already_on():
+    """Review finding 6: if the feed turned on between the confirm dialog opening
+    and the operator confirming, request_feed_enable(confirmed=True) must NOT
+    toggle it back off."""
+    board, els = _make_collaborators(connected=True)
+    c = ElsUiController(els=els, board=board)
+    board.servo.servoMode = 1               # feed enabled meanwhile
+    assert c.request_feed_enable(confirmed=True) is True
+    assert board.servo.servoMode == 1       # still on — not toggled off
+
+
 def test_action_button_disabled_when_z_at_stop_in_stop_only_mode():
     """In stop-only mode, the action button should be disabled when Z
     is exactly at stop_z — the cut should only start when Z is strictly

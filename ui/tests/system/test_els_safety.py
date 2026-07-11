@@ -184,3 +184,45 @@ def test_cut_aborts_when_stop_write_not_acked(harness):
     assert h.board.servo.servoMode == 0, "feed not stopped on abort"
     # And the carriage did not run a cut (no release → no feed).
     assert _max_travel(h, 2.0) < 300.0, "carriage fed despite the aborted cut"
+
+    # Recovery: the operator can clear the alarm with Disengage (domain FSM
+    # allows disable from 'alarm') — no MachineError, lands in disabled.
+    h.hal.set_stop_position = orig_set_stop_position  # link "recovers"
+    h.controller.toggle_engage()
+    h.pump()
+    assert h.els_fsm.state == "disabled", (
+        f"could not clear the alarm via disengage: els={h.els_fsm.state}"
+    )
+
+
+@pytest.mark.parametrize("emulator_process", [_ENV], indirect=True)
+def test_cut_aborts_when_enable_write_not_acked(harness):
+    """Review finding 2: the enable arming write is verified too. On the
+    engage-past-stop path enable is the first/only thing that arms the stop, so a
+    failed enable write must also abort the cut (not feed with nothing armed)."""
+    h = harness
+    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
+                els_forward=True)
+    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    z0 = h.z_scaled_position()
+    h.set_stop_z(z0 - 300.0)
+    h.engage()
+
+    cm = h.board.connection_manager
+    orig_set_enable = h.hal.set_enable
+
+    def failing_set_enable(enabled):
+        orig_set_enable(enabled)
+        cm.connected = False        # enable write went out but was not acknowledged
+
+    h.hal.set_enable = failing_set_enable
+
+    h.enable_sync()
+    h.cut()
+    h.pump()
+
+    assert h.els_fsm.state == "alarm", (
+        f"cut did not abort on an unacknowledged enable write: els={h.els_fsm.state}"
+    )
+    assert h.board.servo.servoMode == 0, "feed not stopped on abort"
+    assert _max_travel(h, 2.0) < 300.0, "carriage fed despite the aborted cut"

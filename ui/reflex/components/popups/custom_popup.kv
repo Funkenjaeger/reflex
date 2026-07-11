@@ -26,8 +26,11 @@
             text: root.cancel_text
             opacity: 1 if root.cancel_text else 0
             disabled: not root.cancel_text
+            # Present → share the row (size_hint_x drives width). Absent →
+            # collapse to zero width. (width is only consulted when size_hint_x
+            # is None, i.e. the absent case, so the else value is a placeholder.)
             size_hint_x: 1 if root.cancel_text else None
-            width: 0 if not root.cancel_text else self.width
+            width: dp(80) if root.cancel_text else 0
             on_release: root.on_cancel_press()
 
         FormValueButton:

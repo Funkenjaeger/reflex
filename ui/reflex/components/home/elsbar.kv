@@ -23,7 +23,9 @@
     led_on: bool(app.servo.servoMode)
     led_color: app.formats.color_on if app.servo.servoMode else app.formats.color_off
     # beep handled by BeepMixin.on_press
-    on_release: app.servo.toggle_enable()
+    # Routed through the app so the ELS feed guard can confirm before enabling a
+    # feed with no armed ELS stop (this is the Sync Enable shown in ELS mode).
+    on_release: app.on_servo_enable_pressed()
 
   # ── DIR: bordered box — "DIR" header (divider below) over a forward/
   #    reverse one-hot, matching the mockup; margin around the box ──

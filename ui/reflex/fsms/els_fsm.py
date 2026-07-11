@@ -30,8 +30,8 @@ class ElsFsm:
         {'trigger': 'retract_done', 'source': 'retracting', 'dest': '='},
         {'trigger': 'cut', 'source': 'stopped', 'dest': 'cutting', 'conditions': ['is_ready_to_cut']}, 
         {'trigger': 'stop_active', 'source': 'cutting', 'dest': 'stopped'},
-        {'trigger': 'disable', 'source': ['stopped', 'retracting'], 'dest': 'disabled'},
-        {'trigger': 'fault', 'source': '*', 'dest': 'alarm'},       
+        {'trigger': 'disable', 'source': ['stopped', 'retracting', 'alarm'], 'dest': 'disabled'},
+        {'trigger': 'fault', 'source': '*', 'dest': 'alarm'},
     ]
 
     def __init__(self, els: els, board: board, hal: ElsStopHal, controller):
@@ -115,17 +115,16 @@ class ElsFsm:
         # again need to traverse the play window.
         self._retract_backlash_applied = False
 
-        # Verify the safety-critical stop TARGET writes are acknowledged BEFORE
-        # releasing the cut. stopPosition + scaleIndex are fire-and-forget over
-        # Modbus; if one silently failed and the link recovered before we release
-        # (set_active(False)), the cut would run against the PREVIOUS pass's stop
-        # — a wrong-shoulder cut (safety audit #4). Every Modbus write is ACK'd by
-        # the firmware (minimalmodbus raises on a missing/bad response, which the
-        # write helpers turn into connection_manager.connected = False), so
-        # accumulate that per-write ACK — a later write recovering the link can't
-        # mask an earlier failure. (stopDirection/enable are written below with
-        # values already correct from engage time, so a post-release write failure
-        # there leaves the previously-armed correct values in place.)
+        # ARM the ELS stop and verify the safety-critical writes are acknowledged
+        # BEFORE releasing the cut. stopPosition, scaleIndex and enable are
+        # fire-and-forget over Modbus; if any silently failed the cut could run
+        # against a stale stop (wrong shoulder) or — on the engage-past-stop path
+        # where `enable` is 0 until this point, with a feed possibly already
+        # running — with NO armed stop at all (safety audit #4 + review). Every
+        # Modbus write is ACK'd by the firmware (minimalmodbus raises on a
+        # missing/bad response, which the write helpers turn into
+        # connection_manager.connected = False), so accumulate that per-write ACK
+        # — a later write recovering the link can't mask an earlier failure.
         cm = self.board.connection_manager
         # Write stopPosition and scaleIndex individually (not via set_stop_z,
         # which bundles both) so the per-write ACK is checked at the right
@@ -145,11 +144,18 @@ class ElsFsm:
             self.hal.set_thread_pitch_steps(0.0)
             self.hal.set_z_counts_per_pitch(0.0)
             self.hal.set_backlash_steps(0)
+        # Arm `enable` here (not just post-release) and verify it — this is the
+        # first arming on the engage-past-stop path, and the one thing that
+        # actually stops the feed. (stopDirection/hysteresis are re-asserted
+        # post-release; their values are already correct from engage time.)
+        self.hal.set_enable(True)
+        armed_ok = armed_ok and bool(cm.connected)
 
         if not armed_ok:
-            # The stop target wasn't confirmed — do NOT release the cut. Stop any
-            # feed and fault out rather than cut against an unverified stop.
-            log.error("on_enter_cutting: ELS stop target not acknowledged — "
+            # A safety-critical stop write wasn't confirmed — do NOT release the
+            # cut. Stop any feed and fault out rather than cut against an
+            # unverified / unarmed stop.
+            log.error("on_enter_cutting: ELS stop not acknowledged — "
                       "aborting cut (stop not released)")
             self.board.servo.stop_feed()
             bus.publish("alarm_raised",
@@ -157,8 +163,7 @@ class ElsFsm:
                                "controller connection and try again.")
             # Defer the fault transition to the top level: triggering it from
             # inside this (nested) cut transition callback doesn't reliably
-            # process on a queued machine. We stay in 'cutting' with active=1
-            # (no feed — never released) until the fault lands on the next tick.
+            # process on a queued machine.
             from kivy.clock import Clock
             Clock.schedule_once(lambda _dt: self._raise_stop_write_fault(), 0)
             return
@@ -171,7 +176,6 @@ class ElsFsm:
             self.hal.set_hysteresis_tight()
         else:
             self.hal.set_hysteresis_loose()
-        self.hal.set_enable(True)
         log.info(
             f"on_enter_cutting: els_forward={self.controller.els_forward} "
             f"backlash_steps={int(self.els.els_backlash_steps)}"
@@ -222,6 +226,11 @@ class ElsFsm:
         # also stop any running sync feed — otherwise a spindle-synced feed keeps
         # driving the carriage with no auto-stop (audit H6). Idempotent.
         self.board.servo.stop_feed()
+        if not self.board.connection_manager.connected:
+            # The stop-feed write wasn't acknowledged (link down). Nothing more
+            # software can do to stop it here, but surface it loudly.
+            log.error("on_enter_disabled: feed-stop write NOT acknowledged — "
+                      "sync feed may still be running (controller link down)")
 
     def _raise_stop_write_fault(self):
         """Top-level fault after an unacknowledged cut-stop write (scheduled from
