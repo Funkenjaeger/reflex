@@ -185,14 +185,23 @@ def test_cut_aborts_when_stop_write_not_acked(harness):
     # And the carriage did not run a cut (no release → no feed).
     assert _max_travel(h, 2.0) < 300.0, "carriage fed despite the aborted cut"
 
-    # Recovery: the operator can clear the alarm with Disengage (domain FSM
-    # allows disable from 'alarm') — no MachineError, lands in disabled.
+    # Recovery: the operator can clear the alarm with Disengage — BOTH FSMs must
+    # leave alarm (domain → disabled AND the UI FSM out of its alarm state), or
+    # ELS is soft-locked until app restart.
     h.hal.set_stop_position = orig_set_stop_position  # link "recovers"
     h.controller.toggle_engage()
     h.pump()
     assert h.els_fsm.state == "disabled", (
         f"could not clear the alarm via disengage: els={h.els_fsm.state}"
     )
+    assert h.ui_fsm.state != "alarm", (
+        f"UI FSM stuck in alarm after disengage (ELS soft-locked): ui={h.ui_fsm.state}"
+    )
+    # And ELS is usable again: re-engage + set a stop → ready to cut.
+    h.controller.toggle_engage()
+    h.set_stop_z(h.z_scaled_position() - 200.0)
+    h.pump()
+    assert h.els_fsm.state == "stopped", f"re-engage after alarm failed: {h.els_fsm.state}"
 
 
 @pytest.mark.parametrize("emulator_process", [_ENV], indirect=True)

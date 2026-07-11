@@ -225,10 +225,13 @@ class ElsFsm:
         # Safety: disengaging ELS removes the stop that was gating the feed, so
         # also stop any running sync feed — otherwise a spindle-synced feed keeps
         # driving the carriage with no auto-stop (audit H6). Idempotent.
+        feed_was_on = self.board.servo.servoMode != 0
         self.board.servo.stop_feed()
-        if not self.board.connection_manager.connected:
-            # The stop-feed write wasn't acknowledged (link down). Nothing more
-            # software can do to stop it here, but surface it loudly.
+        if feed_was_on and not self.board.connection_manager.connected:
+            # A stop-feed write was attempted but not acknowledged (link down).
+            # Nothing more software can do to stop it here — surface it loudly.
+            # (Only when the feed was actually on, so an offline idle disengage
+            # doesn't cry wolf.)
             log.error("on_enter_disabled: feed-stop write NOT acknowledged — "
                       "sync feed may still be running (controller link down)")
 

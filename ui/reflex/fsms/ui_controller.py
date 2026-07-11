@@ -179,6 +179,16 @@ class ElsUiController(EventDispatcher):
 
     def _sync_engaged(self, state):
         self.engaged = state != "disabled"
+        # Recover the UI FSM from its own alarm state when the operator clears a
+        # fault by disengaging (domain → disabled). Without this the domain
+        # recovers but the UI FSM stays parked in 'alarm' forever (Start/Stop and
+        # the action button disabled), soft-locking ELS until an app restart.
+        if state == "disabled" and self._ui_fsm.state == "alarm":
+            if self._ui_fsm.may_ack_alarm():
+                self._ui_fsm.ack_alarm()          # alarm → idle
+            # Re-land in the correct resting UI state for the current mode
+            # (non-wizard auto-advances to in_cycle.waiting_to_cut).
+            self._sync_ui_state_to_modes()
         self._apply_policy()
 
     def _poll_els_stop_active(self, *args):
@@ -432,8 +442,15 @@ class ElsUiController(EventDispatcher):
                 "Cannot engage ELS: no Z axis assigned "
                 "(map the ELS Z axis in setup, or connect the controller)"
             )
-        else:
+        elif self._els_fsm.may_enable():
             self._els_fsm.enable()
+        else:
+            # `engaged` is synced via Clock.schedule_once, so a double-tap within
+            # one frame could otherwise call enable() from 'stopped' → MachineError
+            # inside a kv handler. Guard it (mirrors the disable side above).
+            log.warning(
+                f"Engage ignored — not valid from '{self._els_fsm.state}'"
+            )
 
     def commit_standalone_stop_z(self, stop_z_value: float):
         """Stop-Z entered via the standalone keypad or long-press capture.
