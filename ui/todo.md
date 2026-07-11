@@ -165,9 +165,13 @@ Findings (probes were temporary; regression tests land with each fix):
   disarm-while-feeding. **DECISION (Evan): confirm-to-override on enabling feed with no
   armed stop (advanced ELS mode); disengaging ELS also stops an active sync feed; basic
   bare power feed unaffected.**
-- **CONFIRMED — no feed-distance bound (H1).** A `stop_z` far ahead (stale/mis-entered)
-  is accepted; the guard checks only safe-side + margin, never distance. An 8,000-count
-  stop was accepted and fed with no warning. Add a distance sanity/confirm.
+- **CONFIRMED — never-set / stale `stop_z` (H1).** `stop_z_valid` was hard-coded True, so
+  the 0.0 default was silently usable (engage+cut → feed to Z=0). NOTE: a feed-*distance*
+  check was rejected (legit cuts can be multiple inches; the hazard is a WRONG stop_z, not a
+  large one). **FIXED (f5a6913):** `stop_z_valid` now means "operator actually set a stop_z"
+  — starts False, the action gate blocks the cut, the field shows "--". Invalidated on ELS
+  Z-axis remap. Follow-up to weigh: also invalidate on a Z DRO zero/offset change (stored
+  scaled stop_z then points to a different physical spot) — needs offset-provider wiring.
 - **CONFIRMED — 'Cutting…' lockup (H3).** Deterministically reproduced: when the domain
   cut is refused, the UI parks in `in_cycle.cutting` (blank action, Stop disabled) with
   no exit but the Engage toggle. Fix: gate the UI `waiting_to_cut→cutting` transition on
@@ -183,6 +187,16 @@ Findings (probes were temporary; regression tests land with each fix):
 - **LOW PRIORITY — H5 backlash takeup.** The cut-start takeup is bounded by
   `els_backlash_steps` (config). Inconclusive in the emulator; add a config-range
   validation rather than treat as a control-flow bug.
+
+**Fixes landed (branch `fix/els-safety`, all with emulator/unit regressions):**
+- H3 'Cutting…' lockup — `fedfc9b` (gate UI cut on fresh domain readiness).
+- Sync/stop guard — `02a03d8` (confirm-to-override on feed w/o armed stop;
+  disengage stops the feed). NOTE: the confirm *popup* is UI that can't be
+  rendered headless — needs an on-device smoke test.
+- elsStop write verification — `ddd078a` (verify stopPosition/scaleIndex ACK
+  before releasing; abort→alarm on failure).
+- H1 stop_z validation — `f5a6913`.
+Deferred (Evan): post-stop overshoot — hardware-verify first, no firmware change.
 
 ## Dead Code and Cleanup
 
