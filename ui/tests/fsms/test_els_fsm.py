@@ -267,7 +267,7 @@ def test_set_stop_z_writes_frozen_encoder_to_hal():
     hal = MagicMock()
     controller = _make_controller(stop_z=42.0)  # frozen stop_z_encoder = 42
     fsm = _build_fsm(z=z, hal=hal, controller=controller)
-    fsm.set_stop_z()  # writes the operator's frozen encoder (arg ignored)
+    fsm.push_stop_to_firmware()  # writes the operator's frozen encoder
     hal.set_stop_position.assert_called_once_with(controller.stop_z_encoder)
     hal.set_scale_index.assert_called_with(z_inp.inputIndex)
 

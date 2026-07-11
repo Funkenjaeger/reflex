@@ -706,6 +706,26 @@ def test_reframe_warns_on_offset_change_not_units():
     assert c.targets_reframed_warn is True  # warned
 
 
+def test_reframe_preserves_retract_margin_validity():
+    """Regression: a DRO re-zero must NOT flip retract_z_valid. The reframe poll
+    re-validates only AFTER both Z mirrors are in the new frame — validating in a
+    mixed frame (stop_z reframed, retract_z not) would compute a garbage span and
+    silently enable a too-close retract (disabling the safety margin)."""
+    z = _make_z_axis()
+    board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
+    board.servo.leadScrewPitch = 2.0        # margin ≈ 2.0 * 1.1 = 2.2 mm
+    board.servo.leadScrewPitchIn = False
+    c = ElsUiController(els=els, board=board)
+    c.retract_enabled = True
+    c.commit_standalone_stop_z(0.0)
+    c.commit_standalone_retract_z(1.0)      # span 1.0 < 2.2 → too close → invalid
+    assert c.retract_z_valid is False
+    # Re-zero by +10 (both encoders shift equally; physical span is unchanged).
+    z.scaled_from_encoder.side_effect = lambda e: e / 1000.0 + 10.0
+    c._poll_reframe_targets()
+    assert c.retract_z_valid is False, "re-zero wrongly enabled a too-close retract"
+
+
 def test_reframe_units_change_is_silent():
     """A units switch (factor changes) just re-renders — it never notifies (it's
     on the operator to know a literal value doesn't carry across units)."""

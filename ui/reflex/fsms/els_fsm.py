@@ -76,13 +76,17 @@ class ElsFsm:
         self._engaging = True
 
     def on_enter_retracting(self):
-        enc_current = self._saddle_input.encoderCurrent
         # Frozen leadscrew encoder captured when the operator set retract_z
         # (anchored to the physical position, immune to display-frame changes).
-        # Fall back to converting the scaled value if somehow uncommitted.
         enc_target = self.controller.retract_z_encoder
         if enc_target is None:
-            enc_target = self.z_axis.position_to_encoder(self.controller.retract_z)
+            # No committed retract target — REFUSE rather than fabricate a move
+            # to the 0.0 display default (which on a shoulder-zeroed setup is the
+            # chuck). The UI gates this upstream (retract_z_valid); this is a
+            # defensive backstop, symmetric with on_enter_cutting's None-abort.
+            log.error("on_enter_retracting: no committed retract_z — refusing to move")
+            return
+        enc_current = self._saddle_input.encoderCurrent
         # Invert the delta: DRO and servo have opposite polarity on the lathe.
         # Positive servo steps move toward the shoulder (cutting direction), so
         # retracting requires negative steps even when the DRO position is larger
@@ -206,7 +210,7 @@ class ElsFsm:
             cut_dir = self.els.stop_direction_value(self.controller.els_forward)
             diff = (z_pos - self.controller.stop_z) * cut_dir
             if diff <= 0:  # Z is on the safe side or at stop_z
-                self.set_stop_z(self.controller.stop_z)
+                self.push_stop_to_firmware()
                 # Set active=1 before enable so ELS arms in STOPPED state —
                 # sync motion paused until operator clicks Cut (which clears
                 # active via on_enter_cutting, triggering resume/takeup).
@@ -359,14 +363,12 @@ class ElsFsm:
         if z_input is not None:
             self.hal.set_scale_index(z_input.inputIndex)
 
-    def set_stop_z(self, stop_z_position: float = None):
+    def push_stop_to_firmware(self):
         """Push the operator's frozen stop encoder to firmware + set scaleIndex.
 
         Used by the engage-arm (on_enter_stopped) and the idle-propagate path.
         The stop is anchored to the encoder captured when the operator set it
-        (controller.stop_z_encoder), so this ignores any passed scaled value and
-        is a no-op when no stop is committed.
-        """
+        (controller.stop_z_encoder); a no-op when no stop is committed."""
         enc = self.controller.stop_z_encoder
         if enc is None:
             return

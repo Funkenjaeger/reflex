@@ -382,7 +382,7 @@ class ElsUiController(EventDispatcher):
         if self._els_fsm.state != "stopped":
             return
         try:
-            self._els_fsm.set_stop_z(self.stop_z)
+            self._els_fsm.push_stop_to_firmware()
         except Exception:
             log.debug("_propagate_stop_z_to_firmware: failed to write stopPosition")
 
@@ -621,7 +621,6 @@ class ElsUiController(EventDispatcher):
         self._start_dia_encoder = x.position_to_encoder(scaled_value)
         self._start_dia_committed = True
         self.start_dia = x.scaled_from_encoder(self._start_dia_encoder)
-        self.clear_reframe_notice()
 
     def _commit_stop_dia(self, scaled_value: float):
         x = self._els.get_x_axis()
@@ -631,7 +630,6 @@ class ElsUiController(EventDispatcher):
         self._stop_dia_encoder = x.position_to_encoder(scaled_value)
         self._stop_dia_committed = True
         self.stop_dia = x.scaled_from_encoder(self._stop_dia_encoder)
-        self.clear_reframe_notice()
 
     def _poll_reframe_targets(self, *args):
         """Re-render each committed target's derived scaled value from its frozen
@@ -648,32 +646,45 @@ class ElsUiController(EventDispatcher):
         units_changed = factor != self._last_factor
         self._last_factor = factor
 
-        reframed = False
+        z_reframed = False
+        dia_reframed = False
         if z is not None:
             if self._stop_z_committed:
                 new = z.scaled_from_encoder(self._stop_z_encoder)
                 if new != self.stop_z:
                     self.stop_z = new
-                    self._validate_retract_z()
-                    reframed = True
+                    z_reframed = True
             if self._retract_z_committed:
                 new = z.scaled_from_encoder(self._retract_z_encoder)
                 if new != self.retract_z:
                     self.retract_z = new
-                    reframed = True
+                    z_reframed = True
         if x is not None:
             if self._start_dia_committed:
                 new = x.scaled_from_encoder(self._start_dia_encoder)
                 if new != self.start_dia:
                     self.start_dia = new
-                    reframed = True
+                    dia_reframed = True
             if self._stop_dia_committed:
                 new = x.scaled_from_encoder(self._stop_dia_encoder)
                 if new != self.stop_dia:
                     self.stop_dia = new
-                    reframed = True
+                    dia_reframed = True
 
-        if reframed and not units_changed:
+        # Re-validate ONLY AFTER all mirrors are in the new frame — otherwise
+        # _validate_retract_z would compute span = |retract_z - stop_z| across
+        # MIXED frames (one reframed, one not) and durably flip retract_z_valid,
+        # silently disabling the retract-mode safety margin after a re-zero.
+        # (The physical span is frame-invariant, so validity shouldn't change —
+        # but validate in a single consistent frame regardless.)
+        if z_reframed:
+            self._validate_retract_z()
+        if dia_reframed:
+            self._validate_stop_dia()
+
+        # Notify only on a Z stop/retract re-reference (the safety targets) that
+        # wasn't a units switch. A diameter-only (X) re-zero re-renders silently.
+        if z_reframed and not units_changed:
             self._on_targets_reframed()
 
     # ——— re-reference notify ———
@@ -702,10 +713,10 @@ class ElsUiController(EventDispatcher):
         self.reframe_message = ""
 
     def reset_reframed_targets(self):
-        """'Reset' from the confirm bar: invalidate the re-referenced targets so
-        the operator re-sets them (→ '--')."""
+        """'Reset both' from the confirm bar: invalidate Stop Z + Start Z (the
+        safety targets the notice is about) so the operator re-sets them (→ '--').
+        Diameters are not touched — the notice only fires on a Z re-reference."""
         self._invalidate_z_targets()
-        self._invalidate_x_targets()
         self.clear_reframe_notice()
 
     # ——— invalidation ———
@@ -817,7 +828,7 @@ class ElsUiController(EventDispatcher):
 
     def start_cut(self):
         self.clear_reframe_notice()   # starting the cut clears a re-reference flag
-        self._els_fsm.set_stop_z(self.stop_z)
+        self._els_fsm.push_stop_to_firmware()
         self._els_fsm.cut()
 
     def start_retract(self):
