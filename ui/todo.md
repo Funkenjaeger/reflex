@@ -179,6 +179,16 @@ Findings (probes were temporary; regression tests land with each fix):
     axis remap invalidate. Optional per-machine notify (`ElsDispatcher.stop_z_reframe_notify`
     = silent/warn/confirm) flags an offset/coordinate re-reference (not units). UI (settings
     dropdown, notice strip) needs an on-device smoke test.
+  - **KNOWN LIMITATION — SUM-transform ELS Z axis (PRE-EXISTING, Fable-flagged 2026-07-11).**
+    `AxisDispatcher.position_to_encoder` / `scaled_from_encoder` only account for the axis's
+    PRIMARY input. If the ELS Z axis is configured as a SUM transform (leadscrew scale +
+    compound-slide scale), the stop is anchored/armed against the primary encoder only — a
+    contribution from the second scale would put the physical stop in the wrong place. This is
+    UNCHANGED by the encoder work (the old cut-time `position_to_encoder` conversion had the
+    identical flaw), and the derived mirror at least stays self-consistent with what's armed.
+    Normal single-input Z lathe setups (incl. elspi) are unaffected. FUTURE: refuse/warn when
+    an ELS Z axis has a multi-input transform, or fold the full transform into the encoder
+    conversion.
 - **CONFIRMED — 'Cutting…' lockup (H3).** Deterministically reproduced: when the domain
   cut is refused, the UI parks in `in_cycle.cutting` (blank action, Stop disabled) with
   no exit but the Engage toggle. Fix: gate the UI `waiting_to_cut→cutting` transition on
