@@ -109,7 +109,9 @@
     TextHeaderButton:
       id: btn_stop_z
       text_header: "Stop Z"
-      text_button: app.formats.position_format.format(root.controller.stop_z)
+      # "--" until the operator actually sets a stop Z — a never-set (0.0) stop
+      # must not read like a real target (audit H1).
+      text_button: app.formats.position_format.format(root.controller.stop_z) if root.controller.stop_z_valid else "--"
       blink_enable: root.controller.active_input == "stop_z"
       width: self.height
       disabled: not root.controller.x_z_inputs_enabled

@@ -91,15 +91,27 @@ class ElsUiController(EventDispatcher):
         self._board = board
         self._hal = ElsStopHal(board)
 
+        # Whether the operator has actually SET a stop_z (vs the 0.0 default).
+        # stop_z_valid tracks this, so a never-set stop can't silently be used
+        # for a cut (audit H1). Invalidated when the stored value becomes
+        # meaningless: a new ELS Z-axis mapping, or a Z DRO zero/offset change
+        # (stop_z is a scaled position, so re-zeroing the DRO moves the physical
+        # target). NOT cleared by a plain disengage — same-setup re-engage is
+        # common and the value is still meaningful.
+        self._stop_z_committed = False
+
         # 1. Wire validation bindings before anything observes *_valid flags.
-        self.bind(stop_z=lambda *_: self._validate_stop_z(),
+        #    A stop_z write marks it committed (operator entered a value), then
+        #    validates + propagates.
+        self.bind(stop_z=self._on_stop_z_changed,
                   retract_z=lambda *_: self._validate_retract_z(),
                   start_dia=lambda *_: self._validate_start_dia(),
                   stop_dia=lambda *_: self._validate_stop_dia())
 
-        # Also propagate stop_z changes to firmware while engaged-and-idle, so ELS
-        # uses the operator's latest value if they type a new one via keypad.
-        self.bind(stop_z=lambda *_: self._propagate_stop_z_to_firmware())
+        # Invalidate the stored stop_z when the ELS Z-axis mapping changes — the
+        # value was captured against a different axis and no longer refers to a
+        # known physical position.
+        self._els.bind(z_axis_index=lambda *_: self.invalidate_stop_z())
 
         # 2. Build domain FSM (HAL injected; controller doubles as modes source).
         self._els_fsm = ElsFsm(els, board, self._hal, self)
@@ -413,7 +425,12 @@ class ElsUiController(EventDispatcher):
         advances to in_cycle.cutting, ElsFsm.start_cut() pushes stop_z to
         firmware via the HAL.
         """
+        # Mark committed explicitly so setting the value the operator wants —
+        # even if it equals the current stop_z (e.g. 0.0) — validates it. The
+        # property-change binding only fires on an actual change.
+        self._stop_z_committed = True
         self.stop_z = stop_z_value
+        self._validate_stop_z()
 
     def commit_standalone_retract_z(self, retract_z_value: float):
         """Start-Z (retract target) entered outside the wizard. retract_z is
@@ -498,11 +515,27 @@ class ElsUiController(EventDispatcher):
     def on_ack_alarm(self):
         self._ui_fsm.ack_alarm()
 
+    # ——— stop_z commit / invalidation ———
+    def _on_stop_z_changed(self, *_):
+        # Any explicit write to stop_z means the operator set a value.
+        self._stop_z_committed = True
+        self._validate_stop_z()
+        self._propagate_stop_z_to_firmware()
+
+    def invalidate_stop_z(self):
+        """Mark the stored stop_z as no longer a known target, so a cut is
+        blocked until the operator sets it again. Called when the value's frame
+        of reference changes (e.g. the ELS Z-axis mapping)."""
+        self._stop_z_committed = False
+        self._validate_stop_z()
+
     # ——— validators ———
     def _validate_stop_z(self):
-        # No validation criteria
-        self.stop_z_valid = True
-        self.stop_z_error = ""
+        # A stop_z is only "valid" once the operator has actually set one — the
+        # 0.0 default must never be silently usable for a cut (audit H1). The
+        # action gate + the "--" display both key off this.
+        self.stop_z_valid = self._stop_z_committed
+        self.stop_z_error = "" if self.stop_z_valid else "Stop Z not set"
 
     def _validate_retract_z(self):
         margin = self._els_fsm._safety_margin_display()

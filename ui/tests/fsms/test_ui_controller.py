@@ -135,6 +135,7 @@ def test_toggling_wizard_off_mid_wizard_cancels_and_enters_in_cycle(ctrl):
     ctrl.wizard_enabled = True
     _pump()
     ctrl._ui_fsm.start()              # idle → set_stop_z
+    ctrl.commit_standalone_stop_z(1.0)  # set a stop_z so the wizard can advance
     ctrl._ui_fsm.action()             # set_stop_z → set_retract_z
     assert ctrl._ui_fsm.state == "set_retract_z"
     ctrl.wizard_enabled = False
@@ -616,6 +617,9 @@ def test_action_button_disabled_when_z_past_stop_in_stop_only_mode():
     z = _make_z_axis(scaled_position=12.7)
     board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
     c = ElsUiController(els=els, board=board)
+    # Commit a stop_z (=0.0) so stop_z_valid is True and the button gate is
+    # exercised on Z position alone, not the "not set" guard (audit H1).
+    c.commit_standalone_stop_z(0.0)
     _pump()
     # Non-wizard mode auto-advances to in_cycle.waiting_to_cut at startup.
     assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
@@ -629,6 +633,30 @@ def test_action_button_disabled_when_z_past_stop_in_stop_only_mode():
     z.scaledPosition = -1.0
     c._poll_apply_policy()
     assert c.action_allowed is True
+
+
+def test_stop_z_invalid_until_set_blocks_cut():
+    """Audit H1: a never-set stop_z is invalid, so a cut is blocked until the
+    operator commits one — and re-mapping the ELS Z axis invalidates it again."""
+    z = _make_z_axis(scaled_position=-5.0)
+    board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
+    c = ElsUiController(els=els, board=board)
+    _pump()
+    # Never set → invalid → cut gated even though engaged with Z on the safe side.
+    assert c.stop_z_valid is False
+    c.toggle_engage()
+    _pump()
+    assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
+    assert c.action_allowed is False, "cut allowed with no stop_z set"
+    # Operator sets a stop_z → valid → the stop_z gate no longer blocks.
+    c.commit_standalone_stop_z(-10.0)
+    _pump()
+    assert c.stop_z_valid is True
+    # A change to the stored value's frame of reference (Z-axis remap) invalidates
+    # it again so a stale target can't be silently reused.
+    c.invalidate_stop_z()
+    _pump()
+    assert c.stop_z_valid is False
 
 
 def test_action_button_disabled_when_z_at_stop_in_stop_only_mode():
