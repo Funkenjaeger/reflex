@@ -114,8 +114,28 @@ class ElsFsm:
         # Starting a new cut reverses direction, so the next retract will
         # again need to traverse the play window.
         self._retract_backlash_applied = False
-        self.set_stop_z(self.controller.stop_z)
+
+        # Verify the safety-critical stop TARGET writes are acknowledged BEFORE
+        # releasing the cut. stopPosition + scaleIndex are fire-and-forget over
+        # Modbus; if one silently failed and the link recovered before we release
+        # (set_active(False)), the cut would run against the PREVIOUS pass's stop
+        # — a wrong-shoulder cut (safety audit #4). Every Modbus write is ACK'd by
+        # the firmware (minimalmodbus raises on a missing/bad response, which the
+        # write helpers turn into connection_manager.connected = False), so
+        # accumulate that per-write ACK — a later write recovering the link can't
+        # mask an earlier failure. (stopDirection/enable are written below with
+        # values already correct from engage time, so a post-release write failure
+        # there leaves the previously-armed correct values in place.)
+        cm = self.board.connection_manager
+        # Write stopPosition and scaleIndex individually (not via set_stop_z,
+        # which bundles both) so the per-write ACK is checked at the right
+        # granularity — otherwise the scaleIndex write would recover `connected`
+        # and mask a failed stopPosition write.
+        enc = self.z_axis.position_to_encoder(self.controller.stop_z)
+        self.hal.set_stop_position(enc)
+        armed_ok = bool(cm.connected)
         self.hal.set_scale_index(self._saddle_input.inputIndex)
+        armed_ok = armed_ok and bool(cm.connected)
         if self.controller.is_threading:
             self.push_thread_geometry()
             self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
@@ -125,6 +145,24 @@ class ElsFsm:
             self.hal.set_thread_pitch_steps(0.0)
             self.hal.set_z_counts_per_pitch(0.0)
             self.hal.set_backlash_steps(0)
+
+        if not armed_ok:
+            # The stop target wasn't confirmed — do NOT release the cut. Stop any
+            # feed and fault out rather than cut against an unverified stop.
+            log.error("on_enter_cutting: ELS stop target not acknowledged — "
+                      "aborting cut (stop not released)")
+            self.board.servo.stop_feed()
+            bus.publish("alarm_raised",
+                        reason="ELS stop not confirmed — cut aborted. Check the "
+                               "controller connection and try again.")
+            # Defer the fault transition to the top level: triggering it from
+            # inside this (nested) cut transition callback doesn't reliably
+            # process on a queued machine. We stay in 'cutting' with active=1
+            # (no feed — never released) until the fault lands on the next tick.
+            from kivy.clock import Clock
+            Clock.schedule_once(lambda _dt: self._raise_stop_write_fault(), 0)
+            return
+
         self.hal.set_active(False)
         self.hal.set_stop_direction(
             self.els.stop_direction_value(self.controller.els_forward)
@@ -184,6 +222,21 @@ class ElsFsm:
         # also stop any running sync feed — otherwise a spindle-synced feed keeps
         # driving the carriage with no auto-stop (audit H6). Idempotent.
         self.board.servo.stop_feed()
+
+    def _raise_stop_write_fault(self):
+        """Top-level fault after an unacknowledged cut-stop write (scheduled from
+        on_enter_cutting). Faults the domain FSM and mirrors it to the UI FSM."""
+        if self.state != 'alarm':
+            self.fault()
+        bus.publish("els_alarm")
+
+    def on_enter_alarm(self):
+        # Fault state — drive the machine to a safe idle: stop the feed, disarm
+        # the stop, and detach the move poller. Reached e.g. when a cut's stop
+        # writes weren't acknowledged (on_enter_cutting).
+        self.board.unbind(update_tick=self._on_board_update)
+        self.board.servo.stop_feed()
+        self.hal.set_enable(False)
 
     # ——— condition-checking methods ———    
     def is_ready_to_retract(self):

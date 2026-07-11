@@ -91,6 +91,7 @@ class ElsUiFsm:
         )
         bus.subscribe("els_stop_activated", self.on_event_els_stop_activated)
         bus.subscribe("els_retract_done", self.on_event_els_retract_done)
+        bus.subscribe("els_alarm", self.on_event_els_alarm)
 
     # ——— after any state change ———
     def _broadcast(self):
@@ -124,3 +125,11 @@ class ElsUiFsm:
         log.info("ui fsm on_event_els_retract_done()")
         if self.state == "in_cycle.retracting":
             self.retract_done()
+
+    def on_event_els_alarm(self):
+        # The domain FSM faulted (e.g. a cut's stop writes weren't acknowledged).
+        # Mirror it so the UI leaves the cutting/retracting state into alarm
+        # rather than sitting in "Cutting…" with no motion.
+        log.info("ui fsm on_event_els_alarm()")
+        if self.state != "alarm":
+            self.fault()

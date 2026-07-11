@@ -142,3 +142,45 @@ def test_disengage_stops_feed(harness):
     assert settle < 500.0, (
         f"carriage kept feeding after disengage: {settle:.0f} counts"
     )
+
+
+# ── #4: a cut whose stop write isn't ACK'd must abort, not release ────────────
+@pytest.mark.parametrize("emulator_process", [_ENV], indirect=True)
+def test_cut_aborts_when_stop_write_not_acked(harness):
+    """Audit #4: the elsStop writes are ACK'd over Modbus. Simulate the
+    stopPosition write NOT being acknowledged (link drops) but recovering on the
+    next write — the accumulated ACK check must still catch it, refuse to release
+    the cut, stop the feed, and fault (so the cut can't run against an unverified
+    / previous stop)."""
+    h = harness
+    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
+                els_forward=True)
+    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    z0 = h.z_scaled_position()
+    h.set_stop_z(z0 - 300.0)
+    h.engage()
+
+    # Inject: the stopPosition write "fails to ACK" (connected drops); the very
+    # next write recovers the link. A naive end-of-sequence check would miss this.
+    cm = h.board.connection_manager
+    orig_set_stop_position = h.hal.set_stop_position
+
+    def failing_set_stop_position(counts):
+        orig_set_stop_position(counts)
+        cm.connected = False        # write went out but was not acknowledged
+
+    h.hal.set_stop_position = failing_set_stop_position
+
+    h.enable_sync()
+    h.cut()
+    h.pump()
+
+    # The cut must have aborted: domain + UI faulted to alarm, the feed is off,
+    # and — the safety invariant — no cut motion happened.
+    assert h.els_fsm.state == "alarm", (
+        f"cut did not abort on an unacknowledged stop write: els={h.els_fsm.state}"
+    )
+    assert h.ui_fsm.state == "alarm", f"UI didn't mirror the fault: ui={h.ui_fsm.state}"
+    assert h.board.servo.servoMode == 0, "feed not stopped on abort"
+    # And the carriage did not run a cut (no release → no feed).
+    assert _max_travel(h, 2.0) < 300.0, "carriage fed despite the aborted cut"
