@@ -720,6 +720,37 @@ def test_reframe_units_change_is_silent():
     assert c.targets_reframed_warn is False  # units → silent
 
 
+def test_reframe_notice_clears_on_reset_of_value():
+    """Re-setting a target addresses the re-reference — the warn flag clears."""
+    z = _make_z_axis()
+    board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
+    els.stop_z_reframe_notify = "warn"
+    c = ElsUiController(els=els, board=board)
+    c.commit_standalone_stop_z(50.0)
+    z.scaled_from_encoder.side_effect = lambda e: e / 1000.0 + 10.0
+    c._poll_reframe_targets()
+    assert c.targets_reframed_warn is True
+    c.commit_standalone_stop_z(60.0)          # operator re-sets
+    assert c.targets_reframed_warn is False
+
+
+def test_reset_reframed_targets_invalidates_and_clears():
+    """The confirm bar's 'Reset both' invalidates the re-referenced targets
+    (→ must re-set) and clears the notice."""
+    z = _make_z_axis()
+    board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
+    els.stop_z_reframe_notify = "confirm"
+    c = ElsUiController(els=els, board=board)
+    c.commit_standalone_stop_z(50.0)
+    assert c.stop_z_valid is True
+    z.scaled_from_encoder.side_effect = lambda e: e / 1000.0 + 10.0
+    c._poll_reframe_targets()
+    assert c.reframe_confirm_pending is True
+    c.reset_reframed_targets()
+    assert c.stop_z_valid is False            # invalidated → "--", must re-set
+    assert c.reframe_confirm_pending is False
+
+
 def test_confirm_feed_enable_is_noop_when_already_on():
     """Review finding 6: if the feed turned on between the confirm dialog opening
     and the operator confirming, request_feed_enable(confirmed=True) must NOT

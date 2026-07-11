@@ -600,6 +600,7 @@ class ElsUiController(EventDispatcher):
         self._validate_stop_z()
         self._validate_retract_z()
         self._propagate_stop_z_to_firmware()
+        self.clear_reframe_notice()   # re-setting addresses any re-reference flag
 
     def _commit_retract_z(self, scaled_value: float):
         z = self._els.get_z_axis()
@@ -610,6 +611,7 @@ class ElsUiController(EventDispatcher):
         self._retract_z_committed = True
         self.retract_z = z.scaled_from_encoder(self._retract_z_encoder)
         self._validate_retract_z()
+        self.clear_reframe_notice()
 
     def _commit_start_dia(self, scaled_value: float):
         x = self._els.get_x_axis()
@@ -619,6 +621,7 @@ class ElsUiController(EventDispatcher):
         self._start_dia_encoder = x.position_to_encoder(scaled_value)
         self._start_dia_committed = True
         self.start_dia = x.scaled_from_encoder(self._start_dia_encoder)
+        self.clear_reframe_notice()
 
     def _commit_stop_dia(self, scaled_value: float):
         x = self._els.get_x_axis()
@@ -628,6 +631,7 @@ class ElsUiController(EventDispatcher):
         self._stop_dia_encoder = x.position_to_encoder(scaled_value)
         self._stop_dia_committed = True
         self.stop_dia = x.scaled_from_encoder(self._stop_dia_encoder)
+        self.clear_reframe_notice()
 
     def _poll_reframe_targets(self, *args):
         """Re-render each committed target's derived scaled value from its frozen
@@ -812,6 +816,7 @@ class ElsUiController(EventDispatcher):
         return True
 
     def start_cut(self):
+        self.clear_reframe_notice()   # starting the cut clears a re-reference flag
         self._els_fsm.set_stop_z(self.stop_z)
         self._els_fsm.cut()
 
