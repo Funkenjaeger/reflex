@@ -195,15 +195,29 @@ Findings (probes were temporary; regression tests land with each fix):
   `els_backlash_steps` (config). Inconclusive in the emulator; add a config-range
   validation rather than treat as a control-flow bug.
 
-**Fixes landed (branch `fix/els-safety`, all with emulator/unit regressions):**
-- H3 'Cutting…' lockup — `fedfc9b` (gate UI cut on fresh domain readiness).
+**Fixes landed (branch `fix/els-safety`, all with emulator/unit regressions;
+Fable-reviewed twice — review + verify):**
+- H3 'Cutting…' lockup — `fedfc9b` (gate UI cut on fresh domain `may_cut`).
 - Sync/stop guard — `02a03d8` (confirm-to-override on feed w/o armed stop;
-  disengage stops the feed). NOTE: the confirm *popup* is UI that can't be
-  rendered headless — needs an on-device smoke test.
-- elsStop write verification — `ddd078a` (verify stopPosition/scaleIndex ACK
-  before releasing; abort→alarm on failure).
-- H1 stop_z validation — `f5a6913`.
-Deferred (Evan): post-stop overshoot — hardware-verify first, no firmware change.
+  disengage stops the feed).
+- elsStop write verification — `ddd078a` (verify stopPosition/scaleIndex + enable
+  ACK before releasing; abort→alarm on failure).
+- H1 stop_z validation ("--", must-set) — `f5a6913`.
+- Review fixes — `baadad8` (CRITICAL: sync guard was on the wrong bar — routed
+  elsbar Sync Enable through the guard; verify `enable` before release; alarm
+  state exit + may_cut/toggle_engage guards + alarm-text surface).
+- Alarm recovery completion — `9f054c9` (UI FSM leaves alarm on disengage;
+  double-tap-engage guard).
+- Encoder-anchored ELS targets — `effa7f5`, `7bd9297`, `71a55db` (stop_z/retract_z
+  + diameters anchored to the physical encoder; re-reference notify silent/warn/
+  confirm; closes the H1 DRO-rezero gap above).
+- Deferred (Evan): post-stop overshoot — hardware-verify first, no firmware change.
+
+**On-device smoke test (Kivy UI, not headless-testable — logic IS tested):**
+- Sync-guard confirm popup (CustomPopup + cancel button).
+- H1 "--" Stop-Z display + alarm-text instruction line.
+- Re-reference notify UI: ELS-settings "Stop re-reference" dropdown +
+  els_advbar notice strip (warn message / confirm Keep+Reset).
 
 ## Dead Code and Cleanup
 
