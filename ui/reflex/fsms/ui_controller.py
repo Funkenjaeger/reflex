@@ -83,6 +83,13 @@ class ElsUiController(EventDispatcher):
     start_dia_valid = BooleanProperty(False)
     stop_dia_valid  = BooleanProperty(False)
 
+    # ── Re-reference notify (a committed target's displayed value changed due to
+    #    a DRO re-zero / coordinate-system switch — the physical target is
+    #    unchanged; this just flags it per the operator's notify preference).
+    targets_reframed_warn  = BooleanProperty(False)  # 'warn': amber field flag
+    reframe_confirm_pending = BooleanProperty(False)  # 'confirm': show the bar
+    reframe_message        = StringProperty("")       # human text for warn/confirm
+
     ui_state = StringProperty("idle")
 
     def __init__(self, els: els, board: board, **kw):
@@ -107,15 +114,29 @@ class ElsUiController(EventDispatcher):
         self._retract_z_encoder = None
         self._stop_z_committed = False
         self._retract_z_committed = False
+        # Diameters get the same treatment on the X (cross-slide) axis. They're
+        # only used for X-gating comparisons (not written to firmware), but the
+        # same scaled-storage fragility applies.
+        self._start_dia_encoder = None
+        self._stop_dia_encoder = None
+        self._start_dia_committed = False
+        self._stop_dia_committed = False
+        # Track the display factor so the reframe poll can tell a units switch
+        # (silent, re-render only) from a DRO re-zero / coordinate change (the
+        # notify-worthy event).
+        try:
+            self._last_factor = float(self._board.formats.factor)
+        except Exception:
+            self._last_factor = 1.0
 
-        # 1. Wire validation bindings (start_dia/stop_dia get the same encoder
-        #    treatment in a follow-up; keep their scaled validators for now).
+        # Diameter validators fire on change (they're also settable directly).
         self.bind(start_dia=lambda *_: self._validate_start_dia(),
                   stop_dia=lambda *_: self._validate_stop_dia())
 
-        # Invalidate the stored targets when the ELS Z-axis mapping changes — the
+        # Invalidate the captured targets when the ELS axis mapping changes — a
         # captured encoder belongs to a different physical axis now.
         self._els.bind(z_axis_index=lambda *_: self._invalidate_z_targets())
+        self._els.bind(x_axis_index=lambda *_: self._invalidate_x_targets())
 
         # 2. Build domain FSM (HAL injected; controller doubles as modes source).
         self._els_fsm = ElsFsm(els, board, self._hal, self)
@@ -467,6 +488,14 @@ class ElsUiController(EventDispatcher):
         physical encoder (consumed by ElsFsm.on_enter_retracting)."""
         self._commit_retract_z(retract_z_value)
 
+    def commit_standalone_start_dia(self, value: float):
+        """Start diameter entered via keypad/long-press — anchored to the X
+        encoder so an X re-zero / units switch re-references it correctly."""
+        self._commit_start_dia(value)
+
+    def commit_standalone_stop_dia(self, value: float):
+        self._commit_stop_dia(value)
+
     def try_advance_wizard(self):
         """If the UI FSM is on a wizard configuration step, advance to the
         next one. Otherwise do nothing.
@@ -514,9 +543,9 @@ class ElsUiController(EventDispatcher):
                 log.warning(f"action button: no X (cross-slide) axis assigned in state '{state}'")
                 return
             if state == "set_start_dia":
-                self.start_dia = axis.scaledPosition
+                self._commit_start_dia(axis.scaledPosition)
             else:
-                self.stop_dia = axis.scaledPosition
+                self._commit_stop_dia(axis.scaledPosition)
         elif state == "confirm":
             # write stop z down to FW
             pass
@@ -582,24 +611,100 @@ class ElsUiController(EventDispatcher):
         self.retract_z = z.scaled_from_encoder(self._retract_z_encoder)
         self._validate_retract_z()
 
-    def _poll_reframe_targets(self, *args):
-        """Re-render the derived scaled stop_z/retract_z from their frozen
-        encoders each tick, so a DRO re-zero or units switch just re-displays the
-        physical target (the encoder never moves) — the same way the DRO itself
-        reframes. (Reframe-notify hooks in here in a follow-up.)"""
-        z = self._els.get_z_axis()
-        if z is None:
+    def _commit_start_dia(self, scaled_value: float):
+        x = self._els.get_x_axis()
+        if x is None:
+            log.warning("_commit_start_dia: no ELS X axis assigned")
             return
-        if self._stop_z_committed:
-            new = z.scaled_from_encoder(self._stop_z_encoder)
-            if new != self.stop_z:
-                self.stop_z = new
-                self._validate_retract_z()
-        if self._retract_z_committed:
-            new = z.scaled_from_encoder(self._retract_z_encoder)
-            if new != self.retract_z:
-                self.retract_z = new
+        self._start_dia_encoder = x.position_to_encoder(scaled_value)
+        self._start_dia_committed = True
+        self.start_dia = x.scaled_from_encoder(self._start_dia_encoder)
 
+    def _commit_stop_dia(self, scaled_value: float):
+        x = self._els.get_x_axis()
+        if x is None:
+            log.warning("_commit_stop_dia: no ELS X axis assigned")
+            return
+        self._stop_dia_encoder = x.position_to_encoder(scaled_value)
+        self._stop_dia_committed = True
+        self.stop_dia = x.scaled_from_encoder(self._stop_dia_encoder)
+
+    def _poll_reframe_targets(self, *args):
+        """Re-render each committed target's derived scaled value from its frozen
+        encoder every tick, so a DRO re-zero or units switch just re-displays the
+        physical target (the encoder never moves) — the same way the DRO itself
+        reframes. A re-render that is NOT a units change (units is on the
+        operator) is a "re-reference" event → notify per the operator's setting."""
+        z = self._els.get_z_axis()
+        x = self._els.get_x_axis()
+        try:
+            factor = float(self._board.formats.factor)
+        except Exception:
+            factor = self._last_factor
+        units_changed = factor != self._last_factor
+        self._last_factor = factor
+
+        reframed = False
+        if z is not None:
+            if self._stop_z_committed:
+                new = z.scaled_from_encoder(self._stop_z_encoder)
+                if new != self.stop_z:
+                    self.stop_z = new
+                    self._validate_retract_z()
+                    reframed = True
+            if self._retract_z_committed:
+                new = z.scaled_from_encoder(self._retract_z_encoder)
+                if new != self.retract_z:
+                    self.retract_z = new
+                    reframed = True
+        if x is not None:
+            if self._start_dia_committed:
+                new = x.scaled_from_encoder(self._start_dia_encoder)
+                if new != self.start_dia:
+                    self.start_dia = new
+                    reframed = True
+            if self._stop_dia_committed:
+                new = x.scaled_from_encoder(self._stop_dia_encoder)
+                if new != self.stop_dia:
+                    self.stop_dia = new
+                    reframed = True
+
+        if reframed and not units_changed:
+            self._on_targets_reframed()
+
+    # ——— re-reference notify ———
+    def _reframe_notify_mode(self) -> str:
+        mode = getattr(self._els, "stop_z_reframe_notify", "silent")
+        return mode if mode in ("silent", "warn", "confirm") else "silent"
+
+    def _on_targets_reframed(self):
+        """A committed target's displayed value changed due to a DRO re-zero /
+        coordinate-system switch (not units). The physical target is unchanged;
+        flag it per the operator's notify preference."""
+        mode = self._reframe_notify_mode()
+        if mode == "silent":
+            return
+        self.reframe_message = "Stop/Start re-referenced after a zero/offset change"
+        if mode == "confirm":
+            self.reframe_confirm_pending = True
+        else:  # warn
+            self.targets_reframed_warn = True
+
+    def clear_reframe_notice(self):
+        """Dismiss the warn highlight / confirm bar — the operator acknowledged,
+        re-set a value, or started the next cut. Physical targets are unchanged."""
+        self.targets_reframed_warn = False
+        self.reframe_confirm_pending = False
+        self.reframe_message = ""
+
+    def reset_reframed_targets(self):
+        """'Reset' from the confirm bar: invalidate the re-referenced targets so
+        the operator re-sets them (→ '--')."""
+        self._invalidate_z_targets()
+        self._invalidate_x_targets()
+        self.clear_reframe_notice()
+
+    # ——— invalidation ———
     def invalidate_stop_z(self):
         """Mark the stored stop_z as no longer a known target, so a cut is
         blocked until the operator sets it again (never-set or an ELS Z-axis
@@ -613,10 +718,22 @@ class ElsUiController(EventDispatcher):
         self._retract_z_encoder = None
         self._validate_retract_z()
 
+    def invalidate_start_dia(self):
+        self._start_dia_committed = False
+        self._start_dia_encoder = None
+
+    def invalidate_stop_dia(self):
+        self._stop_dia_committed = False
+        self._stop_dia_encoder = None
+
     def _invalidate_z_targets(self, *_):
         # An ELS Z-axis remap makes both captured encoders meaningless.
         self.invalidate_stop_z()
         self.invalidate_retract_z()
+
+    def _invalidate_x_targets(self, *_):
+        self.invalidate_start_dia()
+        self.invalidate_stop_dia()
 
     # ——— validators ———
     def _validate_stop_z(self):

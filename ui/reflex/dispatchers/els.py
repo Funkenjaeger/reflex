@@ -1,5 +1,5 @@
 from kivy.logger import Logger
-from kivy.properties import BooleanProperty, NumericProperty
+from kivy.properties import BooleanProperty, NumericProperty, StringProperty
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
 
@@ -28,6 +28,15 @@ class ElsDispatcher(SavingDispatcher):
     # User-facing entry happens in mm via the settings popup, which converts
     # using the servo ratio.
     els_backlash_steps = NumericProperty(0)
+
+    # ── Re-reference notify preference ────────────────────────────────
+    # How to flag when a committed ELS target's DISPLAYED value changes after a
+    # DRO re-zero / coordinate-system switch (the physical target is unchanged):
+    #   "silent"  — just re-render (matches the rest of the DRO); default
+    #   "warn"    — amber-flag the Stop/Start fields + a small message
+    #   "confirm" — an inline Keep/Reset bar
+    # Persisted to Els-0.yaml like the other ELS settings.
+    stop_z_reframe_notify = StringProperty("silent")
 
     # ── Machine direction polarity ────────────────────────────────────
     # Direction canonicalization is now handled by firmware via scaleDir

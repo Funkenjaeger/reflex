@@ -221,9 +221,9 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         elif which == "start_z":
             self.controller.commit_standalone_retract_z(position)
         elif which == "major_dia":
-            self.controller.start_dia = position
+            self.controller.commit_standalone_start_dia(position)
         elif which == "minor_dia":
-            self.controller.stop_dia = position
+            self.controller.commit_standalone_stop_dia(position)
         self.controller.try_advance_wizard()
 
     def _open_standalone_stop_z_keypad(self):
@@ -331,13 +331,15 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         is_metric = self.app.formats.current_format == "MM"
         unit_label = "mm" if is_metric else "in"
         target_attr = "start_dia" if which == "major" else "stop_dia"
+        commit = (self.controller.commit_standalone_start_dia if which == "major"
+                  else self.controller.commit_standalone_stop_dia)
         title_label = "Major ø" if which == "major" else "Minor ø"
         keypad = Keypad(title=f"Enter {title_label} ({unit_label})")
         keypad.integer = False
 
         def on_done(value):
             try:
-                setattr(self.controller, target_attr, float(value))
+                commit(float(value))
             except ValueError:
                 log.warning(f"Invalid {target_attr} value: {value}")
                 return

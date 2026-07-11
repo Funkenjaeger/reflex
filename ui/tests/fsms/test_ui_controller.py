@@ -56,9 +56,11 @@ def _make_z_axis(scaled_position=0.0, encoder_offset=0):
     return axis
 
 
-def _make_x_axis(scaled_position=0.0):
+def _make_x_axis(scaled_position=0.0, encoder_offset=0):
     axis = MagicMock()
     axis.scaledPosition = scaled_position
+    axis.position_to_encoder.side_effect = lambda mm: round(mm * 1000) + encoder_offset
+    axis.scaled_from_encoder.side_effect = lambda enc: (enc - encoder_offset) / 1000.0
     axis._primary_input.return_value = SimpleNamespace(
         encoderCurrent=0, ratioNum=1, ratioDen=1, inputIndex=3,
     )
@@ -682,6 +684,40 @@ def test_wizard_set_stop_z_commits_even_when_value_unchanged():
     c.on_action_button_clicked()            # Set: capture Z=0.0 (== default)
     assert c.stop_z_valid is True
     assert c._ui_fsm.state == "set_retract_z", "wizard did not advance past Set"
+
+
+def test_reframe_warns_on_offset_change_not_units():
+    """A committed target whose displayed value changes because of a DRO re-zero
+    / offset change (factor unchanged) fires the notify per the setting; the
+    physical encoder is untouched."""
+    z = _make_z_axis()
+    board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
+    els.stop_z_reframe_notify = "warn"
+    c = ElsUiController(els=els, board=board)
+    c.commit_standalone_stop_z(50.0)
+    enc = c.stop_z_encoder
+    assert c.stop_z == 50.0
+    assert c.targets_reframed_warn is False
+    # Offset change: the SAME encoder now renders 10 higher (a re-zero).
+    z.scaled_from_encoder.side_effect = lambda e: e / 1000.0 + 10.0
+    c._poll_reframe_targets()
+    assert c.stop_z == 60.0                 # display re-referenced
+    assert c.stop_z_encoder == enc          # physical target unchanged
+    assert c.targets_reframed_warn is True  # warned
+
+
+def test_reframe_units_change_is_silent():
+    """A units switch (factor changes) just re-renders — it never notifies (it's
+    on the operator to know a literal value doesn't carry across units)."""
+    z = _make_z_axis()
+    board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
+    els.stop_z_reframe_notify = "warn"
+    c = ElsUiController(els=els, board=board)
+    c.commit_standalone_stop_z(50.0)
+    board.formats.factor = 2.0              # units changed
+    z.scaled_from_encoder.side_effect = lambda e: e / 500.0
+    c._poll_reframe_targets()
+    assert c.targets_reframed_warn is False  # units → silent
 
 
 def test_confirm_feed_enable_is_noop_when_already_on():
