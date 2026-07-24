@@ -485,3 +485,20 @@ Works-as-specified (note, not bugs):
   residual: `app.use_case` persists to the repo-root `config.ini` (path is hardcoded
   relative to the module, not under HOME) — gitignored and harmless, but a local run
   will set `use_case=lathe` there.
+
+---
+
+## System-test suite: explicit feed selection
+
+- **Context (2026-07-12, geometry commissioning):** `SystemHarness.commission_geometry()` now
+  commissions the harness to the emulator reference machine (400 counts/mm scales, 4000 counts/rev
+  spindle, exactly 127/32000 mm/step leadscrew), so system-test spans/tolerances are real mm and
+  the firmware's count-domain registers are physically meaningful.
+- **Gap:** the cut feed rate in the system tests still comes from the spindle axis's *default*
+  `syncRatioNum/Den = 360/100`, reinterpreted as 3.6 mm/rev (1.8 mm/s at EMU_RPM=30). Production
+  sets this via `ElsBar.update_feeds_ratio` from `feeds.table`; the harness has no ElsBar, so the
+  tests implicitly depend on a rotary-axis default that happens to be a usable feed.
+- **Done (2026-07-12):** `SystemHarness.set_feed(pitch_mm)` mirrors `update_feeds_ratio`
+  (signed spindle-axis `syncRatioNum/Den` from `els_forward`); all ELS system tests now select
+  16 TPI (`Fraction(254, 160)`, feeds.py Thread IN "16" = 1.5875 mm/rev, ~0.79 mm/s at
+  EMU_RPM=30) explicitly.

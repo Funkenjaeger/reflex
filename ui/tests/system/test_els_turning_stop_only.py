@@ -6,6 +6,8 @@ at the operator's stop_z. Assertions are on RELATIVE Z travel (the DRO position
 register carries a fixed startup offset; absolute counts are meaningless).
 """
 
+from fractions import Fraction
+
 import pytest
 
 pytestmark = pytest.mark.system
@@ -25,12 +27,18 @@ def test_turning_stop_only_reaches_stop_z(harness):
     h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
                 els_forward=True)
     h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    h.commission_geometry()
+    h.set_feed(Fraction(254, 160))        # 16 TPI = 1.5875 mm/rev → ~0.79 mm/s at EMU_RPM=30
 
     # Stop target on the cutting side (els_forward=True => cut_dir=-1 => cut moves
-    # in the -scaledPosition direction). Must clear the safety margin.
+    # in the -scaledPosition direction). With commissioned geometry the span is
+    # real mm: it must clear the ~3.49 mm safety margin, but stay well inside the
+    # 5 mm of physical -Z travel the reference machine has from its Z=0 start
+    # (lathe.toml min_position_mm=-5) or the carriage pins on the travel limit
+    # before reaching stop_z.
     z_start = h.z_scaled_position()
     margin = h.safety_margin()
-    span = max(margin * 2, 0.0) + 30.0    # scaled units; comfortably past margin
+    span = margin + 1.0                   # mm
     stop_z = z_start - span
 
     # Set stop_z BEFORE engaging so on_enter_stopped arms against it, then engage
@@ -61,19 +69,16 @@ def test_turning_stop_only_reaches_stop_z(harness):
     assert abs(z_final - z_start) > span * 0.5, (
         f"carriage barely moved: start={z_start} final={z_final} span={span}"
     )
-    # ...and halted in the stop_z vicinity. Tolerance is generous: stop-only mode
-    # uses a loose firmware hysteresis, the feed is wall-clock paced, and at the
-    # real servo speed (maxSpeed=10000) the carriage carries ~0.15 mm (~60 counts)
-    # past a position-triggered stop before it halts. Sub-unit stop precision /
-    # no-overshoot is Task 8b's job, not this smoke test's — this just pins that
-    # the cut halts in the target's vicinity rather than running away.
-    assert z_final == pytest.approx(stop_z, abs=90.0), (
+    # ...and halted in the stop_z vicinity. With commissioned geometry this is
+    # real mm: at the ~0.79 mm/s selected feed the position-triggered stop
+    # carries a small fraction of a millimeter past the target (stop-only mode
+    # uses the loose firmware hysteresis). 0.25 mm bounds that while still being
+    # a physically meaningful stop for a lathe carriage.
+    assert z_final == pytest.approx(stop_z, abs=0.25), (
         f"stopped off target: final={z_final} stop_z={stop_z}"
     )
-    # It must not have blown far PAST the stop toward the chuck (a coarse overshoot
-    # sanity check; els_forward=True cuts in the -Z direction, so overshoot is
-    # more-negative than stop_z). Bounds the realistic ~60-count overshoot well
-    # below a failure-to-stop runaway.
-    assert z_final >= stop_z - 90.0, (
+    # It must not have blown PAST the stop toward the chuck (els_forward=True
+    # cuts in the -Z direction, so overshoot is more-negative than stop_z).
+    assert z_final >= stop_z - 0.25, (
         f"overshot the stop: final={z_final} stop_z={stop_z}"
     )

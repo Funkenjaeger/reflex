@@ -2,6 +2,8 @@
 emulator, reads a known register, drives the production toggle write-path, and
 sees it affect the live physics -- with no Kivy App/UI."""
 
+from fractions import Fraction
+
 import pytest
 
 pytestmark = pytest.mark.system
@@ -24,6 +26,35 @@ def test_harness_reads_known_register(harness):
     assert harness.register("servo", "servoDir") in (1, -1)
     # scales array reads back too.
     assert isinstance(harness.carriage_position_counts(), int)
+
+
+def test_commissioned_thread_geometry_matches_emulator_physics(harness):
+    """Host-side twin of the emulator dashboard's geometry cross-check
+    (reflex-fw dashboard.cpp): the count-domain thread geometry the UI pushes
+    must satisfy zCountsPerPitch / threadPitchSteps == the physics'
+    z-counts-per-leadscrew-step (lathe.toml: mm_per_step 0.00396875 ×
+    encoder_counts_per_mm 400 = 1.5875). With the hermetic defaults the UI
+    pushes ~1.1111 instead and the dashboard (interactive mode) logs
+    'WARN geom mismatch' — commission_geometry() exists to close exactly that
+    gap, so pin it here where the serve-mode tests can see it."""
+    h = harness
+    h.configure(is_threading=True, retract_enabled=False, wizard_enabled=False,
+                els_forward=True)
+    h.commission_geometry()
+    h.set_feed(Fraction(254, 160))   # 16 TPI (feeds.py Thread IN "16")
+
+    h.els_fsm.push_thread_geometry()
+    h.pump()
+
+    tps = float(h.register("elsStop", "threadPitchSteps"))
+    zcpp = float(h.register("elsStop", "zCountsPerPitch"))
+    assert tps != 0.0 and zcpp != 0.0, "thread geometry was not pushed"
+    # Same 0.5% relative tolerance the emulator dashboard uses (float32
+    # registers round the exact host Fractions slightly).
+    assert zcpp / tps == pytest.approx(1.5875, rel=0.005), (
+        f"geom mismatch: firmware zCnt/lsStep={zcpp / tps} "
+        f"(zcpp={zcpp} tps={tps}), physics=1.5875"
+    )
 
 
 def test_servo_reverse_toggle_writes_through_production_path(harness):

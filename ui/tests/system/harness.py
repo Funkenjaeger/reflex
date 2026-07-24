@@ -249,12 +249,109 @@ class SystemHarness:
         self.board.servo.acceleration = acceleration
         self.pump()
 
-    def set_input_reverse(self, scale_index: int, reverse: bool):
+    def _input(self, scale_index: int):
         for inp in self.board.inputs:
             if inp.inputIndex == scale_index:
-                inp.reverse = reverse
-                return
+                return inp
         raise KeyError(f"no InputDispatcher for scale index {scale_index}")
+
+    def set_input_reverse(self, scale_index: int, reverse: bool):
+        self._input(scale_index).reverse = reverse
+
+    def commission_geometry(self):
+        """Commission the UI's machine geometry to the emulator reference
+        machine (reflex-fw emulator/config/lathe.toml), through the production
+        settings write paths. Call AFTER configure() — the spindle sync-ratio
+        push below needs the spindle axis role assigned.
+
+        Without this, the hermetic default settings (1 count/mm scales, the
+        rotary 400/360 ≈ 1.1111 mm/step servo ratio) make every count-domain
+        value the UI pushes to firmware (syncRatioNum/Den, threadPitchSteps,
+        zCountsPerPitch) physically meaningless relative to the emulator's
+        physics — its dashboard flags exactly this ("WARN geom mismatch",
+        dashboard.cpp geometry cross-check). With it, scaled positions, spans
+        and tolerances in tests are REAL MILLIMETERS of the reference machine:
+
+          * Z & X scales: 400 counts/mm  → input ratio 1/400 mm per count
+          * Spindle: 4000 counts/rev (encoder_ppr=4000, gear 1:1)
+                     → 1/4000 rev per count in the sync-ratio math
+          * Servo leadscrew: 8 TPI (0.125 in = 3.175 mm) at 800 steps/rev
+                     → exactly 127/32000 mm per step (0.00396875)
+
+        Exactness: 0.125 is binary-exact, so configure_lead_screw_ratio's
+        Fraction chain ((1/8) × 254/10 / 800) yields exactly 127/32000 with no
+        float error (asserted below). Scale ratios are exact int properties.
+
+        Real-units consequences tests must respect:
+          * The reference machine starts at Z=0 mm with min_position_mm=-5, and
+            an els_forward=True cut feeds physically -Z — so cut spans must
+            clear the ~3.49 mm safety margin yet stay well inside 5 mm.
+          * Feed selection is separate (a per-job operator choice, not machine
+            geometry): call set_feed() after this, or the spindle axis's
+            default syncRatio (360/100, a rotary-axis default) is what feeds.
+        """
+        for index in (self.Z_SCALE_INDEX, self.X_SCALE_INDEX):
+            inp = self._input(index)
+            inp.ratioNum = 1
+            inp.ratioDen = 400
+            inp.stepsPerMM = 400
+
+        spindle = self._input(self.SPINDLE_SCALE_INDEX)
+        spindle.spindleMode = True
+        spindle.encoder_ppr = 4000
+        spindle.gear_ratio_num = 1
+        spindle.gear_ratio_den = 1
+
+        servo = self.board.servo
+        servo.elsMode = True            # linear leadscrew, not rotary indexing
+        servo.leadScrewPitchIn = True   # 8 TPI leadscrew: pitch entered in inches
+        servo.leadScrewPitch = 0.125
+        servo.leadScrewPitchSteps = 800
+        # elsMode isn't bound to configure_lead_screw_ratio (only the pitch
+        # properties are), so run the production handler explicitly in case
+        # every pitch property above was already at its target value.
+        servo.configure_lead_screw_ratio(servo, None)
+
+        servo_ratio = Fraction(servo.ratioNum, servo.ratioDen)
+        assert servo_ratio == Fraction(127, 32000), (
+            f"leadscrew commissioning is not exact: got {servo_ratio}, "
+            f"want 127/32000 (0.00396875 mm/step)"
+        )
+
+        # The connect-time sync-ratio push ran against the hermetic defaults
+        # (and before the spindle axis role existed, so through the wrong
+        # branch). Re-run the same production handler so the firmware's
+        # syncRatioNum/Den registers reflect the commissioned geometry.
+        for axis in self.board.axes:
+            axis._set_sync_ratio()
+        self.pump()
+
+    def set_feed(self, pitch_mm):
+        """Select the ELS feed / thread pitch (mm of carriage travel per
+        spindle revolution) through the production path — mirrors
+        ElsBar.update_feeds_ratio: writes the signed spindle-axis
+        syncRatioNum/Den (sign from the operator's els_forward), which the
+        property binding pushes to the firmware sync registers.
+
+        Call AFTER configure() (needs the spindle axis role assigned and
+        els_forward set); a later els_forward change does NOT re-sign the
+        feed here (in production ElsBar re-applies it) — re-call set_feed.
+
+        Pass an exact Fraction matching a feeds.py table entry — the suite's
+        default is 16 TPI (Thread IN "16", Fraction(254, 160) = 1.5875 mm/rev).
+        Wall-clock note: carriage feed = pitch × rpm/60, so at EMU_RPM=30 that
+        pitch feeds ~0.79 mm/s — pick production values coarse enough that cut
+        spans complete well inside test timeouts."""
+        pitch = Fraction(pitch_mm)
+        spindle_axis = self.board.get_spindle_axis()
+        if spindle_axis is None:
+            raise RuntimeError(
+                "no spindle axis assigned — call configure() before set_feed()"
+            )
+        direction = self.els.direction_sign(self.controller.els_forward)
+        spindle_axis.syncRatioNum = pitch.numerator * direction
+        spindle_axis.syncRatioDen = pitch.denominator
+        self.pump()
 
     def apply_wiring_toggles(self, toggles: dict):
         """Set the four operator reverse toggles to CANCEL a wiring permutation,

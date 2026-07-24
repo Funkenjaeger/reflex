@@ -28,6 +28,7 @@ import re
 import subprocess
 import threading
 import time
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -304,6 +305,13 @@ def wiring_cut_harness(request, emulator_binary, tmp_path, monkeypatch):
         h.board.servo.maxSpeed = 10000
         h.board.servo.acceleration = 20000
         h.pump()
+        # Reference-machine geometry (400 counts/mm scales, 4000 counts/rev
+        # spindle, 127/32000 mm/step leadscrew) so scaled spans/tolerances in
+        # the matrix are real millimeters and the firmware's count-domain
+        # registers are physically meaningful. Feed selected explicitly
+        # (production feeds.py Thread IN "16" = 16 TPI): ~0.79 mm/s at EMU_RPM=30.
+        h.commission_geometry()
+        h.set_feed(Fraction(254, 160))
         h.apply_wiring_toggles(real_commissioning_toggles(perm.overrides))
         yield h, perm
     finally:

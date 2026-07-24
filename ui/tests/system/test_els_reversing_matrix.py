@@ -30,7 +30,10 @@ def _run_stop_only_cut(h):
     return (z_start, stop_z, z_final, span). Raises on any FSM-sequence failure."""
     z_start = h.z_scaled_position()
     margin = h.safety_margin()
-    span = max(margin * 2, 0.0) + 30.0
+    # Real mm (the fixture commissions the reference geometry): clear the
+    # ~3.49 mm safety margin but stay inside the 5 mm of physical -Z travel
+    # from the reference machine's Z=0 start (lathe.toml min_position_mm=-5).
+    span = margin + 1.0
     stop_z = z_start - span
 
     h.set_stop_z(stop_z)
@@ -68,14 +71,14 @@ def test_valid_wiring_reaches_stop_z(wiring_cut_harness):
         f"start={z_start} final={z_final} stop_z={stop_z} "
         f"applied_toggles={real_commissioning_toggles(perm.overrides)}"
     )
-    # ...and halted in the stop_z vicinity, not running past it. Tolerance is
-    # generous: at the real servo speed (maxSpeed=10000) the carriage carries
-    # ~0.15 mm (~60 counts) past a position-triggered stop with the loose
-    # stop-only hysteresis. This matrix pins the CAUSAL property (right direction,
-    # halts near target across every wiring); sub-unit precision is Task 8b's job.
-    assert z_final == pytest.approx(stop_z, abs=90.0), (
+    # ...and halted in the stop_z vicinity, not running past it. Real mm: at the
+    # ~0.79 mm/s selected feed the position-triggered stop carries a small
+    # fraction of a millimeter past the target with the loose stop-only
+    # hysteresis; 0.25 mm bounds that. This matrix pins the CAUSAL property
+    # (right direction, halts at the target across every wiring).
+    assert z_final == pytest.approx(stop_z, abs=0.25), (
         f"[{perm.id}] stopped off target: final={z_final} stop_z={stop_z}"
     )
-    assert z_final >= stop_z - 90.0, (
+    assert z_final >= stop_z - 0.25, (
         f"[{perm.id}] overshot the stop toward the chuck: final={z_final} stop_z={stop_z}"
     )

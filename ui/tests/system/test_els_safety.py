@@ -3,6 +3,7 @@ audit results'). Each test drives the REAL controller + FSM stack against the
 emulator and pins a guard that the audit showed was missing.
 """
 import time
+from fractions import Fraction
 
 import pytest
 
@@ -18,11 +19,9 @@ def test_stop_z_survives_dro_rezero(harness):
     This is the whole point of encoder-backing (the old scaled storage would have
     silently moved the physical stop)."""
     h = harness
-    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
-                els_forward=True)
-    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    _commission(h, els_forward=True, retract_enabled=False)
     z0 = h.z_scaled_position()
-    h.set_stop_z(z0 - 100.0)
+    h.set_stop_z(z0 - 10.0)             # mm; committed only, never cut to
 
     enc_before = h.controller.stop_z_encoder
     scaled_before = h.controller.stop_z
@@ -64,6 +63,8 @@ def _commission(h, *, els_forward=True, retract_enabled=False, is_threading=Fals
     h.configure(is_threading=is_threading, retract_enabled=retract_enabled,
                 wizard_enabled=False, els_forward=els_forward)
     h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    h.commission_geometry()
+    h.set_feed(Fraction(254, 160))   # 16 TPI = 1.5875 mm/rev → ~0.79 mm/s at EMU_RPM=30
 
 
 # ── H3: a refused cut must not lock the UI in "Cutting…" ──────────────────────
@@ -76,7 +77,7 @@ def test_refused_cut_does_not_lock_ui(harness):
     h = harness
     _commission(h, els_forward=True, retract_enabled=False)
     z0 = h.z_scaled_position()
-    h.set_stop_z(z0 - 300.0)
+    h.set_stop_z(z0 - 50.0)             # mm; far stop, never reached
     h.engage()
     h.enable_sync()
     assert h.ui_fsm.state == "in_cycle.waiting_to_cut"
@@ -111,9 +112,7 @@ def test_feed_enable_requires_confirm_without_armed_stop(harness):
     carriage freely toward the chuck. request_feed_enable must refuse (return
     False, feed NOT enabled) until confirmed; then it enables."""
     h = harness
-    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
-                els_forward=True)
-    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    _commission(h, els_forward=True, retract_enabled=False)
 
     # Not engaged → no armed stop.
     assert h.controller.feed_without_armed_stop() is True
@@ -124,8 +123,8 @@ def test_feed_enable_requires_confirm_without_armed_stop(harness):
     h.pump()
     assert enabled is False
     assert h.board.servo.servoMode == 0, "feed must not start without confirmation"
-    # And nothing moved.
-    assert _max_travel(h, 1.5) < 50.0, "carriage moved despite feed being refused"
+    # And nothing moved (mm; the ~0.79 mm/s feed would cover ~1.2 mm in this window).
+    assert _max_travel(h, 1.5) < 0.2, "carriage moved despite feed being refused"
 
     # Confirming enables the feed.
     enabled = h.controller.request_feed_enable(confirmed=True)
@@ -138,11 +137,9 @@ def test_feed_enable_requires_confirm_without_armed_stop(harness):
 def test_feed_enable_allowed_with_armed_stop(harness):
     """With ELS engaged and a stop armed, enabling the feed needs no confirm."""
     h = harness
-    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
-                els_forward=True)
-    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    _commission(h, els_forward=True, retract_enabled=False)
     z0 = h.z_scaled_position()
-    h.set_stop_z(z0 - 300.0)
+    h.set_stop_z(z0 - 50.0)         # mm
     h.engage()                      # arms the stop (Z on safe side)
     assert h.controller.feed_without_armed_stop() is False
     enabled = h.controller.request_feed_enable(confirmed=False)
@@ -157,11 +154,9 @@ def test_disengage_stops_feed(harness):
     """Audit H6: engage + feed, then disengage ELS. The feed must stop
     (servoMode 0) and the carriage must not keep marching toward the chuck."""
     h = harness
-    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
-                els_forward=True)
-    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    _commission(h, els_forward=True, retract_enabled=False)
     z0 = h.z_scaled_position()
-    h.set_stop_z(z0 - 5000.0)       # far stop so the feed is genuinely running
+    h.set_stop_z(z0 - 50.0)         # mm; far stop so the feed is genuinely running
     h.engage()
     h.enable_sync()
     # Let the feed run briefly, then disengage.
@@ -174,10 +169,11 @@ def test_disengage_stops_feed(harness):
     h.pump()
     assert h.els_fsm.state == "disabled"
     assert h.board.servo.servoMode == 0, "disengage must stop the feed"
-    # After disengage the carriage must settle quickly, not keep marching.
+    # After disengage the carriage must settle quickly, not keep marching
+    # (mm; the ~0.79 mm/s feed would cover ~2.4 mm in this window).
     settle = _max_travel(h, 3.0)
-    assert settle < 500.0, (
-        f"carriage kept feeding after disengage: {settle:.0f} counts"
+    assert settle < 1.0, (
+        f"carriage kept feeding after disengage: {settle:.2f} mm"
     )
 
 
@@ -190,11 +186,9 @@ def test_cut_aborts_when_stop_write_not_acked(harness):
     the cut, stop the feed, and fault (so the cut can't run against an unverified
     / previous stop)."""
     h = harness
-    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
-                els_forward=True)
-    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    _commission(h, els_forward=True, retract_enabled=False)
     z0 = h.z_scaled_position()
-    h.set_stop_z(z0 - 300.0)
+    h.set_stop_z(z0 - 50.0)         # mm
     h.engage()
 
     # Inject: the stopPosition write "fails to ACK" (connected drops); the very
@@ -219,8 +213,9 @@ def test_cut_aborts_when_stop_write_not_acked(harness):
     )
     assert h.ui_fsm.state == "alarm", f"UI didn't mirror the fault: ui={h.ui_fsm.state}"
     assert h.board.servo.servoMode == 0, "feed not stopped on abort"
-    # And the carriage did not run a cut (no release → no feed).
-    assert _max_travel(h, 2.0) < 300.0, "carriage fed despite the aborted cut"
+    # And the carriage did not run a cut (no release → no feed; mm — a released
+    # cut would cover ~1.6 mm in this window).
+    assert _max_travel(h, 2.0) < 0.5, "carriage fed despite the aborted cut"
 
     # Recovery: the operator can clear the alarm with Disengage — BOTH FSMs must
     # leave alarm (domain → disabled AND the UI FSM out of its alarm state), or
@@ -236,7 +231,7 @@ def test_cut_aborts_when_stop_write_not_acked(harness):
     )
     # And ELS is usable again: re-engage + set a stop → ready to cut.
     h.controller.toggle_engage()
-    h.set_stop_z(h.z_scaled_position() - 200.0)
+    h.set_stop_z(h.z_scaled_position() - 50.0)
     h.pump()
     assert h.els_fsm.state == "stopped", f"re-engage after alarm failed: {h.els_fsm.state}"
 
@@ -247,11 +242,9 @@ def test_cut_aborts_when_enable_write_not_acked(harness):
     engage-past-stop path enable is the first/only thing that arms the stop, so a
     failed enable write must also abort the cut (not feed with nothing armed)."""
     h = harness
-    h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
-                els_forward=True)
-    h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    _commission(h, els_forward=True, retract_enabled=False)
     z0 = h.z_scaled_position()
-    h.set_stop_z(z0 - 300.0)
+    h.set_stop_z(z0 - 50.0)         # mm
     h.engage()
 
     cm = h.board.connection_manager
@@ -271,4 +264,4 @@ def test_cut_aborts_when_enable_write_not_acked(harness):
         f"cut did not abort on an unacknowledged enable write: els={h.els_fsm.state}"
     )
     assert h.board.servo.servoMode == 0, "feed not stopped on abort"
-    assert _max_travel(h, 2.0) < 300.0, "carriage fed despite the aborted cut"
+    assert _max_travel(h, 2.0) < 0.5, "carriage fed despite the aborted cut"

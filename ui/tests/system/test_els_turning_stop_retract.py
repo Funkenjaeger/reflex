@@ -29,6 +29,8 @@ instead of away). The direction assertion below pins that: the retract must move
 the carriage AWAY from stop_z (opposite the cut).
 """
 
+from fractions import Fraction
+
 import pytest
 
 pytestmark = pytest.mark.system
@@ -48,10 +50,15 @@ def test_turning_stop_retract_regression_c69b02a(harness):
     # Real machine commissioning: servo reversed + realistic servo speed. This
     # is what makes the direct-servo retract go the right way and complete.
     h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    h.commission_geometry()
+    h.set_feed(Fraction(254, 160))   # 16 TPI = 1.5875 mm/rev → ~0.79 mm/s at EMU_RPM=30
 
     z_start = h.z_scaled_position()
     margin = h.safety_margin()
-    span = max(margin * 2, 0.0) + 30.0
+    # Real mm: clear the ~3.49 mm safety margin but stay inside the 5 mm of
+    # physical -Z travel from the reference machine's Z=0 start (see
+    # test_els_turning_stop_only).
+    span = margin + 1.0
     stop_z = z_start - span          # cut moves -Z toward the shoulder
     retract_z = z_start              # retract back to the cut-start position (+Z)
 
@@ -90,13 +97,14 @@ def test_turning_stop_retract_regression_c69b02a(harness):
         f"at_stop={z_at_stop} after={z_after}"
     )
     # ...and it reached retract_z (reaching or passing it in the retract
-    # direction). Servo momentum at the commissioned speed carries it a little
-    # past retract_z (well under 1 mm at 400 counts/mm); the cap only has to
-    # discriminate that modest overshoot from a runaway (thousands of counts).
-    assert z_after >= retract_z - 5.0, (
+    # direction — the retract self-loop keeps correcting until is_retracted).
+    # Servo momentum at the commissioned speed carries it a little past
+    # retract_z (well under 1 mm); the cap only has to discriminate that
+    # modest overshoot from a runaway (the c69b02a class ran away by many mm).
+    assert z_after >= retract_z - 0.25, (
         f"retract stopped short of retract_z: after={z_after} retract_z={retract_z}"
     )
-    assert z_after <= retract_z + max(span * 8, 500.0), (
+    assert z_after <= retract_z + 2.0, (
         f"retract overshot far past retract_z (runaway?): "
         f"after={z_after} retract_z={retract_z} span={span}"
     )
