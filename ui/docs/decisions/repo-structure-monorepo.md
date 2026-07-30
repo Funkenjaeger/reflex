@@ -1,7 +1,34 @@
 # Decision doc: reflex-ui + reflex-fw repo structure (monorepo?)
 
-**Status:** DEFERRED — but the revisit trigger below has now FIRED (see 2026-07-12 update).
+**Status:** **CLOSED — MOOT.** Not adopted, and not rejected on its merits. Closed 2026-07-30.
 **Date:** 2026-07-09
+
+> ## Closing note, 2026-07-30
+>
+> **The decision was overtaken by the project ending rather than settled.** The revisit trigger
+> fired on 2026-07-12, consolidation was never carried out, and the ELS project has since been
+> wound down and archived — `reflex-ui` and `reflex-fw` are no longer under active development.
+>
+> That removes the premise the whole analysis rests on. Every benefit of consolidating listed
+> below is a benefit *per coordinated cross-repo change*: atomic commits and reverts, compatibility
+> encoded in one version number, naming parity made checkable, the register-map contract test
+> living in one tree. With no further coordinated changes coming, the recurring cost the monorepo
+> was meant to eliminate has gone to zero, while the one-time cost of merging two histories and
+> rewriting the release flow has not. Restructuring two finished repositories would break existing
+> clone URLs, release tags, and cross-repo documentation links to buy nothing.
+>
+> **So: no action, and the two-repo layout stands as the permanent shape of this project.**
+>
+> **The recommendation below is preserved and still stands as the answer if work ever resumes** —
+> full monorepo with lockstep versioning via `git subtree`, not a submodule, and not
+> independent per-artifact versions. Anyone picking this up should read the analysis as unchanged
+> and current; only its urgency expired. The hand-maintained coupling it describes (naming parity
+> between Python properties and firmware variables, the duplicated register map between
+> `devices.py` and `Ramps.h`) is real and remains in the code, so a reader who resumes development
+> should expect to hit exactly the friction documented here.
+>
+> Closed as part of the ELS archival pass; see the `Funkenjaeger/reflex-ui` and `reflex-fw` READMEs
+> for the current status of each repository.
 
 > **Update 2026-07-12:** the emulator system-test suite has landed (32/32 under WSL), clearing the
 > original "not now" condition. More importantly, the planned ELS **auto-start** feature is exactly
@@ -134,6 +161,11 @@ worst-of-both: you pay the ergonomic cost for a coordination benefit you don't c
      by a single test rather than by prose.
 
 ## Revisit trigger
+
+> **Spent, 2026-07-30.** This trigger fired on 2026-07-12 and was not acted on before the project
+> was archived. It cannot fire again while both repos are dormant, since it depends on a
+> coordinated change being attempted. It becomes live again only if development resumes — see the
+> closing note at the top. Retained as written for the record:
 
 Reopen this the **next time a protocol/register-map change forces a coordinated edit across both
 repos that you can't land or revert atomically.** That friction is the real signal; when it
