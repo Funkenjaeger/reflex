@@ -152,6 +152,7 @@ def _start_emulator(emulator_binary, config_path, extra_env: dict):
         env={**os.environ, "EMU_SCENARIO": "serve", **extra_env},
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        stdin=subprocess.PIPE,
         text=True,
         bufsize=1,
     )
@@ -257,8 +258,8 @@ def harness(emulator_process, tmp_path, monkeypatch):
 
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    _, pty_path = emulator_process
-    h = SystemHarness(pty_path)
+    proc, pty_path = emulator_process
+    h = SystemHarness(pty_path, proc=proc)
     h.connect()
     yield h
     h.disconnect()

@@ -78,10 +78,16 @@ class SystemHarness:
     Z_SCALE_INDEX = 1        # scales[1] = Z axis (emulator main.cpp)
     X_SCALE_INDEX = 2        # scales[2] = X / cross-slide
 
-    def __init__(self, pty_path: str, address: int = 17, baudrate: int = 115200):
+    def __init__(self, pty_path: str, address: int = 17, baudrate: int = 115200,
+                 proc=None):
         self.pty_path = pty_path
         self.address = address
         self.baudrate = baudrate
+        # Optional emulator Popen handle (emulator_process fixture) -- lets
+        # emu_cmd() write to the emulator's stdin command channel
+        # (reflex-fw emulator/src/main.cpp stdinCommandThreadFunc). None if
+        # the harness was built without one; emu_cmd() raises in that case.
+        self.proc = proc
         self.board = None
         self.els = None
         self.controller = None
@@ -165,8 +171,47 @@ class SystemHarness:
     def carriage_position_counts(self) -> int:
         return self._scale_position(self.Z_SCALE_INDEX)
 
+    def x_position_counts(self) -> int:
+        return self._scale_position(self.X_SCALE_INDEX)
+
+    # ── emulator stdin command channel (physics-only, e.g. X/cross-slide moves) ─
+    def emu_cmd(self, line: str):
+        """Write one command line to the emulator's stdin channel and flush.
+
+        Requires the harness to have been constructed with `proc` (the
+        emulator_process fixture's Popen handle) -- the plain `harness`
+        fixture wires this up automatically. See reflex-fw
+        emulator/src/main.cpp (stdinCommandThreadFunc) for the grammar, e.g.:
+            "x move <mm>"    -> physics->moveCrossSlideTo(mm)
+            "x jog <-1|0|1>" -> physics->jogCrossSlide(dir)
+        """
+        if self.proc is None or self.proc.stdin is None:
+            raise RuntimeError(
+                "SystemHarness has no emulator stdin handle "
+                "(constructed without proc=, or the emulator has exited)"
+            )
+        self.proc.stdin.write(line + "\n")
+        self.proc.stdin.flush()
+
     def register(self, struct: str, field: str):
         return self.board.device[struct][field]
+
+    # ── display-frame helpers (units + DRO re-zero) ───────────────────────
+    def set_imperial(self):
+        """Switch the display frame to inches, mirroring FormatsDispatcher's
+        update_format (factor 10/254, current_format "IN"). The real machine
+        runs imperial ("Thread IN"); the harness boots metric like the app
+        does, and tests that claim real-machine fidelity should switch."""
+        self.board.formats.current_format = "IN"
+        self.board.formats.factor = Fraction(10, 254)
+        self.pump()
+
+    def rezero_z(self):
+        """Operator 'Zero' on the ELS Z axis (axis.zero_position()) — the
+        display re-frames, the physical encoder does not move. This is the
+        event the encoder-anchored ELS targets exist to survive."""
+        self.els.get_z_axis().zero_position()
+        self.pump()
 
     # ── ELS cut-cycle driving (through the real controller/FSM) ───────────
     def configure(self, *, is_threading=False, retract_enabled=False,
