@@ -472,14 +472,30 @@ class ElsUiController(EventDispatcher):
         OD work (is_inner=False): clear means X > start_dia (radially out).
         ID work (is_inner=True):  clear means X < start_dia (radially in).
         Missing axis → assume clear, so the gate never blocks a misconfigured rig.
+
+        Requires a COMMITTED start diameter, like every other gating target
+        (audit H1 philosophy: a 0.0 default must never gate anything). Before
+        this, the uncommitted default made the gate arbitrary by machine: on an
+        X DRO that reads positive it was silently vacuous (always "clear"),
+        while on one that sits below its power-on zero it blocked EVERY
+        threading retract in non-wizard mode — a grayed Retract button with no
+        way to satisfy a gate the operator never set (observed on the real
+        lathe, 2026-08-02 checklist run).
         """
+        if not self._start_dia_committed:
+            return True
         x = self._x_position()
         if x is None:
             return True
         return x < self.start_dia if self.is_inner else x > self.start_dia
 
     def _x_reached_stop_dia(self) -> bool:
-        """True iff the last cut has reached/passed the configured stop diameter."""
+        """True iff the last cut has reached/passed the COMMITTED stop
+        diameter. Uncommitted → False: the informational depth-reached latch
+        must not fire off the 0.0 default (on a below-zero X DRO it would
+        latch "depth reached" the moment the cycle starts)."""
+        if not self._stop_dia_committed:
+            return False
         x = self._x_position()
         if x is None:
             return False

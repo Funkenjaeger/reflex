@@ -507,7 +507,7 @@ def test_x_clear_of_start_dia_od_work_requires_x_greater_than_start_dia():
     board, els = _make_collaborators(z_axis=_make_z_axis(), x_axis=x)
     c = ElsUiController(els=els, board=board)
     c.is_inner = False
-    c.start_dia = 10.0
+    c.commit_standalone_start_dia(10.0)
     assert c._x_clear_of_start_dia() is True   # 15 > 10
     x.scaledPosition = 5.0
     assert c._x_clear_of_start_dia() is False  # 5 > 10 False
@@ -518,7 +518,7 @@ def test_x_clear_of_start_dia_id_work_requires_x_less_than_start_dia():
     board, els = _make_collaborators(z_axis=_make_z_axis(), x_axis=x)
     c = ElsUiController(els=els, board=board)
     c.is_inner = True
-    c.start_dia = 10.0
+    c.commit_standalone_start_dia(10.0)
     assert c._x_clear_of_start_dia() is True   # 5 < 10
     x.scaledPosition = 15.0
     assert c._x_clear_of_start_dia() is False  # 15 < 10 False
@@ -536,7 +536,7 @@ def test_x_reached_stop_dia_od_vs_id():
     c = ElsUiController(els=els, board=board)
     # OD work: stop_dia is the smaller, terminal diameter (tool moving in)
     c.is_inner = False
-    c.stop_dia = 5.0
+    c.commit_standalone_stop_dia(5.0)
     assert c._x_reached_stop_dia() is True   # 4 <= 5
     x.scaledPosition = 6.0
     assert c._x_reached_stop_dia() is False  # 6 <= 5 False
@@ -589,8 +589,8 @@ def test_try_advance_wizard_noop_when_action_not_allowed():
     c.wizard_enabled = True
     c.is_threading = True
     c.is_inner = False
-    c.start_dia = 10.0
-    c.stop_dia = 5.0
+    c.commit_standalone_start_dia(10.0)
+    c.commit_standalone_stop_dia(5.0)
     c.commit_standalone_retract_z(5.0)
     c.commit_standalone_stop_z(1.0)
     _pump()
@@ -613,8 +613,8 @@ def test_depth_reached_latches_in_waiting_to_retract_when_x_reaches_stop():
     c = ElsUiController(els=els, board=board)
     c.wizard_enabled = True
     c.is_inner = False
-    c.start_dia = 10.0
-    c.stop_dia = 5.0
+    c.commit_standalone_start_dia(10.0)
+    c.commit_standalone_stop_dia(5.0)
     c.commit_standalone_retract_z(5.0)
     c.commit_standalone_stop_z(1.0)
     _pump()
@@ -633,7 +633,7 @@ def test_depth_reached_clears_when_returning_to_idle():
     board, els = _make_collaborators(z_axis=_make_z_axis(), x_axis=x)
     c = ElsUiController(els=els, board=board)
     c.wizard_enabled = True
-    c.start_dia = 10.0; c.stop_dia = 5.0
+    c.commit_standalone_start_dia(10.0); c.commit_standalone_stop_dia(5.0)
     c.commit_standalone_retract_z(5.0); c.commit_standalone_stop_z(1.0)
     _pump()
     c._ui_fsm.fsm.set_state("in_cycle.waiting_to_retract")
@@ -915,3 +915,51 @@ def test_board_already_connected_at_build_reconciles(monkeypatch):
     ElsUiController(els=els, board=board)
     _pump()
     assert calls, "init-time reconcile never ran for an already-connected board"
+
+
+# ─── uncommitted diameters must not gate (real-machine regression) ─────────
+
+def test_threading_retract_gate_ignores_uncommitted_start_dia():
+    """2026-08-02 on-lathe find: non-wizard stop+retract with a threading
+    table selected grayed the Retract button forever on a machine whose X DRO
+    reads BELOW zero — the gate compared live X against start_dia's 0.0
+    default, a value the operator never set (and that mode's UI doesn't
+    surface). On a positive-reading X DRO the same default made the gate
+    silently vacuous instead. Uncommitted start_dia now means NO gate, per
+    the same commitment rule as every Z target."""
+    x = _make_x_axis(scaled_position=-2.5)   # the real lathe's negative X
+    board, els = _make_collaborators(z_axis=_make_z_axis(), x_axis=x)
+    c = ElsUiController(els=els, board=board)
+    c.retract_enabled = True
+    c.is_threading = True
+    c.is_inner = False
+    c.commit_standalone_retract_z(5.0)
+    c.commit_standalone_stop_z(1.0)
+    _engage(c)
+    c._ui_fsm.fsm.set_state("in_cycle.waiting_to_retract")
+    c._apply_policy()
+    assert c.action_allowed is True, (
+        "uncommitted start_dia must not gate the retract"
+    )
+    # And committing one re-activates the gate deterministically.
+    c.commit_standalone_start_dia(10.0)
+    c._apply_policy()
+    assert c.action_allowed is False           # X=-2.5 not clear of 10.0 (OD)
+    assert "clear of start diameter" in c.instruction_text
+
+
+def test_depth_latch_ignores_uncommitted_stop_dia():
+    """The informational depth-reached latch must not fire off stop_dia's 0.0
+    default — on a below-zero X DRO it would read 'depth reached' the moment
+    the cycle starts."""
+    x = _make_x_axis(scaled_position=-2.5)
+    board, els = _make_collaborators(z_axis=_make_z_axis(), x_axis=x)
+    c = ElsUiController(els=els, board=board)
+    c.retract_enabled = True
+    c.is_inner = False
+    c.commit_standalone_retract_z(5.0)
+    c.commit_standalone_stop_z(1.0)
+    _engage(c)
+    c._ui_fsm.fsm.set_state("in_cycle.waiting_to_retract")
+    c._apply_policy()
+    assert c.depth_reached is False
