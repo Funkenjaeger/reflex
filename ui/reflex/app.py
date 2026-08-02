@@ -137,7 +137,7 @@ class MainApp(App):
             ),
             button_text="Enable Feed",
             cancel_text="Cancel",
-            on_dismiss_callback=lambda: self.els_uic.request_feed_enable(confirmed=True),
+            confirm_callback=lambda: self.els_uic.request_feed_enable(confirmed=True),
         ).open()
 
     def get_spindle_axis(self):

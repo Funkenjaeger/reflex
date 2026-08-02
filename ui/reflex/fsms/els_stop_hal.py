@@ -34,6 +34,11 @@ class ElsStopHal:
             return
         self._board.device['elsStop']['active'] = 1 if active else 0
 
+    def read_enable(self) -> bool:
+        if not self._board.connected:
+            return False
+        return bool(self._board.device['elsStop']['enable'])
+
     def read_active(self) -> bool:
         if not self._board.connected:
             return False

@@ -51,8 +51,22 @@ UI_TRANSITIONS = [
     {"trigger": "cut_done", "source": "in_cycle.cutting",
      "dest": "in_cycle.waiting_to_retract", "conditions": "retract_enabled"},
     {"trigger": "cut_done", "source": "in_cycle.cutting", "dest": "in_cycle.waiting_to_cut"},
-    {"trigger": "action", "source": "in_cycle.waiting_to_retract", "dest": "in_cycle.retracting"},
+    # Gated on a FRESH domain-readiness check, for the same reason as the cut
+    # above: `retracting` is only left by a `retract_done` published from the
+    # domain FSM's move poller, so entering it when ElsFsm.retract() would
+    # refuse parked the UI in "Retracting…" permanently — button blanked, Stop
+    # disabled, and no operator action (including hand-cranking past retract_z)
+    # could recover it short of an app restart.
+    {"trigger": "action", "source": "in_cycle.waiting_to_retract",
+     "dest": "in_cycle.retracting", "conditions": "retract_ready"},
     {"trigger": "retract_done", "source": "in_cycle.retracting", "dest": "in_cycle.waiting_to_cut"},
+
+    # ─── Mode repair: retract turned off while parked in waiting_to_retract ──
+    # waiting_to_retract has no meaning in stop-only mode (nothing polls the
+    # retract threshold there), so a mode switch out of retract must move the
+    # cycle back to waiting_to_cut or the bar is stuck on a disabled "Retract".
+    {"trigger": "retract_mode_off", "source": "in_cycle.waiting_to_retract",
+     "dest": "in_cycle.waiting_to_cut"},
 
     # ─── Manual carriage motion: mirror retract-threshold crossings into cycle state ──
     {"trigger": "manual_retract_done", "source": "in_cycle.waiting_to_retract",
@@ -105,6 +119,7 @@ class ElsUiFsm:
     def wizard_enabled(self):   return self.controller.wizard_enabled
     def retract_enabled(self):  return self.controller.retract_enabled
     def cut_ready(self):        return self.controller.may_cut()
+    def retract_ready(self):    return self.controller.may_retract()
 
     # ——— state change methods ———
     def on_enter_in_cycle_cutting(self):

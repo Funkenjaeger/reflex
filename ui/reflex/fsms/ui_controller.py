@@ -280,7 +280,7 @@ class ElsUiController(EventDispatcher):
             self._hal.set_hysteresis_loose()
 
     def _sync_ui_state_to_modes(self):
-        """Align the UI FSM with the current wizard_enabled flag.
+        """Align the UI FSM with the current wizard_enabled / retract_enabled flags.
 
         Non-wizard mode has no Start button, so the bar must auto-advance
         into in_cycle.waiting_to_cut whenever the operator toggles wizard
@@ -288,6 +288,14 @@ class ElsUiController(EventDispatcher):
         on cancels back to idle so the wizard can be initiated via Start
         as today. Mid-cycle transitions are left alone — pulling the rug
         out from under a live cut would be surprising.
+
+        Turning retract OFF additionally has to rescue a cycle parked in
+        in_cycle.waiting_to_retract: that sub-state is unreachable-from and
+        meaningless in stop-only mode (`_poll_carriage_retracted` returns early
+        when retract is disabled, and stop-only cut_done routes to
+        waiting_to_cut), so without this the bar sits forever on a disabled
+        "Retract" button reading "Enter Start Z to retract" — which is exactly
+        what "the action button never enables in stop-only mode" looked like.
         """
         state = self._ui_fsm.state
         if not self.wizard_enabled:
@@ -300,6 +308,13 @@ class ElsUiController(EventDispatcher):
         else:
             if state.startswith("in_cycle"):
                 self._ui_fsm.cancel()
+
+        # Re-read: the branches above may have moved us.
+        if not self.retract_enabled and \
+                self._ui_fsm.state == "in_cycle.waiting_to_retract":
+            log.info("retract disabled while waiting_to_retract — returning the "
+                     "cycle to waiting_to_cut")
+            self._ui_fsm.retract_mode_off()
 
     def _apply_policy(self):
         # X/Z input buttons are usable only when the machine is not moving.
@@ -377,14 +392,27 @@ class ElsUiController(EventDispatcher):
         self._apply_policy()
 
     def _propagate_stop_z_to_firmware(self):
-        """Write stopPosition to firmware when domain FSM is in stopped state,
-        so ELS uses the operator's latest configured value immediately."""
+        """Push the operator's latest stop to firmware when the domain FSM is
+        engaged-and-idle, and (re)arm against it.
+
+        Arming here matters because engaging BEFORE setting a stop is the normal
+        order of operations: the engage-time arm refuses when nothing is
+        committed yet, so without this retry the operator would sit engaged with
+        ELS disarmed until they pressed Cut.
+
+        Only arms when ELS is NOT already armed. Re-arming sets active=1, which
+        halts a running sync feed — correct at engage, but an unwanted surprise
+        if the operator merely retypes the stop while feeding. Already-armed
+        stays on the old push-the-position-only path."""
         if self._els_fsm.state != "stopped":
             return
         try:
-            self._els_fsm.push_stop_to_firmware()
+            if self._hal.read_enable():
+                self._els_fsm.push_stop_to_firmware()
+            else:
+                self._els_fsm.arm_idle_stop()
         except Exception:
-            log.debug("_propagate_stop_z_to_firmware: failed to write stopPosition")
+            log.debug("_propagate_stop_z_to_firmware: failed to push/arm the stop")
 
     # ——— Z-position predicates ———
     def _z_safe_for_cut(self) -> bool:
@@ -790,6 +818,17 @@ class ElsUiController(EventDispatcher):
             return bool(self._els_fsm.may_cut())
         except Exception:
             log.debug("may_cut: domain may_cut() raised → refusing the cut")
+            return False
+
+    def may_retract(self) -> bool:
+        """True iff the domain FSM would accept a retract right now — a FRESH
+        check, the retract-side twin of :meth:`may_cut`. Gates the UI
+        waiting_to_retract→retracting transition so a refused retract can't lock
+        the UI in 'Retracting…' with no exit. Any error → refuse."""
+        try:
+            return bool(self._els_fsm.may_retract())
+        except Exception:
+            log.debug("may_retract: domain may_retract() raised → refusing")
             return False
 
     def feed_without_armed_stop(self) -> bool:

@@ -175,6 +175,31 @@ def test_stop_retract_action_blocked_until_retract_z_set(ctrl):
     assert "Start Z" in ctrl.instruction_text
 
 
+def test_switching_to_stop_only_rescues_a_cycle_parked_in_waiting_to_retract(ctrl):
+    """Real-machine regression (2026-08-01).
+
+    The operator was in stop+retract, the cycle sat in waiting_to_retract, and
+    they switched to stop-only. Nothing moved the cycle back: stop-only's
+    cut_done routes to waiting_to_cut but that never runs, and
+    _poll_carriage_retracted (the only other way out) returns early when retract
+    is disabled. The bar was left showing a permanently-disabled "Retract"
+    reading "Enter Start Z to retract" — which is what "the action button never
+    enables in stop-only mode" actually was. There is no operator action that
+    recovers it, so this must be repaired on the mode switch itself.
+    """
+    _engage(ctrl)
+    ctrl.retract_enabled = True
+    _pump()
+    ctrl._ui_fsm.fsm.set_state("in_cycle.waiting_to_retract")
+    _pump()
+
+    ctrl.retract_enabled = False
+    _pump()
+
+    assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
+    assert ctrl.action_button_text == "Cut"
+
+
 def test_stop_retract_action_allows_after_setting_retract_z(ctrl):
     _engage(ctrl)
     ctrl.retract_enabled = True

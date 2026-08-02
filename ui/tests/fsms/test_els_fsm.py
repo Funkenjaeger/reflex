@@ -260,6 +260,47 @@ def test_on_enter_stopped_does_not_arm_when_z_past_stop():
     hal.set_stop_position.assert_not_called()
 
 
+def test_on_enter_stopped_does_not_arm_when_no_stop_committed():
+    """Engaging before any stop is set must leave ELS DISARMED.
+
+    push_stop_to_firmware() is a no-op with nothing committed, so writing
+    `enable` here would arm ELS against whatever stopPosition the firmware still
+    holds from a previous session. It also made the controller's
+    feed_without_armed_stop() report "armed", silently skipping the no-stop feed
+    confirmation — observed on the real machine, which armed at engage while the
+    bar still showed a stop of "--"."""
+    hal = MagicMock()
+    controller = _make_controller()
+    controller.stop_z_encoder = None
+    fsm = _build_fsm(hal=hal, controller=controller)
+    fsm.enable()
+    hal.set_stop_position.assert_not_called()
+    hal.set_enable.assert_not_called()
+    hal.set_active.assert_not_called()
+    # Direction / hysteresis are still applied — those aren't the armed stop.
+    hal.set_stop_direction.assert_called_once()
+
+
+def test_arm_idle_stop_arms_once_the_operator_sets_a_stop_while_engaged():
+    """Engaging before setting a stop is the normal order of operations, so the
+    arm has to be retried when the stop is committed (the controller calls this
+    from _propagate_stop_z_to_firmware) — otherwise the operator sits engaged
+    with no protection until they press Cut."""
+    hal = MagicMock()
+    controller = _make_controller()
+    controller.stop_z_encoder = None
+    fsm = _build_fsm(hal=hal, controller=controller)
+    fsm.enable()
+    hal.reset_mock()
+
+    controller.stop_z = 42.0
+    controller.stop_z_encoder = 42
+    assert fsm.arm_idle_stop() is True
+    hal.set_stop_position.assert_called_with(42)
+    hal.set_active.assert_called_once_with(True)
+    hal.set_enable.assert_called_once_with(True)
+
+
 # ─── set_stop_z: HAL writes stopPosition + scaleIndex ──────────────────────
 
 def test_set_stop_z_writes_frozen_encoder_to_hal():
@@ -353,6 +394,41 @@ def test_on_enter_retracting_pushes_steps_to_go():
     fsm.retract()   # is_ready_to_retract: check_x_retract defaults False → allowed
     assert fsm.state == "retracting"
     hal.set_steps_to_go.assert_called_once_with(-20)
+
+
+def test_retract_allowed_when_x_encoder_is_negative():
+    """The X gate is opt-in via check_x_retract, which is off.
+
+    Regression: Python's conditional-expression precedence made the original
+    one-liner parse as `(not check_x_retract or ...) if inside else (x_pos >=
+    safe_x)`, so with `inside` False the opt-in flag was ignored and the gate
+    reduced to a raw-encoder-count `x_pos >= 0`. Every retract was refused on a
+    machine whose cross-slide encoder sat below its power-on zero, which parked
+    the bar in "Retracting…" forever. The other retract tests all used the
+    default x encoder of 0, which passes `>= 0` — they could not catch this.
+    """
+    x, _ = _make_x_axis(encoder_current=-4200)
+    fsm = _build_fsm(x=x)
+    fsm.enable()
+    assert fsm.is_ready_to_retract() is True
+    fsm.retract()
+    assert fsm.state == "retracting"
+
+
+def test_retract_refused_when_no_retract_target_committed():
+    """With no committed Start Z there is nothing to move to. The FSM must stay
+    in 'stopped': entering 'retracting' and then refusing to move binds no move
+    poller, and retract_done is only ever published by that poller — so the
+    state would be terminal."""
+    hal = MagicMock()
+    controller = _make_controller()
+    controller.retract_z_encoder = None
+    fsm = _build_fsm(hal=hal, controller=controller)
+    fsm.enable()
+    hal.reset_mock()
+    fsm.retract()
+    assert fsm.state == "stopped"
+    hal.set_steps_to_go.assert_not_called()
 
 
 # ─── retract backlash compensation ─────────────────────────────────────────

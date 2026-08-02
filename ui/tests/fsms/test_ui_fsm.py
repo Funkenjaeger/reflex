@@ -24,9 +24,11 @@ def _make_controller(**overrides):
         # need them to exist as no-ops.
         start_cut=lambda: None,
         start_retract=lambda: None,
-        # Gates the waiting_to_cut→cutting transition (fresh domain readiness).
-        # Default ready; refusal is exercised explicitly where relevant.
+        # Gate the waiting_to_cut→cutting and waiting_to_retract→retracting
+        # transitions (fresh domain readiness). Default ready; refusal is
+        # exercised explicitly where relevant.
         may_cut=lambda: True,
+        may_retract=lambda: True,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -107,6 +109,31 @@ def test_stop_retract_cycle_loops_back_to_waiting_to_cut(stop_retract_fsm):
     stop_retract_fsm.cut_done()    # waiting_to_retract
     stop_retract_fsm.action()      # retracting
     stop_retract_fsm.retract_done()
+    assert stop_retract_fsm.state == "in_cycle.waiting_to_cut"
+
+
+def test_refused_retract_stays_in_waiting_to_retract():
+    """A domain FSM that would refuse the retract must not let the UI enter
+    'retracting' — that state is only left by a retract_done published from the
+    domain's move poller, so entering it on a refusal parked the bar in
+    "Retracting…" forever with no operator recovery."""
+    fsm = ElsUiFsm(_make_controller(retract_enabled=True, may_retract=lambda: False))
+    fsm.start()
+    fsm.action()                      # cutting
+    fsm.cut_done()                    # waiting_to_retract
+    fsm.action()                      # refused
+    assert fsm.state == "in_cycle.waiting_to_retract"
+
+
+def test_retract_mode_off_returns_cycle_to_waiting_to_cut(stop_retract_fsm):
+    """Switching to stop-only while parked in waiting_to_retract must move the
+    cycle back to waiting_to_cut — nothing polls the retract threshold in
+    stop-only mode, so the bar would otherwise sit on a dead "Retract"."""
+    stop_retract_fsm.start()
+    stop_retract_fsm.action()
+    stop_retract_fsm.cut_done()
+    assert stop_retract_fsm.state == "in_cycle.waiting_to_retract"
+    stop_retract_fsm.retract_mode_off()
     assert stop_retract_fsm.state == "in_cycle.waiting_to_cut"
 
 

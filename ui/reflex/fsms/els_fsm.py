@@ -25,7 +25,12 @@ class ElsFsm:
     TRANSITIONS = [
         {'trigger': 'enable', 'source': 'disabled', 'dest': 'stopped',
          'prepare': '_on_prepare_enable'},
-        {'trigger': 'retract', 'source': 'stopped', 'dest': 'retracting', 'conditions': ['is_ready_to_retract']},
+        # has_retract_target is a CONDITION, not just an on_enter guard: entering
+        # 'retracting' and then refusing to move leaves the FSM parked there with
+        # no move poller bound and no path out (retract_done is only published by
+        # that poller). Refusing the transition keeps it in 'stopped' instead.
+        {'trigger': 'retract', 'source': 'stopped', 'dest': 'retracting',
+         'conditions': ['is_ready_to_retract', 'has_retract_target']},
         {'trigger': 'retract_done', 'source': 'retracting', 'dest': 'stopped', 'conditions': ['is_retracted']},
         {'trigger': 'retract_done', 'source': 'retracting', 'dest': '='},
         {'trigger': 'cut', 'source': 'stopped', 'dest': 'cutting', 'conditions': ['is_ready_to_cut']}, 
@@ -206,20 +211,7 @@ class ElsFsm:
 
         if self._engaging:
             self._engaging = False
-            z_pos = self.z_axis.scaledPosition
-            cut_dir = self.els.stop_direction_value(self.controller.els_forward)
-            diff = (z_pos - self.controller.stop_z) * cut_dir
-            if diff <= 0:  # Z is on the safe side or at stop_z
-                self.push_stop_to_firmware()
-                # Set active=1 before enable so ELS arms in STOPPED state —
-                # sync motion paused until operator clicks Cut (which clears
-                # active via on_enter_cutting, triggering resume/takeup).
-                self.hal.set_active(True)
-                self.hal.set_enable(True)
-                log.info(
-                    f"on_enter_stopped (engage): armed ELS stopped with "
-                    f"stop_z={self.controller.stop_z} z_pos={z_pos}"
-                )
+            self.arm_idle_stop()
 
         self.hal.set_stop_direction(
             self.els.stop_direction_value(self.controller.els_forward)
@@ -265,10 +257,36 @@ class ElsFsm:
 
     # ——— condition-checking methods ———    
     def is_ready_to_retract(self):
+        # `check_x_retract` is the opt-in for this gate, but Python's
+        # conditional-expression precedence made the original one-liner parse as
+        #     (not check_x_retract or x_pos <= safe_x) if inside else (x_pos >= safe_x)
+        # so with `inside` False (its only value — nothing ever sets it) the flag
+        # was ignored entirely and the gate reduced to `x_pos >= 0` on a RAW
+        # ENCODER COUNT. Any machine whose cross-slide encoder happened to sit
+        # below its power-on zero therefore refused every retract: the domain FSM
+        # stayed in 'stopped' while the UI sat in "Retracting…" forever.
+        #
+        # The real, unit-correct X gate lives in the controller
+        # (_x_clear_of_start_dia, surfaced as "Move X clear of start diameter,
+        # then retract"); this one is vestigial and stays off until safe_x is
+        # given real units. See the TODO on safe_x/check_x_retract/inside.
+        if not self.check_x_retract:
+            return True
         x_pos = self._cross_slide_input.encoderCurrent
         # TODO: need to align units (encoder counts vs in/mm)
-        return not self.check_x_retract or x_pos <= self.safe_x if self.inside else x_pos >= self.safe_x 
-    
+        return x_pos <= self.safe_x if self.inside else x_pos >= self.safe_x
+
+
+    def has_retract_target(self):
+        """True iff the operator has committed a retract target. Without one
+        there is nothing to move to — on_enter_retracting would refuse rather
+        than fabricate a move to the 0.0 display default (which on a
+        shoulder-zeroed setup is the chuck)."""
+        if self.controller.retract_z_encoder is None:
+            log.warning("retract refused: no committed retract_z (Start Z not set)")
+            return False
+        return True
+
     def is_retracted(self):
         # Retract direction is implicit in the user-entered values:
         # retract_z is the destination away from stop_z, so sign(retract_z -
@@ -362,6 +380,47 @@ class ElsFsm:
         z_input = self.z_axis._primary_input()
         if z_input is not None:
             self.hal.set_scale_index(z_input.inputIndex)
+
+    def arm_idle_stop(self):
+        """Arm ELS while engaged-and-idle so an unexpected spindle start is
+        arrested before "Cut" is ever pressed.
+
+        Called at engage, and again whenever the operator commits a stop while
+        already engaged (engaging with no stop set is the normal order of
+        operations, so arming has to be retried then or the protection simply
+        never appears).
+
+        Refuses when no stop is committed: push_stop_to_firmware() is a no-op in
+        that case, so setting `enable` would arm ELS against whatever
+        stopPosition the FIRMWARE still holds from a previous session — a
+        different shoulder, or a different part. It also made
+        ``feed_without_armed_stop()`` report "armed", which silently skipped the
+        no-stop feed confirmation. Refuses too when Z is already past the stop,
+        where arming would fire ELS immediately → backlash takeup.
+        """
+        if self.controller.stop_z_encoder is None:
+            log.info("arm_idle_stop: no committed stop — leaving ELS disarmed")
+            return False
+        z_pos = self.z_axis.scaledPosition
+        cut_dir = self.els.stop_direction_value(self.controller.els_forward)
+        diff = (z_pos - self.controller.stop_z) * cut_dir
+        if diff > 0:  # Z is past stop_z — arming would fire ELS on the spot
+            log.info(
+                f"arm_idle_stop: Z past stop — not arming "
+                f"(stop_z={self.controller.stop_z} z_pos={z_pos})"
+            )
+            return False
+        self.push_stop_to_firmware()
+        # Set active=1 before enable so ELS arms in STOPPED state — sync motion
+        # paused until the operator clicks Cut (which clears active via
+        # on_enter_cutting, triggering resume/takeup).
+        self.hal.set_active(True)
+        self.hal.set_enable(True)
+        log.info(
+            f"arm_idle_stop: armed ELS stopped with "
+            f"stop_z={self.controller.stop_z} z_pos={z_pos}"
+        )
+        return True
 
     def push_stop_to_firmware(self):
         """Push the operator's frozen stop encoder to firmware + set scaleIndex.
