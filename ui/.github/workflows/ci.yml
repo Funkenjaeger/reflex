@@ -59,6 +59,13 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: Funkenjaeger/reflex-fw
+        # The cross-repo pairing rule (AGENTS.md): dev branches pair with the
+        # latest commit on each repo's respective dev branch. reflex-fw's
+        # DEFAULT branch is dev, which lags dev-staging — the first CI run
+        # failed exactly there (dev's lathe.toml predates cross_slide.scale_dir
+        # and all 16 reversing-matrix permutations errored on the missing key).
+        # Bump this ref deliberately when the pairing changes.
+        ref: dev-staging
         path: reflex-fw
 
     - name: Install emulator build deps (insurance)
