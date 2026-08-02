@@ -422,6 +422,61 @@ class ElsFsm:
         )
         return True
 
+    def reconcile_firmware_on_connect(self):
+        """Drive the firmware's retained elsStop block to match THIS session's
+        FSM state when a connection is (re)established.
+
+        Firmware retains elsStop.{enable, active, stopPosition} across app
+        restarts (observed on the real machine 2026-08-01: after a restart the
+        previous session's servoMode was still set). Nothing else clears them
+        at startup — set_enable(False) otherwise runs only on the disable/alarm
+        transitions, and the FSM's initial 'disabled' state fires no on_enter —
+        so a fresh session silently inherits the PREVIOUS session's armed stop,
+        and feed_without_armed_stop() (which trusts the firmware enable bit)
+        would skip the no-stop feed confirmation against a stale shoulder.
+
+        Policy by state:
+        - disabled / alarm → clear enable+active. A cleared enable makes the
+          retained stopPosition inert.
+        - stopped (engaged-idle) → re-assert direction/hysteresis and re-arm via
+          arm_idle_stop() (self-gates on a committed stop + Z on the safe
+          side). Covers a firmware reboot mid-session losing our armed stop.
+          If arming refuses, clear enable+active — a retained arm must not
+          outlive its session either.
+        - cutting / retracting → hands off, log only: motion may be live, and
+          blindly rewriting could disarm a stop that is actively protecting the
+          cut. (Full link-loss-mid-cut recovery is a known separate gap.)
+        """
+        state = self.state
+        if state in ('disabled', 'alarm'):
+            self.hal.set_enable(False)
+            self.hal.set_active(False)
+            log.info(
+                f"reconcile_firmware_on_connect: cleared retained ELS stop "
+                f"(state={state})"
+            )
+        elif state == 'stopped':
+            self.hal.set_stop_direction(
+                self.els.stop_direction_value(self.controller.els_forward)
+            )
+            if self.controller.retract_enabled or self.controller.wizard_enabled:
+                self.hal.set_hysteresis_tight()
+            else:
+                self.hal.set_hysteresis_loose()
+            armed = self.arm_idle_stop()
+            if not armed:
+                self.hal.set_enable(False)
+                self.hal.set_active(False)
+            log.info(
+                f"reconcile_firmware_on_connect: re-asserted engaged-idle "
+                f"(armed={armed})"
+            )
+        else:
+            log.warning(
+                f"reconcile_firmware_on_connect: state={state} — leaving "
+                f"firmware ELS stop untouched (motion may be live)"
+            )
+
     def push_stop_to_firmware(self):
         """Push the operator's frozen stop encoder to firmware + set scaleIndex.
 

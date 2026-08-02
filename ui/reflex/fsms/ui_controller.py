@@ -158,6 +158,13 @@ class ElsUiController(EventDispatcher):
         # 6. Apply initial state policy and connect HW bindings.
         self._apply_policy()
         self._board.bind(connected=self._on_connected_changed)
+        # If the board is ALREADY connected at build time the bind above will
+        # never fire True, so reconcile the firmware's retained elsStop state
+        # here too (normally `connected` first goes True on a post-build update
+        # tick and the bind handles it — this covers the other ordering).
+        if self._board.connected:
+            Clock.schedule_once(
+                lambda _dt: self._els_fsm.reconcile_firmware_on_connect(), 0)
         self._board.bind(update_tick=self._poll_els_stop_active)
         self._board.bind(update_tick=self._poll_carriage_retracted)
         self._board.bind(update_tick=self._poll_apply_policy)
@@ -193,7 +200,15 @@ class ElsUiController(EventDispatcher):
         Clock.schedule_once(lambda _dt: setattr(self, "alarm_text", reason), 0)
 
     def _on_connected_changed(self, instance, value):
-        Clock.schedule_once(lambda _dt: self._apply_policy(), 0)
+        def _apply(_dt):
+            if value:
+                # A (re)connection means the firmware may hold elsStop state
+                # from a previous session (or have rebooted and lost ours) —
+                # reconcile it to THIS session's FSM state before anything
+                # (e.g. the feed guard) trusts firmware bits.
+                self._els_fsm.reconcile_firmware_on_connect()
+            self._apply_policy()
+        Clock.schedule_once(_apply, 0)
 
     def _on_domain_state_changed(self, state):
         # Mirror domain FSM state into a Kivy property the widget can bind to.

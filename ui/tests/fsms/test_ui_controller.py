@@ -90,8 +90,14 @@ def _make_collaborators(*, z_axis=None, x_axis=None, connected=False):
     els.get_spindle_axis.return_value = SimpleNamespace(
         syncRatioNum=1, syncRatioDen=1,
     )
-    els.stop_direction_value.return_value = +1
-    els.direction_sign.return_value = +1
+    # Mirror reflex.dispatchers.els.ElsDispatcher exactly: stop_direction_value
+    # is -1 for forward, +1 for reverse; direction_sign is the inverse. These
+    # MUST be side_effect (not a fixed return_value) so cut_dir tracks
+    # whichever els_forward the controller under test actually carries — a
+    # pinned return value here is what let the mock drift out of sync with
+    # production and go undetected.
+    els.stop_direction_value.side_effect = lambda els_forward: -1 if els_forward else 1
+    els.direction_sign.side_effect = lambda els_forward: 1 if els_forward else -1
     els.els_backlash_steps = 0
     return board, els
 
@@ -150,18 +156,23 @@ def test_toggling_wizard_off_mid_wizard_cancels_and_enters_in_cycle(ctrl):
 
 # ─── Action-button gating in non-wizard cycle states ───────────────────────
 
-def test_stop_only_action_allowed_with_valid_stop_z(ctrl):
+@pytest.mark.parametrize("els_forward, stop_z", [(True, -10.0), (False, 10.0)])
+def test_stop_only_action_allowed_with_valid_stop_z(ctrl, els_forward, stop_z):
     """In stop-only mode, UI FSM auto-advances to in_cycle.waiting_to_cut at
     startup (no Start button). After engage, the action button is enabled
-    when Z is on the safe side of stop_z."""
-    # Z=0, stop_z=0 → Z at stop → blocked by _z_safe_for_cut.
-    # Set stop_z so Z is on the safe side (cut_dir=+1, so Z < stop_z is safe).
-    ctrl.commit_standalone_stop_z(10.0)
+    when Z is on the safe side of stop_z.
+
+    stop_direction_value(els_forward) is -1 for forward, +1 for reverse, so
+    with zero safety margin the safe side (diff < 0) is Z > stop_z for
+    forward and Z < stop_z for reverse. The fixture's Z=0.0 is kept fixed;
+    stop_z is placed on the appropriate side of it for each direction.
+    """
+    ctrl.els_forward = els_forward
+    ctrl.commit_standalone_stop_z(stop_z)
     _engage(ctrl)
     # Non-wizard mode auto-advances to in_cycle.waiting_to_cut at startup,
     # so no need to call start() here.
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
-    # Z=0 < stop_z=10 → safe for cut (cut_dir=+1, cutting toward +Z)
     assert ctrl.action_allowed is True
     assert ctrl.instruction_text == "Ready to cut"
 
@@ -222,12 +233,14 @@ def test_action_blocked_when_not_engaged(ctrl):
     assert "Engage" in ctrl.instruction_text
 
 
-def test_engaging_enables_action(ctrl):
+@pytest.mark.parametrize("els_forward, stop_z", [(True, -10.0), (False, 10.0)])
+def test_engaging_enables_action(ctrl, els_forward, stop_z):
     """In stop-only mode, the UI FSM auto-advances to in_cycle.waiting_to_cut
     at startup. Before engage, action is blocked by 'not engaged'. After
     engage, action is enabled when Z is on the safe side of stop_z."""
     assert ctrl.action_allowed is False  # not engaged
-    ctrl.commit_standalone_stop_z(10.0)  # Z=0 < stop_z=10 → safe for cut
+    ctrl.els_forward = els_forward
+    ctrl.commit_standalone_stop_z(stop_z)  # Z=0 on safe side of stop_z
     _engage(ctrl)
     assert ctrl.engaged is True
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
@@ -245,10 +258,12 @@ def test_start_stop_disabled_when_not_engaged_in_wizard_mode(ctrl):
     assert ctrl.start_stop_enabled is False
 
 
-def test_disengaging_mid_cycle_disables_action(ctrl):
+@pytest.mark.parametrize("els_forward, stop_z", [(True, -10.0), (False, 10.0)])
+def test_disengaging_mid_cycle_disables_action(ctrl, els_forward, stop_z):
     """If the operator disengages mid-cycle, the action button must
     immediately disable so they can't press it and crash the FSM."""
-    ctrl.commit_standalone_stop_z(10.0)  # Z=0 < stop_z=10 → safe for cut
+    ctrl.els_forward = els_forward
+    ctrl.commit_standalone_stop_z(stop_z)  # Z=0 on safe side of stop_z
     _engage(ctrl)
     assert ctrl.action_allowed is True
     ctrl.toggle_engage()   # back to disabled
@@ -470,11 +485,13 @@ def test_on_action_button_clicked_without_x_axis_does_not_raise():
     assert c._ui_fsm.state == "set_start_dia"   # did not advance
 
 
-def test_on_action_button_clicked_in_waiting_to_cut_enters_cutting(ctrl):
+@pytest.mark.parametrize("els_forward, stop_z", [(True, -10.0), (False, 10.0)])
+def test_on_action_button_clicked_in_waiting_to_cut_enters_cutting(ctrl, els_forward, stop_z):
     """Non-wizard cycle: action button drives waiting_to_cut → cutting."""
     z = ctrl._els.get_z_axis()
     z.scaledPosition = 0.0
-    ctrl.commit_standalone_stop_z(10.0)  # Z=0 < stop_z=10 → safe for cut
+    ctrl.els_forward = els_forward
+    ctrl.commit_standalone_stop_z(stop_z)  # Z=0 on safe side of stop_z
     ctrl.toggle_engage()
     _pump()
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
@@ -547,13 +564,15 @@ def test_try_advance_wizard_advances_when_in_matching_state():
     assert c._ui_fsm.state == "set_retract_z"
 
 
-def test_try_advance_wizard_noop_in_non_wizard_cycle_state(ctrl):
+@pytest.mark.parametrize("els_forward, stop_z", [(True, -10.0), (False, 10.0)])
+def test_try_advance_wizard_noop_in_non_wizard_cycle_state(ctrl, els_forward, stop_z):
     """In non-wizard mode the UI FSM lives in in_cycle.waiting_to_cut.
     try_advance_wizard must be a no-op there — otherwise a long-press
     capture would auto-fire the action transition and start a cut,
     bypassing the requirement that the action button is the only
     motion initiator."""
-    ctrl.commit_standalone_stop_z(10.0)  # Z=0 < stop_z=10 → safe for cut
+    ctrl.els_forward = els_forward
+    ctrl.commit_standalone_stop_z(stop_z)  # Z=0 on safe side of stop_z
     _engage(ctrl)
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
     assert ctrl.action_allowed is True
@@ -643,13 +662,23 @@ def test_poll_carriage_retracted_noop_in_stop_only_mode():
     assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
 
 
-def test_action_button_disabled_when_z_past_stop_in_stop_only_mode():
+@pytest.mark.parametrize("els_forward, unsafe_z, safe_z", [
+    (False, 12.7, -1.0),
+    (True, -12.7, 1.0),
+])
+def test_action_button_disabled_when_z_past_stop_in_stop_only_mode(els_forward, unsafe_z, safe_z):
     """In stop-only mode, the action button should be disabled when Z
     is past stop_z in the cutting direction, and re-enable when Z
-    moves to the safe side."""
-    z = _make_z_axis(scaled_position=12.7)
+    moves to the safe side.
+
+    stop_direction_value(els_forward) is -1 forward / +1 reverse, so with
+    stop_z=0.0 and zero margin the safe side flips with direction: below 0
+    for reverse (original convention), above 0 for forward.
+    """
+    z = _make_z_axis(scaled_position=unsafe_z)
     board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
     c = ElsUiController(els=els, board=board)
+    c.els_forward = els_forward
     # Commit a stop_z (=0.0) so stop_z_valid is True and the button gate is
     # exercised on Z position alone, not the "not set" guard (audit H1).
     c.commit_standalone_stop_z(0.0)
@@ -659,11 +688,11 @@ def test_action_button_disabled_when_z_past_stop_in_stop_only_mode():
     # Engage domain FSM so action button is not blocked by "not engaged"
     c.toggle_engage()
     _pump()
-    # Z=12.7, stop_z=0.0, cut_dir=+1 → Z past stop → button disabled
+    # Z past stop_z in the cutting direction → button disabled
     assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
     assert c.action_allowed is False
     # Move Z to safe side
-    z.scaledPosition = -1.0
+    z.scaledPosition = safe_z
     c._poll_apply_policy()
     assert c.action_allowed is True
 
@@ -807,13 +836,18 @@ def test_confirm_feed_enable_is_noop_when_already_on():
     assert board.servo.servoMode == 1       # still on — not toggled off
 
 
-def test_action_button_disabled_when_z_at_stop_in_stop_only_mode():
+@pytest.mark.parametrize("els_forward, safe_z", [(False, 9.9), (True, 10.1)])
+def test_action_button_disabled_when_z_at_stop_in_stop_only_mode(els_forward, safe_z):
     """In stop-only mode, the action button should be disabled when Z
     is exactly at stop_z — the cut should only start when Z is strictly
-    before the stop position in the cutting direction."""
+    before the stop position in the cutting direction. diff=0 at the stop
+    regardless of cut_dir's sign, so only the "move to safe side" half
+    differs by direction (below stop_z=10.0 for reverse, above for forward).
+    """
     z = _make_z_axis(scaled_position=10.0)
     board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis(), connected=True)
     c = ElsUiController(els=els, board=board)
+    c.els_forward = els_forward
     c.commit_standalone_stop_z(10.0)
     _pump()
     c.toggle_engage()
@@ -822,22 +856,62 @@ def test_action_button_disabled_when_z_at_stop_in_stop_only_mode():
     assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
     # Z=10.0, stop_z=10.0 → exactly at stop → button disabled
     assert c.action_allowed is False
-    # Move Z to safe side (below stop_z when cut_dir=+1)
-    z.scaledPosition = 9.9
+    # Move Z to safe side
+    z.scaledPosition = safe_z
     c._poll_apply_policy()
     assert c.action_allowed is True
 
 
-def test_fsm_cut_blocked_when_z_at_stop_in_stop_only_mode():
+@pytest.mark.parametrize("els_forward, safe_z", [(False, 9.9), (True, 10.1)])
+def test_fsm_cut_blocked_when_z_at_stop_in_stop_only_mode(els_forward, safe_z):
     """The domain FSM's is_ready_to_cut should return False when Z
     is exactly at stop_z, preventing the cut transition."""
     z = _make_z_axis(scaled_position=10.0)
     board, els = _make_collaborators(z_axis=z, x_axis=_make_x_axis())
     c = ElsUiController(els=els, board=board)
+    c.els_forward = els_forward
     c.commit_standalone_stop_z(10.0)
     _pump()
     # Z=10.0, stop_z=10.0 → exactly at stop → not ready to cut
     assert not c._els_fsm.is_ready_to_cut()
     # Move Z to safe side
-    z.scaledPosition = 9.9
+    z.scaledPosition = safe_z
     assert c._els_fsm.is_ready_to_cut()
+
+
+# ─── connect-time firmware reconciliation wiring ───────────────────────────
+# The FSM-level behavior is covered in test_els_fsm; these pin the CONTROLLER
+# wiring — that a (re)connect actually triggers the reconcile, through both
+# paths (the connected bind, and a board already connected at build time).
+
+def test_connected_transition_triggers_firmware_reconcile(ctrl):
+    ctrl._els_fsm.reconcile_firmware_on_connect = MagicMock()
+    ctrl._on_connected_changed(ctrl._board, True)
+    _pump()
+    ctrl._els_fsm.reconcile_firmware_on_connect.assert_called_once()
+
+
+def test_disconnected_transition_does_not_reconcile(ctrl):
+    """Reconciling means WRITING to firmware — pointless (and noisy) while the
+    link is down. Only the connected edge triggers it."""
+    ctrl._els_fsm.reconcile_firmware_on_connect = MagicMock()
+    ctrl._on_connected_changed(ctrl._board, False)
+    _pump()
+    ctrl._els_fsm.reconcile_firmware_on_connect.assert_not_called()
+
+
+def test_board_already_connected_at_build_reconciles(monkeypatch):
+    """If the board connected before the controller was built, the connected
+    bind never fires True — the init path must reconcile instead. Without it,
+    exactly the harness/app-restart ordering skips reconciliation entirely."""
+    from reflex.fsms.els_fsm import ElsFsm
+    calls = []
+    monkeypatch.setattr(
+        ElsFsm, "reconcile_firmware_on_connect",
+        lambda self: calls.append(True))
+    board, els = _make_collaborators(
+        z_axis=_make_z_axis(), x_axis=_make_x_axis(), connected=True,
+    )
+    ElsUiController(els=els, board=board)
+    _pump()
+    assert calls, "init-time reconcile never ran for an already-connected board"
