@@ -35,3 +35,12 @@
                 help_file: "els_backlash_takeup.md"
                 value: root.backlash_mm
                 on_value: root.backlash_mm = self.value
+
+            DropDownItem:
+                id: reframe_notify_dropdown
+                height: 60
+                name: "Stop re-reference"
+                help_file: "els_stop_reref.md"
+                options: ["silent", "warn", "confirm"]
+                value: app.els.stop_z_reframe_notify
+                on_value: app.els.stop_z_reframe_notify = self.value

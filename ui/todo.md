@@ -51,6 +51,184 @@
 
 ---
 
+## Safety / ELS guards
+
+### Warn/prompt when enabling power feed with no ELS stop armed
+- **Context (verified 2026-07-09, emulator-backed investigation):** feed is gated entirely by
+  `syncEnable` on a scale — firmware `Ramps.c:626-631` auto-sets `servoMode=1` whenever any
+  `scales[i].syncEnable != 0` (and ELS not already stopped), and the servo then follows the
+  spindle. `syncEnable` is only set by deliberate operator action (`ServoDispatcher.toggle_enable`
+  servo-enable button, `AxisDispatcher.toggle_sync` power-feed toggle, or the ELS engage→cut
+  flow). Confirmed empirically that merely connecting — raw or full UI, spindle running — does NOT
+  set `syncEnable` or move the carriage (so there is **no** uncontrolled feed on connect).
+- **The gap:** nothing requires an ELS stop (`elsStop.enable` + a valid `stopPosition` on the
+  cutting side) to be armed before the operator enables power feed. So an operator can start a
+  sync feed toward the chuck/headstock with no auto-stop — the only protections are travel limits
+  and the operator's own attention. That's normal for a bare power feed, but risky on this machine.
+- **Why a prompt is reasonable (Evan, 2026-07-09):** in **advanced ELS mode**, *every* submode
+  includes the stop function — so if the operator is in advanced ELS mode, it's reasonable to
+  infer they intend to have an ELS stop set. Enabling feed there without an armed stop is likely a
+  mistake, not an intentional bare power feed.
+- **Action:** when enabling sync/power feed (servo enable / sync toggle) in advanced ELS mode with
+  no valid ELS stop armed, prompt/confirm (or at least surface a visible warning) before allowing
+  the feed — rather than silently feeding. Decide the exact UX (block-until-confirmed vs.
+  warn-and-allow) and whether it applies only in advanced ELS mode or more broadly. The
+  emulator-backed system-test suite (`.hermes/plans/2026-07-09_emulator-backed-system-tests.md`)
+  is a natural place to add a regression test for whatever guard lands.
+
+### Audit for unexpected large feed moves from arbitrary control ordering (broader than connect)
+- **Concern (Evan, 2026-07-09):** the connect case is clean, but that's only one entry point. The
+  UI exposes *separate, independently pressable* controls — servo/**Sync Enable**, **advanced ELS
+  enable/engage**, ELS submode, DIR, and stop-Z entry — with no enforced ordering. Risk likely
+  hides in the state combinations reachable by pressing them in an unexpected order, especially the
+  interaction between the standalone Sync-Enable path and the ELS-engage path (both ultimately set
+  `syncEnable`, the firmware feed master switch). Goal: find any sequence that produces an
+  **unexpectedly large** feed (drives into chuck/headstock), not just a wrong-direction one.
+- **Specific hypotheses to check (not yet investigated):**
+  1. **Stale/default `stop_z`.** `controller.stop_z` defaults to 0.0. Engage with the carriage far
+     from 0 and no stop_z entered → ELS arms against a stopPosition far away → a large feed to
+     "reach" the stop when cut is pressed. Confirm what stop_z is used if never set this cycle.
+  2. **Sync-Enable vs. ELS-engage interaction.** Pressing servo/Sync-Enable (sets `servoMode`→
+     `_sync_spindle_to_servo` sets spindle `syncEnable`) while ELS is engaged-and-armed
+     (`active=1` holding) — does the arming hold survive, or does the sync write release/override it
+     and start feeding? And vice-versa (engage while a manual sync feed is already running).
+  3. **Manual axis power-feed coupling.** `AxisDispatcher.toggle_sync` on a non-spindle DRO axis:
+     does the ELS `_sync_spindle_to_servo` coupling turn an intended small manual feed into a
+     full ELS-rate spindle-synced feed?
+  4. **Mid-engaged mode/direction change.** Flipping `els_forward`/DIR or ELS submode while engaged
+     (`_on_modes_changed` pushes a new `stopDirection`) — can it move the stop to the far side of
+     the current position so the next cut feeds a long way (or the wrong way) before stopping?
+  5. **Backlash-takeup / thread re-sync magnitude.** `on_enter_cutting`/`push_thread_geometry` can
+     command a takeup or phase-correction move; check whether a stale `els_backlash_steps`,
+     `threadPitchSteps`, or `zCountsPerPitch` (e.g. left over from a prior threading job, or an
+     unmapped axis) can make that move unexpectedly large.
+  6. **Re-engagement after an auto-stop.** After ELS fires and the operator re-engages, verify the
+     resume can't command a large move (wrong reference latch / stale stopPosition).
+- **Method:** once the emulator-backed system suite can drive a cut (Task 7+), add an adversarial
+  "button-ordering" test group that drives these sequences against the real FSM + emulator and
+  asserts the total feed travel stays bounded (no move exceeds the intended cut span + margin).
+  This is the natural regression harness for whatever guards result.
+- **Relationship:** this is the broader version of the "enable feed with no stop armed" item above;
+  that guard may cover some cases, but this audit should enumerate the full reachable state space
+  first so we know what the guard(s) must cover.
+
+### UI FSM can lock in "Cutting…" with Stop disabled (TOCTOU on is_ready_to_cut)
+- **Found:** overnight review of the system-test work (2026-07-09).
+- **Issue:** `ui_fsm.py:40` transitions `in_cycle.waiting_to_cut → in_cycle.cutting`
+  UNCONDITIONALLY on the action button; `on_enter_in_cycle_cutting` (`ui_fsm.py:102-104`) then
+  calls `ElsFsm.cut()`, whose `is_ready_to_cut` guard can REFUSE (e.g. Z drifted past the safety
+  margin between the last `_apply_policy` tick and the click — a time-of-check/time-of-use gap).
+  Result: UI FSM sits in `in_cycle.cutting` (`can_stop=False`, blank action button per
+  `ui_controller.py:22`) while the domain FSM is still `stopped`. No `stop_active` ever fires, so
+  there's no FSM path out except toggling Engage. No motion occurs (firmware `active=1` still
+  holds), so it's a lockup, not a crash — but a lathe UI that says "Cutting…" while disabling Stop
+  is bad. **Action:** gate the UI `waiting_to_cut → cutting` transition on `els_fsm.may_cut()` (or
+  roll the UI FSM back to `waiting_to_cut` when `ElsFsm.cut()` is refused). Add a regression test.
+
+### ELS safety-critical register writes are fire-and-forget (no read-back / abort)
+- **Found:** overnight review (2026-07-09).
+- **Issue:** the `reflex/utils/communication.py` write helpers swallow all exceptions (log only),
+  and reads return 0 on failure. In `ElsFsm.on_enter_cutting` (`els_fsm.py:117-136`) the sequence
+  writes `stopPosition`/`stopDirection`/`enable` then clears `active` to release the cut. If the
+  `stopPosition` write fails on a transient Modbus timeout but the link recovers before
+  `set_active(False)`, the cut resumes against the PREVIOUS pass's stop position — a wrong-shoulder
+  cut. **Action:** consider read-back verification (or aborting the state transition / raising the
+  ELS alarm) for the safety-critical `elsStop` writes (`stopPosition`, `stopDirection`, `enable`)
+  before releasing `active`. Weigh against the added Modbus round-trips per cut.
+
+### ~~Investigate: does changing servo maxSpeed at runtime corrupt the ELS sync ratio?~~ RESOLVED — NOT A BUG (2026-07-10)
+- **Verdict:** phantom. There is NO maxSpeed→syncRatioDen coupling. Instrumenting
+  `AxisDispatcher._set_sync_ratio` (it is not bound to `maxSpeed`, and `final_ratio =
+  scale_ratio * user_sync / servo_ratio` has no maxSpeed term) showed that setting
+  `board.servo.maxSpeed=100000` after connect does NOT change `scales[0].syncRatioDen`
+  (stays 25) and does not even re-invoke `_set_sync_ratio`. The overnight "25→25000"
+  observation was a confound in the original probe.
+- **What the retract hang actually was:** (1) servo *polarity* — the retract is a direct
+  servo indexing move (`servo.stepsToGo`), so its direction depends on `servoDir`; the
+  `EMU_RPM=-30` band-aid only fixes the sync-mediated cut, so without `servo_reverse=true`
+  the retract ran the wrong way; (2) servo *rate* — at the hermetic `maxSpeed=1000` default a
+  cut-time step backlog flushes after the ELS stop (an emulator 10 kHz-ISR artifact). Both
+  resolved by commissioning the harness servo like the real machine (`servo_reverse=true`,
+  `maxSpeed=10000`). Task 9 now passes with no product change. See commit 3568921.
+
+### Safety audit results (2026-07-10, emulator-driven, branch `fix/els-safety`)
+Adversarial control-ordering probes against the real controller/FSM stack + emulator.
+Findings (probes were temporary; regression tests land with each fix):
+
+- **DOMINANT ROOT CAUSE — sync feed is decoupled from the ELS stop.** The
+  servo/Sync-Enable feed runs free whenever `syncEnable=1` + spindle turning + nothing
+  actively gating (no armed stop, or ELS disarmed). Reproduced two ways: (H2b) enabling
+  Sync-Enable standalone with no ELS armed → carriage fed ~11,965 counts freely; (H6)
+  engage+cut normally then **disengage ELS** while Sync-Enable stays on → the stop is
+  removed but the feed continues (~9,700 counts in 6 s). This is the core of the
+  "no-stop-armed feed guard" item — broadened: cover BOTH enable-without-stop AND
+  disarm-while-feeding. **DECISION (Evan): confirm-to-override on enabling feed with no
+  armed stop (advanced ELS mode); disengaging ELS also stops an active sync feed; basic
+  bare power feed unaffected.**
+- **CONFIRMED — never-set / stale `stop_z` (H1).** `stop_z_valid` was hard-coded True, so
+  the 0.0 default was silently usable (engage+cut → feed to Z=0). NOTE: a feed-*distance*
+  check was rejected (legit cuts can be multiple inches; the hazard is a WRONG stop_z, not a
+  large one). **FIXED (f5a6913):** `stop_z_valid` now means "operator actually set a stop_z"
+  — starts False, the action gate blocks the cut, the field shows "--". Invalidated on ELS
+  Z-axis remap.
+  - **FOLLOW-UP DONE (effa7f5, 7bd9297, 71a55db):** the DRO re-zero / units-switch corruption
+    is now fixed structurally — `stop_z`/`retract_z` (and `start_dia`/`stop_dia`) are anchored
+    to the raw leadscrew/X encoder captured at Set, with the scaled value a live-derived
+    display mirror; the cut writes the frozen encoder. A re-zero / units switch just
+    re-references the display (physical target unchanged), matching the DRO. Only never-set +
+    axis remap invalidate. Optional per-machine notify (`ElsDispatcher.stop_z_reframe_notify`
+    = silent/warn/confirm) flags an offset/coordinate re-reference (not units). UI (settings
+    dropdown, notice strip) needs an on-device smoke test.
+  - **KNOWN LIMITATION — SUM-transform ELS Z axis (PRE-EXISTING, Fable-flagged 2026-07-11).**
+    `AxisDispatcher.position_to_encoder` / `scaled_from_encoder` only account for the axis's
+    PRIMARY input. If the ELS Z axis is configured as a SUM transform (leadscrew scale +
+    compound-slide scale), the stop is anchored/armed against the primary encoder only — a
+    contribution from the second scale would put the physical stop in the wrong place. This is
+    UNCHANGED by the encoder work (the old cut-time `position_to_encoder` conversion had the
+    identical flaw), and the derived mirror at least stays self-consistent with what's armed.
+    Normal single-input Z lathe setups (incl. elspi) are unaffected. FUTURE: refuse/warn when
+    an ELS Z axis has a multi-input transform, or fold the full transform into the encoder
+    conversion.
+- **CONFIRMED — 'Cutting…' lockup (H3).** Deterministically reproduced: when the domain
+  cut is refused, the UI parks in `in_cycle.cutting` (blank action, Stop disabled) with
+  no exit but the Engage toggle. Fix: gate the UI `waiting_to_cut→cutting` transition on
+  `may_cut()` / roll back on refusal.
+- **SAFE (guards hold):** H2a (engage→sync doesn't feed — arming gates it); H4
+  (mid-engage DIR flip → cut guard blocks).
+- **DEFERRED to hardware verification (Evan's decision) — post-stop overshoot.** The
+  carriage overshoots the stop because a servo step backlog flushes after the stop latches
+  (pulse generation isn't gated by `elsStop.active`). Large at the emulator's 10 kHz ISR
+  (~4,600 counts past an 8,000 feed); ~10× smaller expected on real 100 kHz hardware. NO
+  firmware change this release — measure actual overshoot on the real lathe first; fix in
+  reflex-fw only if hardware shows a real problem.
+- **LOW PRIORITY — H5 backlash takeup.** The cut-start takeup is bounded by
+  `els_backlash_steps` (config). Inconclusive in the emulator; add a config-range
+  validation rather than treat as a control-flow bug.
+
+**Fixes landed (branch `fix/els-safety`, all with emulator/unit regressions;
+Fable-reviewed twice — review + verify):**
+- H3 'Cutting…' lockup — `fedfc9b` (gate UI cut on fresh domain `may_cut`).
+- Sync/stop guard — `02a03d8` (confirm-to-override on feed w/o armed stop;
+  disengage stops the feed).
+- elsStop write verification — `ddd078a` (verify stopPosition/scaleIndex + enable
+  ACK before releasing; abort→alarm on failure).
+- H1 stop_z validation ("--", must-set) — `f5a6913`.
+- Review fixes — `baadad8` (CRITICAL: sync guard was on the wrong bar — routed
+  elsbar Sync Enable through the guard; verify `enable` before release; alarm
+  state exit + may_cut/toggle_engage guards + alarm-text surface).
+- Alarm recovery completion — `9f054c9` (UI FSM leaves alarm on disengage;
+  double-tap-engage guard).
+- Encoder-anchored ELS targets — `effa7f5`, `7bd9297`, `71a55db` (stop_z/retract_z
+  + diameters anchored to the physical encoder; re-reference notify silent/warn/
+  confirm; closes the H1 DRO-rezero gap above).
+- Deferred (Evan): post-stop overshoot — hardware-verify first, no firmware change.
+
+**On-device smoke test (Kivy UI, not headless-testable — logic IS tested):**
+- Sync-guard confirm popup (CustomPopup + cancel button).
+- H1 "--" Stop-Z display + alarm-text instruction line.
+- Re-reference notify UI: ELS-settings "Stop re-reference" dropdown +
+  els_advbar notice strip (warn message / confirm Keep+Reset).
+
 ## Dead Code and Cleanup
 
 ### 8. Dead/Commented-Out Code
@@ -307,3 +485,20 @@ Works-as-specified (note, not bugs):
   residual: `app.use_case` persists to the repo-root `config.ini` (path is hardcoded
   relative to the module, not under HOME) — gitignored and harmless, but a local run
   will set `use_case=lathe` there.
+
+---
+
+## System-test suite: explicit feed selection
+
+- **Context (2026-07-12, geometry commissioning):** `SystemHarness.commission_geometry()` now
+  commissions the harness to the emulator reference machine (400 counts/mm scales, 4000 counts/rev
+  spindle, exactly 127/32000 mm/step leadscrew), so system-test spans/tolerances are real mm and
+  the firmware's count-domain registers are physically meaningful.
+- **Gap:** the cut feed rate in the system tests still comes from the spindle axis's *default*
+  `syncRatioNum/Den = 360/100`, reinterpreted as 3.6 mm/rev (1.8 mm/s at EMU_RPM=30). Production
+  sets this via `ElsBar.update_feeds_ratio` from `feeds.table`; the harness has no ElsBar, so the
+  tests implicitly depend on a rotary-axis default that happens to be a usable feed.
+- **Done (2026-07-12):** `SystemHarness.set_feed(pitch_mm)` mirrors `update_feeds_ratio`
+  (signed spindle-axis `syncRatioNum/Den` from `els_forward`); all ELS system tests now select
+  16 TPI (`Fraction(254, 160)`, feeds.py Thread IN "16" = 1.5875 mm/rev, ~0.79 mm/s at
+  EMU_RPM=30) explicitly.

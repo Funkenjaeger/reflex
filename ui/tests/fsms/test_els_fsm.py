@@ -50,15 +50,19 @@ def _make_spindle():
     return SimpleNamespace(syncRatioNum=1, syncRatioDen=1)
 
 
-def _make_els(*, z_axis=None, x_axis=None, spindle=None,
-                forward_stop=+1, els_backlash_steps=0,
-                direction_sign=+1):
+def _make_els(*, z_axis=None, x_axis=None, spindle=None, els_backlash_steps=0):
     els = MagicMock()
     els.get_z_axis.return_value = z_axis
     els.get_x_axis.return_value = x_axis
     els.get_spindle_axis.return_value = spindle or _make_spindle()
-    els.stop_direction_value.return_value = forward_stop
-    els.direction_sign.return_value = direction_sign
+    # Mirror reflex.dispatchers.els.ElsDispatcher exactly: stop_direction_value
+    # is -1 for forward, +1 for reverse; direction_sign is the inverse. These
+    # MUST be side_effect (not a fixed return_value) so cut_dir tracks whichever
+    # els_forward each test's controller actually carries — a pinned return
+    # value here is what let the mock drift out of sync with production and
+    # go undetected (it silently ignored the els_forward argument entirely).
+    els.stop_direction_value.side_effect = lambda els_forward: -1 if els_forward else 1
+    els.direction_sign.side_effect = lambda els_forward: 1 if els_forward else -1
     els.els_backlash_steps = els_backlash_steps
     return els
 
@@ -77,6 +81,9 @@ def _make_servo(ratio_num=1, ratio_den=1, lead_screw_pitch=0.0,
         ratioNum=ratio_num, ratioDen=ratio_den,
         leadScrewPitch=lead_screw_pitch,
         leadScrewPitchIn=lead_screw_pitch_in,
+        servoMode=0,
+        # ElsFsm.on_enter_disabled calls board.servo.stop_feed() as a safety stop.
+        stop_feed=lambda: None,
     )
 
 
@@ -94,6 +101,9 @@ def _make_controller(*, stop_z=10.0, retract_z=20.0,
                      els_forward=True, is_threading=False):
     return SimpleNamespace(
         stop_z=stop_z, retract_z=retract_z,
+        # Frozen encoder counts the FSM now writes to firmware. The mock z_axis's
+        # position_to_encoder is identity (int(mm)), so mirror that here.
+        stop_z_encoder=int(stop_z), retract_z_encoder=int(retract_z),
         wizard_enabled=wizard_enabled,
         retract_enabled=retract_enabled,
         els_forward=els_forward,
@@ -156,21 +166,33 @@ def test_on_enter_disabled_writes_set_enable_false():
 # ─── stopped re-arm: hysteresis driven by mode flags ───────────────────────
 
 def test_on_enter_stopped_arms_loose_hysteresis_in_stop_only_mode():
+    # z on the safe side (above stop_z=10) for the default els_forward=True
+    # so arm_idle_stop succeeds and set_enable(True) is actually issued —
+    # the default z=0.0 from _build_fsm is past the stop for forward.
+    z, _ = _make_z_axis(scaled_position=15.0)
     hal = MagicMock()
     controller = _make_controller(wizard_enabled=False, retract_enabled=False)
-    fsm = _build_fsm(hal=hal, controller=controller)
+    fsm = _build_fsm(z=z, hal=hal, controller=controller)
     fsm.enable()
     hal.set_hysteresis_loose.assert_called_once()
     hal.set_hysteresis_tight.assert_not_called()
     hal.set_enable.assert_called_with(True)
 
 
-def test_on_enter_stopped_arms_in_stopped_state():
+@pytest.mark.parametrize("els_forward, safe_z", [(True, 15.0), (False, 5.0)])
+def test_on_enter_stopped_arms_in_stopped_state(els_forward, safe_z):
     """When engaging with Z on the safe side, ELS should arm in STOPPED
-    state (active=1 before enable=1) so sync motion is paused until Cut."""
+    state (active=1 before enable=1) so sync motion is paused until Cut.
+
+    Real convention: cut_dir = stop_direction_value(els_forward) is -1 when
+    forward, so the safe side (diff <= 0) is z_pos ABOVE stop_z=10 for
+    forward and BELOW it for reverse — the two directions are mirror images
+    of each other around stop_z.
+    """
     hal = MagicMock()
-    z, _ = _make_z_axis(scaled_position=5.0)  # on safe side of default stop_z=10
-    fsm = _build_fsm(z=z, hal=hal)
+    z, _ = _make_z_axis(scaled_position=safe_z)
+    controller = _make_controller(els_forward=els_forward)
+    fsm = _build_fsm(z=z, hal=hal, controller=controller)
     fsm.enable()
     # active should be set True (stopped state), not False
     hal.set_active.assert_called_with(True)
@@ -194,28 +216,31 @@ def test_on_enter_stopped_arms_tight_hysteresis_when_wizard_enabled():
     hal.set_hysteresis_tight.assert_called_once()
 
 
-def test_on_enter_stopped_writes_stop_direction():
+@pytest.mark.parametrize("els_forward, expected_sign", [(True, -1), (False, +1)])
+def test_on_enter_stopped_writes_stop_direction(els_forward, expected_sign):
+    """stop_direction_value mirrors production: -1 forward, +1 reverse. Both
+    signs are exercised so a mock pinned to one value (as it used to be)
+    cannot silently pass."""
     hal = MagicMock()
-    controller = _make_controller(els_forward=False)
+    controller = _make_controller(els_forward=els_forward)
     fsm = _build_fsm(hal=hal, controller=controller)
     fsm.enable()
-    # stop_direction_value returns +1 in our mock regardless of forward;
-    # what matters is that the HAL was told to write it.
-    hal.set_stop_direction.assert_called_once_with(+1)
+    hal.set_stop_direction.assert_called_once_with(expected_sign)
 
 
-def test_on_enter_stopped_writes_stop_position_and_arms_on_engage():
+@pytest.mark.parametrize("els_forward, safe_z", [(True, 50.0), (False, 30.0)])
+def test_on_enter_stopped_writes_stop_position_and_arms_on_engage(els_forward, safe_z):
     """When entering stopped from disabled (enable trigger), ELS should be
     armed with a fresh stopPosition from controller.stop_z, and active=1
-    so it starts in STOPPED state."""
-    z, _ = _make_z_axis(encoder_offset=100)
+    so it starts in STOPPED state. safe_z is on the true safe side of
+    stop_z=42 for each direction (above for forward, below for reverse)."""
+    z, _ = _make_z_axis(scaled_position=safe_z)
     hal = MagicMock()
-    controller = _make_controller(stop_z=42.0)
+    controller = _make_controller(stop_z=42.0, els_forward=els_forward)  # frozen stop_z_encoder = 42
     fsm = _build_fsm(z=z, hal=hal, controller=controller)
     fsm.enable()  # disabled → stopped (fires on_enter_stopped with _engaging=True)
-    # stopPosition should be written from controller.stop_z
-    # position_to_encoder(42.0) → 42 + 100 = 142
-    hal.set_stop_position.assert_called_with(142)
+    # stopPosition is written from the operator's FROZEN stop encoder.
+    hal.set_stop_position.assert_called_with(controller.stop_z_encoder)
     hal.set_enable.assert_called_with(True)
     # active should be set True (stopped state), NOT cleared to False
     hal.set_active.assert_called_once_with(True)
@@ -242,12 +267,17 @@ def test_on_enter_stopped_does_not_arm_when_returning_from_cut():
     hal.set_hysteresis_tight.assert_called_once()
 
 
-def test_on_enter_stopped_does_not_arm_when_z_past_stop():
+@pytest.mark.parametrize("els_forward, past_stop_z", [(True, 5.0), (False, 15.0)])
+def test_on_enter_stopped_does_not_arm_when_z_past_stop(els_forward, past_stop_z):
     """When Z is past stop_z in the cutting direction, arming would cause
-    immediate ELS fire → backlash takeup. Skip arming in this case."""
-    z, _ = _make_z_axis(scaled_position=15.0)  # past default stop_z=10
+    immediate ELS fire → backlash takeup. Skip arming in this case.
+
+    "Past stop" flips sides with direction: below stop_z=10 for forward
+    (cut_dir=-1), above stop_z=10 for reverse (cut_dir=+1).
+    """
+    z, _ = _make_z_axis(scaled_position=past_stop_z)
     hal = MagicMock()
-    controller = _make_controller(stop_z=10.0, els_forward=True)
+    controller = _make_controller(stop_z=10.0, els_forward=els_forward)
     fsm = _build_fsm(z=z, hal=hal, controller=controller)
     fsm.enable()
     # enable should NOT be called (Z is past stop_z)
@@ -255,15 +285,66 @@ def test_on_enter_stopped_does_not_arm_when_z_past_stop():
     hal.set_stop_position.assert_not_called()
 
 
+def test_on_enter_stopped_does_not_arm_when_no_stop_committed():
+    """Engaging before any stop is set must leave ELS DISARMED.
+
+    push_stop_to_firmware() is a no-op with nothing committed, so writing
+    `enable` here would arm ELS against whatever stopPosition the firmware still
+    holds from a previous session. It also made the controller's
+    feed_without_armed_stop() report "armed", silently skipping the no-stop feed
+    confirmation — observed on the real machine, which armed at engage while the
+    bar still showed a stop of "--"."""
+    hal = MagicMock()
+    controller = _make_controller()
+    controller.stop_z_encoder = None
+    fsm = _build_fsm(hal=hal, controller=controller)
+    fsm.enable()
+    hal.set_stop_position.assert_not_called()
+    hal.set_enable.assert_not_called()
+    hal.set_active.assert_not_called()
+    # Direction / hysteresis are still applied — those aren't the armed stop.
+    hal.set_stop_direction.assert_called_once()
+
+
+@pytest.mark.parametrize("els_forward, safe_z", [(True, 50.0), (False, 30.0)])
+def test_arm_idle_stop_arms_once_the_operator_sets_a_stop_while_engaged(els_forward, safe_z):
+    """Engaging before setting a stop is the normal order of operations, so the
+    arm has to be retried when the stop is committed (the controller calls this
+    from _propagate_stop_z_to_firmware) — otherwise the operator sits engaged
+    with no protection until they press Cut.
+
+    safe_z is on the true safe side of the stop committed below (stop_z=42):
+    above for forward (cut_dir=-1), below for reverse (cut_dir=+1). Regression:
+    with a mock that pinned stop_direction_value to +1 regardless of
+    els_forward, committing stop=42 with z=0 (forward) looked past-the-stop
+    (diff=(0-42)*-1=+42>0) and arm_idle_stop correctly-for-the-wrong-reason
+    refused — masking that the mock, not the code, was inverted.
+    """
+    z, _ = _make_z_axis(scaled_position=safe_z)
+    hal = MagicMock()
+    controller = _make_controller(els_forward=els_forward)
+    controller.stop_z_encoder = None
+    fsm = _build_fsm(z=z, hal=hal, controller=controller)
+    fsm.enable()
+    hal.reset_mock()
+
+    controller.stop_z = 42.0
+    controller.stop_z_encoder = 42
+    assert fsm.arm_idle_stop() is True
+    hal.set_stop_position.assert_called_with(42)
+    hal.set_active.assert_called_once_with(True)
+    hal.set_enable.assert_called_once_with(True)
+
+
 # ─── set_stop_z: HAL writes stopPosition + scaleIndex ──────────────────────
 
-def test_set_stop_z_writes_encoder_position_to_hal():
-    z, z_inp = _make_z_axis(encoder_offset=100)
+def test_set_stop_z_writes_frozen_encoder_to_hal():
+    z, z_inp = _make_z_axis()
     hal = MagicMock()
-    fsm = _build_fsm(z=z, hal=hal)
-    fsm.set_stop_z(42.0)
-    # position_to_encoder(42.0) → 42 + 100 = 142
-    hal.set_stop_position.assert_called_once_with(142)
+    controller = _make_controller(stop_z=42.0)  # frozen stop_z_encoder = 42
+    fsm = _build_fsm(z=z, hal=hal, controller=controller)
+    fsm.push_stop_to_firmware()  # writes the operator's frozen encoder
+    hal.set_stop_position.assert_called_once_with(controller.stop_z_encoder)
     hal.set_scale_index.assert_called_with(z_inp.inputIndex)
 
 
@@ -294,39 +375,47 @@ def test_on_enter_cutting_arms_and_writes_thread_geometry():
     assert hal.set_z_counts_per_pitch.called
 
 
-def test_cut_allowed_in_stop_only_mode_when_z_safe_of_stop():
+# stop_direction_value(els_forward) is -1 for forward, +1 for reverse
+# (reflex/dispatchers/els.py), so cut_dir = -1 when els_forward=True. With
+# stop_z=10 and zero safety margin, diff = (z_pos - stop_z) * cut_dir is
+# negative (safe) when z_pos > stop_z for forward, and z_pos < stop_z for
+# reverse — the two directions mirror around stop_z.
+@pytest.mark.parametrize("els_forward, unsafe_z, safe_z", [
+    (True, 8.0, 12.7),
+    (False, 12.7, 8.0),
+])
+def test_cut_allowed_in_stop_only_mode_when_z_safe_of_stop(els_forward, unsafe_z, safe_z):
     """In stop-only mode, cut is allowed when Z is on the safe side
     of stop_z (not past it in the cutting direction)."""
-    z, _ = _make_z_axis(scaled_position=12.7)
-    controller = _make_controller(stop_z=10.0, retract_enabled=False, els_forward=True)
+    z, _ = _make_z_axis(scaled_position=unsafe_z)
+    controller = _make_controller(stop_z=10.0, retract_enabled=False, els_forward=els_forward)
     fsm = _build_fsm(z=z, controller=controller)
-    # els_forward=True → cut_dir=+1, stop_z=10, z=12.7 → (12.7-10)*1 = 2.7 > 0 → NOT safe
     assert not fsm.is_ready_to_cut()
-    # Move Z to safe side (below stop_z when cutting direction is +1)
-    z.scaledPosition = 8.0
+    z.scaledPosition = safe_z
     assert fsm.is_ready_to_cut()
 
 
-def test_cut_blocked_in_stop_only_mode_when_z_past_stop():
+@pytest.mark.parametrize("els_forward, past_stop_z", [(True, 5.0), (False, 15.0)])
+def test_cut_blocked_in_stop_only_mode_when_z_past_stop(els_forward, past_stop_z):
     """In stop-only mode, cut is blocked when Z has already overshot stop_z."""
-    z, _ = _make_z_axis(scaled_position=15.0)
-    controller = _make_controller(stop_z=10.0, retract_enabled=False, els_forward=True)
+    z, _ = _make_z_axis(scaled_position=past_stop_z)
+    controller = _make_controller(stop_z=10.0, retract_enabled=False, els_forward=els_forward)
     fsm = _build_fsm(z=z, controller=controller)
-    # cut_dir=+1, z=15, stop_z=10 → already past stop
     assert not fsm.is_ready_to_cut()
 
 
-def test_cut_blocked_in_stop_only_mode_when_z_at_stop():
+@pytest.mark.parametrize("els_forward, safe_z", [(True, 10.1), (False, 9.9)])
+def test_cut_blocked_in_stop_only_mode_when_z_at_stop(els_forward, safe_z):
     """In stop-only mode, cut is blocked when Z is exactly at stop_z.
     The cut should only be allowed when Z is strictly before the stop
-    position in the cutting direction."""
+    position in the cutting direction. diff=0 at the stop regardless of
+    cut_dir's sign, so this half is direction-invariant; only the
+    "move to the safe side" half differs by direction."""
     z, _ = _make_z_axis(scaled_position=10.0)
-    controller = _make_controller(stop_z=10.0, retract_enabled=False, els_forward=True)
+    controller = _make_controller(stop_z=10.0, retract_enabled=False, els_forward=els_forward)
     fsm = _build_fsm(z=z, controller=controller)
-    # cut_dir=+1, z=10, stop_z=10 → exactly at stop → NOT ready
     assert not fsm.is_ready_to_cut()
-    # Move Z to safe side
-    z.scaledPosition = 9.9
+    z.scaledPosition = safe_z
     assert fsm.is_ready_to_cut()
 
 
@@ -348,6 +437,41 @@ def test_on_enter_retracting_pushes_steps_to_go():
     fsm.retract()   # is_ready_to_retract: check_x_retract defaults False → allowed
     assert fsm.state == "retracting"
     hal.set_steps_to_go.assert_called_once_with(-20)
+
+
+def test_retract_allowed_when_x_encoder_is_negative():
+    """The X gate is opt-in via check_x_retract, which is off.
+
+    Regression: Python's conditional-expression precedence made the original
+    one-liner parse as `(not check_x_retract or ...) if inside else (x_pos >=
+    safe_x)`, so with `inside` False the opt-in flag was ignored and the gate
+    reduced to a raw-encoder-count `x_pos >= 0`. Every retract was refused on a
+    machine whose cross-slide encoder sat below its power-on zero, which parked
+    the bar in "Retracting…" forever. The other retract tests all used the
+    default x encoder of 0, which passes `>= 0` — they could not catch this.
+    """
+    x, _ = _make_x_axis(encoder_current=-4200)
+    fsm = _build_fsm(x=x)
+    fsm.enable()
+    assert fsm.is_ready_to_retract() is True
+    fsm.retract()
+    assert fsm.state == "retracting"
+
+
+def test_retract_refused_when_no_retract_target_committed():
+    """With no committed Start Z there is nothing to move to. The FSM must stay
+    in 'stopped': entering 'retracting' and then refusing to move binds no move
+    poller, and retract_done is only ever published by that poller — so the
+    state would be terminal."""
+    hal = MagicMock()
+    controller = _make_controller()
+    controller.retract_z_encoder = None
+    fsm = _build_fsm(hal=hal, controller=controller)
+    fsm.enable()
+    hal.reset_mock()
+    fsm.retract()
+    assert fsm.state == "stopped"
+    hal.set_steps_to_go.assert_not_called()
 
 
 # ─── retract backlash compensation ─────────────────────────────────────────
@@ -559,3 +683,82 @@ def test_x_axis_reflects_later_axis_assignment():
     x, _ = _make_x_axis()
     els.get_x_axis.return_value = x
     assert fsm.x_axis is x
+
+
+# ─── connect-time reconciliation of firmware-retained elsStop state ────────
+# Firmware retains elsStop.{enable, active, stopPosition} across app restarts
+# (observed on the real machine 2026-08-01). reconcile_firmware_on_connect
+# drives the retained block to match THIS session's FSM state; without it a
+# fresh session inherits the previous session's armed stop and the feed guard
+# (which trusts the firmware enable bit) silently skips its confirmation.
+
+def test_reconcile_clears_retained_arm_when_disabled():
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    assert fsm.state == "disabled"
+    fsm.reconcile_firmware_on_connect()
+    hal.set_enable.assert_called_once_with(False)
+    hal.set_active.assert_called_once_with(False)
+    # Clearing must not write a stop position — there is nothing to arm.
+    hal.set_stop_position.assert_not_called()
+
+
+def test_reconcile_clears_retained_arm_in_alarm():
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.enable()
+    fsm.fault()
+    assert fsm.state == "alarm"
+    hal.reset_mock()
+    fsm.reconcile_firmware_on_connect()
+    hal.set_enable.assert_called_once_with(False)
+    hal.set_active.assert_called_once_with(False)
+
+
+def test_reconcile_rearms_engaged_idle_with_committed_stop():
+    """Engaged-idle with a committed stop and Z on the safe side: a reconnect
+    (possibly a firmware reboot that lost our arm) must re-push and re-arm."""
+    hal = MagicMock()
+    z, _ = _make_z_axis(scaled_position=50.0)  # forward: safe side is above stop
+    controller = _make_controller(stop_z=42.0, els_forward=True)
+    fsm = _build_fsm(z=z, hal=hal, controller=controller)
+    fsm.enable()
+    hal.reset_mock()
+    fsm.reconcile_firmware_on_connect()
+    hal.set_stop_position.assert_called_with(controller.stop_z_encoder)
+    hal.set_active.assert_called_once_with(True)
+    hal.set_enable.assert_called_once_with(True)
+    hal.set_stop_direction.assert_called()
+
+
+def test_reconcile_clears_when_engaged_but_no_committed_stop():
+    """Engaged-idle but nothing committed THIS session: the retained arm must
+    be cleared, not trusted — this is the exact stale-shoulder scenario."""
+    hal = MagicMock()
+    controller = _make_controller()
+    controller.stop_z_encoder = None
+    fsm = _build_fsm(hal=hal, controller=controller)
+    fsm.enable()
+    hal.reset_mock()
+    fsm.reconcile_firmware_on_connect()
+    hal.set_enable.assert_called_once_with(False)
+    hal.set_active.assert_called_once_with(False)
+    hal.set_stop_position.assert_not_called()
+
+
+def test_reconcile_hands_off_mid_cut():
+    """Reconnect while cutting: motion may be live and the firmware's armed
+    stop is actively protecting it — reconcile must write NOTHING."""
+    hal = MagicMock()
+    z, _ = _make_z_axis(scaled_position=50.0)
+    controller = _make_controller(stop_z=42.0, els_forward=True)
+    fsm = _build_fsm(z=z, hal=hal, controller=controller)
+    fsm.enable()
+    fsm.cut()
+    assert fsm.state == "cutting"
+    hal.reset_mock()
+    fsm.reconcile_firmware_on_connect()
+    hal.set_enable.assert_not_called()
+    hal.set_active.assert_not_called()
+    hal.set_stop_position.assert_not_called()
+    hal.set_stop_direction.assert_not_called()

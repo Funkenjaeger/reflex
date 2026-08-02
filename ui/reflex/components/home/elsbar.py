@@ -28,7 +28,10 @@ class ElsBar(BoxLayout, SavingDispatcher):
     enable_advanced = BooleanProperty(False)
 
     def _get_move_type(self):
-        if "Thread" in self.mode_name:
+        # Classify via the feeds table's structured mode field, not the display
+        # name — see feeds.is_threading_table (a table rename must not silently
+        # flip ELS between thread and feed behavior).
+        if feeds.is_threading_table(self.mode_name):
             return "thread_rh" if self.els_forward else "thread_lh"
         else:
             return "turn_in" if self.els_forward else "turn_out"

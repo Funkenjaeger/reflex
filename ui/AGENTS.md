@@ -42,7 +42,37 @@ For opencode, this means configuring `external_directory` permission in your pro
 - The full test suite takes ~5 minutes and WILL time out with the default 120s timeout — use at least 360000ms.
 - Always ask the user before running the full test suite — it's often not worth it for small changes.
 - Running targeted subsets (e.g., `pytest tests/fsms/test_els_fsm.py`) is fine to verify specific changes.
-- Tests hang on headless Linux due to Kivy display init — may need `xvfb-run` or similar.
+- Tests hang on headless Linux due to Kivy display init — the repo-root `conftest.py` now forces
+  Kivy's mock GL/window backends (`KIVY_GL_BACKEND=mock`, `KIVY_WINDOW=mock`) for the whole suite,
+  so `xvfb-run` is no longer needed and collection is fast (real WSLg GL init took ~135s).
+
+### System tests (emulator-backed) — opt-in
+
+`tests/system/` drives the REAL reflex-ui FSM/dispatcher stack against the REAL reflex-fw emulator
+(real firmware C, not mocks) over a real PTY Modbus link, to cover actual servo/DRO motion
+direction across ELS mode and machine-wiring polarity.
+
+- **Opt-in and excluded by default.** They carry the `system` marker and `pyproject.toml` sets
+  `addopts = "-m 'not system'"`, so a plain `uv run pytest` skips them (and never builds/launches
+  the emulator). Run them explicitly:
+  ```bash
+  REFLEX_FW_DIR=/mnt/c/projects/embedded/reflex-fw uv run pytest -m system tests/system/
+  ```
+- **WSL/Linux only.** The emulator's Modbus link is a PTY (`/dev/pts/N`); native Windows can't open
+  it, and the venv is a WSL venv. Run from a WSL shell.
+- **Requires the reflex-fw emulator.** Set `REFLEX_FW_DIR` (defaults to `/mnt/c/projects/embedded/reflex-fw`).
+  The `emulator_binary` fixture builds it if missing and rebuilds when firmware/emulator sources are
+  newer than the binary; it `pytest.skip`s cleanly if reflex-fw isn't checked out. The reflex-fw git
+  SHA is printed in the pytest header for run provenance.
+- **Also depends on the reflex-fw "Path B" physics change** (physics-level wiring signs) and the
+  `EMU_NO_AUTO_RETRACT` serve-mode flag — without them the polarity matrix / retract tests won't
+  behave. Match reflex-fw to the branch that carries these.
+
+### Register-map contract test (default suite)
+
+`tests/test_register_map_contract.py` checks that reflex-ui's hand-maintained register definitions
+(`reflex/utils/devices.py`) still match the firmware's `Ramps.h` struct layout, byte-for-byte. It is
+NOT `system`-marked (fast, emulator-free) so it gates every default run; it skips if reflex-fw is absent.
 
 ## Design Patterns
 
