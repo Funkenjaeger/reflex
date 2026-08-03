@@ -30,19 +30,13 @@ def offset_provider():
 
 @pytest.fixture
 def servo(board, formats, tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "reflex.dispatchers.saving_dispatcher.Path.home",
-        lambda: tmp_path,
-    )
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
     return ServoDispatcher(board=board, formats=formats, id_override="test_servo")
 
 
 @pytest.fixture
 def inputs(board, tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "reflex.dispatchers.saving_dispatcher.Path.home",
-        lambda: tmp_path,
-    )
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
     result = []
     for i in range(4):
         inp = InputDispatcher(
@@ -55,10 +49,7 @@ def inputs(board, tmp_path, monkeypatch):
 
 @pytest.fixture
 def axis(board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "reflex.dispatchers.saving_dispatcher.Path.home",
-        lambda: tmp_path,
-    )
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
     return AxisDispatcher(
         board=board, formats=formats, servo=servo,
         offset_provider=offset_provider, inputs=inputs,
@@ -69,10 +60,7 @@ def axis(board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
 
 def _make_axis(board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch, transform, id_override):
     """Helper to create an AxisDispatcher with tmp_path monkeypatched."""
-    monkeypatch.setattr(
-        "reflex.dispatchers.saving_dispatcher.Path.home",
-        lambda: tmp_path,
-    )
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
     return AxisDispatcher(
         board=board, formats=formats, servo=servo,
         offset_provider=offset_provider, inputs=inputs,
@@ -514,10 +502,7 @@ class TestSyncConflict:
 
 class TestPersistence:
     def test_axis_saves_and_restores_name(self, board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "reflex.dispatchers.saving_dispatcher.Path.home",
-            lambda: tmp_path,
-        )
+        monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
         ax = AxisDispatcher(
             board=board, formats=formats, servo=servo,
             offset_provider=offset_provider, inputs=inputs,
@@ -546,10 +531,7 @@ class TestPersistence:
         assert data["transform_config"]["contributions"] == [0, 2]
 
     def test_sum_transform_survives_round_trip(self, board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "reflex.dispatchers.saving_dispatcher.Path.home",
-            lambda: tmp_path,
-        )
+        monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
         ax = AxisDispatcher(
             board=board, formats=formats, servo=servo,
             offset_provider=offset_provider, inputs=inputs,
@@ -566,10 +548,7 @@ class TestPersistence:
         assert ax2.transform.contributions == (1, 3)
 
     def test_transform_change_then_property_change_preserves_both(self, board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "reflex.dispatchers.saving_dispatcher.Path.home",
-            lambda: tmp_path,
-        )
+        monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
         ax = AxisDispatcher(
             board=board, formats=formats, servo=servo,
             offset_provider=offset_provider, inputs=inputs,
@@ -609,10 +588,7 @@ class TestPersistence:
 
     def test_offsets_persist_correctly(self, board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
         """Offsets (including non-zero slots) survive save/restore."""
-        monkeypatch.setattr(
-            "reflex.dispatchers.saving_dispatcher.Path.home",
-            lambda: tmp_path,
-        )
+        monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
         ax = AxisDispatcher(
             board=board, formats=formats, servo=servo,
             offset_provider=offset_provider, inputs=inputs,
@@ -782,10 +758,7 @@ class TestAbsOffset:
 
     def test_abs_offset_persisted(self, board, formats, servo, offset_provider, inputs, tmp_path, monkeypatch):
         """abs_offset survives save/restore cycle."""
-        monkeypatch.setattr(
-            "reflex.dispatchers.saving_dispatcher.Path.home",
-            lambda: tmp_path,
-        )
+        monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
         ax = AxisDispatcher(
             board=board, formats=formats, servo=servo,
             offset_provider=offset_provider, inputs=inputs,

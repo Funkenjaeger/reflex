@@ -12,6 +12,7 @@ from reflex.dispatchers.input import InputDispatcher
 from reflex.dispatchers.saving_dispatcher import read_settings
 from reflex.dispatchers.servo import ServoDispatcher
 from reflex.utils.communication import ConnectionManager
+from reflex.utils.paths import config_dir
 
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
@@ -56,7 +57,7 @@ class Board(EventDispatcher):
         Clock.schedule_interval(self.blinker, 1.0 / 4)
 
     def _settings_folder(self) -> Path:
-        return Path.home() / ".config" / "reflex"
+        return config_dir()
 
     def _create_axes(self):
         """Create AxisDispatchers, migrating from scale configs if needed."""

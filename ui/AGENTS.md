@@ -194,7 +194,10 @@ Every UI component follows this structure:
 
 - `config.ini` stores device connection settings and basic prefs (loaded via Kivy's ConfigParser)
 - `SavingDispatcher` YAML files store per-component settings (formats, scale configs, etc.)
-- Settings path: `~/.config/reflex/`
+- Settings path: `~/.config/reflex/`, overridable with `REFLEX_CONFIG_DIR`
+  (`reflex/utils/paths.py`). The Pi deployment sets it to `/var/lib/reflex-config`
+  so the commissioned machine config isn't stranded in root's home — see
+  `deploy/start.sh`.
 
 ## Git and Releases
 

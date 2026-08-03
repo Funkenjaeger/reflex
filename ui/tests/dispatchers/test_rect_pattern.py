@@ -7,10 +7,7 @@ from reflex.dispatchers.rect_pattern import RectPatternDispatcher
 
 @pytest.fixture
 def pattern(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "reflex.dispatchers.saving_dispatcher.Path.home",
-        lambda: tmp_path,
-    )
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
     p = RectPatternDispatcher(id_override="test_rect")
     p.recalculate()
     return p

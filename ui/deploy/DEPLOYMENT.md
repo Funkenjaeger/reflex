@@ -145,6 +145,12 @@ sudo systemctl enable --now rcp.service
 
 ## Notes / gotchas
 
+- **Persisted settings live in `/var/lib/reflex-config`**, not `/root/.config/reflex`.
+  `start.sh` exports `REFLEX_CONFIG_DIR` to put the commissioned machine config
+  somewhere the operator account can read, diff and back up. Migrating an existing
+  install: stop the service, `cp -a /root/.config/reflex/. /var/lib/reflex-config/`,
+  then start — copy rather than move, so the old directory remains a rollback until
+  the new location is verified.
 - **Run-user is root**, matching rcp — required for KMS/DRM and `/var/log` writes.
   Don't switch to a non-root user without solving DRM/`video`+`render` group access
   and a writable log dir.
