@@ -4,6 +4,7 @@ import pstats
 import time
 from collections import deque
 from datetime import datetime
+from pathlib import Path  # _save_profile's return annotation, evaluated at import
 
 from kivy.clock import Clock
 from kivy.logger import Logger
