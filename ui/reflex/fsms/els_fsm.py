@@ -55,10 +55,6 @@ class ElsFsm:
             queued=True,
         )
         
-        self.safe_x = 0 # TODO: move to controller
-        self.check_x_retract = False # TODO: move to controller
-        self.inside = False # TODO: move to controller
-
         # Whether the leadscrew nut is already at the retract-side wall.
         # The firmware does a backlash takeup in the cutting direction at
         # cut start, leaving the nut against the cut-side wall. The first
@@ -255,27 +251,21 @@ class ElsFsm:
         self.board.servo.stop_feed()
         self.hal.set_enable(False)
 
-    # ——— condition-checking methods ———    
+    # ——— condition-checking methods ———
     def is_ready_to_retract(self):
-        # `check_x_retract` is the opt-in for this gate, but Python's
-        # conditional-expression precedence made the original one-liner parse as
-        #     (not check_x_retract or x_pos <= safe_x) if inside else (x_pos >= safe_x)
-        # so with `inside` False (its only value — nothing ever sets it) the flag
-        # was ignored entirely and the gate reduced to `x_pos >= 0` on a RAW
-        # ENCODER COUNT. Any machine whose cross-slide encoder happened to sit
-        # below its power-on zero therefore refused every retract: the domain FSM
-        # stayed in 'stopped' while the UI sat in "Retracting…" forever.
-        #
-        # The real, unit-correct X gate lives in the controller
-        # (_x_clear_of_start_dia, surfaced as "Move X clear of start diameter,
-        # then retract"); this one is vestigial and stays off until safe_x is
-        # given real units. See the TODO on safe_x/check_x_retract/inside.
-        if not self.check_x_retract:
-            return True
-        x_pos = self._cross_slide_input.encoderCurrent
-        # TODO: need to align units (encoder counts vs in/mm)
-        return x_pos <= self.safe_x if self.inside else x_pos >= self.safe_x
-
+        # Domain-level X retract gate — REMOVED. It duplicated, in raw encoder
+        # counts with no unit conversion, protection the controller already
+        # provides correctly in display units: _x_clear_of_start_dia (surfaced
+        # as "Move X clear of start diameter, then retract" via
+        # ui_controller._apply_policy's waiting_to_retract branch, and enforced
+        # again by may_retract()/has_retract_target at the FSM boundary). The
+        # old check_x_retract/safe_x/inside trio here defaulted to a no-op
+        # (check_x_retract=False) and, when an earlier version of this
+        # one-liner accidentally made it live, refused every retract on a
+        # machine whose cross-slide encoder sat below its power-on zero — see
+        # git history (is_ready_to_retract, pre-e3cbc5a) for the precedence
+        # bug this replaced. This transition condition is now unconditional.
+        return True
 
     def has_retract_target(self):
         """True iff the operator has committed a retract target. Without one
