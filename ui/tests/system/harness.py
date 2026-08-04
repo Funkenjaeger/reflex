@@ -303,9 +303,9 @@ class SystemHarness:
     def set_input_reverse(self, scale_index: int, reverse: bool):
         self._input(scale_index).reverse = reverse
 
-    def commission_geometry(self):
-        """Commission the UI's machine geometry to the emulator reference
-        machine (reflex-fw emulator/config/lathe.toml), through the production
+    def commission_geometry(self, *, z_counts_per_mm=400, x_counts_per_mm=400,
+                            spindle_ppr=4000, leadscrew_steps=800):
+        """Commission the UI's machine geometry, through the production
         settings write paths. Call AFTER configure() — the spindle sync-ratio
         push below needs the spindle axis role assigned.
 
@@ -315,7 +315,12 @@ class SystemHarness:
         zCountsPerPitch) physically meaningless relative to the emulator's
         physics — its dashboard flags exactly this ("WARN geom mismatch",
         dashboard.cpp geometry cross-check). With it, scaled positions, spans
-        and tolerances in tests are REAL MILLIMETERS of the reference machine:
+        and tolerances in tests are REAL MILLIMETERS of the machine the
+        emulator config was built to match.
+
+        The keyword-only params default to the emulator REFERENCE machine's
+        geometry (reflex-fw emulator/config/lathe.toml) — every existing
+        caller that doesn't pass overrides gets exactly the prior behavior:
 
           * Z & X scales: 400 counts/mm  → input ratio 1/400 mm per count
           * Spindle: 4000 counts/rev (encoder_ppr=4000, gear 1:1)
@@ -323,9 +328,19 @@ class SystemHarness:
           * Servo leadscrew: 8 TPI (0.125 in = 3.175 mm) at 800 steps/rev
                      → exactly 127/32000 mm per step (0.00396875)
 
-        Exactness: 0.125 is binary-exact, so configure_lead_screw_ratio's
-        Fraction chain ((1/8) × 254/10 / 800) yields exactly 127/32000 with no
-        float error (asserted below). Scale ratios are exact int properties.
+        To commission a DIFFERENT machine's geometry (e.g. the real elspi
+        lathe: z_counts_per_mm=200, spindle_ppr=6144, leadscrew_steps=1600),
+        pass the overrides here AND patch the emulator's own TOML to match via
+        tests/system/wiring.py's make_config (see test_els_elspi_geometry.py)
+        — otherwise the UI and the emulator's physics disagree by whatever
+        ratio separates the two geometries (see the fidelity-gap note in
+        test_els_real_config.py, which mirrors only the reference geometry
+        for exactly this reason).
+
+        Exactness: 0.125 in is binary-exact, so configure_lead_screw_ratio's
+        Fraction chain ((1/8) × 254/10 / leadscrew_steps) yields exactly
+        127/(40*leadscrew_steps) with no float error (asserted below). Scale
+        ratios are exact int properties.
 
         Real-units consequences tests must respect:
           * The reference machine starts at Z=0 mm with min_position_mm=-5, and
@@ -335,15 +350,18 @@ class SystemHarness:
             geometry): call set_feed() after this, or the spindle axis's
             default syncRatio (360/100, a rotary-axis default) is what feeds.
         """
-        for index in (self.Z_SCALE_INDEX, self.X_SCALE_INDEX):
+        for index, counts_per_mm in (
+            (self.Z_SCALE_INDEX, z_counts_per_mm),
+            (self.X_SCALE_INDEX, x_counts_per_mm),
+        ):
             inp = self._input(index)
             inp.ratioNum = 1
-            inp.ratioDen = 400
-            inp.stepsPerMM = 400
+            inp.ratioDen = counts_per_mm
+            inp.stepsPerMM = counts_per_mm
 
         spindle = self._input(self.SPINDLE_SCALE_INDEX)
         spindle.spindleMode = True
-        spindle.encoder_ppr = 4000
+        spindle.encoder_ppr = spindle_ppr
         spindle.gear_ratio_num = 1
         spindle.gear_ratio_den = 1
 
@@ -351,16 +369,20 @@ class SystemHarness:
         servo.elsMode = True            # linear leadscrew, not rotary indexing
         servo.leadScrewPitchIn = True   # 8 TPI leadscrew: pitch entered in inches
         servo.leadScrewPitch = 0.125
-        servo.leadScrewPitchSteps = 800
+        servo.leadScrewPitchSteps = leadscrew_steps
         # elsMode isn't bound to configure_lead_screw_ratio (only the pitch
         # properties are), so run the production handler explicitly in case
         # every pitch property above was already at its target value.
         servo.configure_lead_screw_ratio(servo, None)
 
         servo_ratio = Fraction(servo.ratioNum, servo.ratioDen)
-        assert servo_ratio == Fraction(127, 32000), (
+        # 0.125 in = 127/40 mm, so mm/step = (127/40) / leadscrew_steps. Kept
+        # as an assertion (not assumed) — it's the guard that the Fraction
+        # chain stayed exact for WHATEVER leadscrew_steps was passed in.
+        expected_ratio = Fraction(127, 40 * leadscrew_steps)
+        assert servo_ratio == expected_ratio, (
             f"leadscrew commissioning is not exact: got {servo_ratio}, "
-            f"want 127/32000 (0.00396875 mm/step)"
+            f"want {expected_ratio} ({float(expected_ratio)} mm/step)"
         )
 
         # The connect-time sync-ratio push ran against the hermetic defaults
