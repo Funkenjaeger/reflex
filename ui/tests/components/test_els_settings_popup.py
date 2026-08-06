@@ -26,10 +26,15 @@ import pytest
 
 from reflex.components.home.els_settings_popup import ElsSettingsPopup
 
-# The real elspi machine's commissioned servo ratio (see
-# tests/system/harness.py commission_geometry: 127/32000 mm/step for the 8 TPI
-# leadscrew there). The orchestrator's spec for this test file uses 127/64000
-# instead -- keep it exactly as specified.
+# Servo scale the converters below are exercised at: 127/64000 mm/step. That
+# is not a machine property in its own right -- it FOLLOWS from an 8 TPI
+# leadscrew (0.125 in pitch) driven at 1600 steps/rev, which is the REAL elspi
+# machine's commissioned step count. The EMULATOR REFERENCE machine uses 800
+# steps/rev, i.e. 127/32000 mm/step (the defaults in tests/system/harness.py
+# commission_geometry) -- so 127/64000 here is the real-machine figure and
+# 127/32000 is the emulator's, not the other way round.
+# elspi's full commissioned geometry: AGENTS.md ("elspi commissioned
+# geometry"), proven end to end by tests/system/test_els_elspi_geometry.py.
 REAL_RATIO_NUM = 127
 REAL_RATIO_DEN = 64000
 

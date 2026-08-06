@@ -11,6 +11,13 @@ Z=scale1/X=scale2.
 
 ── Fidelity gaps (deliberate, and load-bearing for the assertions below) ──
 
+Gaps #1-#3 are the geometry this test does NOT run at elspi's real values:
+commission_geometry() is called with ALL defaults below, which are the
+EMULATOR REFERENCE machine's numbers. elspi's real commissioned geometry is
+stated in full in AGENTS.md ("elspi commissioned geometry") and proven end to
+end by tests/system/test_els_elspi_geometry.py -- treat that test as the
+in-repo source of truth for the real machine's numbers.
+
 1. Leadscrew steps/rev. The real machine's UI-side servo geometry is ratio
    127/64000 mm/step (leadScrewPitch=0.125in, leadScrewPitchIn=True,
    leadScrewPitchSteps=1600 -- a finer microstep count than the emulator
@@ -27,7 +34,24 @@ Z=scale1/X=scale2.
    (0.125in) and leadScrewPitchIn (True) themselves ARE real-machine-accurate
    -- only the step count differs.
 
-2. Backlash-compensation magnitude vs. the emulator's simulated nut play.
+2. Z encoder scale. commission_geometry() is called with all defaults, so the
+   Z saddle input is commissioned at the emulator reference's 400 counts/mm
+   (1/400 mm per count). The real elspi Z scale is 200 counts/mm. Same
+   reasoning as #1: moving the UI side alone to 1/200 would put every
+   FSM-computed count-domain value at exactly 2x the emulator's own physics.
+   (elspi's X scale, by contrast, genuinely IS 400 counts/mm on both machines
+   -- see COUNTS_PER_MM below -- so only Z deviates here.)
+
+3. Spindle PPR. Same call, same defaults: the spindle input is commissioned at
+   the emulator reference's 4000 counts/rev, where the real elspi spindle
+   encoder is 6144 PPR. Spindle PPR is one of the inputs the sync ratio is
+   computed from, so a UI-only change would put the pushed sync ratio out of
+   step with the encoder the emulator actually simulates.
+   test_els_elspi_geometry.py is the test that changes BOTH sides -- UI
+   commissioning AND the emulator's own TOML physics -- and therefore does run
+   at elspi's real Z scale, spindle PPR and leadscrew step count.
+
+4. Backlash-compensation magnitude vs. the emulator's simulated nut play.
    els_backlash_steps=403 is a REQUIRED real-machine value (Evan's measured
    compensation) and is set as-is. At the emulator-coherent ratio above, 403
    steps is a commanded ~1.60 mm of compensation motion on the first retract
@@ -43,14 +67,14 @@ Z=scale1/X=scale2.
    incidental mismatch), the retract assertions use a generous, justified
    tolerance and print/report the observed error for calibration.
 
-3. is_threading source. The harness has no ElsBar/ElsAdvancedBar (the Kivy
+5. is_threading source. The harness has no ElsBar/ElsAdvancedBar (the Kivy
    widget layer) that would derive is_threading from a feeds-table name via
    feeds.is_threading_table(); harness.configure(is_threading=...) IS the
    closest real-machine-equivalent path exposed to system tests (every
    existing reference test that needs is_threading uses this same
    parameter), so that path is used here directly.
 
-4. Feed selection. harness.set_feed() writes spindle_axis.syncRatioNum/Den
+6. Feed selection. harness.set_feed() writes spindle_axis.syncRatioNum/Den
    using exactly the math in ElsBar.update_feeds_ratio (reflex/components/
    home/elsbar.py) -- verified by reading both. THREAD_IN "16" (16 TPI,
    Fraction(254, 160) mm/rev, reflex/feeds.py) is used, consistent with the
@@ -74,10 +98,14 @@ pytestmark = pytest.mark.system
 # emulator must not fight it with a simulated hand-retract on ELS stop.
 _ENV = {"env": {"EMU_RPM": "30", "EMU_NO_AUTO_RETRACT": "1"}}
 
-# Both the commissioned UI ratio (SystemHarness.commission_geometry, 1/400
-# mm/count) and the emulator's own [z_axis]/[cross_slide] encoder_counts_per_mm
-# are exactly 400 -- unlike the leadscrew ratio (fidelity gap #1 above), the
-# scale ratios have no real-vs-emulator mismatch to report.
+# X-channel readback scale, used only by _move_x_and_wait below to convert a
+# commanded X position in mm into the raw firmware count it should settle at.
+# 400 counts/mm is correct for BOTH machines: the commissioned UI ratio
+# (SystemHarness.commission_geometry, 1/400 mm/count), the emulator's own
+# [cross_slide] encoder_counts_per_mm, and the real elspi cross-slide all
+# agree at 400. Only the X scale matches, though -- elspi's Z scale is 200
+# counts/mm against the emulator's 400 (fidelity gap #2 above), so this
+# constant must not be reused as a Z conversion.
 COUNTS_PER_MM = 400
 
 
@@ -101,10 +129,13 @@ def test_real_machine_config_wizard_threading_retract(harness):
     h = harness
 
     # ── Commission: the real machine's configuration (see module docstring
-    # for the two fidelity gaps this necessarily keeps) ─────────────────────
+    # for the six fidelity gaps this necessarily keeps) ─────────────────────
     h.configure(is_threading=True, retract_enabled=True, wizard_enabled=True,
                 els_forward=True)
     h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
+    # All defaults => emulator-reference geometry on all three axes of gaps
+    # #1-#3: leadscrew 800 steps/rev, Z 400 counts/mm, spindle 4000 PPR (elspi
+    # is 1600, 200 and 6144). X's 400 counts/mm is real-machine-accurate.
     h.commission_geometry()
     h.set_feed(Fraction(254, 160))   # Thread IN "16" (16 TPI) -- reflex/feeds.py
     h.els.els_backlash_steps = 403   # real-machine value; REQUIRED as-is
@@ -234,7 +265,7 @@ def test_real_machine_config_wizard_threading_retract(harness):
     # ── Cut runs to the ELS stop ──────────────────────────────────────────
     # Expected duration: feed = pitch(1.5875mm) * RPM(30)/60 ~= 0.79mm/s;
     # span(in) * 25.4 / 0.79 ~= a few seconds, plus pre-cut backlash takeup
-    # (fidelity gap #2) -- comfortably under the 20s timeout used throughout
+    # (fidelity gap #4) -- comfortably under the 20s timeout used throughout
     # the suite.
     reached = h.wait_until(lambda: h.ui_fsm.state == "in_cycle.waiting_to_retract",
                             timeout_s=20)
@@ -285,7 +316,7 @@ def test_real_machine_config_wizard_threading_retract(harness):
     assert h.controller.instruction_text == "Ready to retract"
 
     # ── Retract: host-driven (retract_enabled), first-ever exercise of the
-    # 403-step backlash compensation path (see fidelity gap #2) ─────────────
+    # 403-step backlash compensation path (see fidelity gap #4) ─────────────
     h.trigger_retract()
     assert h.ui_fsm.state == "in_cycle.retracting"
     done = h.wait_until(lambda: h.els_fsm.state == "stopped", timeout_s=20)
@@ -313,7 +344,7 @@ def test_real_machine_config_wizard_threading_retract(harness):
     # No gross under/overshoot. Generous, justified tolerance: the 403-step
     # compensation implies ~1.60mm (~0.063in) of commanded motion versus the
     # emulator's ~0.6mm (~0.024in) simulated nut-play window (fidelity gap
-    # #2) -- an expected excess of roughly 0.04in, plus rounding/servo-step
+    # #4) -- an expected excess of roughly 0.04in, plus rounding/servo-step
     # granularity. 0.15in (~3.8mm) comfortably bounds "a real bug" (a
     # runaway, or a no-op) while tolerating the documented mismatch; the
     # print above reports the exact observed value regardless of pass/fail.

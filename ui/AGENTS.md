@@ -37,6 +37,30 @@ For opencode, this means configuring `external_directory` permission in your pro
 - To launch the UI: `DISPLAY=:0 SDL_AUDIODRIVER=dummy KIVY_INPUT=mouse uv run python -m reflex.main --size=1024x600`
   (See `runme.sh` for the full command — adapt it as needed for your context.)
 
+## elspi commissioned geometry
+
+`elspi` is the real commissioned lathe this project runs on. Its live settings live under
+`REFLEX_CONFIG_DIR` on the Pi (outside git), so these primitives are recorded here. The
+emulator reference machine (reflex-fw `emulator/config/lathe.toml`, and the defaults of
+`SystemHarness.commission_geometry`) is a **different** machine — most of the system suite
+runs at the reference values, not these:
+
+| Primitive | elspi (real) | Emulator reference |
+|---|---|---|
+| Z encoder scale | 200 counts/mm | 400 counts/mm |
+| X encoder scale | 400 counts/mm | 400 counts/mm (matches) |
+| Spindle encoder | 6144 PPR | 4000 PPR |
+| Leadscrew | 8 TPI (0.125 in pitch), 1600 steps/rev | 8 TPI, 800 steps/rev |
+
+There is deliberately **no sync ratio recorded here**: the sync ratio is computed
+dynamically per operation from the machine settings above (spindle PPR included) *and* the
+selected feed rate / thread pitch, so it is a property of a job, not of the machine. The
+same goes for servo mm/step values such as 127/64000 — that follows from the leadscrew
+pitch and steps/rev above, it is not an independent setting.
+`tests/system/test_els_elspi_geometry.py` exercises a full cut/stop/retract cycle at these
+values (UI commissioning *and* the emulator's own physics patched to match);
+`tests/system/test_els_real_config.py` documents which of them it deliberately does not use.
+
 ## Testing
 
 - The full test suite takes ~5 minutes and WILL time out with the default 120s timeout — use at least 360000ms.
