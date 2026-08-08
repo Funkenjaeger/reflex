@@ -36,6 +36,18 @@
                 value: root.backlash_mm
                 on_value: root.backlash_mm = self.value
 
+            NumberItem:
+                name: "Cal sweep limit (mm)"
+                help_file: "els_backlash_cal.md"
+                value: root.cal_ceiling_mm
+                on_value: root.cal_ceiling_mm = self.value
+
+            NumberItem:
+                name: "Cal motion threshold (Z counts)"
+                help_file: "els_backlash_cal.md"
+                value: root.cal_motion_thresh_counts
+                on_value: root.cal_motion_thresh_counts = self.value
+
             ButtonItem:
                 name: "Measure backlash"
                 value: "Calibrate"

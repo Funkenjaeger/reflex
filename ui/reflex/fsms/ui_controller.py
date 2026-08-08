@@ -121,6 +121,7 @@ class ElsUiController(EventDispatcher):
         # re-renders it — the physical shoulder never moves — instead of
         # silently corrupting it (the old scaled-storage bug). `*_valid` gates a
         # never-set target; only never-set and an ELS Z-axis remap invalidate.
+        self._prev_takeup_seq = 0         # edge-detect baseline for takeup outcomes
         self._stop_z_encoder = None       # int leadscrew encoder count, or None
         self._retract_z_encoder = None
         self._stop_z_committed = False
@@ -180,6 +181,7 @@ class ElsUiController(EventDispatcher):
         self._board.bind(update_tick=self._poll_carriage_retracted)
         self._board.bind(update_tick=self._poll_apply_policy)
         self._board.bind(update_tick=self._poll_reframe_targets)
+        self._board.bind(update_tick=self._poll_takeup_outcome)
 
         # 7. Re-arm HAL when mode flags change so firmware tracks the operator.
         self.bind(retract_enabled=self._on_modes_changed,
@@ -238,6 +240,41 @@ class ElsUiController(EventDispatcher):
             # (non-wizard auto-advances to in_cycle.waiting_to_cut).
             self._sync_ui_state_to_modes()
         self._apply_policy()
+
+    def _poll_takeup_outcome(self, *args):
+        """Log every backlash take-up outcome so it is visible AT THE MACHINE.
+
+        At the lathe there is the touchscreen UI and the log viewer, not a
+        register browser — so anything worth knowing during commissioning has to
+        reach one of those or it may as well not exist.
+
+        The headroom figure is the reason this exists. A REFUSED take-up already
+        names both numbers in its message, but a successful one says nothing, so
+        there is no way to tell a gate with comfortable margin from one sitting a
+        single count above its threshold. The latter will start intermittently
+        refusing good passes later, and without this line the first evidence
+        would be a machine that mysteriously stops working.
+
+        Edge-detected on takeupSeq, which increments once per OUTCOME (not per
+        tick, and not per take-up attempt).
+        """
+        seq = self._hal.read_takeup_seq()
+        if seq == self._prev_takeup_seq:
+            return
+        self._prev_takeup_seq = seq
+
+        result = self._hal.read_takeup_result()
+        moved = self._hal.read_last_takeup_z_delta()
+        needed = self._hal.read_takeup_thresh_counts()
+
+        if result == 0:
+            log.info(
+                "ELS takeup #%s CONFIRMED: moved %s counts, needed %s (headroom %+d)",
+                seq, moved, needed, int(moved) - int(needed))
+        else:
+            log.warning(
+                "ELS takeup #%s REFUSED (result=%s): moved %s counts, needed %s",
+                seq, result, moved, needed)
 
     def _poll_els_stop_active(self, *args):
         # Bound to board.update_tick. Kivy property writes from the polling

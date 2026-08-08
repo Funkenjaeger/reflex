@@ -437,6 +437,22 @@ class ElsFsm:
           blindly rewriting could disarm a stop that is actively protecting the
           cut. (Full link-loss-mid-cut recovery is a known separate gap.)
         """
+        # Push the calibration limits FIRST, in every state, before any
+        # state-specific policy below.
+        #
+        # calMotionThreshCounts is not only a calibration input — the per-pass
+        # take-up confirmation gate reads it on EVERY pass, and it fails CLOSED
+        # at 0. It is otherwise written only when a calibration run starts, so a
+        # machine that was commissioned in settings but has not run a
+        # calibration this session would refuse every take-up with "carriage not
+        # moving" while the drivetrain is perfectly healthy. Firmware does not
+        # retain it across a power cycle either. Pushing on connect is what
+        # makes the setting mean what the settings screen says it means.
+        self.hal.set_cal_limits(
+            int(self.els.els_cal_ceiling_steps),
+            int(self.els.els_cal_motion_thresh_counts),
+        )
+
         state = self.state
         if state in ('disabled', 'alarm'):
             self.hal.set_enable(False)
