@@ -1,5 +1,36 @@
 # AGENTS.md — Reflex UI
 
+## Branching and Hardware Verification — READ FIRST
+
+**This UI drives a real lathe through reflex-fw. The only complete test is on
+hardware, and Evan runs that, not on demand.** The emulator-backed system suite
+is good and getting better, but it has repeatedly looked green while something
+real was wrong — no servo dynamics, no Modbus timing, no metal. Emulator green
+is evidence, never verification.
+
+**Do NOT commit directly to `dev-staging`.** It is one step from a dev release
+and everything on it is supposed to be hardware-verified.
+
+- Work on a **feature branch**, or on **`integration`** when several changes are
+  in flight and separate branches would just be overhead.
+- `integration` / feature branch → `dev-staging` is merged **only after Evan has
+  verified on hardware**. He does that merge, or explicitly asks for it.
+- `dev-staging` → `dev` and `dev` → `main` are **Evan's alone**. Never do these.
+
+**The one exception**, for changes that cannot affect machine behaviour and so
+need no hardware run: documentation, help files, `todo.md`, and tests. Anything
+that changes what gets written to a firmware register — HAL, FSM, dispatchers,
+`devices.py` — is NOT clerical, however small it looks.
+
+Register-map changes are never clerical on either side: `devices.py` and
+reflex-fw's `Ramps.h` are one contract, and they must land together.
+
+If unsure whether a change qualifies, it does not. Put it on a branch and ask.
+
+**Never push without being asked.** `origin` fans out to BOTH
+`github.com/Funkenjaeger/reflex-ui` and `dserver:/mnt/git/reflex-ui.git`, so any
+push writes two remotes at once.
+
 ## Todo Tracking
 
 When you encounter a task, follow-up item, or piece of work that should be tracked, add it to `todo.md` in the project root. This applies to:
@@ -225,7 +256,10 @@ Every UI component follows this structure:
 
 ## Git and Releases
 
-- **Branch strategy:** `main` for releases, `dev` for pre-releases, feature branches for work
+- **Branch strategy:** `main` for releases, `dev` for pre-releases, feature branches
+  (or `integration`) for work. See "Branching and Hardware Verification" at the
+  top — `dev-staging` is gated on Evan's hardware verification and agents do not
+  commit to it except for the clerical exception.
 - **Commit messages:** Follow conventional commits (`fix:`, `feat:`, `chore:`, etc.)
 - **Versioning:** Automated via `python-semantic-release` from commit messages
 - **CI/CD:** GitHub Actions workflow on push to `main`/`dev` triggers semantic release
