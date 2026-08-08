@@ -526,6 +526,27 @@ class ElsFsm:
         Uses the servo leadscrew pitch, not the thread pitch being cut — the
         safety margin is about how far the servo can move before ELS fires,
         independent of what thread is being cut.
+
+        INVARIANT THIS DEPENDS ON (closed-loop backlash calibration, 2026-08-08).
+        ``els_backlash_steps`` must hold the COMMANDED take-up (measured lash +
+        margin), not the raw measured lash. The two are deliberately separate
+        properties on ElsDispatcher — ``els_cal_last_measured_steps`` holds the
+        measurement, ``els_backlash_steps`` holds the command — and only the
+        command is written to the firmware's ``backlashSteps`` register, so this
+        margin is computed against the number the firmware will actually drive.
+        Storing the raw measurement here instead would under-budget this margin
+        by exactly the take-up margin.
+
+        Given that, the formula stays conservative for the right reason: it
+        treats the ENTIRE take-up as potential carriage travel, whereas
+        physically most of it is absorbed crossing the lash window and only the
+        margin moves the carriage. Over-budgeting is the safe direction.
+
+        NOTE: this margin governs starting a CUT. It does not govern a
+        calibration run, which moves the carriage bidirectionally by up to
+        ``els_cal_ceiling_steps`` per leg. Calibration is gated separately — the
+        firmware refuses it unless ``elsStop.enable == 0``, and the operator
+        modal owns "tool clear of the work".
         """
         # Leadscrew pitch in mm (not thread pitch)
         try:

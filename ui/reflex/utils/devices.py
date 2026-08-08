@@ -107,6 +107,26 @@ typedef struct {
 """
 
 class ElsStop(BaseDevice):
+    """Mirror of ``elsStop_t`` in reflex-fw ``Core/Inc/Ramps.h``.
+
+    MUST match the firmware struct byte for byte — the whole shared struct is
+    memory-mapped straight onto Modbus holding registers with no translation
+    layer, so a field added on one side and not the other silently reinterprets
+    every register after it. ``tests/test_register_map_contract.py`` parses the
+    firmware header and diffs it against this string; that test failing is the
+    intended alarm, not a nuisance.
+
+    Field semantics, units and sign conventions are documented at the firmware
+    struct definition and in ``Core/Inc/els_backlash_cal.h``; they are
+    deliberately NOT duplicated here, because two copies of a unit convention is
+    how they drift apart. Comments are also kept out of the typedef string
+    itself — the parser consumes it verbatim.
+
+    Calibration / take-up block (protocolVersion .. lastTakeupZDelta) added
+    2026-08-08 with the closed-loop backlash calibration feature; struct grew
+    56 -> 92 bytes, rampsSharedData_t 264 -> 300.
+    """
+
     definition = """
 typedef struct {
   uint16_t enable;
@@ -126,8 +146,59 @@ typedef struct {
   float    lastActualAdvance;
   float    lastPhaseError;
   float    lastCorrection;
+  uint16_t protocolVersion;
+  uint16_t calCommand;
+  uint16_t calSeq;
+  uint16_t calResult;
+  uint16_t takeupResult;
+  uint16_t takeupSeq;
+  int32_t  calMeasured[3];
+  int32_t  calCeilingSteps;
+  int32_t  calMotionThreshCounts;
+  int32_t  lastTakeupZDelta;
 } elsStop_t;
 """
+
+
+# --- Frozen protocol constants -------------------------------------------
+# Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
+# Modbus contract; never renumber, only append.
+
+ELS_PROTOCOL_VERSION = 1        # elsStop.protocolVersion this UI is built against
+
+ELS_CAL_OK = 0
+ELS_CAL_ERR_ENABLED = 1         # refused: a threading job is live
+ELS_CAL_ERR_SERVOMODE = 2       # refused: servoMode != 1
+ELS_CAL_ERR_CONFIG = 3          # refused: ceiling or motion threshold unset
+ELS_CAL_ERR_NO_MOTION = 4       # drove the full ceiling, carriage never moved
+ELS_CAL_ERR_ABORTED = 5         # conditions changed mid-run
+
+ELS_TAKEUP_ERR_UNCONFIRMED = 4  # shares NO_MOTION: same physical cause
+ELS_TAKEUP_ERR_TIMEOUT = 6      # take-up never reached its commanded target
+
+# Operator-legible causes. The take-up ones deliberately lead with the physical
+# check rather than the firmware state — an operator at the machine can act on
+# "is the half-nut engaged?" and cannot act on "takeupResult == 4".
+ELS_CAL_MESSAGES = {
+    ELS_CAL_ERR_ENABLED: "Disengage the ELS stop before calibrating.",
+    ELS_CAL_ERR_SERVOMODE: "Servo is not in sync/index mode.",
+    ELS_CAL_ERR_CONFIG: "Calibration limits are not configured.",
+    ELS_CAL_ERR_NO_MOTION: (
+        "Carriage did not move — is the half-nut engaged?"
+    ),
+    ELS_CAL_ERR_ABORTED: "Calibration aborted — conditions changed mid-run.",
+}
+
+ELS_TAKEUP_MESSAGES = {
+    ELS_TAKEUP_ERR_UNCONFIRMED: (
+        "Carriage not moving — is the half-nut engaged? "
+        "The cut will not start until the backlash take-up is confirmed."
+    ),
+    ELS_TAKEUP_ERR_TIMEOUT: (
+        "Backlash take-up did not complete. Disengage and re-engage the "
+        "ELS stop to clear."
+    ),
+}
 
 
 class Global(BaseDevice):

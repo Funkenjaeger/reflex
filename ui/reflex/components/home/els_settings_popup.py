@@ -50,6 +50,24 @@ class ElsSettingsPopup(Popup):
             self.app.els.els_backlash_steps = steps
             log.info(f"Backlash takeup: {value} mm → {steps} steps")
 
+    def open_backlash_calibration(self):
+        """Open the closed-loop backlash calibration wizard.
+
+        Imported lazily, matching how els_advbar opens this popup — keeps the
+        component import graph acyclic.
+        """
+        from reflex.components.home.els_backlash_cal_popup import BacklashCalPopup
+        BacklashCalPopup(bar=self).open()
+
+    def refresh_backlash(self):
+        """Re-read the stored take-up after a calibration commits.
+
+        The wizard writes els_backlash_steps (the COMMANDED take-up: measured +
+        margin), so this pulls that back into the mm field and the operator sees
+        the number that will actually be driven rather than a stale one.
+        """
+        self.backlash_mm = self._steps_to_mm(self.app.els.els_backlash_steps)
+
     def get_thread_types(self):
         """Get available thread types based on global format setting."""
         if self.bar.app.formats.current_format == "MM":

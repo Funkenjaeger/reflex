@@ -36,6 +36,12 @@
                 value: root.backlash_mm
                 on_value: root.backlash_mm = self.value
 
+            ButtonItem:
+                name: "Measure backlash"
+                value: "Calibrate"
+                help_file: "els_backlash_cal.md"
+                on_release: root.open_backlash_calibration()
+
             DropDownItem:
                 id: reframe_notify_dropdown
                 height: 60

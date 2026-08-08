@@ -92,6 +92,17 @@ class ElsUiController(EventDispatcher):
 
     ui_state = StringProperty("idle")
 
+    @property
+    def hal(self):
+        """Read-only access to the elsStop HAL.
+
+        Exposed so auxiliary flows (the backlash calibration wizard) can talk to
+        the register block without reaching into `_hal` or standing up a second
+        HAL against the same board. The FSM remains the only writer during a
+        threading cycle; callers using this must not fight it.
+        """
+        return self._hal
+
     def __init__(self, els: els, board: board, **kw):
         super().__init__(**kw)
         self._els = els

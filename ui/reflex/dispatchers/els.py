@@ -29,6 +29,46 @@ class ElsDispatcher(SavingDispatcher):
     # using the servo ratio.
     els_backlash_steps = NumericProperty(0)
 
+    # ── Backlash calibration (closed loop) ────────────────────────────
+    # Machine-specific limits pushed to the firmware before a calibration run.
+    #
+    #   els_cal_ceiling_steps  — per-leg hard ceiling. Driving this far without
+    #       the Z scale moving IS the open-half-nut / uncoupled failure, so it
+    #       must sit comfortably past the largest credible lash but well short
+    #       of anything the carriage could hit. Default sized for elspi:
+    #       ~0.8 mm of leadscrew travel at ~505 steps/mm.
+    #   els_cal_motion_thresh_counts — Z counts that count as real motion.
+    #       On elspi (200 counts/mm) one count is ~2.5 servo steps, so 2 counts
+    #       is about the floor before quantization noise. 0 makes the firmware
+    #       fail CLOSED — treat it as "not commissioned", never as a default.
+    els_cal_ceiling_steps = NumericProperty(400)
+    els_cal_motion_thresh_counts = NumericProperty(2)
+
+    # Accept/reject policy for a completed run. The three measurements must
+    # agree within this spread, in servo steps, or the result is refused.
+    # A wide spread means the measurement is not reproducible, which is itself
+    # the finding — do NOT widen this to make a wizard proceed.
+    els_cal_max_spread_steps = NumericProperty(12)
+
+    # Take-up margin: always measured + max(pct, floor), never trimmed toward
+    # the minimum. The floor exists because at a small lash a flat percentage
+    # collapses into the measurement's own quantization uncertainty (~5 steps
+    # at a 2-count threshold on elspi) and stops being margin at all.
+    els_takeup_margin_pct = NumericProperty(20)
+    els_takeup_margin_floor_steps = NumericProperty(10)
+
+    # Last completed calibration, for display and drift comparison. Stored as
+    # the raw measured mean (lash + detection distance), NOT the commanded
+    # take-up — keeping them separate is what lets a later run notice drift.
+    els_cal_last_measured_steps = NumericProperty(0)
+
+    # Calibration POLICY (spread test, take-up margin) deliberately does NOT
+    # live here. ElsDispatcher cannot be constructed without a running MainApp,
+    # so any logic on it can only be tested by mirroring it in a stub — which is
+    # exactly how two copies of a rule drift apart. The pure functions live in
+    # reflex/fsms/els_cal.py and are tested directly; this class holds only the
+    # persisted configuration they read.
+
     # ── Re-reference notify preference ────────────────────────────────
     # How to flag when a committed ELS target's DISPLAYED value changes after a
     # DRO re-zero / coordinate-system switch (the physical target is unchanged):

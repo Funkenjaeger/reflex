@@ -3,7 +3,8 @@ from pathlib import Path
 
 from kivy.clock import Clock
 from kivy.event import EventDispatcher
-from kivy.properties import NumericProperty, BooleanProperty, ObjectProperty, ListProperty
+from kivy.properties import (NumericProperty, BooleanProperty, ObjectProperty,
+                             ListProperty, StringProperty)
 
 from reflex.components.appsettings import config
 from reflex.dispatchers.axis import AxisDispatcher
@@ -20,6 +21,12 @@ log = Logger.getChild(__name__)
 
 class Board(EventDispatcher):
     connected = BooleanProperty(False)
+    # Firmware register-layout version, read once per connection. 0 means the
+    # firmware predates the register (an unwritten appended register reads 0) —
+    # i.e. "too old", not "unknown but fine".
+    protocol_version = NumericProperty(0)
+    protocol_mismatch = BooleanProperty(False)
+    protocol_message = StringProperty("")
     update_tick = NumericProperty(0)
     blink = BooleanProperty(False)
     device = ObjectProperty(None, allownone=True)
@@ -181,8 +188,61 @@ class Board(EventDispatcher):
 
         if was_disconnected:
             self.task_update.timeout = 1.0 / 30
+            self._check_protocol_version()
 
         self.update_tick = (self.update_tick + 1) % 100
+
+    def _check_protocol_version(self):
+        """Verify the firmware's register-layout version on each new connection.
+
+        The whole shared struct is memory-mapped onto Modbus holding registers
+        with no translation layer, so firmware whose `elsStop_t` differs from
+        `reflex/utils/devices.py` reinterprets every register after the point of
+        divergence. Without this check that surfaces as plausible-looking
+        garbage — a wrong backlash here, an impossible Z there — and gets
+        diagnosed as a hardware fault. One register read at connect turns it
+        into a named version problem instead.
+
+        Deliberately NON-FATAL: it sets a flag and logs. The UI is useful
+        against a mismatched firmware for everything that does not touch the
+        moved registers, and refusing to start would make recovery (flashing
+        from the same UI) harder than the fault warrants.
+        """
+        from reflex.utils.devices import ELS_PROTOCOL_VERSION
+        try:
+            version = int(self.device['elsStop'].refresh()['protocolVersion'])
+        except Exception as e:
+            # A read failure here is not a version verdict — leave the previous
+            # state alone rather than reporting a mismatch we did not observe.
+            log.warning(f"Could not read firmware protocol version: {e}")
+            return
+
+        self.protocol_version = version
+        self.protocol_mismatch = (version != ELS_PROTOCOL_VERSION)
+
+        if not self.protocol_mismatch:
+            self.protocol_message = ""
+            log.info(f"Firmware register protocol version {version} (expected "
+                     f"{ELS_PROTOCOL_VERSION})")
+            return
+
+        if version == 0:
+            self.protocol_message = (
+                "Firmware predates the register protocol version field. "
+                f"This UI expects version {ELS_PROTOCOL_VERSION}. "
+                "Update the firmware."
+            )
+        elif version < ELS_PROTOCOL_VERSION:
+            self.protocol_message = (
+                f"Firmware register protocol is version {version}; this UI "
+                f"expects {ELS_PROTOCOL_VERSION}. Update the firmware."
+            )
+        else:
+            self.protocol_message = (
+                f"Firmware register protocol is version {version}; this UI "
+                f"only understands {ELS_PROTOCOL_VERSION}. Update the UI."
+            )
+        log.error(self.protocol_message)
 
     def blinker(self, *args):
         self.blink = not self.blink

@@ -61,7 +61,12 @@ ROOT_STRUCT = "rampsSharedData_t"
 # ever miscomputes padding, these fixed numbers diverge and fail loudly.
 KNOWN_SERVO_DIR_OFFSET = 32      # servo_t.servoDir sits after 8x 4-byte fields
 KNOWN_SERVO_T_SIZE = 36          # 34 bytes of fields + 2 trailing pad -> 4-align
-KNOWN_ROOT_SIZE = 264            # sizeof(rampsSharedData_t); see module test
+KNOWN_ROOT_SIZE = 300            # sizeof(rampsSharedData_t); see module test
+                                 # 264 -> 300 on 2026-08-08: the closed-loop
+                                 # backlash calibration block appended 36 bytes
+                                 # to elsStop_t (56 -> 92), packed uint16s-first
+                                 # so nothing pads. Bump this ONLY together with
+                                 # devices.py and elsStop.protocolVersion.
 
 
 # ── firmware C-struct parsing + true-C-layout model ──────────────────────────

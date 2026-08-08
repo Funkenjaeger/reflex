@@ -140,6 +140,86 @@ class ElsStopHal:
             return 0.0
         return float(self._board.device['elsStop']['lastCorrection'])
 
+    # ── protocol version ──────────────────────────────────────────────
+    def read_protocol_version(self) -> int:
+        """Firmware register-layout version.
+
+        Returns 0 when disconnected AND on firmware predating the register
+        (an unwritten appended register reads 0), so callers must treat 0 as
+        "too old / unknown" rather than as a version number.
+        """
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['protocolVersion'])
+
+    # ── backlash calibration ──────────────────────────────────────────
+    # The command/ack split matters here: request_calibration() sets calCommand,
+    # and the FIRMWARE clears it the instant the ISR consumes it — long before
+    # the run finishes. Polling calCommand for completion would therefore report
+    # "done" immediately and read a stale result. Edge-detect read_cal_seq().
+
+    def set_cal_limits(self, ceiling_steps: int, motion_thresh_counts: int) -> None:
+        """Push the two machine-specific calibration limits.
+
+        A motion threshold of 0 disables detection and makes the firmware fail
+        CLOSED (it never confirms), which is deliberate — an unconfigured
+        threshold must refuse rather than wave every take-up through. Callers
+        should treat 0 as "not commissioned", not as a usable default.
+        """
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['calCeilingSteps'] = max(0, int(ceiling_steps))
+        self._board.device['elsStop']['calMotionThreshCounts'] = max(0, int(motion_thresh_counts))
+
+    def request_calibration(self) -> None:
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['calCommand'] = 1
+
+    def read_cal_seq(self) -> int:
+        """Monotonic counter, incremented once per finished run (success OR
+        refusal). This is the ack — edge-detect it to know a run completed."""
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['calSeq'])
+
+    def read_cal_result(self) -> int:
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['calResult'])
+
+    def read_cal_measured(self) -> list:
+        """The three per-reversal lash measurements, in servo steps.
+
+        Populated on failure too (a run that measured two reversals and then
+        lost the carriage is diagnostically richer than a bare error code), so
+        only trust these when read_cal_result() is ELS_CAL_OK.
+        """
+        if not self._board.connected:
+            return [0, 0, 0]
+        return [int(v) for v in self._board.device['elsStop']['calMeasured']]
+
+    # ── take-up outcome ───────────────────────────────────────────────
+    def read_takeup_result(self) -> int:
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['takeupResult'])
+
+    def read_takeup_seq(self) -> int:
+        """Increments once per take-up OUTCOME. takeupPending alone cannot
+        distinguish completed-normally from host-cleared; this can."""
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['takeupSeq'])
+
+    def read_last_takeup_z_delta(self) -> int:
+        """Signed Z counts moved across the last take-up, projected onto the
+        take-up direction. NEGATIVE means the carriage moved the WRONG way —
+        a distinct fault from "didn't move" and worth surfacing as such."""
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['lastTakeupZDelta'])
+
     def is_move_done(self) -> bool:
         """True only when the firmware's commanded indexing motion has been
         fully *executed*, not just consumed by the planner.
