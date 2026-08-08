@@ -36,6 +36,7 @@ from reflex.utils.devices import (
     ELS_CAL_ERR_NO_MOTION,
     ELS_CAL_ERR_SERVOMODE,
     ELS_CAL_OK,
+    ELS_PROTOCOL_VERSION,
 )
 
 
@@ -43,8 +44,14 @@ class FakeHal:
     """Models the firmware's command/ack contract, including its traps."""
 
     def __init__(self, measured=(100, 101, 100), result=ELS_CAL_OK,
-                 connected=True, ticks_to_finish=3):
+                 connected=True, ticks_to_finish=3,
+                 protocol_version=ELS_PROTOCOL_VERSION):
         self.connected = connected
+        self._protocol_version = protocol_version
+        # The machine's own speed settings, which calibration must borrow and
+        # give back.
+        self.motion = (250.0, 500.0)
+        self.motion_writes = []
         self._measured = list(measured)
         self._result = result
         self._ticks_to_finish = ticks_to_finish
@@ -68,6 +75,16 @@ class FakeHal:
 
     def set_backlash_steps(self, steps):
         self.backlash_written = steps
+
+    def read_protocol_version(self):
+        return self._protocol_version
+
+    def read_servo_motion_params(self):
+        return self.motion
+
+    def set_servo_motion_params(self, max_speed, accel):
+        self.motion = (max_speed, accel)
+        self.motion_writes.append((max_speed, accel))
 
     # -- reads -------------------------------------------------------
     def read_cal_seq(self):
@@ -248,4 +265,60 @@ def test_timeout_when_ack_never_arrives():
     for _ in range(BacklashCalibration.TIMEOUT_POLLS + 1):
         cal.poll()
     assert cal.state == CalState.REFUSED
-    assert "no response" in cal.message.lower()
+    # The message must NOT blame the link: start() already proved the firmware
+    # has these registers, so a stall here is a machine-state problem and the
+    # text should point the operator at the servo.
+    assert "never reported a result" in cal.message.lower()
+    assert "servo" in cal.message.lower()
+
+
+def test_old_firmware_is_named_not_reported_as_a_dead_link():
+    """Firmware without the calibration registers must be diagnosed as such.
+
+    Otherwise calSeq can never increment, the run sits until the liveness
+    timeout, and the UI blames the link for a missing firmware update — the
+    single most confusing way this can fail.
+
+    MUTATION: drop the version check in start() and this becomes RUNNING."""
+    hal = FakeHal(protocol_version=0)
+    cal = BacklashCalibration(hal, _els())
+    assert cal.start() is False
+    assert cal.state == CalState.REFUSED
+    assert "firmware" in cal.message.lower()
+    assert hal.limits is None          # nothing written to an incapable firmware
+
+
+def test_calibration_drives_at_a_known_speed_and_restores_it():
+    """The sweep must not inherit whatever maxSpeed the machine is set to.
+
+    At a slow setting a ~2000-step sweep takes minutes while looking completely
+    stationary, which is exactly how a working run got killed by hand.
+
+    MUTATION: remove the restore in _restore_motion and the machine is left on
+    calibration speeds afterwards."""
+    hal = FakeHal(measured=(100, 101, 100))
+    original = hal.motion
+    cal = BacklashCalibration(hal, _els())
+
+    assert cal.start() is True
+    assert hal.motion == (BacklashCalibration.CAL_MAX_SPEED,
+                          BacklashCalibration.CAL_ACCEL)
+    assert hal.motion[1] > 0, "zero acceleration NaNs the firmware ramp"
+
+    _run_to_completion(cal)
+    assert hal.motion == original, "machine speed settings must be restored"
+
+
+def test_motion_params_restored_even_on_a_refusal():
+    hal = FakeHal(result=ELS_CAL_ERR_NO_MOTION)
+    original = hal.motion
+    cal = BacklashCalibration(hal, _els())
+    cal.start()
+    _run_to_completion(cal)
+    assert hal.motion == original
+
+
+def test_timeout_is_sized_against_a_real_sweep():
+    """A 20-second backstop killed a healthy run. Guard the sizing, not just
+    the mechanism."""
+    assert BacklashCalibration.TIMEOUT_POLLS / BacklashCalibration.POLL_HZ >= 60

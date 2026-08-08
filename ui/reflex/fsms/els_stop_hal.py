@@ -171,6 +171,32 @@ class ElsStopHal:
         self._board.device['elsStop']['calCeilingSteps'] = max(0, int(ceiling_steps))
         self._board.device['elsStop']['calMotionThreshCounts'] = max(0, int(motion_thresh_counts))
 
+    def read_servo_motion_params(self):
+        """(maxSpeed, acceleration) as the firmware currently holds them."""
+        if not self._board.connected:
+            return (0.0, 0.0)
+        return (float(self._board.device['servo']['maxSpeed']),
+                float(self._board.device['servo']['acceleration']))
+
+    def set_servo_motion_params(self, max_speed: float, acceleration: float) -> None:
+        """Set the ramp parameters the firmware will use for commanded moves.
+
+        Calibration needs this because it is the only feature that commands
+        motion from cold: it inherits whatever maxSpeed the machine happens to
+        be configured for, and at a slow setting a 2000-step sweep takes minutes
+        while looking completely stationary. The caller is responsible for
+        restoring the previous values.
+
+        NOTE acceleration must never be 0: updateIndexingPosition computes
+        stopDistance as (v*v/acceleration)/2, so a zero acceleration yields NaN,
+        every ramp comparison against it is false, and the move hangs forever
+        without ever starting.
+        """
+        if not self._board.connected:
+            return
+        self._board.device['servo']['maxSpeed'] = float(max_speed)
+        self._board.device['servo']['acceleration'] = float(acceleration)
+
     def request_calibration(self) -> None:
         if not self._board.connected:
             return

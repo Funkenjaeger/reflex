@@ -10,8 +10,20 @@
     ScrollView:
       do_scroll_x: False
       do_scroll_y: True
+      canvas.before:
+        Color:
+          rgba: app.theme.background
+        Rectangle:
+          pos: self.pos
+          size: self.size
       Label:
-        text: root.log_content
+        # color was never set here, so this inherited Kivy's default WHITE and
+        # was invisible against a light background — the screen rendered as a
+        # blank box with no clue that anything was wrong. Both the text colour
+        # and the backdrop behind it are now explicit so it cannot go invisible
+        # in either theme.
+        text: root.log_content if root.log_content else "(this log file is empty)"
+        color: app.theme.text
         size_hint_y: None
         height: self.texture_size[1]
         text_size: self.width, None

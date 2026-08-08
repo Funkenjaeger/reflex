@@ -78,6 +78,10 @@ class BacklashCalPopup(Popup):
     def _tick(self, _dt):
         result = self._cal.poll()
         if result == CalState.RUNNING:
+            # Keep the modal visibly alive. A slow sweep moves the carriage
+            # under a millimetre over tens of seconds, which is indistinguishable
+            # from a hung machine — that is how a healthy run got abandoned.
+            self.detail_text = self._cal.progress_text
             return
         self._stop_polling()
         self.busy = False

@@ -31,6 +31,7 @@ from reflex.utils.devices import (
     ELS_CAL_ERR_CONFIG,
     ELS_CAL_MESSAGES,
     ELS_CAL_OK,
+    ELS_PROTOCOL_VERSION,
 )
 
 log = Logger.getChild(__name__)
@@ -102,10 +103,30 @@ class CalState:
 class BacklashCalibration:
     """One calibration run against the firmware, judged against host policy."""
 
-    # A run is a handful of sub-millimetre moves; if the ack has not arrived in
-    # this many polls the link or the firmware is wedged. Purely a UI liveness
-    # backstop — the firmware has its own ceiling and cannot run forever.
-    TIMEOUT_POLLS = 600      # ~10 s at a 60 Hz UI tick
+    # Liveness backstop, in polls at POLL_HZ. Sized against how long the sweep
+    # can ACTUALLY take, not against how long it feels like it should.
+    #
+    # The sweep is five legs (seat + 3 measured + re-seat) of up to
+    # els_cal_ceiling_steps each, so ~2000 steps at the default ceiling. The
+    # firmware ramp reaches maxSpeed in about a second, so the run is
+    # maxSpeed-dominated: at 1000 steps/s that is ~2 s, but at a slow machine
+    # setting it is minutes. The first version of this used 20 s and killed a
+    # run that was working — 0.8 mm creeping past over a minute looks exactly
+    # like a dead machine, so there was nothing to contradict it.
+    #
+    # Calibration now drives at a known speed (see CAL_MAX_SPEED), which bounds
+    # this properly; the backstop stays generous because a false timeout on a
+    # healthy machine is far more expensive than waiting a few extra seconds.
+    POLL_HZ = 30
+    TIMEOUT_POLLS = 30 * 120     # 2 minutes
+
+    # Speed the calibration commands, in steps/s, and its acceleration.
+    # Deliberately modest — this is unattended bidirectional carriage motion —
+    # but fast enough that a 2000-step sweep completes in seconds and visibly
+    # moves. Acceleration must be > 0 or the firmware ramp NaNs and never
+    # starts.
+    CAL_MAX_SPEED = 800.0
+    CAL_ACCEL = 4000.0
 
     def __init__(self, hal, els):
         self._hal = hal
@@ -116,12 +137,32 @@ class BacklashCalibration:
         self.message = ""
         self._baseline_seq = 0
         self._polls = 0
+        self._saved_motion = None
 
     # ── lifecycle ────────────────────────────────────────────────────
     def start(self) -> bool:
         """Push limits and request a run. False if it could not be requested."""
         if not self._hal.connected:
             self._fail(ELS_CAL_ERR_CONFIG, "Not connected to the controller.")
+            return False
+
+        # Firmware capability check, BEFORE anything is written.
+        #
+        # On firmware predating this feature the calibration registers do not
+        # exist: the calCommand write lands nowhere and calSeq can never
+        # increment, so the run would sit until the liveness timeout and then
+        # report "no response from the controller" — which blames the link for
+        # what is actually a missing firmware update, and is the single most
+        # confusing way this can fail. A failed register read returns 0 (see
+        # communication.read_long), so 0 means "too old", not "unknown".
+        version = self._hal.read_protocol_version()
+        if version != ELS_PROTOCOL_VERSION:
+            self._fail(
+                ELS_CAL_ERR_CONFIG,
+                f"Controller firmware does not support backlash calibration "
+                f"(reports register version {version}, this UI needs "
+                f"{ELS_PROTOCOL_VERSION}). Flash the firmware to match this UI.",
+            )
             return False
 
         ceiling = int(self._els.els_cal_ceiling_steps)
@@ -135,6 +176,11 @@ class BacklashCalibration:
                 "Calibration limits are not commissioned for this machine.",
             )
             return False
+
+        # Drive at a known speed rather than whatever the machine is set to,
+        # and restore afterwards. See CAL_MAX_SPEED.
+        self._saved_motion = self._hal.read_servo_motion_params()
+        self._hal.set_servo_motion_params(self.CAL_MAX_SPEED, self.CAL_ACCEL)
 
         self._hal.set_cal_limits(ceiling, thresh)
         self._baseline_seq = self._hal.read_cal_seq()
@@ -158,13 +204,19 @@ class BacklashCalibration:
         self._polls += 1
         if self._hal.read_cal_seq() == self._baseline_seq:
             if self._polls >= self.TIMEOUT_POLLS:
+                self._restore_motion()
+                # start() already proved the firmware has these registers, so a
+                # timeout here is a genuine stall rather than a version problem.
                 self._fail(
                     ELS_CAL_ERR_CONFIG,
-                    "No response from the controller during calibration.",
+                    "The controller accepted the calibration but never reported "
+                    "a result. Check the servo is enabled and in sync/index "
+                    "mode, then retry.",
                 )
             return self.state
 
         # Ack observed — the run finished, for better or worse.
+        self._restore_motion()
         self.result_code = self._hal.read_cal_result()
         self.measured = self._hal.read_cal_measured()
 
@@ -212,8 +264,28 @@ class BacklashCalibration:
         return True
 
     def cancel(self) -> None:
+        self._restore_motion()
         self.state = CalState.IDLE
         self.message = ""
+
+    def _restore_motion(self):
+        """Put the machine's own speed settings back. Idempotent."""
+        if self._saved_motion is None:
+            return
+        max_speed, accel = self._saved_motion
+        self._saved_motion = None
+        if max_speed > 0 and accel > 0:
+            self._hal.set_servo_motion_params(max_speed, accel)
+
+    @property
+    def progress_text(self) -> str:
+        """Something that visibly changes while the run is in flight.
+
+        A silent modal during a slow sweep is indistinguishable from a hung one,
+        which is how the first version got killed by hand.
+        """
+        secs = self._polls // self.POLL_HZ
+        return f"Measuring… {secs}s"
 
     # ── derived values ───────────────────────────────────────────────
     @property
