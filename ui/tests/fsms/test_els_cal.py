@@ -322,3 +322,40 @@ def test_timeout_is_sized_against_a_real_sweep():
     """A 20-second backstop killed a healthy run. Guard the sizing, not just
     the mechanism."""
     assert BacklashCalibration.TIMEOUT_POLLS / BacklashCalibration.POLL_HZ >= 60
+
+
+# ─── take-up refusal text ─────────────────────────────────────────────
+# This formatter was written and then never called by anything, so on the first
+# hardware run a refused pass produced NO operator-visible output at all: the
+# machine simply sat there, indistinguishable from hung. It now drives the
+# inline warning strip in the ELS bar, so it is worth pinning.
+
+def test_takeup_text_names_the_numbers_when_it_has_them():
+    from reflex.utils.devices import (ELS_TAKEUP_ERR_UNCONFIRMED,
+                                      takeup_failure_text)
+    msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED, z_delta=5, thresh_counts=11)
+    assert "half-nut" in msg.lower()
+    assert "5" in msg and "11" in msg, "operator needs moved-vs-needed, not just a refusal"
+
+
+def test_takeup_text_calls_out_wrong_way_motion_separately():
+    """A carriage moving the WRONG way is a different fault (scale direction,
+    or something else driving it) and must not be folded into 'not enough'."""
+    from reflex.utils.devices import (ELS_TAKEUP_ERR_UNCONFIRMED,
+                                      takeup_failure_text)
+    msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED, z_delta=-7, thresh_counts=11)
+    assert "wrong" in msg.lower()
+    assert "7" in msg
+
+
+def test_takeup_text_degrades_without_numbers():
+    from reflex.utils.devices import (ELS_TAKEUP_ERR_UNCONFIRMED,
+                                      takeup_failure_text)
+    msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED)
+    assert "half-nut" in msg.lower()
+
+
+def test_takeup_timeout_has_its_own_text():
+    from reflex.utils.devices import ELS_TAKEUP_ERR_TIMEOUT, takeup_failure_text
+    msg = takeup_failure_text(ELS_TAKEUP_ERR_TIMEOUT)
+    assert "half-nut" not in msg.lower(), "a timeout is not a half-nut diagnosis"

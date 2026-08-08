@@ -7,6 +7,7 @@ from reflex.dispatchers import els, board
 from reflex.fsms.ui_fsm import ElsUiFsm
 from reflex.fsms.els_fsm import ElsFsm
 from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.utils.devices import takeup_failure_text
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
 
 log = Logger.getChild(__name__)
@@ -43,6 +44,17 @@ class ElsUiController(EventDispatcher):
     # ── Hardware-state mirrors (kv binds to these) ─────────────────────
     engaged             = BooleanProperty(False)   # True iff domain FSM not in 'disabled'
     els_stop_active     = BooleanProperty(False)   # mirrors HAL read_active()
+
+    # Inline take-up warning, shown in the ELS bar. Non-empty means the last
+    # attempted pass was REFUSED because the firmware could not confirm the
+    # backlash take-up actually moved the carriage.
+    #
+    # The firmware aborts such a pass back to the stopped state with the thread
+    # phase reference intact, so recovery is simply pressing Cut again — this
+    # string is the only thing that tells the operator why nothing happened.
+    # Without it a refusal and a hung machine are indistinguishable, which is
+    # exactly how it presented on hardware 2026-08-08.
+    takeup_warning      = StringProperty("")
 
     # ── Operator-job descriptors (mirrored from the widget) ────────────
     # is_threading toggles the X-clear-of-start-dia gate in waiting_to_retract.
@@ -268,10 +280,12 @@ class ElsUiController(EventDispatcher):
         needed = self._hal.read_takeup_thresh_counts()
 
         if result == 0:
+            self.takeup_warning = ""
             log.info(
                 "ELS takeup #%s CONFIRMED: moved %s counts, needed %s (headroom %+d)",
                 seq, moved, needed, int(moved) - int(needed))
         else:
+            self.takeup_warning = takeup_failure_text(result, moved, needed)
             log.warning(
                 "ELS takeup #%s REFUSED (result=%s): moved %s counts, needed %s",
                 seq, result, moved, needed)
@@ -946,6 +960,12 @@ class ElsUiController(EventDispatcher):
 
     def start_cut(self):
         self.clear_reframe_notice()   # starting the cut clears a re-reference flag
+        # Clear a previous take-up refusal HERE, on initiation, rather than
+        # waiting for the next outcome. The operator's response to the warning
+        # is to close the half-nut and press Cut again; leaving the old warning
+        # up through the retry reads as "still refusing" during the very window
+        # where they are watching to see whether it worked.
+        self.takeup_warning = ""
         self._els_fsm.push_stop_to_firmware()
         self._els_fsm.cut()
 

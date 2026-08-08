@@ -54,6 +54,37 @@
       disabled: not root.controller.reframe_confirm_pending
       on_release: root.controller.reset_reframed_targets()
 
+  # ── Take-up refusal notice ────────────────────────────────────────────────
+  #    Shown when the firmware refused to start a pass because it could not
+  #    confirm the backlash take-up actually moved the carriage. The pass is
+  #    aborted back to the stopped state with the thread phase reference
+  #    intact, so the operator just closes the half-nut and presses Cut again;
+  #    this strip is the ONLY thing that tells them why nothing happened.
+  #    Collapses to zero height when there is nothing to say.
+  BoxLayout:
+    id: takeup_notice
+    orientation: 'horizontal'
+    size_hint_y: None
+    spacing: dp(8)
+    padding: dp(8), 0
+    height: dp(30) if root.controller.takeup_warning else 0
+    opacity: 1 if self.height else 0
+    disabled: not self.height
+    canvas.before:
+      Color:
+        rgba: (0.85, 0.16, 0.16, 0.30)
+      Rectangle:
+        pos: self.pos
+        size: self.size
+    Label:
+      text: root.controller.takeup_warning
+      text_size: self.size
+      halign: 'left'
+      valign: 'middle'
+      font_name: app.theme.font_bold
+      font_size: dp(13)
+      color: app.theme.text
+
   # ── Wizard instruction bar ─────────────────────────────────────────────────
   # Full-width strip across the top of the bar (over every control column) so
   # the control row below — Engage, Start, the value fields and the mode
