@@ -122,9 +122,9 @@ class ElsStop(BaseDevice):
     how they drift apart. Comments are also kept out of the typedef string
     itself — the parser consumes it verbatim.
 
-    Calibration / take-up block (protocolVersion .. lastTakeupZDelta) added
+    Calibration / take-up block (protocolVersion .. takeupThreshCounts) added
     2026-08-08 with the closed-loop backlash calibration feature; struct grew
-    56 -> 92 bytes, rampsSharedData_t 264 -> 300.
+    56 -> 96 bytes, rampsSharedData_t 264 -> 304.
     """
 
     definition = """
@@ -156,6 +156,7 @@ typedef struct {
   int32_t  calCeilingSteps;
   int32_t  calMotionThreshCounts;
   int32_t  lastTakeupZDelta;
+  int32_t  takeupThreshCounts;
 } elsStop_t;
 """
 
@@ -215,3 +216,27 @@ typedef struct {
   elsStop_t elsStop;
 } rampsSharedData_t;
 """
+
+
+def takeup_failure_text(result_code, z_delta=None, thresh_counts=None):
+    """Operator-facing text for a take-up failure.
+
+    When the firmware's derived threshold and the observed motion are both
+    available, name them. "Moved 5 counts, needed 11" is a diagnosis an operator
+    can act on — a partially engaged half-nut looks completely different from
+    one that never engaged — whereas the bare sentence leaves them guessing
+    which of the two they have.
+
+    A NEGATIVE delta means the carriage moved the WRONG way, which is a
+    different fault entirely (scale direction, or something else driving the
+    carriage) and is called out as such rather than folded into "not enough".
+    """
+    base = ELS_TAKEUP_MESSAGES.get(result_code, "Backlash take-up failed.")
+    if result_code != ELS_TAKEUP_ERR_UNCONFIRMED:
+        return base
+    if z_delta is None or thresh_counts is None:
+        return base
+    if z_delta < 0:
+        return (f"{base} The carriage moved {abs(int(z_delta))} counts the WRONG "
+                f"way — check the Z scale direction.")
+    return f"{base} Moved {int(z_delta)} counts, needed {int(thresh_counts)}."

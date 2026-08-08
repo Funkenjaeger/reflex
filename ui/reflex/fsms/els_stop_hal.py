@@ -212,6 +212,19 @@ class ElsStopHal:
             return 0
         return int(self._board.device['elsStop']['takeupSeq'])
 
+    def read_takeup_thresh_counts(self) -> int:
+        """Z counts the last take-up had to move to be confirmed.
+
+        Firmware-DERIVED, not operator-set: computed from the commanded take-up
+        minus the calibrated lash, so it tracks the calibration automatically.
+        Falls back to the bare detection floor with no calibration on file or in
+        turning mode. Pair with read_last_takeup_z_delta() to tell an operator
+        what was wanted versus what happened.
+        """
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['takeupThreshCounts'])
+
     def read_last_takeup_z_delta(self) -> int:
         """Signed Z counts moved across the last take-up, projected onto the
         take-up direction. NEGATIVE means the carriage moved the WRONG way —
