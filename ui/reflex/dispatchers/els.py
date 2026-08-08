@@ -35,13 +35,21 @@ class ElsDispatcher(SavingDispatcher):
     #   els_cal_ceiling_steps  — per-leg hard ceiling. Driving this far without
     #       the Z scale moving IS the open-half-nut / uncoupled failure, so it
     #       must sit comfortably past the largest credible lash but well short
-    #       of anything the carriage could hit. Default sized for elspi:
-    #       ~0.8 mm of leadscrew travel at ~505 steps/mm.
+    #       of anything the carriage could hit. It costs nothing to be generous:
+    #       a leg ends the moment Z moves, so this only bounds the FAILURE case.
+    #
+    #       MEASURED ON elspi 2026-08-08: 385 steps (~0.76 mm) of real lash.
+    #       That is roughly 4x the 0.05-0.20 mm range this feature was designed
+    #       against, and it makes a tight ceiling actively dangerous: the first
+    #       default here was 400 steps, which left EIGHTEEN steps of headroom
+    #       over the measurement. A healthy machine was ~0.036 mm of lash drift
+    #       away from reporting a false "carriage did not move - is the half-nut
+    #       engaged?". Sized at ~2 mm now, about 2.6x the measured lash.
     #   els_cal_motion_thresh_counts — Z counts that count as real motion.
     #       On elspi (200 counts/mm) one count is ~2.5 servo steps, so 2 counts
     #       is about the floor before quantization noise. 0 makes the firmware
     #       fail CLOSED — treat it as "not commissioned", never as a default.
-    els_cal_ceiling_steps = NumericProperty(400)
+    els_cal_ceiling_steps = NumericProperty(1008)   # ~2.0 mm at 0.00198 mm/step
     els_cal_motion_thresh_counts = NumericProperty(2)
 
     # Accept/reject policy for a completed run. The three measurements must

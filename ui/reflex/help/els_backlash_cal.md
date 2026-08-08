@@ -83,6 +83,22 @@ pass in the wrong place. If you see this message, check the half-nut
 before anything else. To clear a stuck take-up, disengage and re-engage
 the ELS stop.
 
+## Sizing the sweep limit
+
+The sweep limit must exceed your actual backlash with room to spare. Every leg
+of the calibration runs up to it, and a leg that reaches it without seeing the
+carriage move reports *"carriage did not move"* — so a limit set close to the
+real lash turns normal drift into a false half-nut alarm.
+
+Being generous costs nothing: a leg ends the moment the scale moves, so the
+limit only bounds the failure case. Aim for roughly **2–3× your measured
+backlash**.
+
+Measured on this machine (2026-08-08): **~0.76 mm** of real lash, against a
+0.8 mm dial-indicator measurement. That is several times larger than a typical
+well-tuned lathe, so do not size the limit from general advice — size it from
+what the calibration actually reports.
+
 ## Notes
 
 - The stored take-up appears in **Backlash takeup (mm)** in ELS
