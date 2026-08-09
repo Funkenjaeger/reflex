@@ -108,6 +108,16 @@ class ElsSettingsPopup(Popup):
         from reflex.components.home.els_backlash_cal_popup import BacklashCalPopup
         BacklashCalPopup(bar=self).open()
 
+    def open_thread_resync(self):
+        """Open the pick-up-existing-thread (manual reference latch) wizard.
+
+        Lazily imported like the calibration popup. The wizard itself refuses
+        with a clear message when no job is armed, so this button does not need
+        its own gating.
+        """
+        from reflex.components.home.els_resync_popup import ThreadResyncPopup
+        ThreadResyncPopup().open()
+
     def refresh_backlash(self):
         """Re-read the stored take-up after a calibration commits.
 

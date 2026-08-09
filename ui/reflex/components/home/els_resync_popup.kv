@@ -1,0 +1,125 @@
+<ThreadResyncPopup>:
+    title: "Pick up existing thread"
+    size_hint_x: 0.8
+    size_hint_y: None
+    height: 470
+    # Not auto-dismiss: a stray tap outside the modal must not silently drop a
+    # live Z watch the operator believes is still running.
+    auto_dismiss: False
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: dp(16)
+        spacing: dp(10)
+
+        Label:
+            id: lbl_body
+            text: root.body_text
+            halign: "left"
+            valign: "top"
+            text_size: self.width, None
+            size_hint_y: None
+            height: self.texture_size[1]
+            color: app.theme.text
+            font_size: app.formats.font_size
+
+        Label:
+            id: lbl_live
+            text: root.live_text
+            halign: "left"
+            valign: "top"
+            text_size: self.width, None
+            size_hint_y: None
+            height: self.texture_size[1] if root.live_text else 0
+            opacity: 1 if root.live_text else 0
+            color: app.theme.text_dim if hasattr(app.theme, "text_dim") else app.theme.text
+            font_name: app.theme.font_mono
+            font_size: app.formats.font_size
+
+        Widget:
+            # spacer so the buttons sit at the bottom regardless of text length
+
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(56)
+            spacing: dp(10)
+
+            # ── jog: cancel / tool is over the thread ───────────────
+            FormValueButton:
+                text: "Cancel"
+                opacity: 1 if root.state == "jog" else 0
+                disabled: root.state != "jog"
+                size_hint_x: 1 if root.state == "jog" else None
+                width: 0 if root.state != "jog" else 100
+                on_press: app.beep()
+                on_release: root.cancel()
+
+            FormValueButton:
+                text: "Tool is over the thread"
+                opacity: 1 if root.state == "jog" else 0
+                disabled: root.state != "jog"
+                size_hint_x: 1 if root.state == "jog" else None
+                width: 0 if root.state != "jog" else 100
+                on_press: app.beep()
+                on_release: root.begin()
+
+            # ── align: abort / confirm (gated on Z hold + stillness) ─
+            FormValueButton:
+                text: "Abort"
+                opacity: 1 if root.state == "align" else 0
+                disabled: root.state != "align"
+                size_hint_x: 1 if root.state == "align" else None
+                width: 0 if root.state != "align" else 100
+                on_press: app.beep()
+                on_release: root.cancel()
+
+            FormValueButton:
+                text: "Confirm — latch here"
+                opacity: 1 if root.state == "align" else 0
+                disabled: root.state != "align" or not root.confirm_enabled
+                size_hint_x: 1 if root.state == "align" else None
+                width: 0 if root.state != "align" else 100
+                on_press: app.beep()
+                on_release: root.confirm()
+
+            # ── drifted: abort / re-seated ──────────────────────────
+            FormValueButton:
+                text: "Abort"
+                opacity: 1 if root.state == "drifted" else 0
+                disabled: root.state != "drifted"
+                size_hint_x: 1 if root.state == "drifted" else None
+                width: 0 if root.state != "drifted" else 100
+                on_press: app.beep()
+                on_release: root.cancel()
+
+            FormValueButton:
+                text: "Re-seated"
+                opacity: 1 if root.state == "drifted" else 0
+                disabled: root.state != "drifted"
+                size_hint_x: 1 if root.state == "drifted" else None
+                width: 0 if root.state != "drifted" else 100
+                on_press: app.beep()
+                on_release: root.reseat()
+
+            # ── latched: done ───────────────────────────────────────
+            FormValueButton:
+                text: "Done"
+                opacity: 1 if root.state == "latched" else 0
+                disabled: root.state != "latched"
+                size_hint_x: 1 if root.state == "latched" else None
+                width: 0 if root.state != "latched" else 100
+                on_press: app.beep()
+                on_release: root.cancel()
+
+            # ── red flag / refused: close. Deliberately NO retry on a
+            #    red flag — a custody fault is a machine finding, and the
+            #    only honest next step is off-screen. ──────────────────
+            FormValueButton:
+                text: "Close"
+                opacity: 1 if root.state in ("red_flag", "refused") else 0
+                disabled: root.state not in ("red_flag", "refused")
+                size_hint_x: 1 if root.state in ("red_flag", "refused") else None
+                width: 0 if root.state not in ("red_flag", "refused") else 100
+                on_press: app.beep()
+                on_release: root.cancel()

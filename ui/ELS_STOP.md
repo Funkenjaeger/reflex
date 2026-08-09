@@ -77,6 +77,24 @@ This replaces the "no software interlock" caveat below for the take-up case
 specifically. Pressing Cut with the half-nut open no longer produces a silent
 wrong-phase pass; it produces a refusal that names the likely cause.
 
+## Picking up an existing thread (manual reference latch)
+
+Normally the job's thread reference auto-latches at the first stop trigger.
+The "Pick up existing thread" wizard (ELS settings → Sync) instead latches it
+at an operator-verified point on an existing thread: coarse jog in the cutting
+direction only (loads the lash on the correct side), then hand-rotate the
+spindle and work the cross-slide to seat the tool in the groove — Z held and
+watched the whole time — then Confirm, which fires the firmware's atomic
+`latchCommand`. The run controller (`reflex/fsms/els_resync.py`) enforces the
+procedure's safety properties: a 1–3 count Z-hold tolerance whose violation is
+recoverable only by a hand re-seat that must return the reading almost exactly
+(a miss is surfaced as a Z-chain custody fault, never widened away), a spindle
+stillness dwell gating Confirm, and a readback cross-check that the firmware
+latched the Z this screen was watching. `latchSeq` is edge-detected exactly
+like `calSeq` — never poll `latchCommand`. Operator doc:
+[`reflex/help/els_thread_resync.md`](reflex/help/els_thread_resync.md);
+emulator proof: `tests/system/test_els_thread_resync.py`.
+
 ## Protocol version
 
 `Board._check_protocol_version()` reads `elsStop.protocolVersion` on each new

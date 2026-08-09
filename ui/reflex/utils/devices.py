@@ -143,6 +143,24 @@ class ElsStop(BaseDevice):
     Read the block ON DEMAND only. 64 registers is ~12 ms of extra serial time
     at 115200 baud against ~29 ms for the whole map -- a permanent 40% tax on
     every poll cycle for a block that is empty in production.
+    Manual latch pair (latchCommand, latchSeq) added with the interactive
+    re-sync feature, and REBASED onto the scratchpad map on 2026-08-16: the pair
+    now sits AFTER diagReserved, not where the pre-rebase branch put it. struct
+    224 -> 228 bytes, rampsSharedData_t 432 -> 436, protocolVersion 2 -> 3.
+
+    The bump matters more than the four bytes. Both parents of that rebase
+    called themselves protocolVersion 2 and meant different layouts -- this
+    branch's 2 ended at latchSeq with no diagnostic block, dev-staging's 2 ends
+    at diagReserved[4]. Three layouts sharing one version number is exactly what
+    protocolVersion exists to prevent, so the combined map is 3.
+
+    Appending after the diagnostic block is deliberate: every offset that has
+    been exercised on the lathe keeps the address it was verified at.
+
+    Same command/ack contract as calCommand/calSeq: the firmware clears the
+    command the instant the ISR consumes it, so edge-detect latchSeq, never poll
+    latchCommand. A latch written with enable == 0 is consumed with NO seq
+    increment — the absent ack IS the refusal.
     """
 
     definition = """
@@ -185,6 +203,8 @@ typedef struct {
   uint16_t diagCaptureTicks;
   uint16_t diagEndReason;
   uint16_t diagReserved[4];
+  uint16_t latchCommand;
+  uint16_t latchSeq;
 } elsStop_t;
 """
 
@@ -193,7 +213,10 @@ typedef struct {
 # Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
 # Modbus contract; never renumber, only append.
 
-ELS_PROTOCOL_VERSION = 2        # elsStop.protocolVersion this UI is built against
+ELS_PROTOCOL_VERSION = 3        # elsStop.protocolVersion this UI is built against
+                                # 3 adds latchCommand/latchSeq after the diagnostic
+                                # scratchpad; see the Els docstring for why the rebase
+                                # had to bump it rather than inherit either parent's 2
 
 # Diagnostic scratchpad schema ids (elsStop.diagSchema). 0 means no probe is
 # compiled into the firmware and the block must not be interpreted at all.
