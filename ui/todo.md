@@ -2,6 +2,28 @@
 
 ---
 
+## ELS interactive re-sync (pick up existing thread) — 2026-08-08, feat/els-thread-resync
+
+Emulator-verified only; **NOT proven on hardware**. Cross-repo register change
+with reflex-fw's same-named branch (`latchCommand`/`latchSeq`, protocolVersion
+1 → 2) — the two branches must be flashed/deployed together.
+
+- New: `reflex/fsms/els_resync.py` (run controller, mutation-proven tests in
+  `tests/fsms/test_els_resync.py`), `els_resync_popup.py/.kv` (wizard, opened
+  from ELS settings → "Pick up existing thread"), help doc
+  `els_thread_resync.md`, system test `tests/system/test_els_thread_resync.py`.
+- elspi verification (Evan): real re-chucked threaded part — jog into the
+  thread, hand-seat, latch, AIR PASS first. Checklist lives in TickTick task
+  6a768a98.
+- The Z-hold tolerance (`els_resync_z_tol_counts`, default 3) is deliberately
+  NOT exposed in the settings popup — it is a commissioning value with a
+  "do not widen" rule; revisit only if real elspi scale jitter demands it.
+- The resync wizard's popup Z/spindle readers bind to the axis primary inputs
+  at open; if axis mapping changes while the popup is open the readers go
+  stale. Low risk (settings and the wizard are both modal), noted for rigor.
+
+---
+
 ## Polish backlog — found during 2026-08-08 hardware testing
 
 **DO NOT ACTION THESE YET.** Evan's explicit call: these are usability gripes

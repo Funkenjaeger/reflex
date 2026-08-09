@@ -70,6 +70,16 @@ class ElsDispatcher(SavingDispatcher):
     # take-up — keeping them separate is what lets a later run notice drift.
     els_cal_last_measured_steps = NumericProperty(0)
 
+    # ── Thread re-sync (manual reference latch) ───────────────────────
+    # Z counts the carriage may sit from its post-jog baseline during fine
+    # alignment, and how closely a hand re-seat against the drive flank must
+    # return to it. DELIBERATELY tiny: a re-seat is the carriage arriving back
+    # at a mechanical stop it was already against, so missing by more than a
+    # couple of counts means the Z chain has lost custody of the position —
+    # the same fault that would silently corrupt every ELS operation. That is
+    # a finding to surface, never a reason to raise this number.
+    els_resync_z_tol_counts = NumericProperty(3)
+
     # Calibration POLICY (spread test, take-up margin) deliberately does NOT
     # live here. ElsDispatcher cannot be constructed without a running MainApp,
     # so any logic on it can only be tested by mirroring it in a stub — which is

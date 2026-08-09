@@ -125,6 +125,14 @@ class ElsStop(BaseDevice):
     Calibration / take-up block (protocolVersion .. takeupThreshCounts) added
     2026-08-08 with the closed-loop backlash calibration feature; struct grew
     56 -> 96 bytes, rampsSharedData_t 264 -> 304.
+
+    Manual latch pair (latchCommand, latchSeq) added 2026-08-08 with the
+    interactive re-sync feature; struct grew 96 -> 100 bytes, rampsSharedData_t
+    304 -> 308, protocolVersion 1 -> 2. Same command/ack contract as
+    calCommand/calSeq: the firmware clears the command the instant the ISR
+    consumes it, so edge-detect latchSeq, never poll latchCommand. A latch
+    written with enable == 0 is consumed with NO seq increment — the absent
+    ack IS the refusal.
     """
 
     definition = """
@@ -157,6 +165,8 @@ typedef struct {
   int32_t  calMotionThreshCounts;
   int32_t  lastTakeupZDelta;
   int32_t  takeupThreshCounts;
+  uint16_t latchCommand;
+  uint16_t latchSeq;
 } elsStop_t;
 """
 
@@ -165,7 +175,7 @@ typedef struct {
 # Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
 # Modbus contract; never renumber, only append.
 
-ELS_PROTOCOL_VERSION = 1        # elsStop.protocolVersion this UI is built against
+ELS_PROTOCOL_VERSION = 2        # elsStop.protocolVersion this UI is built against
 
 ELS_CAL_OK = 0
 ELS_CAL_ERR_ENABLED = 1         # refused: a threading job is live
