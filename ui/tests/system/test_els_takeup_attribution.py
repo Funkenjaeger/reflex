@@ -62,17 +62,32 @@ an explicit message rather than passing quietly.
 
 CROSS-REPO PAIRING -- READ THIS BEFORE BELIEVING A CI FAILURE
 ------------------------------------------------------------
-This test requires firmware that HAS motion attribution (reflex-fw
-Core/Inc/els_slip.h, branch feat/els-slip-attribution off integration).
-.github/workflows/ci.yml pins the reflex-fw checkout to `dev-staging`, which
-does not have it yet -- so until that ref is bumped, or the firmware lands on
-dev-staging, this test fails in CI and the message says "A HAND-PUSHED CARRIAGE
-RELEASED THE TAKE-UP GATE".
+This test requires firmware that has the closed-loop take-up confirmation gate
+AND motion attribution (reflex-fw Core/Inc/els_slip.h, branch
+feat/els-slip-attribution off integration).
 
-That message would be a statement about the FIRMWARE BEING OLD, not a
-regression in this repo. conftest reports the reflex-fw SHA in the pytest
-header; check it first. Bumping the pairing is a deliberate act, per the rule
-in AGENTS.md.
+.github/workflows/ci.yml pins the reflex-fw checkout to `dev-staging`, which as
+of 2026-08-10 has NEITHER -- it predates the whole feature (b98b398 closed-loop
+cal + take-up confirmation, b62722c derived threshold, b3b78e3 bounded window
+are all absent) and sits 7+ commits behind integration.
+
+So in CI BOTH tests here fail, including the coupled positive control, and both
+fail EARLY with:
+
+    the take-up gate never published an outcome: takeupSeq still 0,
+    takeupPending=0, takeupResult=0, backlashSteps=300
+
+That is the pairing signature: backlashSteps reached the firmware, and the
+firmware simply has no gate to answer with. It is a statement about the FIRMWARE
+BEING OLD, not a regression in this repo -- and note it is NOT the
+"A HAND-PUSHED CARRIAGE RELEASED THE TAKE-UP GATE" message, which would mean
+something genuinely alarming. Check the reflex-fw SHA in the pytest header
+before drawing any conclusion. Bumping the pairing is a deliberate act, per the
+rule in AGENTS.md.
+
+(ci.yml's `system-tests` job is continue-on-error, and the semantic-release
+workflow is a separate file gated on main/dev, so a red here releases nothing
+and blocks nothing.)
 
 EMULATOR GREEN IS NOT A HARDWARE RESULT: no servo dynamics beyond the model, no
 metal, and ELS_SLIP_SETTLE_TICKS is UNCOMMISSIONED (reflex-fw todo.md) -- it
