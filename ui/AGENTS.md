@@ -54,6 +54,7 @@ This project is tightly coupled with **reflex-fw**, the STM32 firmware that runs
 
 - **Interface:** RS-485 Modbus RTU — the UI reads/writes holding registers that map directly to the firmware's shared data struct
 - **Version compatibility:** For released versions, matching major.minor implies UI↔FW compatibility. For dev branches, assume the latest commit on each repo's respective branch is compatible. Cross-repo changes affecting the Modbus register interface are called out in commit messages.
+- **How CI applies that rule:** `.github/workflows/ci.yml`'s `system-tests` job resolves the reflex-fw checkout by **matching branch name**, then falls back to `integration` → `dev-staging` → `dev`, and writes the ref it chose (and why) to the job summary. So a branch carrying paired FW+UI work is tested against its own firmware, provided **the branch is named the same in both repos** — which is the thing to get right when a change spans the two. Until 2026-08-10 this ref was hardcoded to `dev-staging`; that silently tested paired branches against firmware that predated them, and the resulting failures read like product defects. If a system test fails, read the pairing line in the job summary before anything else.
 - **Finding the firmware repo:** The reflex-fw repository may be cloned adjacent to this one. If you can't locate it, ask the user for the path. Once found, persist the location using whatever memory or persistence mechanism is available so you don't need to ask again.
 
 ## Agent Provisioning
