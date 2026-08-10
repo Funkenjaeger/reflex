@@ -181,9 +181,28 @@ class SystemHarness:
         Requires the harness to have been constructed with `proc` (the
         emulator_process fixture's Popen handle) -- the plain `harness`
         fixture wires this up automatically. See reflex-fw
-        emulator/src/main.cpp (stdinCommandThreadFunc) for the grammar, e.g.:
+        emulator/src/main.cpp (stdinCommandThreadFunc) for the grammar:
             "x move <mm>"    -> physics->moveCrossSlideTo(mm)
             "x jog <-1|0|1>" -> physics->jogCrossSlide(dir)
+            "z move <mm>"    -> physics->moveCarriageTo(mm)
+            "z jog <-1|0|1>" -> physics->jogCarriage(dir)
+            "halfnut open"   -> physics->setHalfNutEngaged(False)
+            "halfnut close"  -> physics->setHalfNutEngaged(True)
+
+        The z + halfnut commands together stage the machine state the emulator
+        could not previously represent -- UNCOUPLED BUT MOVING ANYWAY, i.e. the
+        operator pushing the carriage with the nut open. That absence is why the
+        2026-08-08 take-up gate defect was unreachable by test; see
+        test_els_takeup_attribution.py.
+
+        Two behaviours worth knowing before using them:
+          * "z jog" models an arrow key being HELD. LathePhysics stops it after
+            0.15 s of silence, so a single command is a tap -- re-send it each
+            poll to keep the carriage moving, then "z jog 0" to stop.
+          * "halfnut" takes an explicit STATE, not a toggle, and is idempotent.
+            A toggle issued while an engage is waiting for phase alignment
+            CANCELS it, so toggle-shaped commands mean different things
+            depending on state the test cannot see.
         """
         if self.proc is None or self.proc.stdin is None:
             raise RuntimeError(
