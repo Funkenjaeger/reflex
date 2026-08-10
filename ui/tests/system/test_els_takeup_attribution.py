@@ -66,13 +66,16 @@ This test requires firmware that has the closed-loop take-up confirmation gate
 AND motion attribution (reflex-fw Core/Inc/els_slip.h, branch
 feat/els-slip-attribution off integration).
 
-.github/workflows/ci.yml pins the reflex-fw checkout to `dev-staging`, which as
-of 2026-08-10 has NEITHER -- it predates the whole feature (b98b398 closed-loop
-cal + take-up confirmation, b62722c derived threshold, b3b78e3 bounded window
-are all absent) and sits 7+ commits behind integration.
+ci.yml pairs reflex-fw by MATCHING BRANCH NAME (falling back to integration,
+then dev-staging, then dev), and prints the ref it chose to the job summary.
+Check that line first -- it is the whole diagnosis.
 
-So in CI BOTH tests here fail, including the coupled positive control, and both
-fail EARLY with:
+Until 2026-08-10 the ref was hardcoded to `dev-staging`, which predates the
+whole feature: b98b398 (closed-loop cal + take-up confirmation), b62722c
+(derived threshold) and b3b78e3 (bounded window) are all absent, 7+ commits
+behind integration. Reproduced locally via REFLEX_FW_DIR: paired that way BOTH
+tests here fail, including the coupled positive control, and both fail EARLY
+with:
 
     the take-up gate never published an outcome: takeupSeq still 0,
     takeupPending=0, takeupResult=0, backlashSteps=300

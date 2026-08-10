@@ -55,17 +55,57 @@ jobs:
       with:
         path: reflex-ui
 
+    # Pick the reflex-fw ref to pair with. SAME BRANCH NAME FIRST.
+    #
+    # A feature branch — or integration — routinely carries firmware and UI
+    # changes that only make sense together: a new Modbus register, a new
+    # emulator command, a firmware gate the UI drives. Pinning one fixed ref
+    # here makes exactly that class of change untestable, and it fails in a way
+    # that reads like a product defect rather than a pairing mistake.
+    #
+    # 2026-08-10 is the worked example: `feat/els-slip-attribution` existed in
+    # BOTH repos, and CI paired the UI branch against dev-staging anyway —
+    # firmware predating the entire closed-loop take-up feature. Both new tests
+    # failed with "the take-up gate never published an outcome", which says
+    # nothing about the code under test.
+    #
+    # Fallbacks, in order, for a branch that exists in only one repo:
+    #   integration  — where feature work converges, so the best guess for
+    #                  anything modern
+    #   dev-staging  — HW-verified (AGENTS.md); the previous hardcoded value
+    #   dev          — reflex-fw's default branch, which lags dev-staging
+    #
+    # The chosen ref is echoed to the job summary, so a red run names its own
+    # pairing instead of making you go and look.
+    - name: Resolve reflex-fw pairing ref
+      id: fwref
+      env:
+        # head_ref is the source branch on pull_request events, where ref_name
+        # would be the synthetic "<pr>/merge".
+        BRANCH: ${{ github.head_ref || github.ref_name }}
+      run: |
+        FW=https://github.com/Funkenjaeger/reflex-fw
+        for ref in "$BRANCH" integration dev-staging dev; do
+          if git ls-remote --exit-code --heads "$FW" "$ref" >/dev/null 2>&1; then
+            echo "ref=$ref" >> "$GITHUB_OUTPUT"
+            if [ "$ref" = "$BRANCH" ]; then
+              why="matching branch name"
+            else
+              why="fallback; reflex-fw has no branch '$BRANCH'"
+            fi
+            echo "### reflex-fw pairing: \`$ref\` ($why)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Pairing reflex-fw @ $ref ($why)"
+            exit 0
+          fi
+        done
+        echo "::error::no reflex-fw ref resolved for branch '$BRANCH'"
+        exit 1
+
     - name: Checkout reflex-fw
       uses: actions/checkout@v4
       with:
         repository: Funkenjaeger/reflex-fw
-        # The cross-repo pairing rule (AGENTS.md): dev branches pair with the
-        # latest commit on each repo's respective dev branch. reflex-fw's
-        # DEFAULT branch is dev, which lags dev-staging — the first CI run
-        # failed exactly there (dev's lathe.toml predates cross_slide.scale_dir
-        # and all 16 reversing-matrix permutations errored on the missing key).
-        # Bump this ref deliberately when the pairing changes.
-        ref: dev-staging
+        ref: ${{ steps.fwref.outputs.ref }}
         path: reflex-fw
 
     - name: Install emulator build deps (insurance)
