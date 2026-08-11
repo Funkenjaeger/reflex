@@ -37,15 +37,109 @@ jobs:
     - name: Run tests
       run: uv run --frozen pytest -q
 
+  # Pick the reflex-fw ref to pair with. SAME BRANCH NAME FIRST.
+  #
+  # A feature branch — or integration — routinely carries firmware and UI
+  # changes that only make sense together: a new Modbus register, a new
+  # emulator command, a firmware gate the UI drives. Pinning one fixed ref
+  # here makes exactly that class of change untestable, and it fails in a way
+  # that reads like a product defect rather than a pairing mistake.
+  #
+  # 2026-08-10 is the worked example: `feat/els-slip-attribution` existed in
+  # BOTH repos, and CI paired the UI branch against dev-staging anyway —
+  # firmware predating the entire closed-loop take-up feature. Both new tests
+  # failed with "the take-up gate never published an outcome", which says
+  # nothing about the code under test.
+  #
+  # For a branch that exists in only one repo the single fallback is
+  # `dev-staging`, which AGENTS.md designates as the HW-verified branch — the
+  # one baseline it is safe to judge a UI-only change against. `dev` follows
+  # only as a floor in case dev-staging is ever absent. `integration` is
+  # deliberately NOT in this chain: it is unverified and it moves, so falling
+  # back to it would silently re-baseline every UI-only branch onto different
+  # firmware from week to week. A branch that genuinely wants fw `integration`
+  # gets it from the first rule, by being named `integration` itself.
+  #
+  # This is a SEPARATE JOB from system-tests on purpose. system-tests is
+  # continue-on-error (a flaky emulator build must not turn the run red), and
+  # that would equally swallow a failure to resolve the pairing at all. Split
+  # out, an unresolvable pairing fails the run loudly while a flaky emulator
+  # still does not.
+  resolve-pairing:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.fwref.outputs.ref }}
+
+    steps:
+    - name: Resolve reflex-fw pairing ref
+      id: fwref
+      env:
+        # head_ref is the source branch on pull_request events, where ref_name
+        # would be the synthetic "<pr>/merge".
+        BRANCH: ${{ github.head_ref || github.ref_name }}
+      run: |
+        FW=https://github.com/Funkenjaeger/reflex-fw
+        for ref in "$BRANCH" dev-staging dev; do
+          err=$(git ls-remote --exit-code --heads "$FW" "$ref" 2>&1 >/dev/null)
+          rc=$?
+
+          if [ "$rc" -eq 0 ]; then
+            case "$ref" in
+              "$BRANCH")
+                why="matching branch name" ;;
+              dev-staging)
+                why="fallback to the HW-verified baseline; reflex-fw has no branch '$BRANCH'" ;;
+              *)
+                why="last-resort fallback; reflex-fw has neither '$BRANCH' nor dev-staging" ;;
+            esac
+            echo "ref=$ref" >> "$GITHUB_OUTPUT"
+            echo "### reflex-fw pairing: \`$ref\` ($why)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Pairing reflex-fw @ $ref ($why)"
+            exit 0
+          fi
+
+          # Exit 2 is the ONLY answer that means "no such branch". Anything
+          # else -- 128 for DNS/transport/auth, most commonly -- means we never
+          # got a truthful answer at all. Treating that as "absent" is how a
+          # one-second network blip silently pairs a branch against the wrong
+          # firmware and then prints a confident, false reason for it, which is
+          # the exact failure this step exists to prevent. So: stop, loudly.
+          if [ "$rc" -ne 2 ]; then
+            echo "::error::reflex-fw lookup for '$ref' failed (git ls-remote exit $rc); refusing to guess a pairing"
+            {
+              echo "### reflex-fw pairing: FAILED"
+              echo
+              echo "\`git ls-remote\` exited **$rc** looking up \`$ref\`. Only exit 2 means"
+              echo "\"no such branch\", so this is a lookup failure, not an absent branch —"
+              echo "no pairing was guessed. Re-run the job."
+              echo
+              echo '```'
+              echo "$err"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+        done
+
+        echo "::error::no reflex-fw ref resolved for branch '$BRANCH'"
+        {
+          echo "### reflex-fw pairing: FAILED"
+          echo
+          echo "reflex-fw has none of \`$BRANCH\`, \`dev-staging\`, \`dev\`."
+        } >> "$GITHUB_STEP_SUMMARY"
+        exit 1
+
   # Best-effort: builds the reflex-fw emulator from source and runs the
   # emulator-backed system suite against it. reflex-fw is a public sibling
   # repo (anonymous checkout below), so no PAT/secret is required today; if
   # it's ever made private this job will need a PAT with read access stored
   # as a secret and passed via `with: token:` on the reflex-fw checkout step.
   # continue-on-error so a flaky/slow emulator build never blocks the
-  # required `test` job above.
+  # required `test` job above. Note that resolving the pairing is NOT covered
+  # by that leniency -- see resolve-pairing.
   system-tests:
     runs-on: ubuntu-latest
+    needs: resolve-pairing
     continue-on-error: true
     timeout-minutes: 20
 
@@ -59,13 +153,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: Funkenjaeger/reflex-fw
-        # The cross-repo pairing rule (AGENTS.md): dev branches pair with the
-        # latest commit on each repo's respective dev branch. reflex-fw's
-        # DEFAULT branch is dev, which lags dev-staging — the first CI run
-        # failed exactly there (dev's lathe.toml predates cross_slide.scale_dir
-        # and all 16 reversing-matrix permutations errored on the missing key).
-        # Bump this ref deliberately when the pairing changes.
-        ref: dev-staging
+        ref: ${{ needs.resolve-pairing.outputs.ref }}
         path: reflex-fw
 
     - name: Install emulator build deps (insurance)
