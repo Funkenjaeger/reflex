@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install headless runtime libs (insurance)
       run: |
@@ -145,12 +145,12 @@ jobs:
 
     steps:
     - name: Checkout reflex-ui
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         path: reflex-ui
 
     - name: Checkout reflex-fw
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: Funkenjaeger/reflex-fw
         ref: ${{ needs.resolve-pairing.outputs.ref }}
