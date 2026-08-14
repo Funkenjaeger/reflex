@@ -125,6 +125,24 @@ class ElsStop(BaseDevice):
     Calibration / take-up block (protocolVersion .. takeupThreshCounts) added
     2026-08-08 with the closed-loop backlash calibration feature; struct grew
     56 -> 96 bytes, rampsSharedData_t 264 -> 304.
+
+    Diagnostic scratchpad (diagSchema .. diagReserved) added 2026-08-14: a fixed
+    64-register block reserved so that temporary firmware instrumentation never
+    has to change the layout again. struct grew 96 -> 224 bytes,
+    rampsSharedData_t 304 -> 432. It is RESERVED IN EVERY BUILD but written only
+    when the firmware is compiled with ELS_DIAG_SCRATCH, so in a release build
+    the whole block reads zero.
+
+    ``diagSchema`` names whichever probe is compiled in, and 0 means "nothing
+    here". Anything reading this block MUST check it first and refuse to
+    interpret a schema it does not recognise -- protocolVersion deliberately
+    does NOT bump when a probe changes, because the layout does not change, so
+    diagSchema is the only thing standing between a reader and a plausible
+    number with the wrong meaning.
+
+    Read the block ON DEMAND only. 64 registers is ~12 ms of extra serial time
+    at 115200 baud against ~29 ms for the whole map -- a permanent 40% tax on
+    every poll cycle for a block that is empty in production.
     """
 
     definition = """
@@ -157,6 +175,14 @@ typedef struct {
   int32_t  calMotionThreshCounts;
   int32_t  lastTakeupZDelta;
   int32_t  takeupThreshCounts;
+  uint16_t diagSchema;
+  uint16_t diagSeq;
+  uint16_t diagBucketTicks;
+  uint16_t diagBucketCount;
+  int32_t  diagSettleTicks;
+  int32_t  diagNetCounts;
+  int16_t  diagTrace[50];
+  uint16_t diagReserved[6];
 } elsStop_t;
 """
 
@@ -165,7 +191,15 @@ typedef struct {
 # Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
 # Modbus contract; never renumber, only append.
 
-ELS_PROTOCOL_VERSION = 1        # elsStop.protocolVersion this UI is built against
+ELS_PROTOCOL_VERSION = 2        # elsStop.protocolVersion this UI is built against
+
+# Diagnostic scratchpad schema ids (elsStop.diagSchema). 0 means no probe is
+# compiled into the firmware and the block must not be interpreted at all.
+# Mirrored from reflex-fw Core/Src/Ramps.c. Never renumber, only append: a
+# stale reader that recognises an old number must not silently accept a new
+# probe's data under it.
+ELS_DIAG_SCHEMA_NONE = 0
+ELS_DIAG_SCHEMA_TAKEUP_SETTLE = 1   # per-bucket signed dZ after the last take-up pulse
 
 ELS_CAL_OK = 0
 ELS_CAL_ERR_ENABLED = 1         # refused: a threading job is live
