@@ -54,7 +54,7 @@ This project is tightly coupled with **reflex-fw**, the STM32 firmware that runs
 
 - **Interface:** RS-485 Modbus RTU — the UI reads/writes holding registers that map directly to the firmware's shared data struct
 - **Version compatibility:** For released versions, matching major.minor implies UI↔FW compatibility. For dev branches, assume the latest commit on each repo's respective branch is compatible. Cross-repo changes affecting the Modbus register interface are called out in commit messages.
-- **How CI applies that rule:** `.github/workflows/ci.yml`'s `system-tests` job resolves the reflex-fw checkout by **matching branch name**, then falls back to `integration` → `dev-staging` → `dev`, and writes the ref it chose (and why) to the job summary. So a branch carrying paired FW+UI work is tested against its own firmware, provided **the branch is named the same in both repos** — which is the thing to get right when a change spans the two. Until 2026-08-10 this ref was hardcoded to `dev-staging`; that silently tested paired branches against firmware that predated them, and the resulting failures read like product defects. If a system test fails, read the pairing line in the job summary before anything else.
+- **How CI applies that rule:** `.github/workflows/ci.yml`'s `resolve-pairing` job picks the reflex-fw checkout by **matching branch name**, falling back to `dev-staging` (the hardware-verified baseline) and then `dev`, and writes the ref it chose — and why — to the job summary. So a branch carrying paired FW+UI work is tested against its own firmware, provided **the branch is named the same in both repos**, which is the one thing to get right when a change spans the two. If a system test fails, read the pairing line in the job summary before anything else. Until 2026-08-10 this ref was hardcoded to `dev-staging`, which silently tested paired branches against firmware that predated them and produced failures that read like product defects.
 - **Finding the firmware repo:** The reflex-fw repository may be cloned adjacent to this one. If you can't locate it, ask the user for the path. Once found, persist the location using whatever memory or persistence mechanism is available so you don't need to ask again.
 
 ## Agent Provisioning
@@ -263,7 +263,27 @@ Every UI component follows this structure:
   commit to it except for the clerical exception.
 - **Commit messages:** Follow conventional commits (`fix:`, `feat:`, `chore:`, etc.)
 - **Versioning:** Automated via `python-semantic-release` from commit messages
-- **CI/CD:** GitHub Actions workflow on push to `main`/`dev` triggers semantic release
+- **CI/CD — two workflows that never overlap:**
+  - `release.yml` runs **only** on pushes to `main`/`dev`, and cuts the semantic release.
+  - `ci.yml` — the test suite — lives **only** on `integration`, `dev-staging` and
+    feature branches. It is not present on `main` or `dev` at all.
+
+  So on any given branch exactly one of the two exists.
+
+- **Never write `[skip ci]` in a commit message outside `main`/`dev`.** GitHub's
+  `[skip ci]` marker suppresses *every* workflow for that push, not just the
+  release. On `main`/`dev` the only workflow is `release.yml`, so it does what
+  you would expect. On `integration`, `dev-staging` or a feature branch the only
+  workflow is `ci.yml` — so the marker's sole effect there is to **delete the
+  test run**, and it buys nothing in exchange, because a release was never going
+  to fire on those branches anyway. As of 2026-08-11 seven commits on the
+  `integration` line carried it, including the whole backlash-calibration
+  wizard; none of that work was ever seen by CI.
+
+  You almost certainly do not need it on `main`/`dev` either:
+  `python-semantic-release` only cuts a release when the conventional-commit
+  types since the last tag warrant one, so a docs-only or `chore:` push already
+  produces no release and needs no marker.
 
 ## Key Dependencies
 
