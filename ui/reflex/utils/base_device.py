@@ -90,11 +90,22 @@ class BaseDevice:
             ][0]
 
             # Handle multi var definition separated by comma
+            # `size` MUST be updated in every branch, not just the scalar one
+            # below. It is the reported length of the type, and until 2026-08-14
+            # the comma and array branches advanced `current_address` and fell
+            # through without touching it -- so a struct whose LAST member was an
+            # array under-reported its own size by exactly that array.
+            #
+            # Nothing caught it because every struct here happened to end on a
+            # scalar, which set `size` to the correct running total on the way
+            # past. elsStop_t's diagnostic scratchpad ends with two arrays and
+            # took the reported size of rampsSharedData_t from 432 to 320,
+            # silently truncating the register map by 112 bytes.
             if "," in identified_name:
                 for name in identified_name.replace(" ", "").split(","):
                     current_address = current_address + matching_type.length
                     struct_unpack_string += matching_type.struct_unpack_string
-                    # size = current_address
+                    size = current_address
                 continue
 
             # Handle array definition
@@ -105,6 +116,7 @@ class BaseDevice:
 
                 current_address += matching_type.length * count
                 struct_unpack_string += matching_type.struct_unpack_string * count
+                size = current_address
                 continue
 
             current_address = current_address + matching_type.length
