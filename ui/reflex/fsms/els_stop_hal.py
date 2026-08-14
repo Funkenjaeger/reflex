@@ -238,6 +238,57 @@ class ElsStopHal:
             return 0
         return int(self._board.device['elsStop']['takeupSeq'])
 
+    def read_diag_schema(self) -> int:
+        """Which diagnostic probe the firmware was built with; 0 = none.
+
+        This is the ONLY thing that says what the rest of the scratchpad means.
+        protocolVersion deliberately does not move when a probe changes -- the
+        register layout does not change, which is the whole point of reserving
+        the block -- so a reader that skips this check will happily interpret
+        one probe's numbers as another's. Check it, and refuse anything you do
+        not recognise; never guess.
+        """
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['diagSchema'])
+
+    def read_diag_seq(self) -> int:
+        """Increments once per COMPLETED capture. Edge-detect this.
+
+        One register, so it is cheap enough to poll. There is deliberately no
+        capture-in-progress register: a reader that polled one would race the
+        ISR and could read a half-written trace.
+        """
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['diagSeq'])
+
+    def read_diag_capture(self) -> dict:
+        """Read the whole scratchpad in one refresh. Call only after diag_seq
+        has changed -- this is the expensive read the block is designed around
+        (64 registers, roughly 12 ms of serial time at 115200 baud), and it has
+        no business anywhere near the steady-state poll loop.
+
+        Returns raw firmware values with no unit conversion. Bucket width is
+        reported in ISR TICKS, and the tick period is deliberately NOT assumed
+        here: reflex-fw's own documentation disagrees with itself about the ISR
+        rate by 10x, so a conversion baked in at this layer would be a confident
+        wrong answer. The recorder stores executionInterval alongside the trace
+        so the time base is derivable from the same capture that needs it.
+        """
+        if not self._board.connected:
+            return {}
+        els = self._board.device['elsStop'].refresh()
+        return {
+            "schema": int(els['diagSchema']),
+            "seq": int(els['diagSeq']),
+            "bucket_ticks": int(els['diagBucketTicks']),
+            "bucket_count": int(els['diagBucketCount']),
+            "settle_ticks": int(els['diagSettleTicks']),
+            "net_counts": int(els['diagNetCounts']),
+            "trace": [int(v) for v in els['diagTrace']],
+        }
+
     def read_takeup_thresh_counts(self) -> int:
         """Z counts the last take-up had to move to be confirmed.
 

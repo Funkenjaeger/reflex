@@ -7,6 +7,7 @@ from reflex.dispatchers import els, board
 from reflex.fsms.ui_fsm import ElsUiFsm
 from reflex.fsms.els_fsm import ElsFsm
 from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_diag import ElsDiagRecorder
 from reflex.utils.devices import takeup_failure_text
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
 
@@ -120,6 +121,7 @@ class ElsUiController(EventDispatcher):
         self._els = els
         self._board = board
         self._hal = ElsStopHal(board)
+        self._diag_recorder = ElsDiagRecorder(self._hal, board)
 
         # ── Encoder-anchored ELS targets ─────────────────────────────────────
         # stop_z / retract_z are stored as the PHYSICAL Z-leadscrew encoder count
@@ -194,6 +196,10 @@ class ElsUiController(EventDispatcher):
         self._board.bind(update_tick=self._poll_apply_policy)
         self._board.bind(update_tick=self._poll_reframe_targets)
         self._board.bind(update_tick=self._poll_takeup_outcome)
+        # Firmware diagnostic scratchpad. Dormant against any release build --
+        # it reads diagSchema once per connection and, finding 0, issues no
+        # further reads at all. See reflex/fsms/els_diag.py.
+        self._board.bind(update_tick=self._poll_diag_capture)
 
         # 7. Re-arm HAL when mode flags change so firmware tracks the operator.
         self.bind(retract_enabled=self._on_modes_changed,
@@ -226,6 +232,11 @@ class ElsUiController(EventDispatcher):
 
     def _on_connected_changed(self, instance, value):
         def _apply(_dt):
+            # The board on the other end may have been REFLASHED between
+            # connections, so anything learned about its firmware last time --
+            # including whether it carries a diagnostic probe, and which one --
+            # says nothing about this one. Re-interrogate from scratch.
+            self._diag_recorder.reset()
             if value:
                 # A (re)connection means the firmware may hold elsStop state
                 # from a previous session (or have rebooted and lost ours) —
@@ -289,6 +300,20 @@ class ElsUiController(EventDispatcher):
             log.warning(
                 "ELS takeup #%s REFUSED (result=%s): moved %s counts, needed %s",
                 seq, result, moved, needed)
+
+    def _poll_diag_capture(self, *args):
+        """Drain any completed firmware settle capture to disk.
+
+        Deliberately a separate poller from _poll_takeup_outcome even though both
+        fire on the same event: the take-up outcome is published the moment the
+        gate decides, while the settle capture keeps running for the rest of its
+        window precisely to see what Z does AFTER that decision. Folding this
+        into the outcome poller would read the block while it was still being
+        written and record a truncated trace as if it were a complete one.
+
+        Never raises -- see ElsDiagRecorder.poll().
+        """
+        self._diag_recorder.poll()
 
     def _poll_els_stop_active(self, *args):
         # Bound to board.update_tick. Kivy property writes from the polling
