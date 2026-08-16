@@ -56,9 +56,14 @@ def test_advbar_height_accounts_for_every_collapsible_strip():
         r"^\s+height:\s*dp\(\d+\)\s+if\s+(.+?)\s+else\s+0\s*$", text, re.M)
     assert strip_conditions, "no collapsible strips found -- has the kv changed shape?"
 
-    # The root rule's own height sits at two-space indent; the strips are deeper.
-    root_height = re.search(r"^  height:\s*(\S.*)$", text, re.M)
-    assert root_height, "could not find the ElsAdvancedBar root height expression"
+    # `natural_height`, not `height`: ElsModeLayout owns `height` because it
+    # decides whether the bar is shown at all, and in Kivy assigning a property
+    # replaces any kv binding on it. The two were the same property until
+    # 2026-08-16, when that collision froze the bar at its construction-time
+    # height and made this very expression irrelevant -- the kv was correct and
+    # simply not driving anything. Two owners, two properties.
+    root_height = re.search(r"^  natural_height:\s*(\S.*)$", text, re.M)
+    assert root_height, "could not find the ElsAdvancedBar natural_height expression"
     root_expr = root_height.group(1)
 
     for cond in strip_conditions:
