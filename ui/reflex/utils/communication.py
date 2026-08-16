@@ -149,7 +149,7 @@ def write_float(dm, address, value, variable_name: Optional[str] = ""):
             address, byteorder=minimalmodbus.BYTEORDER_LITTLE_SWAP, value=value
         )
         dm.connected = True
-        log.info(f"Write {variable_name}: float {value} to address {address}")
+        log.debug(f"Write {variable_name}: float {value} to address {address}")
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))
@@ -177,7 +177,7 @@ def write_long(dm, address, value, variable_name: Optional[str] = ""):
             value=int(value),
         )
         dm.connected = True
-        log.info(f"Write {variable_name}: long {value} to address {address}")
+        log.debug(f"Write {variable_name}: long {value} to address {address}")
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))
@@ -198,7 +198,7 @@ def write_unsigned(dm, address, value, variable_name: Optional[str] = ""):
     try:
         dm.device.write_register(address, signed=False, value=int(value))
         dm.connected = True
-        log.info(f"Write {variable_name}: unsigned {value} to address {address}")
+        log.debug(f"Write {variable_name}: unsigned {value} to address {address}")
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))
@@ -219,7 +219,7 @@ def write_signed(dm, address, value, variable_name: Optional[str] = ""):
     try:
         dm.device.write_register(address, signed=True, value=int(value))
         dm.connected = True
-        log.info(f"Write {variable_name}: signed {value} to address {address}")
+        log.debug(f"Write {variable_name}: signed {value} to address {address}")
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))

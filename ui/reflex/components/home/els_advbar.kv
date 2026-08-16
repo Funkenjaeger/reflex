@@ -7,9 +7,16 @@
 <ElsAdvancedBar>:
   orientation: "vertical"
   size_hint_y: None
-  # Grow by the re-reference strip's height only while it's showing, so the
-  # control row below is never squished.
-  height: 128 + (dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0)
+  # Grow by each notice strip's height only while it is showing, so the control
+  # row below is never squished.
+  #
+  # EVERY collapsible strip below MUST be represented here. A strip that takes
+  # height without the parent growing to match overflows this vertical
+  # BoxLayout's bounds and renders wherever the layout arithmetic lands it --
+  # observed on the machine 2026-08-16 as the take-up warning appearing over a
+  # DRO line in the middle of the screen. The strip itself was fine; it was
+  # this line that had not been updated when it was added.
+  height: 128 + (dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (dp(30) if root.controller.takeup_warning else 0)
 
   # ── Re-reference notice strip (audit H1 follow-up) ─────────────────────────
   # Shown when a committed Stop/Start value was re-referenced by a DRO re-zero /

@@ -221,7 +221,7 @@ class ElsUiController(EventDispatcher):
     # Bus events may originate on the ConnectionManager polling thread, so
     # all assignments to Kivy properties are marshaled to the main thread.
     def _on_ui_state_changed(self, state):
-        log.info("ui controller _on_ui_state_changed()")
+        log.debug("ui controller _on_ui_state_changed()")
         def _apply(_dt):
             self.ui_state = state
             self._apply_policy()
