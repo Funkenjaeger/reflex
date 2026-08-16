@@ -1,7 +1,14 @@
 name: CI
 
+# `branches: ['**']` is EVERY branch -- main, dev, dev-staging, integration and
+# every feature branch, slashes and all -- so nothing that used to be tested
+# stops being tested. What it excludes is TAGS. A bare `push:` fires on tag
+# pushes too, so pushing an archive/* tag ran the whole suite against a
+# historical tree and mailed out the failure. Tags here are archival (archive/*)
+# or cut by semantic-release; neither is a thing to test.
 on:
   push:
+    branches: ['**']
   pull_request:
 
 permissions:
