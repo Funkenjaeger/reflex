@@ -32,7 +32,6 @@ def _stub(natural_height=128, enable_advanced=True):
         els_adv_bar=SimpleNamespace(
             natural_height=natural_height, height=None, opacity=None, disabled=None),
         _update_row_heights=lambda *a: None,
-        _log_geometry=lambda *a: None,
     )
 
 
