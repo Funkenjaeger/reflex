@@ -34,6 +34,35 @@ class ElsStopHal:
             return
         self._board.device['elsStop']['active'] = 1 if active else 0
 
+    def stop_sync(self) -> None:
+        """Clear syncEnable on every scale. The MOTION SOURCE off-switch.
+
+        ORDER MATTERS AT DISENGAGE, and this is the whole point of the method.
+        The firmware's servoEnableTask (reflex-fw Ramps.c, 100 ms period) does:
+
+            if (anySyncMotionEnabled && !elsStop.active && servoMode != 2)
+                servoMode = 1;
+
+        -- it only ever turns the feed ON, and the `!active` term is a condition
+        that DISENGAGE ITSELF CREATES, because dropping enable clears active. So
+        for as long as any syncEnable is still set after enable has gone to 0,
+        that task is entitled to switch the feed back on, and nothing in the
+        firmware will ever switch it off again.
+
+        Clearing sync FIRST removes the `anySyncMotionEnabled` term before the
+        window can open. Relying on the servoMode->syncEnable binding to do it
+        (dispatchers/els.py) is what left the window: the binding fires as a
+        REACTION to servoMode, so syncEnable was necessarily written LAST.
+
+        Measured before this existed: ~1 disengage in 7-10 left the carriage
+        feeding, 1.825 mm in 3 s and still going, with the ELS stop disarmed
+        (enable == 0 gates the stop check off) -- i.e. no backstop left.
+        """
+        if not self._board.connected:
+            return
+        for scale in self._board.device['scales']:
+            scale['syncEnable'] = 0
+
     def read_enable(self) -> bool:
         if not self._board.connected:
             return False

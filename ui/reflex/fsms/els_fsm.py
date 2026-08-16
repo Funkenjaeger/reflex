@@ -222,11 +222,26 @@ class ElsFsm:
         # so conservatively assume the next retract needs full takeup.
         self._retract_backlash_applied = False
         self.board.unbind(update_tick=self._on_board_update)
-        self.hal.set_enable(False)
         # Safety: disengaging ELS removes the stop that was gating the feed, so
         # also stop any running sync feed — otherwise a spindle-synced feed keeps
         # driving the carriage with no auto-stop (audit H6). Idempotent.
+        #
+        # SYNC OFF FIRST, THEN ENABLE, THEN FEED. Not cosmetic ordering.
+        # Dropping enable clears elsStop.active in firmware, and the firmware's
+        # servoEnableTask turns the feed back ON whenever it sees
+        # (any syncEnable) && !active. So between "enable = 0" and "syncEnable =
+        # 0" there is a window in which that task re-asserts servoMode = 1 —
+        # and nothing in firmware ever clears it again.
+        #
+        # Previously syncEnable was cleared only as a side effect of the
+        # servoMode binding in dispatchers/els.py, which by construction fires
+        # AFTER servoMode changes, so the window was always open. Measured at
+        # ~1 disengage in 7-10 leaving the carriage feeding — 1.825 mm in 3 s and
+        # still going — with the ELS stop simultaneously disarmed, because the
+        # firmware gates the stop check on enable. Feed running, backstop gone.
         feed_was_on = self.board.servo.servoMode != 0
+        self.hal.stop_sync()
+        self.hal.set_enable(False)
         self.board.servo.stop_feed()
         if feed_was_on and not self.board.connection_manager.connected:
             # A stop-feed write was attempted but not acknowledged (link down).

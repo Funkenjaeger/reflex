@@ -143,8 +143,26 @@ class ElsDispatcher(SavingDispatcher):
         return None
 
     def _sync_spindle_to_servo(self, instance, value):
-        """Enable/disable spindle syncEnable when ELS servo mode changes."""
+        """Enable/disable spindle syncEnable when ELS servo mode changes.
+
+        OBSERVATION MUST NOT BECOME COMMAND. servoMode is a two-way field: the UI
+        writes it, and dispatchers/servo.py also assigns the POLLED FIRMWARE
+        VALUE into the same property, which fires this callback. Acting on that
+        turns "the firmware reports the feed is on" into "the UI commands sync
+        on" — a control loop the operator is not in.
+
+        That closed the latch behind the disengage race: firmware's
+        servoEnableTask sets servoMode = 1 during the disengage window, the UI
+        polls it, this callback writes syncEnable = 1 in response, and the task
+        then has the `anySyncMotionEnabled` term it needs to keep asserting the
+        feed forever. It is the reason the failure never recovered rather than
+        lasting one poll cycle.
+        """
         if not self.app.board.connected:
+            return
+        if getattr(self.app.servo, 'servoMode_from_firmware', False):
+            log.debug(f"ignoring firmware-originated servoMode={value}; "
+                      "sync state is commanded by the UI, never echoed back")
             return
         spindle_axis = self.get_spindle_axis()
         if spindle_axis is None:

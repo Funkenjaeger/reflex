@@ -28,6 +28,10 @@ class ServoDispatcher(SavingDispatcher):
     index = NumericProperty(0)
 
     servoMode = NumericProperty(0)
+    #: True only while servoMode is being assigned from a firmware
+    #: readback. Deliberately a plain attribute, not a Kivy property:
+    #: it must not itself generate change events.
+    servoMode_from_firmware = False
     unitsPerTurn = NumericProperty(360.0)
     oldOffset = NumericProperty(0.0)
 
@@ -150,7 +154,18 @@ class ServoDispatcher(SavingDispatcher):
             self.encoderCurrent = self.board.fast_data_values['servoCurrent']
             servoMode = self.board.fast_data_values['servoMode']
             if servoMode != self.servoMode:
-                self.servoMode = servoMode
+                # Flagged so listeners can tell an OBSERVED value from a
+                # COMMANDED one. This assignment mirrors what the firmware
+                # reports; it is not the operator asking for anything, and a
+                # listener that writes hardware in response turns a readback
+                # into a command. dispatchers/els.py checks this before
+                # driving syncEnable — see the note there for the disengage
+                # latch it closes.
+                self.servoMode_from_firmware = True
+                try:
+                    self.servoMode = servoMode
+                finally:
+                    self.servoMode_from_firmware = False
 
             steps_per_second = self.board.fast_data_values['servoSpeed']
             self.speed_history.append(steps_per_second)
