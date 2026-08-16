@@ -28,10 +28,17 @@ THREE PROPERTIES THIS MUST HAVE, and each one is load-bearing:
 NO UNIT CONVERSION HAPPENS HERE. Bucket width is recorded in ISR ticks, and the
 ISR's measured interval in CPU cycles is recorded alongside it, so ticks can be
 converted to seconds from the capture itself. reflex-fw's own documentation
-disagrees with itself about the ISR rate by 10x (AGENTS.md and ARCHITECTURE.md
-say ~100 us, todo.md and els_slip.h say 100 kHz, and reflex.ioc describes a third
-rate it has not matched since 2024), so a conversion baked in here would be a
-confident wrong answer. Record what was measured; convert when analysing.
+disagreed with itself about the ISR rate by 10x when this was written -- AGENTS.md
+and ARCHITECTURE.md said ~100 us, todo.md and els_slip.h said 100 kHz, and
+reflex.ioc described a third rate it had not matched since 2024. Those were
+reconciled to 100 kHz on 2026-08-16, so the contradiction is gone.
+
+THE RULE STANDS ANYWAY, and not merely out of caution. A rate compiled into this
+file is an assumption about a number the firmware is free to change, and the
+capture would keep parsing cleanly and silently mean something else -- the same
+class of failure diagSchema exists to prevent one level up. That is why the
+firmware PUBLISHES diagBucketTicks rather than expecting anyone to know it.
+Record what was measured; convert when analysing.
 """
 
 import json

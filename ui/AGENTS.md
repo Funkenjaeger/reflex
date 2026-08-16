@@ -130,6 +130,45 @@ direction across ELS mode and machine-wiring polarity.
 (`reflex/utils/devices.py`) still match the firmware's `Ramps.h` struct layout, byte-for-byte. It is
 NOT `system`-marked (fast, emulator-free) so it gates every default run; it skips if reflex-fw is absent.
 
+The same file also checks the **diagnostic schema registry**, which is a second
+cross-repo contract in the same header — see below.
+
+## Diagnostic probes — the UI half
+
+**reflex-fw's `DIAG.md` is the reference.** It owns the probe registry, the
+one-probe-at-a-time rule, and the procedure for adding or retiring one. That is
+deliberately not duplicated here: a second copy of a registry is a registry that
+drifts. This section covers only what lives in *this* repo.
+
+A firmware **probe** writes a 64-register scratchpad reserved at the tail of
+`elsStop_t`. `elsStop.diagSchema` names which probe is compiled in; `0` means
+none, which is every release build.
+
+`reflex/fsms/els_diag.py` (`ElsDiagRecorder`) is the reader. Read its module
+docstring before touching it — the three properties it lists are load-bearing,
+particularly that it is **inert against release firmware**: it interrogates
+`diagSchema` once per connection and, finding `0` or an id it does not know,
+issues no further reads at all.
+
+**Adding a probe means touching three things here, not one.** Mirroring the id
+alone is the mistake, and it fails at the lathe rather than in CI:
+
+| Where | What |
+|---|---|
+| `reflex/utils/devices.py` | the `ELS_DIAG_SCHEMA_*` constant |
+| `reflex/fsms/els_diag.py` — `KNOWN_SCHEMAS` | **the one that bites.** The recorder refuses any schema outside this set, logs *"which this UI does not recognise"*, and goes dormant. Firmware fine, flash fine, nothing recorded. |
+| `reflex/fsms/els_diag.py` — `SCHEMAS_WITH_END_REASON` | only if the probe publishes `diagEndReason` |
+
+`test_register_map_contract.py` now enforces the first two: every live firmware
+probe must be in `KNOWN_SCHEMAS`, ids must agree by name *and* value, and the UI
+must not recognise a schema the firmware never defined. Until 2026-08-16 nothing
+did, and the two registries could disagree with CI green.
+
+**Retired schemas stay in `KNOWN_SCHEMAS` on purpose.** The firmware refuses to
+*build* a retired probe, but every recorded `.jsonl` line carries its own schema,
+so captures taken under an older probe must stay readable. Retired ids are never
+deleted and never reissued.
+
 ## Design Patterns
 
 Follow the architecture guidelines in [kivy-fsm-design-pattern.md](kivy-fsm-design-pattern.md)
