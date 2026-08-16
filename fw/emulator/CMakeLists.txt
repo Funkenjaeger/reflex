@@ -208,3 +208,12 @@ target_compile_definitions(els_diag_scratch_takeup_settle_v2_test
 target_link_libraries(els_diag_scratch_takeup_settle_v2_test m pthread)
 add_test(NAME els_diag_scratch_takeup_settle_v2_test
     COMMAND els_diag_scratch_takeup_settle_v2_test)
+
+add_executable(els_diag_scratch_disengage_latch_test
+    ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_compile_definitions(els_diag_scratch_disengage_latch_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_DISENGAGE_LATCH)
+target_link_libraries(els_diag_scratch_disengage_latch_test m pthread)
+add_test(NAME els_diag_scratch_disengage_latch_test
+    COMMAND els_diag_scratch_disengage_latch_test)

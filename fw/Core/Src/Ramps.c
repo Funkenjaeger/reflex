@@ -1115,8 +1115,16 @@ _Noreturn void servoEnableTask(void *argument) {
       anySyncMotionEnabled = anySyncMotionEnabled || (shared->scales[i].syncEnable != 0);
     }
 
-    if (anySyncMotionEnabled && !shared->elsStop.active && rampsData->shared.fastData.servoMode != 2)
-      rampsData->shared.fastData.servoMode = 1;
+    /* The re-assert. elsDiagServoGate is a no-op returning false in every
+     * release build; a diagnostic probe may refuse the assert and record that
+     * it did (see els_diag_disengage_latch.h, which exists precisely because
+     * this line can switch the feed back on after a disengage). */
+    if (anySyncMotionEnabled && !shared->elsStop.active && rampsData->shared.fastData.servoMode != 2) {
+      if (!elsDiagServoGate(&rampsData->diag, &shared->elsStop,
+                            rampsData->shared.fastData.servoMode)) {
+        rampsData->shared.fastData.servoMode = 1;
+      }
+    }
 
     rampsData->shared.fastData.servoSpeed = (float)(int32_t)(rampsData->shared.servo.currentSteps - previousPosition) * 10;
     previousPosition = rampsData->shared.servo.currentSteps;

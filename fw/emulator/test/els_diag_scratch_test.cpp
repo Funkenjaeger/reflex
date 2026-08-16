@@ -133,13 +133,24 @@ int main(void)
           "take-up settle v2 publishes wire schema 2");
     check(data.shared.elsStop.diagBucketCount == ELS_DIAG_TRACE_BUCKETS,
           "take-up settle v2 publishes its bucket count");
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_DISENGAGE_LATCH
+    check(data.shared.elsStop.diagSchema == 3,
+          "disengage latch publishes wire schema 3");
+    /* Zero events at startup. This probe reports a PROBLEM by counting up, so a
+     * non-zero seq out of RampsStart would be a false positive on every run. */
+    check(data.shared.elsStop.diagSeq == 0,
+          "disengage latch starts with no events recorded");
+    check(data.shared.elsStop.diagNetCounts == 0,
+          "disengage latch starts with a zero event count");
 #else
 #error "this probe has no assertions in els_diag_scratch_test.cpp -- add an arm above"
 #endif
     check(data.shared.elsStop.diagEndReason == 0,
           "end reason starts cleared (no stale verdict beside a fresh trace)");
+#if ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
     check(data.shared.elsStop.diagBucketTicks > 0,
-          "flagged build publishes bucket width (host must not assume the ISR rate)");
+          "trace probe publishes bucket width (host must not assume the ISR rate)");
+#endif
     printf("=== %s (probe build, schema %u) ===\n",
            failures == 0 ? "ALL PASS" : "FAILURES",
            (unsigned)data.shared.elsStop.diagSchema);

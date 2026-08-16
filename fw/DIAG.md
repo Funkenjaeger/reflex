@@ -151,6 +151,40 @@ writing another one, and because the geometry it publishes (`diagBucketTicks`,
 `diagBucketCount`) is the pattern every trace-shaped probe should copy. Expect
 most probes to be like this one: used once, then inert.
 
+### `disengage-latch` — schema 3 — **INTERVENING probe, for catching a live defect**
+
+Counts `servoEnableTask` re-asserting `servoMode = 1` while `elsStop.enable == 0`
+— i.e. switching a spindle-synced feed back on after a disengage, with the ELS
+stop simultaneously disarmed.
+
+**This probe changes behaviour: it REFUSES the re-assert and records that it
+did.** Every other probe only observes. The reason is that catching this by
+observation alone means letting a carriage actually run away on a lathe with the
+stop disarmed — that is not a test, it is the accident. Suppressing makes the
+dangerous outcome impossible while the counter still proves whether the condition
+arises.
+
+**A non-zero `diagSeq` is the finding.** It means the race occurred and was
+caught, not that anything went wrong during the run.
+
+| Field | Meaning (NOT the same as schema 2 — check `diagSchema` first) |
+|---|---|
+| `diagSeq` | events caught. **The result.** 0 = never happened this run |
+| `diagNetCounts` | same count in 32 bits, so a long run cannot wrap unnoticed |
+| `diagCaptureTicks` | `elsStop.active` at the most recent event (expect 0) |
+| `diagSettleTicks` | `servoMode` at the event: 0 = this would have STARTED a feed |
+| `diagEndReason` | 1 once any event has been seen |
+| `diagTrace[]` | unused |
+
+Scope of the intervention: suppression is conditional on `enable == 0`, so while
+this is compiled in, sync motion started by a non-ELS path also stops being
+auto-enabled. Acceptable in a diagnostic build; it is why this must never reach a
+release branch.
+
+More sensitive than the end-to-end system test, which only fails when the timing
+escalates all the way to visible carriage travel — an A/B over 20 runs showed
+zero failures in *both* arms and proved nothing. This fires on the condition.
+
 ### `takeup-settle` — schema 1 — **RETIRED**
 
 Superseded by v2, which ends the capture at the servo's next pulse instead of a

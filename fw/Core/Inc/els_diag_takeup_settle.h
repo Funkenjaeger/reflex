@@ -87,6 +87,12 @@ static inline void elsDiagInit(elsDiagCtx_t *ctx, elsStop_t *stop) {
   stop->diagEndReason    = 0;
   stop->diagSettleTicks  = 0;
   stop->diagNetCounts    = 0;
+  /* diagSeq too. It is the host's edge-detect source, so a garbage value at
+   * boot reads as 'a capture just completed' against a block that holds
+   * nothing. Left implicit until 2026-08-16, when it happened to be zero
+   * because BSS is zero on this part -- the invariant held without anything
+   * enforcing it, which is the same trap the clears below already call out. */
+  stop->diagSeq          = 0;
   ctx->state             = 0;
   ctx->captureTick       = 0;
 }
@@ -190,6 +196,15 @@ static inline void elsDiagTick(elsDiagCtx_t *ctx, elsStop_t *stop,
       stop->diagSeq++;
     }
   }
+}
+
+/* This probe does not watch servoEnableTask, so it never intervenes. Present
+ * because the entry-point contract is fixed: Ramps.c calls the same set
+ * whichever probe is selected. */
+static inline bool elsDiagServoGate(elsDiagCtx_t *ctx, elsStop_t *stop,
+                                    uint16_t servoModeNow) {
+  (void)ctx; (void)stop; (void)servoModeNow;
+  return false;
 }
 
 #endif /* ELS_DIAG_TAKEUP_SETTLE_H */
