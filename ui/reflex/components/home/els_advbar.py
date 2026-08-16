@@ -27,6 +27,23 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     enable_retract = BooleanProperty(True)
     enable_wizard = BooleanProperty(True)
 
+    # Height this bar WANTS, i.e. its base plus whichever collapsible notice
+    # strips are currently showing. Computed in the kv rule.
+    #
+    # It is a separate property from `height` because the two have different
+    # owners and conflating them broke the bar on 2026-08-16. ElsModeLayout owns
+    # `height`, because it is what decides whether the advanced bar is shown at
+    # all — and in Kivy, assigning to a property REPLACES any kv binding on it.
+    # So the moment the layout wrote `height`, the kv expression stopped driving
+    # it, and the bar was frozen at whatever it measured at construction time:
+    # base height, with no strip showing. A strip appearing then made the
+    # children taller than the parent and the warning rendered outside the bar,
+    # up over the DRO rows.
+    #
+    # With the two split, kv owns what the bar needs and the layout owns whether
+    # it gets it, and neither silently overwrites the other.
+    natural_height = NumericProperty(128)
+
     # ── One-hot tri-state operating mode (derived from the flags above) ───────
     # The single mode button in the advanced bar cycles through these three:
     #   "wizard"        -> guided multi-step cut (enable_wizard)

@@ -140,6 +140,181 @@ class ElsStopHal:
             return 0.0
         return float(self._board.device['elsStop']['lastCorrection'])
 
+    # ── protocol version ──────────────────────────────────────────────
+    def read_protocol_version(self) -> int:
+        """Firmware register-layout version.
+
+        Returns 0 when disconnected AND on firmware predating the register
+        (an unwritten appended register reads 0), so callers must treat 0 as
+        "too old / unknown" rather than as a version number.
+        """
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['protocolVersion'])
+
+    # ── backlash calibration ──────────────────────────────────────────
+    # The command/ack split matters here: request_calibration() sets calCommand,
+    # and the FIRMWARE clears it the instant the ISR consumes it — long before
+    # the run finishes. Polling calCommand for completion would therefore report
+    # "done" immediately and read a stale result. Edge-detect read_cal_seq().
+
+    def set_cal_limits(self, ceiling_steps: int, motion_thresh_counts: int) -> None:
+        """Push the two machine-specific calibration limits.
+
+        A motion threshold of 0 disables detection and makes the firmware fail
+        CLOSED (it never confirms), which is deliberate — an unconfigured
+        threshold must refuse rather than wave every take-up through. Callers
+        should treat 0 as "not commissioned", not as a usable default.
+        """
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['calCeilingSteps'] = max(0, int(ceiling_steps))
+        self._board.device['elsStop']['calMotionThreshCounts'] = max(0, int(motion_thresh_counts))
+
+    def read_servo_motion_params(self):
+        """(maxSpeed, acceleration) as the firmware currently holds them."""
+        if not self._board.connected:
+            return (0.0, 0.0)
+        return (float(self._board.device['servo']['maxSpeed']),
+                float(self._board.device['servo']['acceleration']))
+
+    def set_servo_motion_params(self, max_speed: float, acceleration: float) -> None:
+        """Set the ramp parameters the firmware will use for commanded moves.
+
+        Calibration needs this because it is the only feature that commands
+        motion from cold: it inherits whatever maxSpeed the machine happens to
+        be configured for, and at a slow setting a 2000-step sweep takes minutes
+        while looking completely stationary. The caller is responsible for
+        restoring the previous values.
+
+        NOTE acceleration must never be 0: updateIndexingPosition computes
+        stopDistance as (v*v/acceleration)/2, so a zero acceleration yields NaN,
+        every ramp comparison against it is false, and the move hangs forever
+        without ever starting.
+        """
+        if not self._board.connected:
+            return
+        self._board.device['servo']['maxSpeed'] = float(max_speed)
+        self._board.device['servo']['acceleration'] = float(acceleration)
+
+    def request_calibration(self) -> None:
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['calCommand'] = 1
+
+    def read_cal_seq(self) -> int:
+        """Monotonic counter, incremented once per finished run (success OR
+        refusal). This is the ack — edge-detect it to know a run completed."""
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['calSeq'])
+
+    def read_cal_result(self) -> int:
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['calResult'])
+
+    def read_cal_measured(self) -> list:
+        """The three per-reversal lash measurements, in servo steps.
+
+        Populated on failure too (a run that measured two reversals and then
+        lost the carriage is diagnostically richer than a bare error code), so
+        only trust these when read_cal_result() is ELS_CAL_OK.
+        """
+        if not self._board.connected:
+            return [0, 0, 0]
+        return [int(v) for v in self._board.device['elsStop']['calMeasured']]
+
+    # ── take-up outcome ───────────────────────────────────────────────
+    def read_takeup_result(self) -> int:
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['takeupResult'])
+
+    def read_takeup_seq(self) -> int:
+        """Increments once per take-up OUTCOME. takeupPending alone cannot
+        distinguish completed-normally from host-cleared; this can."""
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['takeupSeq'])
+
+    def read_diag_schema(self) -> int:
+        """Which diagnostic probe the firmware was built with; 0 = none.
+
+        This is the ONLY thing that says what the rest of the scratchpad means.
+        protocolVersion deliberately does not move when a probe changes -- the
+        register layout does not change, which is the whole point of reserving
+        the block -- so a reader that skips this check will happily interpret
+        one probe's numbers as another's. Check it, and refuse anything you do
+        not recognise; never guess.
+        """
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['diagSchema'])
+
+    def read_diag_seq(self) -> int:
+        """Increments once per COMPLETED capture. Edge-detect this.
+
+        One register, so it is cheap enough to poll. There is deliberately no
+        capture-in-progress register: a reader that polled one would race the
+        ISR and could read a half-written trace.
+        """
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['diagSeq'])
+
+    def read_diag_capture(self) -> dict:
+        """Read the whole scratchpad in one refresh. Call only after diag_seq
+        has changed -- this is the expensive read the block is designed around
+        (64 registers, roughly 12 ms of serial time at 115200 baud), and it has
+        no business anywhere near the steady-state poll loop.
+
+        Returns raw firmware values with no unit conversion. Bucket width is
+        reported in ISR TICKS, and the tick period is deliberately NOT assumed
+        here: reflex-fw's own documentation disagrees with itself about the ISR
+        rate by 10x, so a conversion baked in at this layer would be a confident
+        wrong answer. The recorder stores executionInterval alongside the trace
+        so the time base is derivable from the same capture that needs it.
+        """
+        if not self._board.connected:
+            return {}
+        els = self._board.device['elsStop'].refresh()
+        return {
+            "schema": int(els['diagSchema']),
+            "seq": int(els['diagSeq']),
+            "bucket_ticks": int(els['diagBucketTicks']),
+            "bucket_count": int(els['diagBucketCount']),
+            "settle_ticks": int(els['diagSettleTicks']),
+            "net_counts": int(els['diagNetCounts']),
+            # How long the servo stayed silent, versus when Z last MOVED. Two
+            # different questions: the first bounds the measurement window, the
+            # second is the settle time itself.
+            "capture_ticks": int(els['diagCaptureTicks']),
+            "end_reason": int(els['diagEndReason']),
+            "trace": [int(v) for v in els['diagTrace']],
+        }
+
+    def read_takeup_thresh_counts(self) -> int:
+        """Z counts the last take-up had to move to be confirmed.
+
+        Firmware-DERIVED, not operator-set: computed from the commanded take-up
+        minus the calibrated lash, so it tracks the calibration automatically.
+        Falls back to the bare detection floor with no calibration on file or in
+        turning mode. Pair with read_last_takeup_z_delta() to tell an operator
+        what was wanted versus what happened.
+        """
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['takeupThreshCounts'])
+
+    def read_last_takeup_z_delta(self) -> int:
+        """Signed Z counts moved across the last take-up, projected onto the
+        take-up direction. NEGATIVE means the carriage moved the WRONG way —
+        a distinct fault from "didn't move" and worth surfacing as such."""
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['lastTakeupZDelta'])
+
     def is_move_done(self) -> bool:
         """True only when the firmware's commanded indexing motion has been
         fully *executed*, not just consumed by the planner.

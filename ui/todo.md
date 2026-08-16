@@ -2,6 +2,64 @@
 
 ---
 
+## Polish backlog — found during 2026-08-08 hardware testing
+
+**DO NOT ACTION THESE YET.** Evan's explicit call: these are usability gripes
+found while commissioning the backlash calibration on elspi, and they wait until
+functional testing of the ELS integration branch is complete. Fixing polish
+mid-test churns the thing being tested.
+
+### 1. Calibration mode prerequisites are discovered by refusal, not up front
+
+The wizard lets you press Start and only then refuses, because the firmware
+checks the preconditions (`servoMode == 1`, `elsStop.enable == 0`) when it
+consumes `calCommand`. The operator learns the requirement by being rejected.
+
+**This is not only annoying — the remedy it demands can be destructive.**
+Telling an operator to disengage the ELS stop is not free: firmware clears
+`referenceLatched` on the next `enable` 0→1 edge (`Core/Src/Ramps.c`, the
+enable-rising-edge block), so disengaging and re-engaging **discards a saved
+thread phase reference**. An operator part-way through a threading job who
+follows the error message loses their groove alignment. The message currently
+presents that as a trivial precondition.
+
+What it should do instead:
+- Check the prerequisites **before** offering Start, and say what needs
+  changing rather than refusing after the fact.
+- Offer to put the machine into the right mode, with sanity checks first —
+  spindle stopped at minimum.
+- **A cancel that is genuinely safe**, and an explicit warning when
+  `referenceLatched` is set, because proceeding costs the phase reference.
+- Improve the refusal text. Evan rated the current messages "roughly 50%
+  helpful": `"Servo is not in sync/index mode."` states a fact without telling
+  the operator what to do about it. Source: `ELS_CAL_MESSAGES` in
+  `reflex/utils/devices.py`.
+
+Files: `reflex/components/home/els_backlash_cal_popup.py` (prompt flow),
+`reflex/fsms/els_cal.py` (`start()` preconditions),
+`reflex/utils/devices.py` (`ELS_CAL_MESSAGES`).
+
+### 2. The drift warning fires on ANY difference, so it cries wolf
+
+`BacklashCalibration.drift_steps` / `_drift_text()` in
+`reflex/components/home/els_backlash_cal_popup.py` append *"A large change is
+worth investigating"* whenever drift is non-zero. On elspi the run-to-run drift
+was **1–3 steps** on a ~385-step measurement (well under 1%), and the warning
+fired every time — so it reads as a fault report on a machine that is in fact
+repeating beautifully.
+
+Gate the sentence on the difference actually being large. Needs a threshold with
+a rationale rather than a guessed constant: a sensible basis is the same
+quantization the measurement carries (~5 steps at a 2-count motion threshold),
+or a percentage of the measured value, whichever is greater. Below that, report
+the drift as a plain number with no editorial.
+
+Note the same anti-pattern to check for elsewhere in this feature: a warning
+whose trigger condition is broader than the thing it warns about trains the
+operator to ignore it.
+
+---
+
 ## Hard Fork Cleanup
 
 ### Workflow Fixes

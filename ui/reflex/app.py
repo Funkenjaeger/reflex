@@ -8,6 +8,11 @@ from kivy.properties import ObjectProperty, ConfigParserProperty, NumericPropert
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
 
+from reflex.utils.log_levels import apply_log_levels
+# Before the FSMs are built, so `transitions` is already quiet by the time it
+# has anything to say. Overridable per-logger via REFLEX_LOG_* -- see the module.
+apply_log_levels()
+
 from reflex.components.appsettings import config
 import reflex.components.widgets.facelift_chrome  # noqa: F401  (installs global Popup/form chrome)
 from reflex.components.widgets.theme_provider import ThemeProvider

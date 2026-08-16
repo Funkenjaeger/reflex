@@ -34,6 +34,60 @@ The firmware's re-sync correction depends on three configured quantities being m
 
 The layered architecture these files implement (UI → Controller → FSM → HAL → firmware registers) is documented separately in [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md); the ELS stop is a faithful instance of that pattern.
 
+## Backlash calibration (Python side)
+
+The firmware measures; Python decides what to do with the measurement.
+
+The wizard (`reflex/components/home/els_backlash_cal_popup.py`, opened from the
+ELS settings popup) walks the operator through the safety preconditions, sets
+`calCommand`, and then **edge-detects `calSeq`** — never `calCommand`, which the
+firmware clears the instant the ISR consumes it, long before the run finishes.
+Polling the command would report success immediately and read a stale result.
+
+The run controller (`reflex/fsms/els_cal.py`) owns the policy the firmware
+deliberately does not:
+
+- **Consistency.** The three measurements must agree within
+  `els_cal_max_spread_steps`. A wide spread is refused, and there is no "use it
+  anyway" — a drivetrain that doesn't repeat is the finding, and the same fault
+  would quietly corrupt every other ELS operation.
+- **Margin.** The stored take-up is `measured + max(20%, floor)`. The floor
+  matters because at a small lash a flat percentage collapses into the
+  measurement's own quantization uncertainty and stops being margin at all.
+
+Two properties elsewhere depend on this and are easy to break:
+
+1. `els_backlash_steps` holds the **commanded** take-up, and
+   `els_cal_last_measured_steps` holds the **raw measurement**. Only the command
+   is written to the firmware. `ElsStopFsm._safety_margin_display` budgets
+   against `els_backlash_steps`, so storing the raw measurement there would
+   under-budget the cut-start safety margin by exactly the margin.
+2. Calibration policy lives as module-level functions, not methods on
+   `ElsDispatcher` — that class needs a running `MainApp`, so logic on it can
+   only be tested by mirroring it in a stub, and mirrored rules drift.
+
+## Take-up failures are now operator-visible
+
+The firmware refuses to start a pass whose backlash take-up it could not
+confirm. `takeupResult` / `takeupSeq` carry the outcome, and the UI renders the
+physical check rather than the register value: *"Carriage not moving — is the
+half-nut engaged?"* Recovery is disengaging and re-engaging the ELS stop.
+
+This replaces the "no software interlock" caveat below for the take-up case
+specifically. Pressing Cut with the half-nut open no longer produces a silent
+wrong-phase pass; it produces a refusal that names the likely cause.
+
+## Protocol version
+
+`Board._check_protocol_version()` reads `elsStop.protocolVersion` on each new
+connection and compares it against `ELS_PROTOCOL_VERSION` in `devices.py`. The
+whole shared struct is memory-mapped onto Modbus registers with no translation
+layer, so a firmware whose `elsStop_t` differs reinterprets every register past
+the point of divergence — which presents as plausible-looking garbage and gets
+diagnosed as a hardware fault. The check is non-fatal: it flags and logs, since
+the UI stays useful for everything that doesn't touch the moved registers, and
+refusing to start would make reflashing harder than the fault warrants.
+
 ## Operator-visible expectations
 
 - Engage the stop block **before** enabling sync — sync without a stop will free-run the leadscrew with the spindle.

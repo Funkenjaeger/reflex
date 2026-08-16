@@ -37,14 +37,15 @@ import pytest
 from reflex.utils.base_device import BaseDevice
 from reflex.utils.communication import ConnectionManager
 
-REFLEX_FW_DIR = Path(os.environ.get("REFLEX_FW_DIR", "/mnt/c/projects/embedded/reflex-fw"))
-RAMPS_H = REFLEX_FW_DIR / "Core" / "Inc" / "Ramps.h"
-SCALES_H = REFLEX_FW_DIR / "Core" / "Inc" / "Scales.h"
+from tests.fw_repo import require_or_skip_reason
 
-pytestmark = pytest.mark.skipif(
-    not RAMPS_H.exists(),
-    reason=f"reflex-fw not found ({RAMPS_H}); set REFLEX_FW_DIR to run the register-map contract test",
-)
+REFLEX_FW_DIR, _SKIP_REASON = require_or_skip_reason()
+# Placeholders keep module import working when the firmware is absent; the
+# pytestmark below stops anything from actually reading them.
+RAMPS_H = (REFLEX_FW_DIR / "Core" / "Inc" / "Ramps.h") if REFLEX_FW_DIR else Path("/nonexistent")
+SCALES_H = (REFLEX_FW_DIR / "Core" / "Inc" / "Scales.h") if REFLEX_FW_DIR else Path("/nonexistent")
+
+pytestmark = pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or "")
 
 # C fixed-width scalar types used in the shared structs. For these, alignment
 # equals size (natural alignment), which is target-independent. `bool` is not
@@ -61,7 +62,12 @@ ROOT_STRUCT = "rampsSharedData_t"
 # ever miscomputes padding, these fixed numbers diverge and fail loudly.
 KNOWN_SERVO_DIR_OFFSET = 32      # servo_t.servoDir sits after 8x 4-byte fields
 KNOWN_SERVO_T_SIZE = 36          # 34 bytes of fields + 2 trailing pad -> 4-align
-KNOWN_ROOT_SIZE = 264            # sizeof(rampsSharedData_t); see module test
+KNOWN_ROOT_SIZE = 432            # sizeof(rampsSharedData_t); see module test
+                                 # 264 -> 304 on 2026-08-08: the closed-loop
+                                 # backlash calibration block appended 40 bytes
+                                 # to elsStop_t (56 -> 96), packed uint16s-first
+                                 # so nothing pads. Bump this ONLY together with
+                                 # devices.py and elsStop.protocolVersion.
 
 
 # ── firmware C-struct parsing + true-C-layout model ──────────────────────────

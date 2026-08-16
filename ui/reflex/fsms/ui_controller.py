@@ -7,6 +7,8 @@ from reflex.dispatchers import els, board
 from reflex.fsms.ui_fsm import ElsUiFsm
 from reflex.fsms.els_fsm import ElsFsm
 from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_diag import ElsDiagRecorder
+from reflex.utils.devices import takeup_failure_text
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
 
 log = Logger.getChild(__name__)
@@ -43,6 +45,17 @@ class ElsUiController(EventDispatcher):
     # ── Hardware-state mirrors (kv binds to these) ─────────────────────
     engaged             = BooleanProperty(False)   # True iff domain FSM not in 'disabled'
     els_stop_active     = BooleanProperty(False)   # mirrors HAL read_active()
+
+    # Inline take-up warning, shown in the ELS bar. Non-empty means the last
+    # attempted pass was REFUSED because the firmware could not confirm the
+    # backlash take-up actually moved the carriage.
+    #
+    # The firmware aborts such a pass back to the stopped state with the thread
+    # phase reference intact, so recovery is simply pressing Cut again — this
+    # string is the only thing that tells the operator why nothing happened.
+    # Without it a refusal and a hung machine are indistinguishable, which is
+    # exactly how it presented on hardware 2026-08-08.
+    takeup_warning      = StringProperty("")
 
     # ── Operator-job descriptors (mirrored from the widget) ────────────
     # is_threading toggles the X-clear-of-start-dia gate in waiting_to_retract.
@@ -92,11 +105,23 @@ class ElsUiController(EventDispatcher):
 
     ui_state = StringProperty("idle")
 
+    @property
+    def hal(self):
+        """Read-only access to the elsStop HAL.
+
+        Exposed so auxiliary flows (the backlash calibration wizard) can talk to
+        the register block without reaching into `_hal` or standing up a second
+        HAL against the same board. The FSM remains the only writer during a
+        threading cycle; callers using this must not fight it.
+        """
+        return self._hal
+
     def __init__(self, els: els, board: board, **kw):
         super().__init__(**kw)
         self._els = els
         self._board = board
         self._hal = ElsStopHal(board)
+        self._diag_recorder = ElsDiagRecorder(self._hal, board)
 
         # ── Encoder-anchored ELS targets ─────────────────────────────────────
         # stop_z / retract_z are stored as the PHYSICAL Z-leadscrew encoder count
@@ -110,6 +135,7 @@ class ElsUiController(EventDispatcher):
         # re-renders it — the physical shoulder never moves — instead of
         # silently corrupting it (the old scaled-storage bug). `*_valid` gates a
         # never-set target; only never-set and an ELS Z-axis remap invalidate.
+        self._prev_takeup_seq = 0         # edge-detect baseline for takeup outcomes
         self._stop_z_encoder = None       # int leadscrew encoder count, or None
         self._retract_z_encoder = None
         self._stop_z_committed = False
@@ -169,6 +195,11 @@ class ElsUiController(EventDispatcher):
         self._board.bind(update_tick=self._poll_carriage_retracted)
         self._board.bind(update_tick=self._poll_apply_policy)
         self._board.bind(update_tick=self._poll_reframe_targets)
+        self._board.bind(update_tick=self._poll_takeup_outcome)
+        # Firmware diagnostic scratchpad. Dormant against any release build --
+        # it reads diagSchema once per connection and, finding 0, issues no
+        # further reads at all. See reflex/fsms/els_diag.py.
+        self._board.bind(update_tick=self._poll_diag_capture)
 
         # 7. Re-arm HAL when mode flags change so firmware tracks the operator.
         self.bind(retract_enabled=self._on_modes_changed,
@@ -190,7 +221,7 @@ class ElsUiController(EventDispatcher):
     # Bus events may originate on the ConnectionManager polling thread, so
     # all assignments to Kivy properties are marshaled to the main thread.
     def _on_ui_state_changed(self, state):
-        log.info("ui controller _on_ui_state_changed()")
+        log.debug("ui controller _on_ui_state_changed()")
         def _apply(_dt):
             self.ui_state = state
             self._apply_policy()
@@ -201,6 +232,11 @@ class ElsUiController(EventDispatcher):
 
     def _on_connected_changed(self, instance, value):
         def _apply(_dt):
+            # The board on the other end may have been REFLASHED between
+            # connections, so anything learned about its firmware last time --
+            # including whether it carries a diagnostic probe, and which one --
+            # says nothing about this one. Re-interrogate from scratch.
+            self._diag_recorder.reset()
             if value:
                 # A (re)connection means the firmware may hold elsStop state
                 # from a previous session (or have rebooted and lost ours) —
@@ -227,6 +263,57 @@ class ElsUiController(EventDispatcher):
             # (non-wizard auto-advances to in_cycle.waiting_to_cut).
             self._sync_ui_state_to_modes()
         self._apply_policy()
+
+    def _poll_takeup_outcome(self, *args):
+        """Log every backlash take-up outcome so it is visible AT THE MACHINE.
+
+        At the lathe there is the touchscreen UI and the log viewer, not a
+        register browser — so anything worth knowing during commissioning has to
+        reach one of those or it may as well not exist.
+
+        The headroom figure is the reason this exists. A REFUSED take-up already
+        names both numbers in its message, but a successful one says nothing, so
+        there is no way to tell a gate with comfortable margin from one sitting a
+        single count above its threshold. The latter will start intermittently
+        refusing good passes later, and without this line the first evidence
+        would be a machine that mysteriously stops working.
+
+        Edge-detected on takeupSeq, which increments once per OUTCOME (not per
+        tick, and not per take-up attempt).
+        """
+        seq = self._hal.read_takeup_seq()
+        if seq == self._prev_takeup_seq:
+            return
+        self._prev_takeup_seq = seq
+
+        result = self._hal.read_takeup_result()
+        moved = self._hal.read_last_takeup_z_delta()
+        needed = self._hal.read_takeup_thresh_counts()
+
+        if result == 0:
+            self.takeup_warning = ""
+            log.info(
+                "ELS takeup #%s CONFIRMED: moved %s counts, needed %s (headroom %+d)",
+                seq, moved, needed, int(moved) - int(needed))
+        else:
+            self.takeup_warning = takeup_failure_text(result, moved, needed)
+            log.warning(
+                "ELS takeup #%s REFUSED (result=%s): moved %s counts, needed %s",
+                seq, result, moved, needed)
+
+    def _poll_diag_capture(self, *args):
+        """Drain any completed firmware settle capture to disk.
+
+        Deliberately a separate poller from _poll_takeup_outcome even though both
+        fire on the same event: the take-up outcome is published the moment the
+        gate decides, while the settle capture keeps running for the rest of its
+        window precisely to see what Z does AFTER that decision. Folding this
+        into the outcome poller would read the block while it was still being
+        written and record a truncated trace as if it were a complete one.
+
+        Never raises -- see ElsDiagRecorder.poll().
+        """
+        self._diag_recorder.poll()
 
     def _poll_els_stop_active(self, *args):
         # Bound to board.update_tick. Kivy property writes from the polling
@@ -898,6 +985,12 @@ class ElsUiController(EventDispatcher):
 
     def start_cut(self):
         self.clear_reframe_notice()   # starting the cut clears a re-reference flag
+        # Clear a previous take-up refusal HERE, on initiation, rather than
+        # waiting for the next outcome. The operator's response to the warning
+        # is to close the half-nut and press Cut again; leaving the old warning
+        # up through the retry reads as "still refusing" during the very window
+        # where they are watching to see whether it worked.
+        self.takeup_warning = ""
         self._els_fsm.push_stop_to_firmware()
         self._els_fsm.cut()
 

@@ -126,6 +126,37 @@ class TestBaseDeviceParsing:
         #        + 2 int16 (servoDir, _pad; 1 each) = 18
         assert device.size == 18
 
+    def test_size_includes_a_trailing_array(self, mock_cm):
+        """A struct whose LAST member is an array must report its full size.
+
+        Regression, 2026-08-14. `register_type` updated `size` only in the
+        scalar branch; the array branch advanced `current_address` and fell
+        through, so `size` froze at the last scalar. Every struct in this file
+        happened to end on a scalar, so the bug was invisible until elsStop_t
+        gained a diagnostic block ending in two arrays -- which reported
+        rampsSharedData_t as 320 bytes instead of 432 and would have truncated
+        the Modbus map by 112 bytes.
+
+        Deliberately checks a trailing array specifically. A struct with an
+        array in the MIDDLE gets the right answer either way, because a later
+        scalar sets `size` to the correct running total on the way past -- so a
+        mid-struct array cannot fail and is worthless as a regression pin.
+        """
+        class TrailingArray(BaseDevice):
+            definition = """
+typedef struct {
+  int32_t  head;
+  int16_t  tail[10];
+} trailing_t;
+"""
+
+        t = TrailingArray.register_type(mock_cm.definitions)
+        # head (2 registers) + tail[10] (1 register each) = 12
+        assert t.length == 12, (
+            f"trailing array dropped from the size: got {t.length}, want 12"
+        )
+        assert t.struct_unpack_string == "l" + "h" * 10
+
 
 class TestRegisterType:
     def test_servo_register_type(self):
