@@ -139,6 +139,14 @@ class ElsModeLayout(ModeLayout):
         # samples differing is that hypothesis confirmed; identical kills it.
         self._log_geometry("immediate")
         Clock.schedule_once(lambda *_: self._log_geometry("after layout"), 0)
+        # The +0 sample fires at the START of the next frame, which may be before
+        # the bar runs its OWN deferred layout -- so it cannot distinguish "the
+        # children are permanently stale" from "they had not caught up yet". These
+        # two settle that. If +2s still shows the strip above the bar's top, the
+        # bar is not re-laying-out its children at all and the fix is to force it;
+        # if it has corrected itself by then, the bug is ordering, not staleness.
+        Clock.schedule_once(lambda *_: self._log_geometry("+0.5s"), 0.5)
+        Clock.schedule_once(lambda *_: self._log_geometry("+2s"), 2.0)
 
     def _log_geometry(self, when=""):
         """TEMPORARY, 2026-08-16. Remove once the take-up banner is placed right.
