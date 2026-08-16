@@ -11,10 +11,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from reflex.fsms.els_diag import ElsDiagRecorder, MAX_FAILURES
-from reflex.utils.devices import ELS_DIAG_SCHEMA_TAKEUP_SETTLE
+from reflex.utils.devices import (ELS_DIAG_SCHEMA_TAKEUP_SETTLE,
+                                  ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2)
 
 
-def make_capture(seq=1, schema=ELS_DIAG_SCHEMA_TAKEUP_SETTLE):
+def make_capture(seq=1, schema=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2):
     return {
         "schema": schema,
         "seq": seq,
@@ -197,6 +198,56 @@ class TestFailureHandling:
         hal.read_diag_capture.return_value = make_capture(seq=1)
         r.poll()
         assert r.captures_written == 1
+
+
+class TestBaseline:
+    """What counts as 'already seen', which is where a capture got lost."""
+
+    def test_reconnect_does_not_lose_a_capture_completed_during_the_gap(
+            self, hal, board, tmp_path):
+        """Regression, 2026-08-16. The board reconnected mid-test, the recorder
+        re-interrogated and baselined against the FIRMWARE's seq, and capture 12
+        went straight from the firmware to nowhere -- the file jumps 11 to 13."""
+        (tmp_path / "takeup_settle.jsonl").write_text(
+            json.dumps({"seq": 11, "schema": ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2}) + "\n")
+
+        hal.read_diag_schema.return_value = ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
+        hal.read_diag_seq.return_value = 12          # completed while disconnected
+        hal.read_diag_capture.return_value = make_capture(seq=12)
+
+        r = rec(hal, board, tmp_path)
+        r.poll()          # interrogate: must baseline from the FILE (11), not 12
+        r.poll()          # so seq 12 is still new and gets recorded
+
+        assert r.captures_written == 1
+        seqs = [json.loads(l)["seq"]
+                for l in (tmp_path / "takeup_settle.jsonl").read_text().splitlines() if l.strip()]
+        assert seqs == [11, 12]
+
+    def test_fresh_start_does_not_backdate_a_preexisting_capture(
+            self, hal, board, tmp_path):
+        """With no file, the block may hold a capture from before this UI ever
+        ran. Recording it would stamp an old measurement with today's time."""
+        hal.read_diag_schema.return_value = ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
+        hal.read_diag_seq.return_value = 7
+        r = rec(hal, board, tmp_path)
+        r.poll()
+        r.poll()
+        assert r.captures_written == 0
+
+    def test_a_torn_line_does_not_lose_the_whole_file(self, hal, board, tmp_path):
+        """A half-written last line (power cut mid-append) must not make the
+        recorder forget everything it had already recorded."""
+        p = tmp_path / "takeup_settle.jsonl"
+        p.write_text(
+            json.dumps({"seq": 4, "schema": ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2}) + "\n"
+            + '{"seq": 5, "sch')                      # torn
+        hal.read_diag_schema.return_value = ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
+        hal.read_diag_seq.return_value = 4
+        r = rec(hal, board, tmp_path)
+        r.poll()
+        assert r.enabled is True
+        assert r._baseline_seq == 4
 
 
 class TestReset:

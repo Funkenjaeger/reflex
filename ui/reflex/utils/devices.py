@@ -182,7 +182,9 @@ typedef struct {
   int32_t  diagSettleTicks;
   int32_t  diagNetCounts;
   int16_t  diagTrace[50];
-  uint16_t diagReserved[6];
+  uint16_t diagCaptureTicks;
+  uint16_t diagEndReason;
+  uint16_t diagReserved[4];
 } elsStop_t;
 """
 
@@ -199,7 +201,13 @@ ELS_PROTOCOL_VERSION = 2        # elsStop.protocolVersion this UI is built again
 # stale reader that recognises an old number must not silently accept a new
 # probe's data under it.
 ELS_DIAG_SCHEMA_NONE = 0
-ELS_DIAG_SCHEMA_TAKEUP_SETTLE = 1   # per-bucket signed dZ after the last take-up pulse
+ELS_DIAG_SCHEMA_TAKEUP_SETTLE = 1      # RETIRED: ran past the gate's decision into the pass
+ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 = 2   # same, but the capture ends at the servo's next pulse
+
+# elsStop.diagEndReason. A window-full capture did not finish measuring: its
+# last bucket is a floor, not a result, and it must not be read as one.
+ELS_DIAG_END_PULSE = 1     # servo drove again -- settling is genuinely over
+ELS_DIAG_END_WINDOW = 2    # ran out of buckets first
 
 ELS_CAL_OK = 0
 ELS_CAL_ERR_ENABLED = 1         # refused: a threading job is live

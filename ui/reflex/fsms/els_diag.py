@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 from reflex.utils.devices import (
     ELS_DIAG_SCHEMA_NONE,
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE,
+    ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2,
 )
 from reflex.utils.paths import diag_dir
 
@@ -49,7 +50,15 @@ log = logging.getLogger(__name__)
 # Schemas this UI knows how to record. A schema id outside this set means the
 # firmware carries a probe written after this UI: refuse it rather than storing
 # its numbers under a shape they do not have.
-KNOWN_SCHEMAS = frozenset({ELS_DIAG_SCHEMA_TAKEUP_SETTLE})
+#
+# v1 is still accepted even though the firmware has moved on, because recording
+# a v1 capture off older firmware is strictly better than recording nothing --
+# every line carries its own schema, so the analysis can tell them apart. What
+# must never happen is v1 data stored as though it were v2.
+KNOWN_SCHEMAS = frozenset({
+    ELS_DIAG_SCHEMA_TAKEUP_SETTLE,
+    ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2,
+})
 
 # Consecutive failures tolerated before the recorder gives up for this
 # connection. Small on purpose -- if reads are failing, the useful behaviour is
@@ -142,14 +151,51 @@ class ElsDiagRecorder:
 
         self._schema = schema
         self._enabled = True
-        # Baseline against whatever the firmware has already counted, so a
-        # capture completed before the UI connected is not replayed as new.
-        self._baseline_seq = self._hal.read_diag_seq()
+        self._baseline_seq = self._choose_baseline()
         log.info(
             f"ELS diagnostic recorder active: schema={schema}, "
             f"baseline diagSeq={self._baseline_seq}, "
             f"writing to {self._capture_path()}"
         )
+
+    def _last_recorded_seq(self):
+        """Highest diagSeq already written to the capture file, or None."""
+        path = self._capture_path()
+        if not path.exists():
+            return None
+        best = None
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    seq = int(json.loads(line)["seq"])
+                except (ValueError, KeyError, TypeError):
+                    continue          # a torn last line must not lose the file
+                best = seq if best is None else max(best, seq)
+        return best
+
+    def _choose_baseline(self) -> int:
+        """What counts as 'already seen' for this connection.
+
+        BASELINE FROM THE FILE, NOT THE FIRMWARE, when we have a file. The
+        obvious implementation -- baseline against whatever the firmware has
+        counted -- is right for a fresh start and WRONG for a reconnect: it
+        treats anything that completed while we were disconnected as history and
+        silently drops it. That cost a real capture on 2026-08-16, when the board
+        reconnected mid-test and capture 12 went straight from the firmware to
+        nowhere, leaving a gap between 11 and 13 in the file.
+
+        With a file to compare against, anything beyond the last recorded seq is
+        genuinely new no matter what happened to the connection. Without one,
+        fall back to the firmware so a capture sitting in the block from before
+        this UI ever ran is not date-stamped as though it just happened.
+        """
+        recorded = self._last_recorded_seq()
+        if recorded is not None:
+            return recorded
+        return self._hal.read_diag_seq()
 
     def _record(self, seq: int):
         capture = self._hal.read_diag_capture()

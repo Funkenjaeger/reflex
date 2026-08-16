@@ -286,6 +286,11 @@ class ElsStopHal:
             "bucket_count": int(els['diagBucketCount']),
             "settle_ticks": int(els['diagSettleTicks']),
             "net_counts": int(els['diagNetCounts']),
+            # How long the servo stayed silent, versus when Z last MOVED. Two
+            # different questions: the first bounds the measurement window, the
+            # second is the settle time itself.
+            "capture_ticks": int(els['diagCaptureTicks']),
+            "end_reason": int(els['diagEndReason']),
             "trace": [int(v) for v in els['diagTrace']],
         }
 
