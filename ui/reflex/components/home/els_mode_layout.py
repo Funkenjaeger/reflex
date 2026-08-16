@@ -10,9 +10,6 @@ from reflex.components.home.elsbar import ElsBar
 from reflex.components.home.mode_layout import ModeLayout
 from reflex.utils.kv_loader import load_kv
 
-from kivy.logger import Logger
-log = Logger.getChild(__name__)
-
 load_kv(__file__)
 
 # Font Awesome 6 icons for rotation direction
@@ -131,39 +128,6 @@ class ElsModeLayout(ModeLayout):
         self.els_adv_bar.opacity = 1 if shown else 0
         self.els_adv_bar.disabled = not shown
         self._update_row_heights()
-        self._log_geometry()
-
-    def _log_geometry(self):
-        """TEMPORARY, 2026-08-16. Remove once the take-up banner is placed right.
-
-        The banner renders outside the advanced bar and two reasoned fixes have
-        not moved it, which means my model of this layout is wrong rather than
-        incomplete. Reasoning harder about it a third time is not the move --
-        this prints where the widgets ACTUALLY are, the way the firmware settle
-        question got answered.
-
-        Deliberately at INFO despite the log-noise work: it fires only when the
-        bar's visibility or height changes, not per frame.
-        """
-        try:
-            adv = self.els_adv_bar
-            parts = [
-                f"layout h={self.height:.0f}",
-                f"els_bar h={self.els_bar.height:.0f} y={self.els_bar.y:.0f}",
-                f"adv natural={adv.natural_height:.0f} h={adv.height:.0f} "
-                f"y={adv.y:.0f} top={adv.top:.0f}",
-                f"spacer h={self.spacer.height:.0f} y={self.spacer.y:.0f}",
-                f"spindle h={self.spindle_info.height:.0f} y={self.spindle_info.y:.0f}",
-            ]
-            for name in ("reframe_notice", "takeup_notice"):
-                w = adv.ids.get(name)
-                parts.append(
-                    f"{name} h={w.height:.0f} y={w.y:.0f} op={w.opacity:.1f}"
-                    if w is not None else f"{name}=<no id>")
-            parts.append(f"warning={self.els_bar and repr(getattr(adv.controller, 'takeup_warning', None))[:40]}")
-            log.info("ELS geometry: " + " | ".join(parts))
-        except Exception as e:
-            log.info(f"ELS geometry: unavailable ({e})")
 
     def _update_row_heights(self, *args):
         num_rows = len(self.axis_bars) + 1  # axis bars + spindle info
