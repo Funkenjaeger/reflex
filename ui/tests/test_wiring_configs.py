@@ -22,13 +22,21 @@ from tests.system.wiring import (
     real_commissioning_toggles,
 )
 
-REFLEX_FW_DIR = Path(os.environ.get("REFLEX_FW_DIR", "/mnt/c/projects/embedded/reflex-fw"))
-BASE_TOML_PATH = REFLEX_FW_DIR / "emulator" / "config" / "lathe.toml"
+from tests.fw_repo import require_or_skip_reason
 
-pytestmark = pytest.mark.skipif(
-    not BASE_TOML_PATH.is_file(),
-    reason=f"reflex-fw base emulator config not found at {BASE_TOML_PATH}",
+REFLEX_FW_DIR, _SKIP_REASON = require_or_skip_reason()
+BASE_TOML_PATH = (
+    REFLEX_FW_DIR / "emulator" / "config" / "lathe.toml"
+    if REFLEX_FW_DIR else Path("/nonexistent")
 )
+
+# Two separate conditions: no firmware checkout at all, versus a checkout that
+# lacks the emulator config. Collapsing them would report "no reflex-fw" for a
+# checkout that is sitting right there but missing a file.
+if _SKIP_REASON is None and not BASE_TOML_PATH.is_file():
+    _SKIP_REASON = f"reflex-fw found, but its base emulator config is missing at {BASE_TOML_PATH}"
+
+pytestmark = pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or "")
 
 
 # ---------------------------------------------------------------------------

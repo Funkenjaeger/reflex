@@ -37,14 +37,15 @@ import pytest
 from reflex.utils.base_device import BaseDevice
 from reflex.utils.communication import ConnectionManager
 
-REFLEX_FW_DIR = Path(os.environ.get("REFLEX_FW_DIR", "/mnt/c/projects/embedded/reflex-fw"))
-RAMPS_H = REFLEX_FW_DIR / "Core" / "Inc" / "Ramps.h"
-SCALES_H = REFLEX_FW_DIR / "Core" / "Inc" / "Scales.h"
+from tests.fw_repo import require_or_skip_reason
 
-pytestmark = pytest.mark.skipif(
-    not RAMPS_H.exists(),
-    reason=f"reflex-fw not found ({RAMPS_H}); set REFLEX_FW_DIR to run the register-map contract test",
-)
+REFLEX_FW_DIR, _SKIP_REASON = require_or_skip_reason()
+# Placeholders keep module import working when the firmware is absent; the
+# pytestmark below stops anything from actually reading them.
+RAMPS_H = (REFLEX_FW_DIR / "Core" / "Inc" / "Ramps.h") if REFLEX_FW_DIR else Path("/nonexistent")
+SCALES_H = (REFLEX_FW_DIR / "Core" / "Inc" / "Scales.h") if REFLEX_FW_DIR else Path("/nonexistent")
+
+pytestmark = pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or "")
 
 # C fixed-width scalar types used in the shared structs. For these, alignment
 # equals size (natural alignment), which is target-independent. `bool` is not

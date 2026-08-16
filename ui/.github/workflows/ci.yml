@@ -37,6 +37,77 @@ jobs:
     - name: Run tests
       run: uv run --frozen pytest -q
 
+  # Cross-repo checks: the suite run again WITH a reflex-fw checkout present.
+  #
+  # WHY THIS IS A SEPARATE JOB AND NOT A FLAG ON `test`. Two modules compare
+  # this repo against the firmware -- the Modbus register-map contract and the
+  # wiring-config permutations, 23 tests between them -- and both skip when no
+  # firmware checkout is visible. `test` above checks out reflex-ui alone, so
+  # until 2026-08-15 those 23 had NEVER run in CI. They passed locally only
+  # because a developer happened to have both repos side by side, and a green
+  # run on a map-breaking change was indistinguishable from a green run on a
+  # safe one.
+  #
+  # That is not a small gap. The register-map contract guards the worst failure
+  # this project has: firmware and UI disagreeing about the register layout, so
+  # every read past the point of divergence silently returns the wrong field. It
+  # caught exactly that on 2026-08-15 -- a 112-byte map truncation from a
+  # trailing-array bug in the layout engine -- and would have caught nothing in
+  # CI, because in CI it was not running.
+  #
+  # Running the WHOLE suite here rather than just those two files is deliberate:
+  # a path list is a silent cap, and the next cross-repo test someone adds would
+  # quietly not run. It costs about 15 seconds. Keeping `test` as well is also
+  # deliberate -- it proves the suite still works with NO firmware present,
+  # which is a real configuration (fresh clone, no sibling repo).
+  #
+  # REFLEX_FW_REQUIRED=1 is the load-bearing part. Without it, a wrong checkout
+  # path here would make every cross-repo test skip and the job pass green,
+  # reproducing the original defect exactly. With it, a missing firmware
+  # checkout is a collection error. A job whose entire purpose is the cross-repo
+  # check must not be able to pass by checking nothing.
+  #
+  # NOT continue-on-error, unlike system-tests: this is a fast static check with
+  # no emulator build to be flaky about, so it has no excuse to be lenient.
+  cross-repo:
+    runs-on: ubuntu-latest
+    needs: resolve-pairing
+
+    steps:
+    - name: Checkout reflex-ui
+      uses: actions/checkout@v7
+      with:
+        path: reflex-ui
+
+    # Paired by the SAME resolver the system tests use. Checking the UI against
+    # firmware it was never meant to pair with would produce map "drift" that is
+    # really just a version mismatch, and burn a day diagnosing it.
+    - name: Checkout reflex-fw
+      uses: actions/checkout@v7
+      with:
+        repository: Funkenjaeger/reflex-fw
+        ref: ${{ needs.resolve-pairing.outputs.ref }}
+        path: reflex-fw
+
+    - name: Install headless runtime libs (insurance)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgl1 libmtdev1 xclip
+
+    - name: Install uv and sync deps
+      working-directory: reflex-ui
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        uv venv
+        uv sync
+
+    - name: Run suite against the paired firmware
+      working-directory: reflex-ui
+      env:
+        REFLEX_FW_DIR: ${{ github.workspace }}/reflex-fw
+        REFLEX_FW_REQUIRED: "1"
+      run: uv run --frozen pytest -q
+
   # Pick the reflex-fw ref to pair with. SAME BRANCH NAME FIRST.
   #
   # A feature branch — or integration — routinely carries firmware and UI
