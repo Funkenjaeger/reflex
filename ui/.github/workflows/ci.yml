@@ -158,8 +158,23 @@ jobs:
       run: |
         FW=https://github.com/Funkenjaeger/reflex-fw
         for ref in "$BRANCH" dev-staging dev; do
-          err=$(git ls-remote --exit-code --heads "$FW" "$ref" 2>&1 >/dev/null)
-          rc=$?
+          # `|| rc=$?` is load-bearing, not style. Actions runs this with
+          # `bash -eo pipefail`, and `--exit-code` makes ls-remote return 2 for
+          # "no such branch" -- which is the NORMAL case for every ref after the
+          # first. Written as a bare `err=$(...)` the assignment inherits that
+          # failure and `set -e` kills the step before `rc` is ever read, so the
+          # loop could never reach its second iteration and the whole fallback
+          # chain below was unreachable code. Putting the command in an OR list
+          # exempts it from `set -e` and lets rc carry the status, which is what
+          # the exit-2 discipline further down depends on.
+          #
+          # It went unnoticed because every branch pushed for months existed in
+          # BOTH repos, so the first iteration always succeeded. Pushing an
+          # archive tag on 2026-08-16 was the first ref that did not match, and
+          # it surfaced as a bare "exit code 2" from a step whose own error
+          # handling never ran.
+          rc=0
+          err=$(git ls-remote --exit-code --heads "$FW" "$ref" 2>&1 >/dev/null) || rc=$?
 
           if [ "$rc" -eq 0 ]; then
             case "$ref" in
