@@ -180,6 +180,30 @@ class ElsModeLayout(ModeLayout):
         except Exception as e:
             log.info(f"ELS geometry [{when}]: unavailable ({e})")
 
+        # The children sit a CONSTANT 100px above their parent's top, in both the
+        # pre- and post-layout phases. A vertical BoxLayout cannot place a child
+        # above self.top, so either these are different coordinate spaces or the
+        # bar's effective top is not what .top reports. to_window() collapses the
+        # first possibility; the parent chain shows whether a RelativeLayout (or
+        # anything else that shifts the origin) sits in between.
+        try:
+            adv = self.els_adv_bar
+            chain, w = [], adv
+            while w is not None and len(chain) < 8:
+                chain.append(type(w).__name__)
+                w = w.parent
+            log.info(f"ELS tree [{when}]: chain={' < '.join(chain)}")
+            for name, wid in (("adv", adv), ("takeup", adv.ids.get("takeup_notice"))):
+                if wid is None:
+                    continue
+                log.info(
+                    f"ELS tree [{when}]: {name} pos={tuple(round(v) for v in wid.pos)} "
+                    f"size={tuple(round(v) for v in wid.size)} "
+                    f"to_window={tuple(round(v) for v in wid.to_window(*wid.pos))} "
+                    f"parent={type(wid.parent).__name__ if wid.parent else None}")
+        except Exception as e:
+            log.info(f"ELS tree [{when}]: unavailable ({e})")
+
     def _update_row_heights(self, *args):
         num_rows = len(self.axis_bars) + 1  # axis bars + spindle info
         if num_rows == 0:
