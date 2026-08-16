@@ -49,6 +49,7 @@ from reflex.utils.devices import (
     ELS_DIAG_SCHEMA_NONE,
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE,
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2,
+    ELS_DIAG_SCHEMA_DISENGAGE_LATCH,
 )
 from reflex.utils.paths import diag_dir
 
@@ -65,6 +66,11 @@ log = logging.getLogger(__name__)
 KNOWN_SCHEMAS = frozenset({
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE,
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2,
+    # Schema 3 is NOT a trace. It counts events, and its fields mean different
+    # things -- diagSeq is "times the firmware caught servoEnableTask trying to
+    # re-assert the feed after a disengage", not "captures completed". A
+    # non-zero value is the finding. See reflex-fw DIAG.md.
+    ELS_DIAG_SCHEMA_DISENGAGE_LATCH,
 })
 
 # Schemas that publish diagEndReason. Only these can be checked for "did a
