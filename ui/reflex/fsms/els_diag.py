@@ -60,6 +60,11 @@ KNOWN_SCHEMAS = frozenset({
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2,
 })
 
+# Schemas that publish diagEndReason. Only these can be checked for "did a
+# capture actually complete" -- v1 has no such field, and its register reads as
+# 0, so applying the check there would reject every v1 capture as empty.
+SCHEMAS_WITH_END_REASON = frozenset({ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2})
+
 # Consecutive failures tolerated before the recorder gives up for this
 # connection. Small on purpose -- if reads are failing, the useful behaviour is
 # to say so once and stop, not to keep hammering a broken link.
@@ -179,23 +184,38 @@ class ElsDiagRecorder:
     def _choose_baseline(self) -> int:
         """What counts as 'already seen' for this connection.
 
-        BASELINE FROM THE FILE, NOT THE FIRMWARE, when we have a file. The
-        obvious implementation -- baseline against whatever the firmware has
-        counted -- is right for a fresh start and WRONG for a reconnect: it
-        treats anything that completed while we were disconnected as history and
-        silently drops it. That cost a real capture on 2026-08-16, when the board
-        reconnected mid-test and capture 12 went straight from the firmware to
-        nowhere, leaving a gap between 11 and 13 in the file.
+        Three cases, and getting any one of them wrong loses or invents data.
 
-        With a file to compare against, anything beyond the last recorded seq is
-        genuinely new no matter what happened to the connection. Without one,
-        fall back to the firmware so a capture sitting in the block from before
-        this UI ever ran is not date-stamped as though it just happened.
+        NO FILE: baseline from the firmware, so a capture sitting in the block
+        from before this UI ever ran is not date-stamped as though it just
+        happened.
+
+        FILE, AND THE FIRMWARE IS AT OR BEYOND IT: baseline from the FILE.
+        Baselining from the firmware here is right for a fresh start and wrong
+        for a reconnect -- it treats anything completed while disconnected as
+        history and drops it. That cost a real capture on 2026-08-16, when the
+        board reconnected mid-test and capture 12 went from the firmware to
+        nowhere, leaving the file jumping 11 to 13.
+
+        FILE, BUT THE FIRMWARE IS BEHIND IT: the firmware's counter has RESET --
+        it is zeroed by a power cycle, which this board requires after every
+        flash. The two numbers are no longer on the same scale, so the file
+        cannot say what is new. Baseline from the firmware. Fixing the reconnect
+        case without this one is how, on 2026-08-16, a power cycle left the file
+        holding seq 13 while the firmware said 0, and an empty block got recorded
+        twice as though it were a capture.
         """
         recorded = self._last_recorded_seq()
-        if recorded is not None:
-            return recorded
-        return self._hal.read_diag_seq()
+        if recorded is None:
+            return self._hal.read_diag_seq()
+
+        live = self._hal.read_diag_seq()
+        if live < recorded:
+            log.info(
+                f"firmware diagSeq ({live}) is behind the capture file ({recorded}); "
+                f"treating as a firmware restart and re-baselining")
+            return live
+        return recorded
 
     def _record(self, seq: int):
         capture = self._hal.read_diag_capture()
@@ -208,6 +228,17 @@ class ElsDiagRecorder:
             self._disable(
                 f"capture reports diagSchema={capture.get('schema')}; refusing it"
             )
+            return
+
+        # A completed capture says WHY it ended. end_reason == 0 means no capture
+        # has finished and the block is empty -- there is nothing to record, and
+        # writing it produces a row of zeros that looks like a real measurement
+        # of a carriage that never moved. This is the semantic backstop behind
+        # the counter-reset handling in _choose_baseline: that reasons about
+        # sequence numbers, this asks the block whether it holds anything.
+        if capture.get("schema") in SCHEMAS_WITH_END_REASON and not capture.get("end_reason"):
+            log.info(f"diagSeq advanced to {seq} but the block reports no completed "
+                     f"capture (end_reason=0); nothing recorded")
             return
 
         # ISR interval in CPU cycles, from the data the UI already polls. This is

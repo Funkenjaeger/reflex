@@ -15,10 +15,12 @@ from reflex.utils.devices import (ELS_DIAG_SCHEMA_TAKEUP_SETTLE,
                                   ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2)
 
 
-def make_capture(seq=1, schema=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2):
+def make_capture(seq=1, schema=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2, end_reason=1):
     return {
         "schema": schema,
         "seq": seq,
+        "capture_ticks": 59,
+        "end_reason": end_reason,
         "bucket_ticks": 100,
         "bucket_count": 50,
         "settle_ticks": 412,
@@ -234,6 +236,59 @@ class TestBaseline:
         r.poll()
         r.poll()
         assert r.captures_written == 0
+
+    def test_power_cycle_resets_the_counter_without_inventing_a_capture(
+            self, hal, board, tmp_path):
+        """Regression, 2026-08-16, introduced by the fix above. This board needs
+        a power cycle after every flash, which zeroes diagSeq -- so the file held
+        seq 13 while the firmware said 0. Baselining from the file then made 0
+        look new and recorded the empty block, twice."""
+        (tmp_path / "takeup_settle.jsonl").write_text(
+            json.dumps({"seq": 13, "schema": ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2}) + "\n")
+
+        hal.read_diag_schema.return_value = ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
+        hal.read_diag_seq.return_value = 0            # firmware rebooted
+        r = rec(hal, board, tmp_path)
+        r.poll()
+        r.poll()
+
+        assert r.captures_written == 0
+        hal.read_diag_capture.assert_not_called()
+
+    def test_after_a_reset_the_next_real_capture_is_still_recorded(
+            self, hal, board, tmp_path):
+        """Re-baselining must not make the recorder deaf for the rest of the
+        session -- the whole point is to keep recording after a power cycle."""
+        (tmp_path / "takeup_settle.jsonl").write_text(
+            json.dumps({"seq": 13, "schema": ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2}) + "\n")
+
+        hal.read_diag_schema.return_value = ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
+        hal.read_diag_seq.return_value = 0
+        r = rec(hal, board, tmp_path)
+        r.poll()                                       # re-baseline at 0
+
+        hal.read_diag_seq.return_value = 1
+        hal.read_diag_capture.return_value = make_capture(seq=1)
+        r.poll()
+        assert r.captures_written == 1
+
+    def test_an_incomplete_block_is_not_recorded_as_a_measurement(
+            self, hal, board, tmp_path):
+        """end_reason == 0 means no capture finished. A row of zeros written from
+        an empty block is indistinguishable from a real measurement of a carriage
+        that never moved -- which is a thing that genuinely happens with the
+        half-nut open, so it must not be faked."""
+        hal.read_diag_schema.return_value = ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
+        hal.read_diag_seq.return_value = 0
+        r = rec(hal, board, tmp_path)
+        r.poll()
+
+        hal.read_diag_seq.return_value = 1
+        hal.read_diag_capture.return_value = make_capture(seq=1, end_reason=0)
+        r.poll()
+
+        assert r.captures_written == 0
+        assert not (tmp_path / "takeup_settle.jsonl").exists()
 
     def test_a_torn_line_does_not_lose_the_whole_file(self, hal, board, tmp_path):
         """A half-written last line (power cut mid-append) must not make the
