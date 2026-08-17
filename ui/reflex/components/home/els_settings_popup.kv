@@ -1,0 +1,37 @@
+<ElsSettingsPopup>:
+    title: "ELS Threading Settings"
+    size_hint_x: 0.8
+    size_hint_y: None
+    height: 450
+    auto_dismiss: True
+
+    ScrollView:
+        do_scroll_x: False
+        do_scroll_y: True
+        GridLayout:
+            id: grid_layout
+            cols: 1
+            spacing: 1
+            size_hint_y: None
+            height: self.minimum_height
+
+            DropDownItem:
+                id: thread_type_dropdown
+                height: 60
+                name: "Thread Type"
+                help_file: "els_thread_pitch.md"
+                options: root.get_thread_types()
+                value: root.bar.thread_profile_type
+                on_value: root.on_thread_type_selected(self.value)
+
+            BooleanItem:
+                name: "Inner Thread"
+                help_file: "els_inner_thread.md"
+                value: root.bar.inner_thread
+                on_value: root.bar.inner_thread = self.value
+
+            NumberItem:
+                name: "Backlash takeup (mm)"
+                help_file: "els_backlash_takeup.md"
+                value: root.backlash_mm
+                on_value: root.backlash_mm = self.value

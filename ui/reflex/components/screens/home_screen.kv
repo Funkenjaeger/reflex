@@ -1,0 +1,40 @@
+#: import HomeToolbar reflex.components.home.home_toolbar
+<Label>:
+  font_name: "fonts/iosevka-regular.ttf"
+
+<Button>:
+  font_name: "fonts/Manrope-Bold.ttf"
+
+<TextInput>:
+  font_name: "fonts/iosevka-regular.ttf"
+
+<HomePage>:
+  BoxLayout:
+    orientation: "horizontal"
+
+    HomeToolbar:
+      id: home_toolbar
+
+    # Divider rail: touches the sidebar tabs on the left and the content on the
+    # right (mockup variant).
+    Widget:
+      size_hint_x: None
+      width: dp(7)
+      canvas:
+        # Darker blueish bar...
+        Color:
+          rgba: app.theme.recess
+        Rectangle:
+          pos: self.x, self.y
+          size: self.width, self.height
+        # ...with a skinny darker line on its LEFT side (against the tabs).
+        Color:
+          rgba: app.theme.border
+        Line:
+          points: (self.x + 1, self.y, self.x + 1, self.top)
+          width: 1.0
+
+    BoxLayout:
+      id: bars_container
+      orientation: "vertical"
+      size_hint: 1, 1

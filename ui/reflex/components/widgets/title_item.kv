@@ -1,0 +1,23 @@
+<TitleItem>:
+  height: 36
+  size_hint_y: None
+  BoxLayout:
+    orientation: "vertical"
+    Label:
+      text: root.name
+      text_size: root.size
+      font_name: app.theme.font_bold
+      color: app.theme.accent_text
+      font_size: app.formats.font_size
+      valign: root.valign
+      halign: root.halign
+    Widget:
+      height: 2
+      width: root.width
+      size_hint: None, None
+      canvas:
+        Color:
+          rgba: app.theme.border
+        Rectangle:
+          size: self.size
+          pos: self.pos

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- U-shaped (U+2B8E-like) retract arrow, rotated 90° so the open end of the
+     "U" faces RIGHT. Theme cyan (facelift ACCENT_TEXT). viewBox 0..100. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <g transform="rotate(90 50 50)">
+    <g fill="none" stroke="#66ebfa" stroke-width="10"
+       stroke-linecap="round" stroke-linejoin="round">
+      <!-- right leg down, U-bend at the bottom, left leg back up -->
+      <path d="M70 30 L70 54 A20 20 0 0 1 30 54 L30 36"/>
+    </g>
+    <!-- triangle arrowhead on the left tip, pointing up -->
+    <polygon points="30 10 17 34 43 34" fill="#66ebfa"/>
+  </g>
+</svg>
