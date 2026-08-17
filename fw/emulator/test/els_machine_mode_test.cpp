@@ -102,6 +102,14 @@ int main() {
     s.fastData.servoMode = 2;
     expect(&s, 0, ELS_MMODE_JOG, "servoMode 2: JOG");
 
+    /* Jog while ENGAGED-HELD: updateJogPosition ignores the hold, so the
+     * machine is genuinely jogging and must say so. Learned on 2026-08-17:
+     * with HELD ranked above JOG, a whole hardware session of jogging while
+     * engaged-idle wrote zero JOG entries to the ledger. */
+    s.elsStop.enable = 1;
+    s.elsStop.active = 1;
+    expect(&s, 0, ELS_MMODE_JOG, "jog while held: JOG (beats HELD)");
+
     /* Sync armed with the servo off: nothing can move (and post-F1 nothing
      * accrues either) — OFF, not a phantom FEEDING. */
     std::memset(&s, 0, sizeof(s));

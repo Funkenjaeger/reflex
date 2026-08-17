@@ -42,12 +42,17 @@
 #define ELS_MMODE_CAL      7u  /* backlash calibration owns the servo */
 
 /* Priority is part of the contract, most-specific first: the calibration and
- * takeup machineries own the servo outright while they run; a hold with a
- * commanded move outstanding IS a move (retract happens while held, and the
- * hold gates sync, not commanded motion); a hold otherwise dominates the
- * servoMode axis because it is the safety-relevant fact. calRunning is a
- * parameter rather than read from the handler so the function stays a pure
- * map over the shared struct — callers pass (elsCal.phase != ELS_CAL_IDLE). */
+ * takeup machineries own the servo outright while they run; a commanded move
+ * or a jog IS motion even while held (retract happens while held, and
+ * updateJogPosition ignores the hold entirely — the hold gates SYNC, and the
+ * ELS stop only fires on sync motion, so jog bypasses both: inherited
+ * semantics, documented here rather than changed); a hold otherwise
+ * dominates because it is the safety-relevant fact. JOG-above-HELD was
+ * learned the hard way on 2026-08-17: round-2 hardware jogging happened
+ * while engaged-idle, the ledger truthfully said HELD throughout, and a day
+ * of jog testing left zero JOG entries. calRunning is a parameter rather
+ * than read from the handler so the function stays a pure map over the
+ * shared struct — callers pass (elsCal.phase != ELS_CAL_IDLE). */
 static inline uint16_t elsDeriveMachineMode(const rampsSharedData_t *shared,
                                             uint16_t calRunning) {
   uint16_t anySync = 0;
@@ -58,9 +63,9 @@ static inline uint16_t elsDeriveMachineMode(const rampsSharedData_t *shared,
   if (shared->elsStop.takeupPending != 0u) return ELS_MMODE_TAKEUP;
   if (shared->fastData.servoMode == 1u && shared->servo.stepsToGo != 0)
                                            return ELS_MMODE_MOVING;
+  if (shared->fastData.servoMode == 2u)    return ELS_MMODE_JOG;
   if (shared->elsStop.enable != 0u && shared->elsStop.active != 0u)
                                            return ELS_MMODE_HELD;
-  if (shared->fastData.servoMode == 2u)    return ELS_MMODE_JOG;
   if (shared->fastData.servoMode == 0u)    return ELS_MMODE_OFF;
   if (anySync)                             return ELS_MMODE_FEEDING;
   return ELS_MMODE_IDLE;
