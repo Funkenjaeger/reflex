@@ -117,3 +117,50 @@ def test_alarm_clears_sync_before_disarming():
     assert names.index('stop_sync') < names.index('set_enable'), (
         f"stop_sync must precede set_enable on the alarm path, got: {names}"
     )
+
+
+# ─── disengage gating: the ambiguous input is removed, not interpreted ──────
+
+def _controller_with_servo_mode(mode):
+    """Minimal controller stand-in: toggle_engage only needs engaged,
+    is_feeding, and the FSM handle."""
+    from types import SimpleNamespace
+    from reflex.fsms.ui_controller import ElsUiController
+
+    # ElsUiController is a Kivy EventDispatcher, so object.__new__ is refused;
+    # its own __new__ does the property setup without running __init__.
+    c = ElsUiController.__new__(ElsUiController)
+    c._board = SimpleNamespace(servo=SimpleNamespace(servoMode=mode))
+    return c
+
+
+def test_is_feeding_reports_commanded_not_observed_motion():
+    """After engage the carriage is HELD with servoMode == 1. is_feeding must be
+    True there: the hazard is the state where motion can BEGIN, and gating on
+    observed movement would leave the button live at exactly the wrong moment."""
+    assert _controller_with_servo_mode(1).is_feeding is True
+    assert _controller_with_servo_mode(0).is_feeding is False
+    assert _controller_with_servo_mode(2).is_feeding is True   # jog counts too
+
+
+def test_disengage_is_refused_while_sync_is_armed():
+    """The FSM-side half of the gate. kv disables the button, but a kv edit must
+    not be able to silently reopen the hole, so the refusal is enforced here as
+    well and the FSM is never reached."""
+    c = _controller_with_servo_mode(1)
+    c.engaged = True
+    c._els_fsm = MagicMock()
+    c.toggle_engage()
+    c._els_fsm.disable.assert_not_called()
+    c._els_fsm.may_disable.assert_not_called()
+
+
+def test_disengage_allowed_once_sync_is_off():
+    """The escape hatch. Sync Enable stays live, so the operator's route out is
+    two unambiguous presses rather than one ambiguous one."""
+    c = _controller_with_servo_mode(0)
+    c.engaged = True
+    c._els_fsm = MagicMock()
+    c._els_fsm.may_disable.return_value = True
+    c.toggle_engage()
+    c._els_fsm.disable.assert_called_once()

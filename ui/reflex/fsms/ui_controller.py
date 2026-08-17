@@ -590,8 +590,48 @@ class ElsUiController(EventDispatcher):
         return x >= self.stop_dia if self.is_inner else x <= self.stop_dia
 
     # ——— intents from UI ———
+    @property
+    def is_feeding(self):
+        """Sync motion is ARMED -- the servo is commanded.
+
+        NOT "the carriage is moving". After engage the carriage is HELD by
+        elsStop.active == 1 even with servoMode == 1, and it starts moving the
+        instant that hold is released. The hazard is the state where motion CAN
+        begin, so that is what this reports.
+
+        A read-through property, not a mirrored BooleanProperty. kv binds
+        `app.servo.servoMode` directly (as elsbar.kv already does), so a second
+        copy here would add a synchronisation problem to solve a formatting one.
+        This exists for the FSM-side refusal, where the value is read once at the
+        moment of the decision.
+        """
+        return bool(self._board.servo.servoMode)
+
     def toggle_engage(self):
         """Engage/disengage button intent. Drives the domain FSM."""
+        if self.engaged and self.is_feeding:
+            # REFUSE. "Disable the stop" while sync motion is armed is an
+            # ambiguous instruction: it reads equally as "stop the carriage" and
+            # as "remove the stop and keep going". The firmware resolves it the
+            # second way -- clearing enable clears elsStop.active, which is what
+            # HOLDS the carriage, so disengaging RELEASES it.
+            #
+            # The teardown in on_enter_disabled makes that safe (sync is cleared
+            # before the hold is released), so this is not the safety mechanism.
+            # It removes the ambiguous input instead of interpreting it: turning
+            # sync off is the unambiguous way to stop the carriage, and it is
+            # exactly equivalent to opening the half nut.
+            #
+            # Deliberately gated on is_feeding (servoMode != 0) rather than on
+            # observed motion. After engage the carriage is HELD, not stopped --
+            # it moves the instant the hold releases -- so the hazard is the
+            # state where motion CAN begin. The escape hatch is the Sync Enable
+            # button, which stays live: press it, then disengage.
+            log.info(
+                "Disengage refused — sync motion is armed. Turn Sync Enable off "
+                "first (equivalent to opening the half nut)."
+            )
+            return
         if self.engaged:
             # Guard the trigger: disable() is only valid from stopped/retracting/
             # alarm. The button is disabled mid-cycle, but check anyway so a

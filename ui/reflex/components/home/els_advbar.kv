@@ -156,7 +156,12 @@
       width: 96
       text: "Disengage" if root.controller.engaged else "Engage"
       font_size: dp(17)
-      disabled: root.is_running
+      # Also disabled while ENGAGED with sync motion armed: "disable the stop"
+      # is ambiguous there, and disengaging RELEASES the held carriage. Sync
+      # Enable stays live and is the unambiguous way to stop. See
+      # ui_controller.toggle_engage, which refuses the same case defensively so
+      # a kv change cannot silently reopen it.
+      disabled: root.is_running or (root.controller.engaged and bool(app.servo.servoMode))
       led_on: root.controller.engaged
       led_color: app.theme.led_off if not root.controller.engaged else (app.theme.danger if root.controller.els_stop_active else app.theme.success)
       status_text: "Disabled" if not root.controller.engaged else ("Stopped" if root.controller.els_stop_active else "Armed")
