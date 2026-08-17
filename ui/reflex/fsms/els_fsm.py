@@ -270,6 +270,21 @@ class ElsFsm:
         # the stop, and detach the move poller. Reached e.g. when a cut's stop
         # writes weren't acknowledged (on_enter_cutting).
         self.board.unbind(update_tick=self._on_board_update)
+        # SYNC OFF FIRST, explicitly, for the same reason as on_enter_disabled
+        # and reconcile_firmware_on_connect: set_enable(False) clears
+        # elsStop.active in firmware, and active == 1 is what HOLDS the carriage
+        # (Ramps.c:815 only accumulates sync steps while active == 0; clearing it
+        # 1->0 is the resume trigger, Ramps.c:826).
+        #
+        # This path happened to be safe already, because stop_feed() drops
+        # servoMode and the dispatchers/els.py binding clears syncEnable as a
+        # side effect BEFORE set_enable runs. But that safety was IMPLICIT --
+        # inherited from the ordering of two unrelated calls and a property
+        # binding in another module. Anyone reordering these three lines, or
+        # changing what that binding does, would silently re-arm the hazard with
+        # nothing here to say why the order mattered. Being explicit costs one
+        # call and makes the requirement local and stateable.
+        self.hal.stop_sync()
         self.board.servo.stop_feed()
         self.hal.set_enable(False)
 

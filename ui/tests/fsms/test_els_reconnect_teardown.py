@@ -96,3 +96,24 @@ def test_teardown_survives_an_unreadable_snapshot():
     fsm.reconcile_firmware_on_connect()
     assert 'stop_sync' in [c[0] for c in fsm.hal.method_calls]
     assert fsm.interrupted_pass is None
+
+
+def test_alarm_clears_sync_before_disarming():
+    """on_enter_alarm has the same requirement as disengage and init: clearing
+    enable releases the hold, so the motion source must be gone first.
+
+    This path was ALREADY safe, but only implicitly -- stop_feed() drops
+    servoMode and a property binding in dispatchers/els.py cleared syncEnable as
+    a side effect, before set_enable ran. Safety inherited from the ordering of
+    two unrelated calls plus a binding in another module is safety nobody can
+    see, and a reorder would have re-armed the hazard silently. Pinned here so
+    the requirement is enforced rather than inherited."""
+    fsm = _build_fsm(hal=MagicMock())
+    fsm.board.servo = MagicMock()
+    fsm.fault()
+
+    names = [c[0] for c in fsm.hal.method_calls]
+    assert 'stop_sync' in names, "alarm never cleared the motion source"
+    assert names.index('stop_sync') < names.index('set_enable'), (
+        f"stop_sync must precede set_enable on the alarm path, got: {names}"
+    )
