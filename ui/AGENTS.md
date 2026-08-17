@@ -112,11 +112,11 @@ direction across ELS mode and machine-wiring polarity.
   `addopts = "-m 'not system'"`, so a plain `uv run pytest` skips them (and never builds/launches
   the emulator). Run them explicitly:
   ```bash
-  REFLEX_FW_DIR=/mnt/c/projects/embedded/reflex-fw uv run pytest -m system tests/system/
+  uv run pytest -m system tests/system/
   ```
 - **WSL/Linux only.** The emulator's Modbus link is a PTY (`/dev/pts/N`); native Windows can't open
   it, and the venv is a WSL venv. Run from a WSL shell.
-- **Requires the reflex-fw emulator.** Set `REFLEX_FW_DIR` (defaults to `/mnt/c/projects/embedded/reflex-fw`).
+- **Requires the fw/ emulator.** The in-repo `../fw` is the default; set `REFLEX_FW_DIR` only to point at a different checkout.
   The `emulator_binary` fixture builds it if missing and rebuilds when firmware/emulator sources are
   newer than the binary; it `pytest.skip`s cleanly if reflex-fw isn't checked out. The reflex-fw git
   SHA is printed in the pytest header for run provenance.
