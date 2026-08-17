@@ -1,0 +1,84 @@
+from kivy.clock import Clock
+from kivy.logger import Logger
+from kivy.properties import ObjectProperty, StringProperty
+from kivy.uix.popup import Popup
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.button import Button
+from kivy.uix.tabbedpanel import TabbedPanel, TabbedPanelItem
+
+from reflex import feeds
+from reflex.components.widgets.beep_mixin import BeepMixin
+
+log = Logger.getChild(__name__)
+
+
+class FeedButton(BeepMixin, Button):
+    # Visual styling (themed slate pill, cyan text) lives in the global
+    # `<FeedButton>` rule in facelift_chrome.kv so it matches the rest of the
+    # facelift. Keep only behaviour/data here.
+    text_halign = "center"
+    halign = "center"
+    return_value = ObjectProperty(None)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def on_height(self, instance, value):
+        self.font_size = value / 3
+
+
+class FeedsTablePopup(Popup):
+    def __init__(self, **kwargs):
+        from reflex.app import MainApp
+        self.app: MainApp = MainApp.get_running_app()
+        super().__init__(**kwargs)
+        self.title = f"Select Feed"
+        self.title_size = "20sp"
+        self.size_hint = (0.8, 0.8)
+        self.auto_dismiss = False
+
+        self.panel = TabbedPanel(
+            do_default_tab=False,
+            tab_width=150,
+        )
+        self.tabs = {}
+
+        unit = self.app.formats.current_format  # "MM" or "IN"
+        for name, table in feeds.table.items():
+            if unit not in name:
+                continue
+            layout = GridLayout(cols=5)
+            for idx, pitch in enumerate(table):
+                layout.add_widget(
+                    FeedButton(text=pitch.name, return_value=(name, idx), on_release=self.confirm)
+                )
+            tab = TabbedPanelItem(text=name)
+            tab.add_widget(layout)
+            self.panel.add_widget(tab)
+            self.tabs[name] = tab
+
+        self.add_widget(self.panel)
+        self.callback_fn = None
+        self.current_value = None
+
+    def show_with_callback(self, callback_fn, current_value=None, current_mode=None):
+        if current_value is not None:
+            self.current_value = float(current_value)
+
+        self.callback_fn = callback_fn
+        self.open()
+
+        if current_mode is not None and current_mode in self.tabs:
+            Clock.schedule_once(lambda dt: self.panel.switch_to(self.tabs[current_mode]))
+
+    def confirm(self, instance: FeedButton):
+        try:
+            value = instance.return_value
+            self.callback_fn(table_name=value[0], index=value[1])
+            self.dismiss()
+        except Exception as e:
+            log.error(str(e))
+            return
+
+    def cancel(self, *args, **kwargs):
+        self.dismiss()

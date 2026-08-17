@@ -1,0 +1,21 @@
+<KeypadButton>:
+  text_halign: "center"
+  halign: "center"
+  font_name: app.theme.font_bold
+  font_size: app.formats.font_size
+  background_normal: ''
+  background_down: ''
+  background_color: 0, 0, 0, 0
+  color: app.theme.accent_text if self.state == 'down' else app.theme.text
+  canvas.before:
+    Color:
+      rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
+    RoundedRectangle:
+      pos: self.x + dp(3), self.y + dp(3)
+      size: self.width - dp(6), self.height - dp(6)
+      radius: [dp(6)]
+    Color:
+      rgba: app.theme.accent if self.state == 'down' else app.theme.border
+    Line:
+      rounded_rectangle: (self.x + dp(3) + 0.5, self.y + dp(3) + 0.5, self.width - dp(6) - 1, self.height - dp(6) - 1, dp(6))
+      width: 1.0

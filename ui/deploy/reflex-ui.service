@@ -1,0 +1,19 @@
+[Unit]
+Description=Reflex UI
+After=network.target auditd.service
+
+[Service]
+ExecStart=/reflex-ui/start.sh
+KillMode=process
+RestartSec=5
+Restart=on-failure
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=%n
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/reflex-ui/
+
+[Install]
+WantedBy=multi-user.target

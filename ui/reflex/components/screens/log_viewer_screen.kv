@@ -1,0 +1,32 @@
+#: import ScreenHeader reflex.components.widgets.screen_header
+
+<LogViewerScreen>:
+  BoxLayout:
+    orientation: "vertical"
+    padding: 10
+    ScreenHeader:
+      text: root.log_file_name
+
+    ScrollView:
+      do_scroll_x: False
+      do_scroll_y: True
+      canvas.before:
+        Color:
+          rgba: app.theme.background
+        Rectangle:
+          pos: self.pos
+          size: self.size
+      BoxLayout:
+        # One Label per CHUNK of lines, not one Label for the whole file.
+        #
+        # A single Label holding 500 log lines lays out ~9000px tall, which
+        # exceeds the GL maximum texture size (2048-4096px on the Pi). Texture
+        # creation then fails silently: nothing is drawn, but texture_size still
+        # reports the full height, so the view shows a long scrollbar over an
+        # empty black box. Short files rendered fine, which made it look
+        # intermittent. Chunking keeps every texture well inside the limit.
+        id: content
+        orientation: "vertical"
+        size_hint_y: None
+        height: self.minimum_height
+        padding: 10, 10

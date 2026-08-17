@@ -1,0 +1,37 @@
+<ScreenHeader>:
+  height: 60
+  size_hint_y: None
+  text: "Placeholder"
+  halign: "center"
+  valign: "center"
+
+  BoxLayout:
+    orientation: "vertical"
+    BoxLayout:
+      orientation: "horizontal"
+      Label:
+        text: root.text
+        text_size: root.size
+        bold: True
+        font_name: app.theme.font_bold
+        color: app.theme.accent_text
+        font_size: app.formats.font_size
+        valign: root.valign
+        halign: root.halign
+      FormValueButton:
+        size_hint_x: None
+        width: 250
+        text: "Back"
+        on_press: app.beep()
+        on_release:
+          app.manager.back()
+    Widget:
+      height: 2
+      width: root.width
+      size_hint: None, None
+      canvas:
+        Color:
+          rgba: app.theme.accent
+        Rectangle:
+          size: self.size
+          pos: self.pos

@@ -1,0 +1,37 @@
+# Domed-lens LED (see led_dot.py). Draws a `diameter`-px dot centred in the
+# widget: a shaded edge, base, upper face and a bright crown -- each a smaller
+# ellipse shifted up-left so the light pools toward the top-left -- then a white
+# specular highlight. No glow here (callers own that layer).
+
+<LedDot>:
+    canvas:
+        # 1. shaded outer edge (full dot)
+        Color:
+            rgba: root.edge
+        Ellipse:
+            pos: self.center_x - root.diameter * 0.5, self.center_y - root.diameter * 0.5
+            size: root.diameter, root.diameter
+        # 2. base colour, shifted up-left
+        Color:
+            rgba: root.base
+        Ellipse:
+            pos: self.center_x - root.diameter * 0.46, self.center_y - root.diameter * 0.34
+            size: root.diameter * 0.80, root.diameter * 0.80
+        # 3. upper face
+        Color:
+            rgba: root.face
+        Ellipse:
+            pos: self.center_x - root.diameter * 0.38, self.center_y - root.diameter * 0.14
+            size: root.diameter * 0.52, root.diameter * 0.52
+        # 4. bright crown
+        Color:
+            rgba: root.crown
+        Ellipse:
+            pos: self.center_x - root.diameter * 0.31, self.center_y + root.diameter * 0.05
+            size: root.diameter * 0.26, root.diameter * 0.26
+        # 5. specular highlight (brighter when lit)
+        Color:
+            rgba: 1, 1, 1, (0.85 if root.lit else 0.5)
+        Ellipse:
+            pos: self.center_x - root.diameter * 0.31, self.center_y + root.diameter * 0.11
+            size: root.diameter * 0.36, root.diameter * 0.28
