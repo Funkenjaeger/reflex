@@ -837,8 +837,18 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
        * drivetrain before this gate existed). A calibration leg is only
        * meaningful if the leadscrew is moved by the calibration and nothing
        * else. */
+      /* The servoMode == 1 term keeps accumulation and emission on the SAME
+       * gate. Emission (further down) only runs with servoMode != 0, so
+       * deltas accepted here in mode 0 are not motion — they are stored
+       * debt the servo chases wholesale whenever mode next becomes 1, and
+       * in mode 2 they superimpose spindle-sync creep onto the jog. Sync
+       * counts that arrive while not in sync-follow mode are DISCARDED,
+       * not banked: threading does not rely on banked deltas across a
+       * pause — the resume machinery re-syncs phase from scale positions.
+       * Emulator repro: els_sync_debt_test. */
       if (!shared->elsStop.active && !shared->elsStop.takeupPending
-          && data->elsCal.phase == ELS_CAL_IDLE) {
+          && data->elsCal.phase == ELS_CAL_IDLE
+          && shared->fastData.servoMode == 1) {
         shared->servo.desiredSteps += data->scalesSyncDeltaPos[i].scaledDelta;
       }
     }

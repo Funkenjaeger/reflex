@@ -39,6 +39,15 @@
  *
  * EXPECTED RESULT: FAILS (exit 1) until accumulation is gated on
  * servoMode == 1. Registered in CTest deliberately, as a reproduction.
+ *
+ * ------------------------------------------------------------------------
+ * STATUS UPDATE — the defect described above is FIXED.
+ *
+ * The sync accumulation gate in Core/Src/Ramps.c now carries a
+ * servoMode == 1 term, putting accumulation and emission on the same
+ * gate. The DEFECT assertions were written to fail and now PASS; they
+ * are left exactly as authored — a repro that flips green is the proof.
+ * ------------------------------------------------------------------------
  */
 
 extern "C" {
