@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from tests.fsms.test_els_fsm import _build_fsm
+from tests.fsms.test_els_fsm import _build_fsm, _make_controller, _make_z_axis
 
 
 def _reconnect(fsm, *, moving, enable=True, active=False):
@@ -117,6 +117,72 @@ def test_alarm_clears_sync_before_disarming():
     assert names.index('stop_sync') < names.index('set_enable'), (
         f"stop_sync must precede set_enable on the alarm path, got: {names}"
     )
+
+
+# ─── the stopped branch: a refused re-arm is a teardown too ─────────────────
+
+def _fsm_in_stopped(*, controller=None, z=None):
+    """Get the FSM to engaged-idle before reconnect. `_build_fsm` starts in
+    'disabled', so every test above exercises only the disabled/alarm branch;
+    these drive the enable trigger first and then reconcile from 'stopped'."""
+    fsm = _build_fsm(hal=MagicMock(), controller=controller, z=z)
+    fsm.enable()
+    assert fsm.state == 'stopped'
+    fsm.hal.reset_mock()
+    return fsm
+
+
+@pytest.mark.parametrize("refusal", ["no_committed_stop", "z_past_stop"])
+def test_stopped_refused_rearm_clears_sync_before_teardown(refusal):
+    """THE ORDERING TEST for the stopped branch. When arm_idle_stop refuses on
+    reconnect, the branch clears enable+active — the same teardown the
+    disabled/alarm branch performs, with the same hazard: clearing active with
+    a retained syncEnable still live is a resume command (Ramps.c:826). The
+    refusal reasons are exactly the states where the firmware's retained stop
+    must NOT be trusted, so the teardown here defends against the most stale
+    state of all — and it must clear the motion source first, like its sibling.
+
+    Both refusal reasons, because they arrive by different code paths:
+    no committed stop (encoder is None) and Z already past the stop."""
+    if refusal == "no_committed_stop":
+        controller = _make_controller()
+        controller.stop_z_encoder = None
+        fsm = _fsm_in_stopped(controller=controller)
+    else:
+        # Default rig: z=0.0, stop_z=10, forward (cut_dir=-1) → diff=+10 > 0,
+        # Z is past the stop and arming would fire ELS on the spot.
+        fsm = _fsm_in_stopped()
+
+    _reconnect(fsm, moving=False, active=True)
+
+    assert fsm.state == 'stopped'
+    names = [c[0] for c in fsm.hal.method_calls]
+    assert 'stop_sync' in names, "refused re-arm tore down without clearing sync"
+    fsm.hal.set_enable.assert_called_once_with(False)
+    fsm.hal.set_active.assert_called_once_with(False)
+    assert names.index('stop_sync') < names.index('set_enable'), (
+        f"stop_sync must precede set_enable, got order: {names}"
+    )
+    assert names.index('stop_sync') < names.index('set_active'), (
+        f"stop_sync must precede set_active, got order: {names}"
+    )
+
+
+def test_stopped_successful_rearm_does_not_tear_down():
+    """The complement: with a committed stop and Z on the safe side, reconnect
+    re-arms engaged-idle (fresh stopPosition, active=1 before enable=1) and
+    must NOT tear anything down — no set_enable(False)/set_active(False), so
+    there is no teardown for the sync ordering to protect."""
+    z, _ = _make_z_axis(scaled_position=15.0)
+    controller = _make_controller()   # stop_z=10, forward → z=15 is safe side
+    fsm = _fsm_in_stopped(controller=controller, z=z)
+
+    _reconnect(fsm, moving=False, active=True)
+
+    fsm.hal.set_stop_position.assert_called_with(controller.stop_z_encoder)
+    # One call each, and with True: any False call would be a teardown.
+    fsm.hal.set_active.assert_called_once_with(True)
+    fsm.hal.set_enable.assert_called_once_with(True)
 
 
 # ─── disengage gating: the ambiguous input is removed, not interpreted ──────

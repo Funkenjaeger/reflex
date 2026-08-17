@@ -556,6 +556,13 @@ class ElsFsm:
                 self.hal.set_hysteresis_loose()
             armed = self.arm_idle_stop()
             if not armed:
+                # SYNC OFF FIRST here too. Same two hazards as the
+                # disabled/alarm branch above (releasing a held stop, and the
+                # servoEnableTask race) — see that branch's comment for the
+                # full reasoning. A refused re-arm tears down enable/active,
+                # and doing that with a retained syncEnable still set would
+                # turn the teardown into a resume command.
+                self.hal.stop_sync()
                 self.hal.set_enable(False)
                 self.hal.set_active(False)
             log.info(
