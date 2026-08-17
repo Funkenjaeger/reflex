@@ -67,6 +67,17 @@ from reflex.fsms.els_mode_watch import (
 )
 
 
+# THE RUNG-3 MASTER SWITCH — ships False, and flips only after the rung-2
+# census (els_mode_watch) validates the mode table on hardware: weeks of real
+# (fsm_state, mode) pairings with the divergence alarm quiet are what earn the
+# published mode the authority to drive connect. Until then the adopt path is
+# dark scaffolding: fully wired, fully tested, deciding nothing.
+#
+# Read as a module attribute (els_adopt.ELS_ADOPT_ON_CONNECT), never imported
+# by value, so the eventual flip -- and tests -- reach the live setting.
+ELS_ADOPT_ON_CONNECT = False
+
+
 class AdoptPlan(NamedTuple):
     """One connect-time decision, whole. `state` is the domain-FSM state the
     session adopts; `teardown` runs the standard sync-first safety teardown;

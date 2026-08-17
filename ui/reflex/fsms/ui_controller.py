@@ -173,8 +173,11 @@ class ElsUiController(EventDispatcher):
         self._els.bind(z_axis_index=lambda *_: self._invalidate_z_targets())
         self._els.bind(x_axis_index=lambda *_: self._invalidate_x_targets())
 
-        # 2. Build domain FSM (HAL injected; controller doubles as modes source).
-        self._els_fsm = ElsFsm(els, board, self._hal, self)
+        # 2. Build domain FSM (HAL injected; controller doubles as modes
+        # source). The diag recorder rides along so the dark rung-3 adopt path
+        # can gate on its learned schema -- inert until els_adopt flips.
+        self._els_fsm = ElsFsm(els, board, self._hal, self,
+                               diag_recorder=self._diag_recorder)
 
         # 3. Eagerly compute initial validation so FSM guards don't start False.
         self._validate_stop_z()
