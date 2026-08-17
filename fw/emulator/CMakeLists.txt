@@ -160,6 +160,19 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
 target_link_libraries(els_disengage_edge_test m pthread)
 add_test(NAME els_disengage_edge_test COMMAND els_disengage_edge_test)
 
+# Sync deltas accumulate into desiredSteps gated on the hold conditions but
+# NOT on servoMode, while pulse emission IS mode-gated — so sync + mode 0
+# (or jog) banks unbounded motion debt that the servo chases at the next
+# mode 1. Reproduces finding F1 of the 2026-08-16 independent architecture
+# review. Expect RED until accumulation is gated on servoMode == 1.
+add_executable(els_sync_debt_test
+    ${CMAKE_SOURCE_DIR}/test/els_sync_debt_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_sync_debt_test m pthread)
+add_test(NAME els_sync_debt_test COMMAND els_sync_debt_test)
+
 # ISR-level backlash-CALIBRATION motion attribution (task 6a7c455e). Drives
 # data->elsCal through the real SynchroRefreshTimerIsr(), same stub strategy
 # as els_takeup_confirm_test. REQUIRES the calibration slip-attribution
