@@ -963,3 +963,39 @@ def test_depth_latch_ignores_uncommitted_stop_dia():
     c._ui_fsm.fsm.set_state("in_cycle.waiting_to_retract")
     c._apply_policy()
     assert c.depth_reached is False
+
+
+# ─── Rung-2 mode-watch sampler ─────────────────────────────────────────────
+
+class TestModeWatchSampler:
+    """_poll_mode_watch: dormant without the schema-4 probe, decimated when
+    present, and structurally incapable of raising into the update loop."""
+
+    def test_dormant_without_the_mode_watch_probe(self, ctrl):
+        ctrl._diag_recorder = MagicMock()
+        ctrl._diag_recorder.schema = None          # release firmware
+        ctrl._hal = MagicMock()
+        for _ in range(20):
+            ctrl._poll_mode_watch()
+        ctrl._hal.read_current_mode.assert_not_called()
+
+    def test_samples_every_nth_tick_and_feeds_the_watch(self, ctrl):
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
+        ctrl._diag_recorder = MagicMock()
+        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH
+        ctrl._hal = MagicMock()
+        ctrl._hal.read_current_mode.return_value = 5      # HELD
+        ctrl._mode_watch = MagicMock()
+        for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY * 2):
+            ctrl._poll_mode_watch()
+        assert ctrl._hal.read_current_mode.call_count == 2
+        ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 5)
+
+    def test_a_failing_read_never_reaches_the_update_loop(self, ctrl):
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
+        ctrl._diag_recorder = MagicMock()
+        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH
+        ctrl._mode_watch_tick = ctrl.MODE_WATCH_SAMPLE_EVERY - 1
+        ctrl._hal = MagicMock()
+        ctrl._hal.read_current_mode.side_effect = RuntimeError("link glitch")
+        ctrl._poll_mode_watch()                    # must not raise

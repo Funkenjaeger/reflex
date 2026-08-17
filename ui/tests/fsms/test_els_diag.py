@@ -320,3 +320,58 @@ class TestReset:
         r.reset()
         r.poll()
         assert r.enabled is True
+
+
+class TestModeWatchSchema:
+    """Schema 4: diagSeq counts MODE TRANSITIONS, and end_reason means 'a
+    latch suppression happened' rather than 'a capture completed'. The
+    membership rules below are what keep those redefinitions from silently
+    dropping or inventing records."""
+
+    def _active(self, hal, board, tmp_path, seq=0):
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
+        hal.read_diag_schema.return_value = ELS_DIAG_SCHEMA_MODE_WATCH
+        hal.read_diag_seq.return_value = seq
+        r = rec(hal, board, tmp_path)
+        r.poll()
+        return r
+
+    def test_schema_4_is_recognised(self, hal, board, tmp_path):
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
+        r = self._active(hal, board, tmp_path)
+        assert r.enabled is True
+        assert r.schema == ELS_DIAG_SCHEMA_MODE_WATCH
+
+    def test_schema_property_is_none_while_dormant(self, hal, board, tmp_path):
+        hal.read_diag_schema.return_value = 0
+        r = rec(hal, board, tmp_path)
+        r.poll()
+        assert r.schema is None
+
+    def test_transition_records_despite_end_reason_zero(self, hal, board, tmp_path):
+        """THE membership rule. For schema 4 end_reason == 0 is the healthy
+        steady state (zero suppressions). Were schema 4 ever added to
+        SCHEMAS_WITH_END_REASON, every mode transition on a healthy machine
+        would be silently dropped — this is the test that makes that edit
+        cost a red."""
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
+        r = self._active(hal, board, tmp_path, seq=0)
+        hal.read_diag_seq.return_value = 1
+        hal.read_diag_capture.return_value = make_capture(
+            seq=1, schema=ELS_DIAG_SCHEMA_MODE_WATCH, end_reason=0)
+        r.poll()
+        assert r.captures_written == 1
+
+    def test_suppression_count_rides_along(self, hal, board, tmp_path):
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
+        r = self._active(hal, board, tmp_path, seq=0)
+        hal.read_diag_seq.return_value = 1
+        capture = make_capture(seq=1, schema=ELS_DIAG_SCHEMA_MODE_WATCH,
+                               end_reason=1)
+        capture["net_counts"] = 2          # two suppressions: the finding
+        hal.read_diag_capture.return_value = capture
+        r.poll()
+        assert r.captures_written == 1
+        recorded = json.loads(
+            (tmp_path / "takeup_settle.jsonl").read_text().splitlines()[-1])
+        assert recorded["net_counts"] == 2

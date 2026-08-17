@@ -8,7 +8,8 @@ from reflex.fsms.ui_fsm import ElsUiFsm
 from reflex.fsms.els_fsm import ElsFsm
 from reflex.fsms.els_stop_hal import ElsStopHal
 from reflex.fsms.els_diag import ElsDiagRecorder
-from reflex.utils.devices import takeup_failure_text
+from reflex.fsms.els_mode_watch import ElsModeWatch
+from reflex.utils.devices import takeup_failure_text, ELS_DIAG_SCHEMA_MODE_WATCH
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
 
 log = Logger.getChild(__name__)
@@ -123,6 +124,14 @@ class ElsUiController(EventDispatcher):
         self._hal = ElsStopHal(board)
         self._diag_recorder = ElsDiagRecorder(self._hal, board)
 
+        # Rung-2 sampler (log-only): compares the domain FSM's state against
+        # the firmware-published machine mode when the mode-watch probe
+        # (schema 4) is flashed. Dormant against any other firmware — the
+        # schema gate in _poll_mode_watch is the recorder's, so this issues
+        # no reads of its own until a recognised mode-watch probe is present.
+        self._mode_watch = ElsModeWatch()
+        self._mode_watch_tick = 0
+
         # ── Encoder-anchored ELS targets ─────────────────────────────────────
         # stop_z / retract_z are stored as the PHYSICAL Z-leadscrew encoder count
         # captured when the operator set them (source of truth), NOT the scaled
@@ -201,6 +210,8 @@ class ElsUiController(EventDispatcher):
         # it reads diagSchema once per connection and, finding 0, issues no
         # further reads at all. See reflex/fsms/els_diag.py.
         self._board.bind(update_tick=self._poll_diag_capture)
+        # Rung-2 mode sampler; equally dormant without the schema-4 probe.
+        self._board.bind(update_tick=self._poll_mode_watch)
 
         # 7. Re-arm HAL when mode flags change so firmware tracks the operator.
         self.bind(retract_enabled=self._on_modes_changed,
@@ -315,6 +326,31 @@ class ElsUiController(EventDispatcher):
         Never raises -- see ElsDiagRecorder.poll().
         """
         self._diag_recorder.poll()
+
+    # Every 5th update tick ≈ 6 Hz against the firmware's ~10 Hz publication:
+    # fast enough that no dwell in a mode is missed, slow enough that the one
+    # extra single-register read stays a rounding error on the serial budget.
+    MODE_WATCH_SAMPLE_EVERY = 5
+
+    def _poll_mode_watch(self, *args):
+        """Rung-2 sampler: (domain FSM state, published machine mode) into the
+        mode watch. Log-only by design — see els_mode_watch.py.
+
+        Keys on the recorder's learned schema rather than reading diagSchema
+        itself, so against release firmware (or any other probe) this method
+        is a compare-and-return with zero serial cost. Never raises into the
+        update loop.
+        """
+        try:
+            if self._diag_recorder.schema != ELS_DIAG_SCHEMA_MODE_WATCH:
+                return
+            self._mode_watch_tick += 1
+            if self._mode_watch_tick % self.MODE_WATCH_SAMPLE_EVERY:
+                return
+            mode = self._hal.read_current_mode()
+            self._mode_watch.feed(self._els_fsm.state, mode)
+        except Exception as e:
+            log.warning(f"mode-watch sample failed: {e}")
 
     def _poll_els_stop_active(self, *args):
         # Bound to board.update_tick. Kivy property writes from the polling

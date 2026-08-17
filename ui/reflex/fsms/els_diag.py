@@ -50,6 +50,7 @@ from reflex.utils.devices import (
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE,
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2,
     ELS_DIAG_SCHEMA_DISENGAGE_LATCH,
+    ELS_DIAG_SCHEMA_MODE_WATCH,
 )
 from reflex.utils.paths import diag_dir
 
@@ -71,11 +72,22 @@ KNOWN_SCHEMAS = frozenset({
     # re-assert the feed after a disengage", not "captures completed". A
     # non-zero value is the finding. See reflex-fw DIAG.md.
     ELS_DIAG_SCHEMA_DISENGAGE_LATCH,
+    # Schema 4: diagSeq counts MODE TRANSITIONS, so each recorded line is one
+    # transition -- capture_ticks holds the mode entered, settle_ticks the mode
+    # left, net_counts the cumulative latch-suppression count (expect 0). The
+    # continuous current-mode register is read elsewhere (ElsModeWatch); the
+    # recorder's job here is just the durable transition log.
+    ELS_DIAG_SCHEMA_MODE_WATCH,
 })
 
 # Schemas that publish diagEndReason. Only these can be checked for "did a
 # capture actually complete" -- v1 has no such field, and its register reads as
 # 0, so applying the check there would reject every v1 capture as empty.
+#
+# Schema 4 publishes the field but MUST NOT be in this set: there it means "a
+# latch suppression has been seen", and 0 is the healthy steady state -- gating
+# on it would silently drop every mode-transition record on a machine where
+# nothing is wrong, which is all of them if the fixes hold.
 SCHEMAS_WITH_END_REASON = frozenset({ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2})
 
 # Consecutive failures tolerated before the recorder gives up for this
@@ -110,6 +122,13 @@ class ElsDiagRecorder:
     def enabled(self) -> bool:
         """True only once a recognised probe has actually been found."""
         return self._enabled is True
+
+    @property
+    def schema(self):
+        """The recognised probe's schema id, or None before interrogation /
+        when dormant. Lets other consumers (the mode watch) key on which
+        probe is present without issuing their own diagSchema read."""
+        return self._schema if self._enabled is True else None
 
     def _disable(self, reason: str):
         if self._enabled is not False:
@@ -274,7 +293,16 @@ class ElsDiagRecorder:
             fh.write(json.dumps(record) + "\n")
 
         self.captures_written += 1
-        log.info(
-            f"ELS settle capture #{seq}: settle_ticks={record['settle_ticks']}, "
-            f"net_counts={record['net_counts']} -> {path}"
-        )
+        if record.get("schema") == ELS_DIAG_SCHEMA_MODE_WATCH:
+            # Same registers, different meanings (see KNOWN_SCHEMAS): this line
+            # is one mode transition, and net_counts is the suppression count.
+            log.info(
+                f"ELS mode transition #{seq}: "
+                f"{record['settle_ticks']} -> {record['capture_ticks']}, "
+                f"suppressions={record['net_counts']} -> {path}"
+            )
+        else:
+            log.info(
+                f"ELS settle capture #{seq}: settle_ticks={record['settle_ticks']}, "
+                f"net_counts={record['net_counts']} -> {path}"
+            )

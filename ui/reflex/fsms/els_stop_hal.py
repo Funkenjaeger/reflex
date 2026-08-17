@@ -318,6 +318,18 @@ class ElsStopHal:
             return 0
         return int(self._board.device['elsStop']['diagSchema'])
 
+    def read_current_mode(self) -> int:
+        """Firmware-derived machine mode (ELS_MMODE_*), live.
+
+        MEANINGFUL ONLY under diag schema 4 (mode-watch), where the firmware
+        republishes its derived mode into diagCaptureTicks every ~100 ms.
+        Under any other schema this register means something else entirely —
+        callers gate on the recorder's learned schema, never call this bare.
+        """
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['diagCaptureTicks'])
+
     def read_diag_seq(self) -> int:
         """Increments once per COMPLETED capture. Edge-detect this.
 
