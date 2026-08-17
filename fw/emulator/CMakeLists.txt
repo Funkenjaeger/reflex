@@ -145,6 +145,21 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
 target_link_libraries(els_stop_resume_relatch_test m pthread)
 add_test(NAME els_stop_resume_relatch_test COMMAND els_stop_resume_relatch_test)
 
+# Mirror image of the relatch test: there the stop trigger (early in the pass)
+# consumed a SW-written active 1->0 edge before the resume detector saw it;
+# here the enable-fall handler (early) CREATES an active 1->0 edge that the
+# resume detector (late, same pass) sees and must not act on. Reproduces
+# finding F2 of the 2026-08-16 independent architecture review: disengaging
+# after a completed threading pass banks a backlash takeup. Expect this
+# target RED until the enable-fall handler consumes its own edge.
+add_executable(els_disengage_edge_test
+    ${CMAKE_SOURCE_DIR}/test/els_disengage_edge_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_disengage_edge_test m pthread)
+add_test(NAME els_disengage_edge_test COMMAND els_disengage_edge_test)
+
 # ISR-level backlash-CALIBRATION motion attribution (task 6a7c455e). Drives
 # data->elsCal through the real SynchroRefreshTimerIsr(), same stub strategy
 # as els_takeup_confirm_test. REQUIRES the calibration slip-attribution
