@@ -249,10 +249,10 @@ error that names the replacement.
    "added a probe, wrote no assertions" a build failure. Pin the **literal** wire
    value, not `ELS_DIAG_PROBE` — asserting the published schema equals the macro
    that set it is a tautology that cannot fail.
-5. **Mirror it in reflex-ui**, in all the places — mirroring the id alone is not
+5. **Mirror it in the UI**, in all the places — mirroring the id alone is not
    enough, and the failure is silent until you are standing at the lathe:
-   - `reflex/utils/devices.py` — the schema constant.
-   - `reflex/fsms/els_diag.py` — add it to `KNOWN_SCHEMAS`. **This is the one
+   - `ui/reflex/utils/devices.py` — the schema constant.
+   - `ui/reflex/fsms/els_diag.py` — add it to `KNOWN_SCHEMAS`. **This is the one
      that bites.** The recorder refuses any schema outside that set, so a probe
      registered in firmware but missing here makes the UI log *"firmware reports
      diagSchema=N, which this UI does not recognise"* and go dormant. The
@@ -260,10 +260,11 @@ error that names the replacement.
    - `SCHEMAS_WITH_END_REASON` in the same file, if the probe publishes
      `diagEndReason`.
 
-   Nothing cross-checks these two registries: the register-map contract test
+   Nothing cross-checks these two registries yet: the register-map contract test
    compares layout (field sets, offsets, types, total size) and says nothing
-   about schema ids, so a probe added on one side and forgotten on the other
-   passes CI green. Until that check exists, this step is the check.
+   about schema ids. Until that check exists, this step is the check — though
+   since the weld both files live in this repository, so the cross-check is now
+   a plain test away rather than a cross-repo problem.
 6. **Document it here**, including whether it is one-off or durable, and what its
    result was once you have one.
 

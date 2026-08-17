@@ -1,0 +1,71 @@
+# Monorepo CI — minimal port of the two repos' workflows, 2026-08-17.
+#
+# What the weld deleted on purpose: the cross-repo checkout, the branch-name
+# pairing resolver, and its fallback chain. The firmware is always present at
+# fw/, so the register-map contract test can no longer skip — REFLEX_FW_REQUIRED
+# is set anyway so a broken resolver fails loudly instead of skipping quietly.
+#
+# Deliberately NOT ported yet (tracked as monorepo follow-through):
+# path-filtered triggers, the release flows (lockstep versioning per
+# ui/docs/decisions/repo-structure-monorepo.md replaces both python-semantic-
+# release and the PaulHatch action), and the ARM cross-build.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ui-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv and sync deps
+        working-directory: ui
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv venv
+          uv sync
+      - name: Run the default (non-system) suite
+        working-directory: ui
+        env:
+          REFLEX_FW_REQUIRED: "1"
+        run: uv run --frozen pytest -q
+
+  fw-emulator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+      - name: Build emulator + tests
+        working-directory: fw/emulator
+        run: |
+          cmake -B build
+          cmake --build build -j
+      - name: Run firmware emulator suite
+        working-directory: fw/emulator/build
+        run: ctest --output-on-failure
+
+  # continue-on-error preserved from the split-era job — a deliberate decision
+  # (pty/serial timing on shared runners), revisit as part of CI refinement.
+  system-tests:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+      - name: Install uv and sync deps
+        working-directory: ui
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv venv
+          uv sync
+      - name: Run system tests against the in-repo firmware
+        working-directory: ui
+        run: uv run --frozen pytest -m system tests/system -q
