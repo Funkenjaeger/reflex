@@ -1036,3 +1036,63 @@ def test_disengage_allowed_when_not_feeding_regardless_of_spindle(ctrl):
     _pump()
     assert ctrl.engaged is False
     assert ctrl._els_fsm.state == "disabled"
+
+
+# ─── Arm-refusal notice: the silent refusal now reaches the operator ───────
+
+def test_engaging_with_z_past_the_stop_raises_the_banner_and_arming_clears_it():
+    """Round-2 hardware finding 2026-08-17: the carriage parks a hair past
+    the stop after a pass runs to it, so re-engaging there refuses to arm —
+    and the refusal was log-only. The whole chain is under test here:
+    arm_idle_stop refusal -> bus -> controller banner, then a successful
+    arm -> banner cleared."""
+    z_axis = _make_z_axis(scaled_position=-0.002)   # 2 thou past a stop at 0
+    board, els = _make_collaborators(z_axis=z_axis, x_axis=_make_x_axis())
+    c = ElsUiController(els=els, board=board)
+    _pump()
+    c.commit_standalone_stop_z(0.0)
+    c.toggle_engage()          # arm refused: Z is past the stop
+    _pump()
+    assert c.engaged is True
+    assert "NOT armed" in c.arm_warning
+    assert "at/past" in c.arm_warning
+
+    z_axis.scaledPosition = 1.0            # operator moves clear...
+    c.commit_standalone_stop_z(0.0)        # ...recommits; arming now succeeds
+    _pump()
+    assert c.arm_warning == ""
+
+
+def test_arm_warning_clears_on_disengage():
+    z_axis = _make_z_axis(scaled_position=-0.002)
+    board, els = _make_collaborators(z_axis=z_axis, x_axis=_make_x_axis())
+    c = ElsUiController(els=els, board=board)
+    _pump()
+    c.commit_standalone_stop_z(0.0)
+    c.toggle_engage()
+    _pump()
+    assert c.arm_warning != ""
+    c._board.servo.servoMode = 0
+    c.toggle_engage()          # disengage
+    _pump()
+    assert c.arm_warning == ""
+
+
+def test_unarmed_stop_message_names_the_actual_cause():
+    """Three different operator problems, three different remedies — the old
+    one-size dialog claimed "no stop is set" for all of them."""
+    z_axis = _make_z_axis(scaled_position=-0.002)
+    board, els = _make_collaborators(z_axis=z_axis, x_axis=_make_x_axis())
+    c = ElsUiController(els=els, board=board)
+    _pump()
+
+    assert "not engaged" in c.unarmed_stop_message()
+
+    c.toggle_engage()
+    _pump()
+    assert "No stop is set" in c.unarmed_stop_message()
+
+    c.commit_standalone_stop_z(0.0)
+    _pump()
+    msg = c.unarmed_stop_message()
+    assert "NOT armed" in msg and "at/past" in msg

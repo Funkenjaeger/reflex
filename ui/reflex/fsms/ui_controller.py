@@ -57,6 +57,12 @@ class ElsUiController(EventDispatcher):
     # Without it a refusal and a hung machine are indistinguishable, which is
     # exactly how it presented on hardware 2026-08-08.
     takeup_warning      = StringProperty("")
+    # Standing operator notice that an ARM was refused (Z at/past the stop).
+    # Set from the els_arm_refused bus event, cleared by els_armed or
+    # disengage. Exists because the refusal used to be log-only and the
+    # operator's first hint was a differently-worded dialog three steps
+    # later (round-2 finding, 2026-08-17).
+    arm_warning         = StringProperty("")
 
     # ── Operator-job descriptors (mirrored from the widget) ────────────
     # is_threading toggles the X-clear-of-start-dia gate in waiting_to_retract.
@@ -190,6 +196,8 @@ class ElsUiController(EventDispatcher):
         bus.subscribe("state_changed", self._on_domain_state_changed)
         bus.subscribe("alarm_raised", self._on_alarm)
         bus.subscribe("els_pass_interrupted", self._on_pass_interrupted)
+        bus.subscribe("els_arm_refused", self._on_arm_refused)
+        bus.subscribe("els_armed", self._on_armed)
 
         # 6. Apply initial state policy and connect HW bindings.
         self._apply_policy()
@@ -264,6 +272,8 @@ class ElsUiController(EventDispatcher):
 
     def _sync_engaged(self, state):
         self.engaged = state != "disabled"
+        if not self.engaged:
+            self.arm_warning = ""   # a disengaged machine has nothing to arm
         # Recover the UI FSM from its own alarm state when the operator clears a
         # fault by disengaging (domain → disabled). Without this the domain
         # recovers but the UI FSM stays parked in 'alarm' forever (Start/Stop and
@@ -1043,6 +1053,37 @@ class ElsUiController(EventDispatcher):
             return not bool(self._board.device['elsStop']['enable'])
         except Exception:
             return True  # can't tell → treat as unsafe, confirm
+
+    def _on_arm_refused(self, reason):
+        Clock.schedule_once(lambda _dt: setattr(self, "arm_warning", reason), 0)
+
+    def _on_armed(self):
+        Clock.schedule_once(lambda _dt: setattr(self, "arm_warning", ""), 0)
+
+    def unarmed_stop_message(self) -> str:
+        """Why enabling the feed right now has no armed stop behind it —
+        operator-facing, cause-specific. The old one-size dialog said
+        "No ELS stop is set", which reads as a lie when a stop IS set but
+        arming was refused for Z sitting at/past it (the normal parking spot
+        after a pass runs to the shoulder — round-2 finding, 2026-08-17)."""
+        if not self.engaged:
+            return ("ELS is not engaged. The feed will run with no "
+                    "automatic stop.\n\nEnable feed anyway?")
+        if self.stop_z_encoder is None:
+            return ("No stop is set. The feed will run with no automatic "
+                    "stop.\n\nEnable feed anyway?")
+        try:
+            z_pos = self._els.get_z_axis().scaledPosition
+            cut_dir = self._els.stop_direction_value(self.els_forward)
+            if (z_pos - self.stop_z) * cut_dir > 0:
+                return (f"A stop is set at {self.stop_z:.4g} but NOT armed: "
+                        f"Z ({z_pos:.4g}) is at/past it. Move Z clear of the "
+                        f"stop (or set a farther one) to arm it.\n\nEnable "
+                        f"feed anyway, with no automatic stop?")
+        except Exception:
+            pass
+        return ("The ELS stop is not armed. The feed will run with no "
+                "automatic stop.\n\nEnable feed anyway?")
 
     def _on_pass_interrupted(self):
         """Tell the operator we stopped a pass that the firmware was still running.

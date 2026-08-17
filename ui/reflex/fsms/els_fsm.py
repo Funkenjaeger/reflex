@@ -436,6 +436,19 @@ class ElsFsm:
                 f"arm_idle_stop: Z past stop — not arming "
                 f"(stop_z={self.controller.stop_z} z_pos={z_pos})"
             )
+            # Tell the OPERATOR, not just the log. Round-2 hardware testing
+            # (2026-08-17): the carriage parks a hair past the stop after
+            # every pass that runs to it, so re-engaging right there hits
+            # this refusal — and the only surface it reached was an INFO
+            # line in a log the kiosk operator cannot watch. The confusion
+            # then surfaced three steps later as the feed guard's dialog,
+            # worded as if no stop existed at all.
+            bus.publish(
+                "els_arm_refused",
+                reason=(f"Stop {self.controller.stop_z:.4g} set but NOT "
+                        f"armed — Z ({z_pos:.4g}) is at/past it. Move Z "
+                        f"clear or set a farther stop."),
+            )
             return False
         self.push_stop_to_firmware()
         # Set active=1 before enable so ELS arms in STOPPED state — sync motion
@@ -447,6 +460,7 @@ class ElsFsm:
             f"arm_idle_stop: armed ELS stopped with "
             f"stop_z={self.controller.stop_z} z_pos={z_pos}"
         )
+        bus.publish("els_armed")   # clears any standing arm-refusal notice
         return True
 
     def reconcile_firmware_on_connect(self):
