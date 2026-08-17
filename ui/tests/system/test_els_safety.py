@@ -151,24 +151,42 @@ def test_feed_enable_allowed_with_armed_stop(harness):
 # ── H6: disengaging ELS while a feed is running must stop the feed ────────────
 @pytest.mark.parametrize("emulator_process", [_ENV], indirect=True)
 def test_disengage_stops_feed(harness):
-    """Audit H6: engage + feed, then disengage ELS. The feed must stop
-    (servoMode 0) and the carriage must not keep marching toward the chuck."""
+    """Audit H6, under the 2026-08-16 interaction contract: disengage while
+    sync motion is armed is REFUSED (toggle_engage's is_feeding gate — the
+    ambiguous instruction is removed rather than interpreted), the operator
+    turns the feed off first, and THEN disengage proceeds and must leave
+    nothing marching. This test originally pinned the pre-gate contract
+    (disengage-with-feed-on succeeds and stops the feed itself); the gate
+    changed the contract deliberately, so the test now pins both halves:
+    the refusal, and the sanctioned path ending inert."""
     h = harness
     _commission(h, els_forward=True, retract_enabled=False)
     z0 = h.z_scaled_position()
     h.set_stop_z(z0 - 50.0)         # mm; far stop so the feed is genuinely running
     h.engage()
     h.enable_sync()
-    # Let the feed run briefly, then disengage.
+    # Let the feed run briefly, then attempt to disengage.
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
         h.pump(); time.sleep(0.01)
     assert h.board.servo.servoMode == 1, "precondition: feed should be running"
 
-    h.controller.toggle_engage()    # disengage
+    h.controller.toggle_engage()    # disengage attempt while feeding: REFUSED
+    h.pump()
+    assert h.els_fsm.state == "stopped", (
+        "disengage while sync motion is armed must be refused, not interpreted"
+    )
+    assert h.board.servo.servoMode == 1, "a refused disengage must change nothing"
+
+    # The sanctioned path: feed off (the unambiguous stop — equivalent to
+    # opening the half nut), then disengage.
+    h.controller.request_feed_enable()
+    h.pump()
+    assert h.board.servo.servoMode == 0, "feed-off precondition for disengage"
+    h.controller.toggle_engage()    # disengage, now unambiguous
     h.pump()
     assert h.els_fsm.state == "disabled"
-    assert h.board.servo.servoMode == 0, "disengage must stop the feed"
+    assert h.board.servo.servoMode == 0, "disengage must leave the feed off"
     # After disengage the carriage must settle quickly, not keep marching
     # (mm; the ~0.79 mm/s feed would cover ~2.4 mm in this window).
     settle = _max_travel(h, 3.0)
