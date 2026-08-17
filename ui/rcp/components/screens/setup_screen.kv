@@ -1,0 +1,58 @@
+#: import ScreenHeader rcp.components.widgets.screen_header
+#: import MODE_ELS rcp.app.MODE_ELS
+#: import USE_CASE_MODES rcp.app.USE_CASE_MODES
+
+<SetupButton@Button>:
+  font_size: app.formats.font_size
+  on_press: app.beep()
+
+<SetupScreen>:
+  BoxLayout:
+    title: "Setup"
+    orientation: "vertical"
+    padding: 10
+    ScreenHeader:
+      text: "Setup"
+
+    GridLayout:
+      spacing: 20
+      padding: 20
+      cols: 4
+      row_force_default: True
+      row_default_height: (self.height - self.padding[1] - self.padding[3] - self.spacing[1] * 2) / 3
+      SetupButton:
+        text: "Machine"
+        on_release: app.manager.goto("machine")
+      SetupButton:
+        text: "Inputs"
+        on_release: app.manager.goto("inputs_setup")
+      SetupButton:
+        text: "Axes"
+        on_release: app.manager.goto("axes_setup")
+      SetupButton:
+        text: "Servo"
+        on_release: app.manager.goto("servo")
+      SetupButton:
+        text: "Network"
+        on_release: app.manager.goto("network")
+      SetupButton:
+        text: "Formats"
+        on_release: app.manager.goto("formats")
+      SetupButton:
+        text: "Update"
+        on_release: app.manager.goto("update")
+      SetupButton:
+        text: "System"
+        on_release: app.manager.goto("system")
+      SetupButton:
+        text: "Logs"
+        on_release: app.manager.goto("logs")
+      SetupButton:
+        text: "Profiling"
+        on_release: app.manager.goto("profiling")
+      # ELS setup is shown only for use cases that expose ELS mode.
+      SetupButton:
+        text: "ELS"
+        opacity: 1 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
+        disabled: MODE_ELS not in USE_CASE_MODES.get(app.use_case, [])
+        on_release: app.manager.goto("els_setup")

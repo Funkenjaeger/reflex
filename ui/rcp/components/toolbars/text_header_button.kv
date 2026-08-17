@@ -1,0 +1,33 @@
+<TextHeaderButton>:
+  size_hint_x: None
+  orientation: "vertical"
+  font_name: app.formats.font_name
+
+  #canvas.before:
+  #  Color:
+  #    rgba: app.formats.color_on # if root.blink else [1, 1, 1, 1]
+    
+  Label:
+    size_hint_y: 0.3
+    #id: label_text_header
+    font_name: root.font_name
+    font_size: self.height / 1.5
+    text: root.text_header
+    color: app.formats.color_on if root._blink else app.formats.display_color    
+    halign: 'center'
+    valign: 'top'
+
+  Label:
+    size_hint_y: 0.7
+    font_name: root.font_name
+    font_size: self.height / 3
+    text: root.text_button
+    color: app.formats.display_color
+    halign: "center"
+    valign: "middle"
+    canvas.before:
+      Color:
+        rgba: [0.3, 0.3, 0.3, 1]
+      Rectangle:
+        pos: self.pos
+        size: self.size

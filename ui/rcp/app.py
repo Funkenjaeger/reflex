@@ -1,0 +1,166 @@
+import os
+
+import sentry_sdk
+from kivy.app import App
+from kivy.config import Config
+from kivy.core.audio import SoundLoader
+from kivy.properties import ObjectProperty, ConfigParserProperty, NumericProperty, ListProperty, StringProperty, BooleanProperty
+from kivy.logger import Logger
+log = Logger.getChild(__name__)
+
+from rcp.components.appsettings import config
+from rcp.dispatchers.axis import AxisDispatcher
+from rcp.dispatchers.board import Board
+from rcp.dispatchers.els import ElsDispatcher
+from rcp.dispatchers.formats import FormatsDispatcher
+from rcp.dispatchers.input import InputDispatcher
+from rcp.dispatchers.servo import ServoDispatcher
+from rcp.fsms.ui_controller import ElsUiController
+
+# Operating modes (must match home_screen mode_layouts keys and ModePopup buttons)
+MODE_INDEX = 1
+MODE_ELS = 2
+MODE_JOG = 3
+MODE_DRO = 4
+
+# Which modes each use case exposes. DRO is available everywhere.
+USE_CASE_MODES = {
+    "rotary_table": [MODE_INDEX, MODE_JOG, MODE_DRO],
+    "lathe": [MODE_ELS, MODE_DRO],
+    "all_features": [MODE_INDEX, MODE_ELS, MODE_JOG, MODE_DRO],
+}
+USE_CASE_LABELS = {
+    "rotary_table": "Rotary Table",
+    "lathe": "Lathe",
+    "all_features": "All Features",
+}
+DEFAULT_USE_CASE = "rotary_table"
+
+
+class MainApp(App):
+    formats = ObjectProperty()
+    currentOffset = NumericProperty(0)
+    abs_mode = BooleanProperty(False)
+
+    board = ObjectProperty()
+
+    servo: ServoDispatcher = ObjectProperty()
+
+    inputs: list[InputDispatcher] = ListProperty()
+
+    # Backward compat alias for KV files that reference app.scales
+    scales: list[InputDispatcher] = ListProperty()
+
+    axes: list[AxisDispatcher] = ListProperty()
+
+    els: ElsDispatcher = ObjectProperty()
+
+    els_uic: ElsUiController = ObjectProperty()
+
+    current_mode = ConfigParserProperty(
+        defaultvalue=1, section="device", key="current_mode", config=config, val_type=int
+    )
+
+    use_case = ConfigParserProperty(
+        defaultvalue=DEFAULT_USE_CASE, section="device", key="use_case", config=config, val_type=str
+    )
+
+    manager = ObjectProperty()
+
+    sound = ObjectProperty()
+
+    version = StringProperty()
+
+    def __init__(self, **kv):
+        super().__init__(**kv)
+
+
+    def beep(self, *args, **kv):
+        if self.sound and hasattr(self, "formats"):
+            self.sound.volume = self.formats.volume
+            self.sound.play()
+
+    @staticmethod
+    def load_help(help_file_name):
+        """
+        Loads the specified help file text from the help files folder.
+        """
+        help_file_path = os.path.join(
+            os.path.dirname(__file__),
+            "help",
+            help_file_name
+        )
+        if not os.path.exists(help_file_path):
+            return "Help file not found"
+
+        with open(help_file_path, "r") as f:
+            return f.read()
+
+    def allowed_modes(self) -> list[int]:
+        """Modes selectable for the current use case (DRO is always allowed)."""
+        return USE_CASE_MODES.get(self.use_case, USE_CASE_MODES[DEFAULT_USE_CASE])
+
+    def set_mode(self, mode_id: int):
+        if mode_id not in self.allowed_modes():
+            mode_id = MODE_DRO
+        self.current_mode = mode_id
+
+    def on_use_case(self, instance, value):
+        # If the active mode is no longer valid for the new use case, fall back
+        # to DRO (common to all use cases and the most benign).
+        self.set_mode(self.current_mode)
+
+    def get_spindle_axis(self):
+        return self.board.get_spindle_axis()
+
+    def build(self):
+        self.formats = FormatsDispatcher(id_override="0")
+        self.board = Board(formats=self.formats, offset_provider=self)
+
+        # Load beep sound
+        sound_path = os.path.join(os.path.dirname(__file__), "sounds", "snap.wav")
+        self.sound = SoundLoader.load(sound_path)
+        if self.sound is None:
+            log.warning(f"Failed to load sound from {sound_path}")
+
+        if not self.formats.disable_error_reporting:
+            log.info("Error reporting is enabled, configuring Sentry")
+            sentry_sdk.init(
+                dsn="https://8fd20c0607e9c930a16d51a4b1eacc94@o4509625403506688.ingest.us.sentry.io/4509625405014016",
+                send_default_pii=False,
+                traces_sample_rate=0.2,
+            )
+
+        # Backward compat aliases — most KV files use app.servo / app.inputs / app.axes
+        self.servo = self.board.servo
+        self.inputs = list(self.board.inputs)
+        self.scales = list(self.board.inputs)  # backward compat alias
+        self.axes = list(self.board.axes)
+
+        self.els = ElsDispatcher(id_override="0")
+
+        self.els_uic = ElsUiController(els=self.els, board=self.board)
+
+        self.beep()
+
+        import importlib.metadata
+        dist = importlib.metadata.distribution("rcp")
+        origin = dist.read_text('direct_url.json')
+        self.version = "v" + importlib.metadata.version("rcp")
+        if origin and '"dir_info": {"editable": true}' in origin:
+            self.version = self.version + "*"
+
+        self._apply_mouse_cursor()
+        self.formats.bind(hide_mouse_cursor=lambda *_: self._apply_mouse_cursor())
+
+        from rcp.components.manager import Manager
+        self.manager = Manager()
+        return self.manager
+
+    def _apply_mouse_cursor(self):
+        if self.formats.hide_mouse_cursor:
+            Config.set('graphics', 'show_cursor', '0')
+        else:
+            Config.set('graphics', 'show_cursor', '1')
+        from kivy.core.window import Window
+        Window.show_cursor = not self.formats.hide_mouse_cursor

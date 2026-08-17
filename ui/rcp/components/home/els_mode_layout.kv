@@ -1,0 +1,36 @@
+#: import AutoSizeButton rcp.components.widgets.auto_size_button
+
+<ElsSpindleInfo>:
+  orientation: "horizontal"
+
+  # Direction icon (matches axis name button: 96px wide, gray background)
+  Button:
+    width: 96
+    size_hint_x: None
+    font_name: "fonts/Font Awesome 6 Free-Solid-900.otf"
+    font_size: min(self.height / 2, self.width / 2)
+    background_color: [0.3, 0.3, 0.3, 1]
+    color: app.formats.display_color
+    text: root.direction_icon
+
+  # Main content: RPM value (large) + "RPM" unit label (small), matching axis bar pattern
+  BoxLayout:
+    orientation: "horizontal"
+    Label:
+      id: rpm_label
+      font_name: app.formats.font_name
+      font_size: min(self.height / 1.1, self.width / 5)
+      font_style: "bold"
+      color: app.formats.display_color
+      text: root.spindle_rpm
+      text_size: self.size
+      halign: 'right'
+      valign: 'center'
+    Label:
+      size_hint_x: None
+      width: self.texture_size[0] + 4
+      font_name: app.formats.font_name
+      font_size: rpm_label.font_size / 4
+      color: app.formats.display_color
+      text: "RPM"
+      valign: 'center'
