@@ -126,7 +126,23 @@ class ServoDispatcher(SavingDispatcher):
             if self.board.connected:
                 self.encoderPrevious = self.board.fast_data_values['servoCurrent']
                 self.encoderCurrent = self.board.fast_data_values['servoCurrent']
-                self.servoMode = self.board.fast_data_values['servoMode']
+                # ADOPTION IS AN OBSERVATION. The firmware retains servoMode
+                # across a UI restart, so at connect this mirrors whatever the
+                # machine already happens to be doing -- the operator has not
+                # asked for anything. Flagged exactly like the poll mirror in
+                # on_update_tick (see its comment): unflagged, on_servoMode
+                # would record the observed value into _commanded_servo_mode
+                # (if the UI commanded 0 earlier this session and a
+                # reconnected firmware reports nonzero, the watchdog SHOULD
+                # see that divergence, not have its baseline moved to match),
+                # and the servoMode->syncEnable binding in dispatchers/els.py
+                # would write sync to the spindle scale from a stale retained
+                # value.
+                self.servoMode_from_firmware = True
+                try:
+                    self.servoMode = self.board.fast_data_values['servoMode']
+                finally:
+                    self.servoMode_from_firmware = False
                 self.board.device['servo']['maxSpeed'] = self.maxSpeed
                 self.board.device['servo']['acceleration'] = self.acceleration
                 servo_dir = -1 if self.reverse else 1

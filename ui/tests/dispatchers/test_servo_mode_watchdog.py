@@ -104,6 +104,29 @@ def test_firmware_echo_does_not_count_as_a_command(servo, caplog):
     assert any("DIVERGENCE" in r.message for r in caplog.records)
 
 
+def test_reconnect_adoption_does_not_blind_the_watchdog(servo, caplog):
+    """on_connected adopts the retained firmware servoMode into the property.
+    That adoption is an OBSERVATION and must ride the same flag as the poll
+    mirror above -- unflagged, on_servoMode records it as a command and the
+    baseline moves to match the firmware at exactly the moment a stale
+    retained feed is the thing worth catching. If the UI commanded 0 earlier
+    in the session and the reconnected firmware reports nonzero, that IS the
+    divergence this watchdog exists to see."""
+    servo.servoMode = 1
+    servo.servoMode = 0                              # UI's last command: stop
+    servo.board.connected = False                    # link drops...
+    servo.board.fast_data_values['servoMode'] = 1    # ...firmware kept feeding
+    servo.board.connected = True                     # reconnect -> on_connected
+    assert servo.servoMode == 1, "adoption should have mirrored the readback"
+    assert servo._commanded_servo_mode == 0, (
+        "connect adoption moved the commanded baseline -- watchdog is blind "
+        "at exactly the reconnect it exists for"
+    )
+    with caplog.at_level(logging.WARNING):
+        _poll(servo, firmware_mode=1, times=N)
+    assert any("DIVERGENCE" in r.message for r in caplog.records)
+
+
 def test_reports_once_per_episode_not_once_per_poll(servo, caplog):
     """A watchdog that floods the log is one nobody reads. It needs to be
     findable afterwards, not loud at the time."""
