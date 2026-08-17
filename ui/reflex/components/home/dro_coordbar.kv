@@ -1,0 +1,99 @@
+#: import AutoSizeButton reflex.components.widgets.auto_size_button
+#: import CircularButton reflex.components.widgets.circular_button
+
+<DroCoordBar>:
+  orientation: "horizontal"
+  size_hint_y: 1
+  # Axis label: a cell in the dark left gutter (not a button), with a right
+  # border + bottom divider so the stacked rows read as one continuous gutter.
+  Button:
+    width: 96
+    size_hint_x: None
+    text: root.axis.axis_name if root.axis else "?"
+    font_name: app.theme.font_bold
+    font_size: min(self.height / 1.7, self.width / 1.7)
+    color: app.theme.text
+    background_color: 0, 0, 0, 0
+    background_normal: ""
+    canvas.before:
+      Color:
+        rgba: app.theme.surface
+      Rectangle:
+        pos: self.pos
+        size: self.size
+      Color:
+        rgba: app.theme.border_dim
+      Line:
+        points: (self.right - 0.5, self.top, self.right - 0.5, self.y, self.x, self.y)
+        width: 1.0
+
+  BoxLayout:
+    orientation: "vertical"
+    BoxLayout:
+      orientation: "horizontal"
+      size_hint_y: 0.7
+      AutoSizeButton:
+        id: pos_label
+        background_color: 0, 0, 0, 0
+        font_name: app.theme.font_seg
+        max_font_size: min(self.height / 1.1, self.parent.width/5)
+        font_style: "bold"
+        color: app.formats.display_color
+        text: (root.axis.formattedPosition).replace("+", "") if root.axis else "--"
+        text_size: self.size
+        halign: 'right'
+        valign: 'center'
+        on_release: root.update_position()
+      Label:
+        size_hint_x: None
+        width: self.texture_size[0] + 4
+        font_name: app.formats.font_name
+        font_size: pos_label.font_size / 4
+        color: app.formats.display_color
+        text: root.axis.position_unit if root.axis else ""
+        valign: 'center'
+    BoxLayout:
+      orientation: "horizontal"
+
+      # Hide speed display if show_speeds is False
+      size_hint_y: 0.3 if app.formats.show_speeds else None
+      height: self.height if app.formats.show_speeds else 0
+      opacity: 1 if app.formats.show_speeds else 0
+      disabled: not app.formats.show_speeds
+
+      Label:
+        font_name: app.formats.font_name
+        font_size: self.height / 1.5
+        font_style: "bold"
+        color: app.formats.display_color
+        text: root.axis.formattedSpeed if root.axis else "--"
+        text_size: self.size
+        halign: 'right'
+        valign: 'top'
+      Label:
+        size_hint_x: None
+        width: self.texture_size[0] + 4
+        font_name: app.formats.font_name
+        font_size: self.height / 1.5 / 4
+        color: app.formats.display_color
+        text: root.axis.speed_unit if root.axis else ""
+        valign: 'top'
+
+  # Zero key: a small circle centered in the dead space between the units
+  # display and the right screen edge. The column width nudges the readouts
+  # left to give the dogleg logo box room; tuned so the gap from the last Z
+  # digit to the dogleg jog matches the gap from the digit top to the dogleg.
+  AnchorLayout:
+    size_hint_x: None
+    width: dp(139)
+    anchor_x: 'center'
+    anchor_y: 'center'
+    CircularButton:
+      text: "Zero"
+      size_hint: None, None
+      height: min(self.parent.height * 0.62, dp(76))
+      width: self.height
+      font_size: self.height * 0.30
+      # beep handled by BeepMixin.on_press
+      on_press: root.on_zero_press()
+      on_release: root.on_zero_release()

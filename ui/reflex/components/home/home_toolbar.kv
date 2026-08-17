@@ -1,0 +1,116 @@
+#: import TabSelector reflex.components.widgets.tab_selector
+#: import IconButton reflex.components.widgets.icon_button
+
+<HomeToolbar>:
+  orientation: "vertical"
+  width: self.height / 6
+  size_hint_x: None
+  size_hint_y: 1
+  # Recessed spine: fill the column a touch darker than the app bg so the tabs
+  # read as sitting in a sunken channel, with a shadow ramping to dark at the
+  # column's right (inner) edge -- the tabs emerge from that recess.
+  canvas.before:
+    Color:
+      rgba: app.theme.recess
+    Rectangle:
+      pos: self.pos
+      size: self.size
+    Color:
+      rgba: 1, 1, 1, 1
+    Rectangle:
+      texture: app.theme.spine_shadow
+      pos: self.right - dp(12), self.y
+      size: dp(12), self.height
+  # Breathing room: inset off the top/bottom/left edges and gaps between the
+  # tab groups so they don't crowd each other or the screen edge. Right stays
+  # flush so the tabs read as attached to the content.
+  padding: dp(6), dp(8), 0, dp(8)
+  spacing: dp(9)
+
+  # Each group's height = sum of its segment weights (selected row 1.0,
+  # unselected 0.68 — see TabSegment). This keeps every selected row the same
+  # height across groups while shrinking the unselected ones, so the 4-state
+  # P0–P3 group isn't simply double the 2-state groups. Single icon buttons
+  # stay ~1 selected-row tall.
+  TabSelector:
+    width: root.width
+    size_hint_y: 1.68
+    orientation: "vertical"
+    selected: app.formats.current_format
+    on_select: app.formats.toggle() if args[1] != app.formats.current_format else None
+    TabSegment:
+      text: "MM"
+      value: "MM"
+    TabSegment:
+      text: "IN"
+      value: "IN"
+
+  # P-offset one-hot: tap anywhere cycles P0→P3.
+  TabSelector:
+    width: root.width
+    size_hint_y: 3.04
+    orientation: "vertical"
+    selected: app.currentOffset
+    on_select: app.currentOffset = args[1]
+    TabSegment:
+      text: "P0"
+      value: 0
+    TabSegment:
+      text: "P1"
+      value: 1
+    TabSegment:
+      text: "P2"
+      value: 2
+    TabSegment:
+      text: "P3"
+      value: 3
+
+  TabSelector:
+    width: root.width
+    size_hint_y: 1.68
+    orientation: "vertical"
+    selected: "ABS" if app.abs_mode else "INC"
+    on_select: app.setter('abs_mode')(app, args[1] == "ABS")
+    TabSegment:
+      text: "ABS"
+      value: "ABS"
+    TabSegment:
+      text: "INC"
+      value: "INC"
+
+  IconButton:
+    width: root.width
+    icon: "\ue2ca"
+    tab_style: True
+    on_release: app.manager.goto("plot")
+
+    # Hide wizard button when show_wizard is False. Use a fixed height with
+    # size_hint_y None so BoxLayout honours it, collapsing to 0 when hidden.
+    # Avoid `size_hint_y: 0` (Kivy treats 0 as None -> full height) and the old
+    # self-referential `height: self.height` (left a stale height at runtime
+    # that drew a dark band over the ABS/INC tab above). Height 0 also makes it
+    # non-drawing regardless of the IconButton disabled-opacity class rule.
+    size_hint_y: None
+    height: dp(46) if app.formats.show_wizard else 0
+    opacity: 1 if app.formats.show_wizard else 0
+    disabled: not app.formats.show_wizard
+
+  # Mode one-hot (ELS/DRO etc.): segments built from allowed_modes() in
+  # home_toolbar.py since the set depends on use case. Tap cycles modes.
+  TabSelector:
+    id: mode_tabs
+    width: root.width
+    size_hint_y: 1
+    orientation: "vertical"
+    selected: app.current_mode
+    on_select: app.set_mode(args[1])
+
+  IconButton:
+    width: root.width
+    icon: "\uf013"
+    tab_style: True
+    on_release: app.manager.goto("setup_screen")
+    size_hint_y: 1
+
+  #Widget:
+  #  size_hint_y: 1

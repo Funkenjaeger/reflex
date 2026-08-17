@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Octagonal "stop sign" icon for the ELS mode selector (stop / stop+retract
+     states). Theme cyan (facelift ACCENT_TEXT). viewBox 0..100. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <polygon
+    points="32.6,8 67.4,8 92,32.6 92,67.4 67.4,92 32.6,92 8,67.4 8,32.6"
+    fill="#66ebfa" fill-opacity="0.14"
+    stroke="#66ebfa" stroke-width="9" stroke-linejoin="round"/>
+</svg>

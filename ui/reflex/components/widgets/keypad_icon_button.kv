@@ -1,0 +1,30 @@
+# Font Awesome glyph keypad key (see keypad_icon_button.py). A themed slate
+# pill like the other keypad keys; the glyph is a CHILD Label so its icon font
+# wins over the global <Button> font rule (otherwise the glyph renders as tofu).
+# The accept/cancel keys pass a semantic icon `color` (green/red); others follow
+# the theme text color.
+
+<KeypadIconButton>:
+  canvas.before:
+    Color:
+      rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
+    RoundedRectangle:
+      pos: self.x + dp(3), self.y + dp(3)
+      size: self.width - dp(6), self.height - dp(6)
+      radius: [dp(6)]
+    Color:
+      rgba: app.theme.accent if self.state == 'down' else app.theme.border
+    Line:
+      rounded_rectangle: (self.x + dp(3) + 0.5, self.y + dp(3) + 0.5, self.width - dp(6) - 1, self.height - dp(6) - 1, dp(6))
+      width: 1.0
+
+  Label:
+    text: root.text
+    font_name: app.theme.font_icon
+    font_size: root.font_size if root.font_size else app.formats.font_size
+    color: root.color if root.color[3] > 0 else app.theme.text
+    size_hint: 1, 1
+    pos_hint: {'x': 0, 'y': 0}
+    text_size: self.size
+    halign: 'center'
+    valign: 'middle'
