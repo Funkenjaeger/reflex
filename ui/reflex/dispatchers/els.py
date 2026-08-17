@@ -143,7 +143,21 @@ class ElsDispatcher(SavingDispatcher):
         return None
 
     def _sync_spindle_to_servo(self, instance, value):
-        """Enable/disable spindle syncEnable when ELS servo mode changes.
+        """Follow the servo mode with syncEnable: arm on sync feed, clear on
+        everything else.
+
+        SYNC FOLLOWS THE SYNC-FEED MODE, NOT "ANY MODE". Only servoMode == 1
+        is the spindle-synced feed; 2 is jog and 0 is off. The old shape
+        (`1 if value != 0 else 0`) treated any nonzero mode as feed-on, so
+        merely starting jog armed the spindle scale's syncEnable — handing the
+        firmware's servoEnableTask the `anySyncMotionEnabled` term it needs to
+        flip the feed on by itself the moment jog ends (review 2026-08-16, F5).
+
+        And when the mode leaves 1, clear syncEnable on ALL scales — the
+        els_stop_hal.stop_sync shape — not just the spindle's. toggle_sync
+        (dispatchers/axis.py, reachable from the Jog/Index coordbars) can arm
+        any axis's scale, and a non-spindle scale left armed across a feed
+        stop is the same firmware re-assert hazard on a different register.
 
         OBSERVATION MUST NOT BECOME COMMAND. servoMode is a two-way field: the UI
         writes it, and dispatchers/servo.py also assigns the POLLED FIRMWARE
@@ -164,16 +178,25 @@ class ElsDispatcher(SavingDispatcher):
             log.debug(f"ignoring firmware-originated servoMode={value}; "
                       "sync state is commanded by the UI, never echoed back")
             return
-        spindle_axis = self.get_spindle_axis()
-        if spindle_axis is None:
-            return
-        inp = spindle_axis._primary_input()
-        if inp is None:
-            return
-        enable = 1 if value != 0 else 0
-        self.app.board.device['scales'][inp.inputIndex]['syncEnable'] = enable
-        spindle_axis.syncEnable = bool(enable)
-        log.info(f"Spindle syncEnable = {enable} (servoMode={value})")
+        if value == 1:
+            spindle_axis = self.get_spindle_axis()
+            if spindle_axis is None:
+                return
+            inp = spindle_axis._primary_input()
+            if inp is None:
+                return
+            self.app.board.device['scales'][inp.inputIndex]['syncEnable'] = 1
+            spindle_axis.syncEnable = True
+            log.info(f"Spindle syncEnable = 1 (servoMode={value})")
+        else:
+            # Deliberately NOT gated on a spindle axis being assigned: the
+            # clear path needs no spindle, and a machine with no spindle role
+            # can still have scales armed via toggle_sync.
+            for scale in self.app.board.device['scales']:
+                scale['syncEnable'] = 0
+            for axis in self.app.axes:
+                axis.syncEnable = False
+            log.info(f"syncEnable cleared on all scales (servoMode={value})")
 
     def get_spindle_is_running(self, *args):
         speed = self.get_spindle_speed()
