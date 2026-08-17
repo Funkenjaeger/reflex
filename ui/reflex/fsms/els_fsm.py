@@ -68,6 +68,13 @@ class ElsFsm:
         # on_enter_stopped know to arm ELS with a fresh stopPosition.
         self._engaging = False
 
+        # Set by reconcile_firmware_on_connect when it finds the firmware was
+        # driving the carriage at connect and stops it. Holds the register
+        # snapshot so the UI can tell the operator WHAT it interrupted; None
+        # means no pass was interrupted this session. Read once and cleared by
+        # whoever presents it.
+        self.interrupted_pass = None
+
 
     # ——— transition side effects ———
 
@@ -468,14 +475,62 @@ class ElsFsm:
             int(self.els.els_cal_motion_thresh_counts),
         )
 
+        # SNAPSHOT BEFORE TEARDOWN. The firmware keeps running across a UI
+        # restart, so these registers are the only surviving evidence of what
+        # the machine was doing. Read first, because everything below destroys
+        # it. Never raises -- a diagnostic must not block a safety teardown.
+        flight = self.hal.read_motion_in_flight()
+
         state = self.state
         if state in ('disabled', 'alarm'):
+            # SYNC OFF FIRST, ALWAYS, and before enable/active. Decided
+            # 2026-08-16; see the method docstring for the full reasoning.
+            #
+            # Two distinct hazards, both closed by this one call:
+            #
+            # 1. RELEASING A HELD STOP. active == 1 is what physically holds the
+            #    carriage at the shoulder -- firmware only accumulates sync steps
+            #    while active == 0 (reflex-fw Ramps.c:815), and clearing active
+            #    1->0 is the RESUME trigger (Ramps.c:826). So clearing active
+            #    with sync still live is a resume command, issued while enable is
+            #    also being cleared -- carriage off the shoulder with no armed
+            #    stop. The dwell at a shoulder is unbounded (operator backing out
+            #    a tool, checking a thread), which makes this the WIDE window,
+            #    not the narrow one.
+            #
+            # 2. THE SERVOENABLETASK RACE. Clearing enable clears active, and
+            #    while any syncEnable remains set the firmware task re-asserts
+            #    servoMode = 1 and nothing ever clears it.
+            #
+            # ACCEPTED COST: if the previous session died MID-PASS, this stops
+            # the carriage with the tool in the cut. In threading that risks a
+            # minor crash. Chosen deliberately over the alternative -- leaving a
+            # pass running with the stop disarmed -- because that is worse in
+            # every case, and this is safest in the large majority. The operator
+            # is TOLD when it happens rather than left to infer it (below), so
+            # the one time it bites there is no ambiguity about why.
+            #
+            # Window for that cost: ~10 s (RestartSec=5 plus ~5 s to connect,
+            # measured on elspi 2026-08-16) against a pass of comparable length,
+            # and it needs a crash to reach at all.
+            self.hal.stop_sync()
             self.hal.set_enable(False)
             self.hal.set_active(False)
             log.info(
                 f"reconcile_firmware_on_connect: cleared retained ELS stop "
-                f"(state={state})"
+                f"(state={state}, motion_in_flight={flight})"
             )
+            if flight.get('moving'):
+                # Deliberately loud. This is the accepted-cost case actually
+                # occurring, and the operator needs to know the carriage was
+                # stopped BY US and not by the machine finishing its pass.
+                log.warning(
+                    f"reconcile_firmware_on_connect: firmware was driving the "
+                    f"carriage at connect ({flight}) — sync disabled and stop "
+                    f"cleared; a pass was interrupted"
+                )
+                self.interrupted_pass = flight
+                bus.publish("els_pass_interrupted")
         elif state == 'stopped':
             self.hal.set_stop_direction(
                 self.els.stop_direction_value(self.controller.els_forward)

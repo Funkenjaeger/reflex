@@ -180,6 +180,7 @@ class ElsUiController(EventDispatcher):
         bus.subscribe("ui_state_changed", self._on_ui_state_changed)
         bus.subscribe("state_changed", self._on_domain_state_changed)
         bus.subscribe("alarm_raised", self._on_alarm)
+        bus.subscribe("els_pass_interrupted", self._on_pass_interrupted)
 
         # 6. Apply initial state policy and connect HW bindings.
         self._apply_policy()
@@ -960,6 +961,49 @@ class ElsUiController(EventDispatcher):
             return not bool(self._board.device['elsStop']['enable'])
         except Exception:
             return True  # can't tell → treat as unsafe, confirm
+
+    def _on_pass_interrupted(self):
+        """Tell the operator we stopped a pass that the firmware was still running.
+
+        Fired by ElsFsm.reconcile_firmware_on_connect when it comes up to find the
+        carriage moving -- i.e. the previous session died mid-pass and the
+        firmware carried on without it.
+
+        THE WHOLE POINT IS REMOVING AMBIGUITY. Disabling sync on connect is a
+        deliberate choice (safest in the large majority of cases; see the note in
+        reconcile_firmware_on_connect), but its cost lands exactly where it is
+        hardest to interpret -- a thread that stops partway with no explanation.
+        Saying so plainly turns a mystery into a known event.
+
+        Non-blocking and informational: the stop has ALREADY happened by the time
+        this runs. There is nothing to confirm and nothing to undo, so it is an
+        acknowledgement, not a choice.
+        """
+        fsm = self._els_fsm
+        flight = getattr(fsm, 'interrupted_pass', None)
+        if not flight:
+            return
+        fsm.interrupted_pass = None   # one-shot; do not re-warn on a later event
+
+        armed = "with an armed stop" if flight.get('enable') else "with NO armed stop"
+        log.warning(f"presenting interrupted-pass notice to operator: {flight}")
+        try:
+            from reflex.components.popups.custom_popup import CustomPopup
+            CustomPopup(
+                title="Feed Stopped On Startup",
+                message="\n\n".join([
+                    "The controller was still driving the carriage when this app "
+                    f"started ({armed}).",
+                    "That means the previous session ended mid-pass. Sync has been "
+                    "disabled and the ELS stop cleared, so the carriage was stopped "
+                    "HERE rather than at a shoulder.",
+                    "Check the workpiece and tool before continuing.",
+                ]),
+                button_text="OK",
+            ).open()
+        except Exception as e:
+            # A notice that cannot be drawn must not take the app down on startup.
+            log.error(f"could not show interrupted-pass notice: {e}")
 
     def request_feed_enable(self, confirmed: bool = False) -> bool:
         """Operator asked to toggle the sync/power feed (advanced ELS context).

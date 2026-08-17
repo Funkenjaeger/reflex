@@ -63,6 +63,43 @@ class ElsStopHal:
         for scale in self._board.device['scales']:
             scale['syncEnable'] = 0
 
+    def read_motion_in_flight(self) -> dict:
+        """Snapshot of whether the FIRMWARE is driving the carriage right now.
+
+        Read BEFORE init tears anything down. The firmware keeps running across a
+        UI restart -- observed on the real machine 2026-08-01 -- so these
+        registers are the only surviving evidence of what the machine was doing
+        when the previous session ended. The FSM's own state does not survive the
+        process and always comes up 'disabled', which is why it cannot be used to
+        make this call.
+
+        moving := a live motion SOURCE (some syncEnable) and a commanded servo
+        (servoMode != 0) and NOT held at a shoulder (active == 0). The active
+        term is what separates 'mid-pass' from 'parked at the stop waiting for
+        the operator' -- both have sync on, only one is moving.
+        """
+        if not self._board.connected:
+            return {'moving': False, 'reason': 'not connected'}
+        try:
+            stop = self._board.device['elsStop'].refresh()
+            sync = any(
+                self._board.device['scales'][i]['syncEnable']
+                for i in range(len(self._board.device['scales']))
+            )
+            servo_mode = self._board.servo.servoMode
+            active = bool(stop.get('active'))
+            enable = bool(stop.get('enable'))
+            return {
+                'moving': bool(sync) and servo_mode != 0 and not active,
+                'sync': bool(sync),
+                'servoMode': servo_mode,
+                'active': active,
+                'enable': enable,
+            }
+        except Exception as e:
+            # Never let a diagnostic read block the teardown that follows it.
+            return {'moving': False, 'reason': f'read failed: {e}'}
+
     def read_enable(self) -> bool:
         if not self._board.connected:
             return False
