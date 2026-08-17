@@ -142,6 +142,49 @@ int main(void)
           "disengage latch starts with no events recorded");
     check(data.shared.elsStop.diagNetCounts == 0,
           "disengage latch starts with a zero event count");
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH
+    check(data.shared.elsStop.diagSchema == 4,
+          "mode watch publishes wire schema 4");
+    check(data.shared.elsStop.diagCaptureTicks == 0,
+          "mode watch boots publishing OFF (mode 0)");
+    check(data.shared.elsStop.diagSeq == 0,
+          "mode watch starts with no transitions recorded");
+    check(data.shared.elsStop.diagNetCounts == 0,
+          "mode watch starts with a zero suppression count");
+
+    /* Behavioral half, both duties. The entry points are static inlines from
+     * the probe header, so calling them here exercises exactly what the task
+     * will run. The derivation reads registers RampsStart does not
+     * initialize — on the real part they are BSS-zero, here they are 0xA5
+     * poison — so set every input the mode function consumes. */
+    data.shared.elsStop.enable = 0;
+    data.shared.elsStop.active = 0;
+    data.shared.servo.stepsToGo = 0;
+    for (int i = 0; i < SCALES_COUNT; i++) data.shared.scales[i].syncEnable = 0;
+    data.shared.fastData.servoMode = 2;      /* operator jogs */
+    elsDiagTaskTick(&data.diag, &data.shared, 0);
+    check(data.shared.elsStop.diagCaptureTicks == 4,   /* ELS_MMODE_JOG */
+          "task tick publishes the derived mode (JOG) on change");
+    check(data.shared.elsStop.diagSettleTicks == 0,
+          "…and the from-side of the transition (OFF)");
+    check(data.shared.elsStop.diagSeq == 1,
+          "…and bumps the transition counter once");
+    elsDiagTaskTick(&data.diag, &data.shared, 0);
+    check(data.shared.elsStop.diagSeq == 1,
+          "no transition, no seq movement (edge-detect stays honest)");
+
+    data.shared.elsStop.enable = 0;          /* no live job */
+    check(elsDiagServoGate(&data.diag, &data.shared.elsStop, 0) == true,
+          "re-assert with enable == 0 is SUPPRESSED");
+    check(data.shared.elsStop.diagNetCounts == 1,
+          "…and counted");
+    data.shared.elsStop.enable = 1;          /* live job */
+    check(elsDiagServoGate(&data.diag, &data.shared.elsStop, 0) == false,
+          "re-assert with a live job passes through untouched");
+    /* The shared end-reason check below asserts the INIT state; this arm is
+     * the only one that exercises behavior, so restore what the suppression
+     * wrote before falling through to it. */
+    data.shared.elsStop.diagEndReason = 0;
 #else
 #error "this probe has no assertions in els_diag_scratch_test.cpp -- add an arm above"
 #endif

@@ -65,6 +65,7 @@
 #define ELS_DIAG_SCHEMA_TAKEUP_SETTLE 1     /* RETIRED -- see v2 */
 #define ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 2
 #define ELS_DIAG_SCHEMA_DISENGAGE_LATCH 3
+#define ELS_DIAG_SCHEMA_MODE_WATCH 4
 
 /* WHICH probe is compiled in, selected by the build as
  * -DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_<NAME>. scripts/build.sh --diag=<name> is the
@@ -100,6 +101,8 @@
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
 /* recognised */
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_DISENGAGE_LATCH
+/* recognised */
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH
 /* recognised */
 #else
 #error "unknown ELS_DIAG_PROBE. Register the schema id in Ramps.h and add it to this chain; see DIAG.md."
@@ -322,7 +325,10 @@ _Noreturn void servoEnableTask(void *argument);
 
 /* LAST, and it has to be. els_diag.h's entry points take elsStop_t* and
  * elsDiagCtx_t*, so it cannot be included until both exist -- which is why this
- * sits at the foot of the header rather than up with the other includes. */
+ * sits at the foot of the header rather than up with the other includes.
+ * els_machine_mode.h needs rampsSharedData_t for the same reason, and must
+ * precede els_diag.h because the mode-watch probe calls its function. */
+#include "els_machine_mode.h"
 #include "els_diag.h"
 
 #endif

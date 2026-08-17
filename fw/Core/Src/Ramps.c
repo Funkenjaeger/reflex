@@ -1164,6 +1164,13 @@ _Noreturn void servoEnableTask(void *argument) {
     rampsData->shared.fastData.servoSpeed = (float)(int32_t)(rampsData->shared.servo.currentSteps - previousPosition) * 10;
     previousPosition = rampsData->shared.servo.currentSteps;
 
+    /* Probe hook: a mode-watch probe derives and publishes the machine mode
+     * once per task tick. No code in a release build or any other probe.
+     * AFTER the re-assert above, so the published mode reflects this tick's
+     * decision rather than last tick's. */
+    elsDiagTaskTick(&rampsData->diag, shared,
+                    (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
+
     if (shared->fastData.servoMode != 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_RESET);
     if (shared->fastData.servoMode == 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_SET);
   }

@@ -116,4 +116,10 @@ static inline bool elsDiagServoGate(elsDiagCtx_t *ctx, elsStop_t *stop,
   return true;                          /* refuse the re-assert */
 }
 
+/* Task-tick hook (mode publication) — not this probe's concern. */
+static inline void elsDiagTaskTick(elsDiagCtx_t *ctx, rampsSharedData_t *shared,
+                                   uint16_t calRunning) {
+  (void)ctx; (void)shared; (void)calRunning;
+}
+
 #endif /* ELS_DIAG_DISENGAGE_LATCH_H */

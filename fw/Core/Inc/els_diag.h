@@ -52,6 +52,8 @@
 #include "els_diag_takeup_settle.h"
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_DISENGAGE_LATCH
 #include "els_diag_disengage_latch.h"
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH
+#include "els_diag_mode_watch.h"
 #else
 /* Unreachable: Ramps.h rejects an unrecognised probe long before here. Kept so
  * that a probe registered in Ramps.h but never dispatched fails LOUDLY, rather
@@ -101,6 +103,14 @@ static inline bool elsDiagServoGate(elsDiagCtx_t *ctx, elsStop_t *stop,
                                     uint16_t servoModeNow) {
   (void)ctx; (void)stop; (void)servoModeNow;
   return false;
+}
+
+/* Once per servoEnableTask iteration (~100 ms). A mode-watch probe derives
+ * and publishes the machine mode here; every other configuration does
+ * nothing. Task-side, so it costs the ISR nothing in any build. */
+static inline void elsDiagTaskTick(elsDiagCtx_t *ctx, rampsSharedData_t *shared,
+                                   uint16_t calRunning) {
+  (void)ctx; (void)shared; (void)calRunning;
 }
 
 #endif /* ELS_DIAG_PROBE */

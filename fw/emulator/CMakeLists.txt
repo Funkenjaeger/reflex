@@ -245,3 +245,22 @@ target_compile_definitions(els_diag_scratch_disengage_latch_test
 target_link_libraries(els_diag_scratch_disengage_latch_test m pthread)
 add_test(NAME els_diag_scratch_disengage_latch_test
     COMMAND els_diag_scratch_disengage_latch_test)
+
+add_executable(els_diag_scratch_mode_watch_test
+    ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_compile_definitions(els_diag_scratch_mode_watch_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_MODE_WATCH)
+target_link_libraries(els_diag_scratch_mode_watch_test m pthread)
+add_test(NAME els_diag_scratch_mode_watch_test
+    COMMAND els_diag_scratch_mode_watch_test)
+
+# The mode table itself — pure function, no ISR, no Ramps.c. Pins the
+# ELS_MMODE_* wire values as literals and the priority order (CAL/TAKEUP own
+# the servo; a commanded move outranks the hold it runs inside; the hold
+# outranks everything else). reflex-ui mirrors these numbers; renumbering
+# must cost a deliberate edit on both sides.
+add_executable(els_machine_mode_test
+    ${CMAKE_SOURCE_DIR}/test/els_machine_mode_test.cpp)
+target_link_libraries(els_machine_mode_test m)
+add_test(NAME els_machine_mode_test COMMAND els_machine_mode_test)

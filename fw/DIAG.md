@@ -87,6 +87,8 @@ what keeps `Ramps.c` probe-agnostic:
 | `elsDiagCaptureStart(ctx)` | first tick at which commanded motion is complete |
 | `elsDiagCapturing(ctx)` | cheap predicate — see below |
 | `elsDiagTick(ctx, stop, dZ, dServo)` | once per ISR tick while capturing |
+| `elsDiagServoGate(ctx, stop, mode)` | `servoEnableTask`, at the re-assert decision; `true` suppresses it (schema 3+) |
+| `elsDiagTaskTick(ctx, shared, cal)` | once per `servoEnableTask` iteration (~100 ms), after the re-assert (schema 4+) |
 
 **`elsDiagCapturing` must stay trivial, and the ISR must call it before
 computing `elsDiagTick`'s arguments.** C evaluates arguments before the callee
@@ -184,6 +186,42 @@ release branch.
 More sensitive than the end-to-end system test, which only fails when the timing
 escalates all the way to visible carriage travel — an A/B over 20 runs showed
 zero failures in *both* arms and proved nothing. This fires on the condition.
+
+### `mode-watch` — schema 4 — **durable: rung 1 of the 2026-08-16 architecture direction**
+
+Publishes the firmware-derived machine mode (`els_machine_mode.h`, `ELS_MMODE_*`)
+once per `servoEnableTask` tick, and **carries schema 3's intervention forward**:
+it still suppresses and counts the `servoEnableTask` re-assert while
+`elsStop.enable == 0`. One probe fits a build and a flash costs a physical
+session (the board does not run new firmware until power-cycled, which cannot be
+done remotely) — so the probe that collects mode data for weeks must also keep
+the latch counter running. With the F1/F2 fixes on this branch the counter is
+**expected to stay 0**; nonzero means some path still leaves sync armed across a
+disengage, which is a finding, not noise. Schema 3's non-ELS-sync caveat applies
+unchanged.
+
+The purpose is rung 2: reflex-ui's watchdog compares the UI's model against this
+register during normal use, and the divergence log — not anyone's confidence —
+decides when the mode becomes a real (protocol-versioned) register and the UI
+starts acting on it.
+
+| Field | Meaning (NOT schema 2's or 3's — check `diagSchema` first) |
+|---|---|
+| `diagCaptureTicks` | **current derived mode** (`ELS_MMODE_*`) |
+| `diagSettleTicks` | previous mode — the from-side of the last transition |
+| `diagSeq` | mode-transition counter; bumped last, so an edge-detected read sees a consistent pair |
+| `diagNetCounts` | latch suppressions, cumulative. **Expect 0** |
+| `diagEndReason` | 1 once any suppression has been seen |
+| `diagTrace[0]`, `[1]` | `servoMode` and `active` at the most recent suppression |
+
+Mode values are a wire contract (append, never renumber), pinned as literals in
+`els_machine_mode_test` on the firmware side and mirrored by reflex-ui. Known
+limitation, deliberate: `HELD` does not split "armed idle" from "stop fired" —
+the registers cannot tell them apart today (the `active` overload); publishing
+the merged state honestly beats guessing.
+
+`disengage-latch` (schema 3) stays selectable for a pure-latch run with no mode
+publication; for the combined agenda this probe supersedes it.
 
 ### `takeup-settle` — schema 1 — **RETIRED**
 
