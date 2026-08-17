@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ELS "stop + retract" mode icon: the U-shaped retract arrow nested INSIDE
+     the octagonal stop sign (one combined glyph instead of two stacked ones).
+     Theme cyan (facelift ACCENT_TEXT). viewBox 0..100. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- octagonal stop sign -->
+  <polygon
+    points="32.6,8 67.4,8 92,32.6 92,67.4 67.4,92 32.6,92 8,67.4 8,32.6"
+    fill="#66ebfa" fill-opacity="0.14"
+    stroke="#66ebfa" stroke-width="8" stroke-linejoin="round"/>
+  <!-- U-shaped retract arrow (opening right), scaled down and centred inside -->
+  <g transform="translate(20,20) scale(0.6)">
+    <g transform="rotate(90 50 50)">
+      <g fill="none" stroke="#66ebfa" stroke-width="13"
+         stroke-linecap="round" stroke-linejoin="round">
+        <path d="M70 30 L70 54 A20 20 0 0 1 30 54 L30 36"/>
+      </g>
+      <polygon points="30 8 14 36 46 36" fill="#66ebfa"/>
+    </g>
+  </g>
+</svg>

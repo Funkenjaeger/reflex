@@ -1,0 +1,147 @@
+#: import LedButton reflex.components.toolbars.led_button
+<StatusBar>:
+  size_hint: 1, None
+  height: 38
+  orientation: "horizontal"
+  padding: dp(8), dp(4), dp(8), dp(4)
+  spacing: dp(6)
+
+  # ── Telemetry gutter: its own recessed, rounded box; the four items ride
+  #    inside it (flat: True) instead of drawing their own pills. ──
+  BoxLayout:
+    orientation: "horizontal"
+    padding: dp(4), 0
+    spacing: dp(4)
+    canvas.before:
+      Color:
+        rgba: app.theme.recess
+      RoundedRectangle:
+        pos: self.pos
+        size: self.size
+        radius: [dp(7)]
+      # Carved-in: soft top inner shadow + 1px bottom inner highlight.
+      Color:
+        rgba: 1, 1, 1, 1
+      Rectangle:
+        texture: app.theme.recess_shadow
+        pos: self.x + dp(4), self.top - 1 - dp(7)
+        size: max(self.width - dp(8), 0), dp(7)
+      Color:
+        rgba: app.theme.edge_light
+      Rectangle:
+        pos: self.x + dp(4), self.y + 1
+        size: max(self.width - dp(8), 0), 1
+      Color:
+        rgba: app.theme.border_dim
+      Line:
+        rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
+        width: 1.0
+
+    LedButton:
+      flat: True
+      font_name: app.theme.font_mono
+      label: "COM"
+      checkbox_value: app.board.connected or app.board.blink
+
+    LedButton:
+      flat: True
+      font_name: app.theme.font_mono
+      label: "{:0.0f}".format(0 if root.interval == 0 else (100000000 / root.interval))
+
+    LedButton:
+      flat: True
+      font_name: app.theme.font_mono
+      label: "{:0.0f}".format(root.fps)
+
+    LedButton:
+      flat: True
+      font_name: app.theme.font_mono
+      label: "{:0.0f}".format(root.cycles)
+
+  # ── Reflex logo + version: their own recessed box at the right end, with the
+  #    logo filling the box height (per the mockup). ──
+  # Dogleg box: the version sits up in the short LEFT part (over the tall DRO
+  # digits); the larger logo sits in the RIGHT part, which drops down (dp(20))
+  # into the dead space above the shorter units/Zero. Drawn from the status bar
+  # but extends below it -- the DRO leaves that area transparent so it shows.
+  FloatLayout:
+    size_hint_x: None
+    width: dp(248)
+    # Dogleg drawn as two rounded rects (rounded outer corners, matching the
+    # other boxes). The step (jog_x) is kept right of the DRO value background.
+    # A slightly larger BORDER_DIM pair behind makes the 1px outline.
+    canvas.before:
+      Color:
+        rgba: app.theme.border_dim
+      RoundedRectangle:
+        pos: self.x - 1, self.y - 1
+        size: dp(92) + 2, self.height + 2
+        radius: [dp(7), 0, 0, dp(7)]
+      RoundedRectangle:
+        pos: self.x + dp(92) - 1, self.y - dp(16) - 1
+        size: self.width - dp(92) + 2, self.height + dp(16) + 2
+        radius: [0, dp(7), dp(7), dp(7)]
+      Color:
+        rgba: app.theme.recess
+      RoundedRectangle:
+        pos: self.x, self.y
+        size: dp(92), self.height
+        radius: [dp(7), 0, 0, dp(7)]
+      RoundedRectangle:
+        pos: self.x + dp(92), self.y - dp(16)
+        size: self.width - dp(92), self.height + dp(16)
+        radius: [0, dp(7), dp(7), dp(7)]
+
+      # Concave fillet at the inner (step) corner: add a wedge of RECESS into
+      # the notch, carve a disc so the reentrant corner reads as a smooth
+      # concave curve, then redraw the two straight borders + the arc ON TOP.
+      # (The carve disc reaches past the tangent points and nicks the straight
+      # borders, so they must be repainted to stay continuous.)
+      Color:
+        rgba: app.theme.recess
+      Rectangle:
+        pos: self.x + dp(92) - dp(7), self.y - dp(7)
+        size: dp(8), dp(8)
+      Color:
+        rgba: app.theme.background
+      Ellipse:
+        pos: self.x + dp(92) - dp(14), self.y - dp(14)
+        size: dp(14), dp(14)
+      # Repaint borders on top, half-pixel aligned to the filled-rect outline.
+      Color:
+        rgba: app.theme.border_dim
+      Line:
+        points: (self.x + dp(60), self.y - 0.5, self.x + dp(92) - dp(7), self.y - 0.5)
+        width: 1.0
+      Line:
+        points: (self.x + dp(92) - 0.5, self.y - dp(7), self.x + dp(92) - 0.5, self.y - dp(16) + dp(2))
+        width: 1.0
+      Line:
+        circle: (self.x + dp(92) - dp(7) - 0.5, self.y - dp(7) - 0.5, dp(7), 0, 90)
+        width: 1.0
+
+    Label:
+      text: app.version
+      font_name: app.theme.font_mono
+      font_size: 16
+      # `text` (not `text_dim`): the version sits on the recessed dogleg, where
+      # text_dim only reaches ~3.8:1 in the light theme. text reads cleanly on
+      # both themes.
+      color: app.theme.text
+      size_hint: None, None
+      size: dp(92), self.parent.height
+      pos: self.parent.x, self.parent.y
+      halign: 'center'
+      valign: 'middle'
+      text_size: self.size
+
+    Image:
+      source: app.theme.logo
+      mipmap: True
+      size_hint: None, None
+      height: dp(37)
+      width: self.height * 3.83
+      # centered horizontally in the lower (tall-right) part for even margins
+      pos: (self.parent.x + dp(92) + self.parent.right - self.width) / 2, self.parent.y - dp(9)
+      allow_stretch: True
+      keep_ratio: True
