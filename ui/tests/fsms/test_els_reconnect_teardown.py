@@ -197,6 +197,10 @@ def _controller_with_servo_mode(mode):
     # its own __new__ does the property setup without running __init__.
     c = ElsUiController.__new__(ElsUiController)
     c._board = SimpleNamespace(servo=SimpleNamespace(servoMode=mode))
+    # Default: spindle turning, so the refusal branch is reachable; tests
+    # narrow it per-case (the 2026-08-17 gate keys on BOTH is_feeding and
+    # spindle_is_running).
+    c._els = SimpleNamespace(spindle_is_running=True)
     return c
 
 
@@ -209,16 +213,35 @@ def test_is_feeding_reports_commanded_not_observed_motion():
     assert _controller_with_servo_mode(2).is_feeding is True   # jog counts too
 
 
-def test_disengage_is_refused_while_sync_is_armed():
+def test_disengage_is_refused_while_sync_is_armed_and_spindle_running():
     """The FSM-side half of the gate. kv disables the button, but a kv edit must
     not be able to silently reopen the hole, so the refusal is enforced here as
-    well and the FSM is never reached."""
+    well and the FSM is never reached.
+
+    Narrowed 2026-08-17 (operator decision after round-1 hardware testing):
+    the refusal requires the spindle to actually be TURNING. With it stopped
+    there are no sync deltas, nothing can move, and the old unconditional
+    refusal was pure friction at the machine."""
     c = _controller_with_servo_mode(1)
     c.engaged = True
+    c._els.spindle_is_running = True
     c._els_fsm = MagicMock()
     c.toggle_engage()
     c._els_fsm.disable.assert_not_called()
     c._els_fsm.may_disable.assert_not_called()
+
+
+def test_disengage_allowed_with_sync_armed_but_spindle_stopped():
+    """The other half of the 2026-08-17 narrowing: spindle stopped, sync still
+    armed — disengage proceeds (teardown remains sync-first; the firmware side
+    is F1/F2-fixed and was hardware-verified the same day)."""
+    c = _controller_with_servo_mode(1)
+    c.engaged = True
+    c._els.spindle_is_running = False
+    c._els_fsm = MagicMock()
+    c._els_fsm.may_disable.return_value = True
+    c.toggle_engage()
+    c._els_fsm.disable.assert_called_once()
 
 
 def test_disengage_allowed_once_sync_is_off():

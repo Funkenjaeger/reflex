@@ -645,7 +645,7 @@ class ElsUiController(EventDispatcher):
 
     def toggle_engage(self):
         """Engage/disengage button intent. Drives the domain FSM."""
-        if self.engaged and self.is_feeding:
+        if self.engaged and self.is_feeding and self._els.spindle_is_running:
             # REFUSE. "Disable the stop" while sync motion is armed is an
             # ambiguous instruction: it reads equally as "stop the carriage" and
             # as "remove the stop and keep going". The firmware resolves it the
@@ -658,11 +658,17 @@ class ElsUiController(EventDispatcher):
             # sync off is the unambiguous way to stop the carriage, and it is
             # exactly equivalent to opening the half nut.
             #
-            # Deliberately gated on is_feeding (servoMode != 0) rather than on
-            # observed motion. After engage the carriage is HELD, not stopped --
-            # it moves the instant the hold releases -- so the hazard is the
-            # state where motion CAN begin. The escape hatch is the Sync Enable
-            # button, which stays live: press it, then disengage.
+            # Gated on is_feeding (servoMode != 0) AND the spindle actually
+            # turning. With the spindle STOPPED there are no sync deltas, so
+            # nothing is moving or can begin to move, and "disengage" stops
+            # being ambiguous -- the refusal would be pure friction (operator
+            # decision 2026-08-17, after round-1 hardware testing found the
+            # greyed button annoying with the machine plainly inert). The
+            # firmware side is safe either way as of the F1/F2 fixes: the
+            # enable-fall handler consumes its own resume edge and cancels
+            # pending motion, hardware-verified 2026-08-17. With the spindle
+            # RUNNING the original reasoning stands: the escape hatch is the
+            # Sync Enable button, which stays live -- press it, then disengage.
             log.info(
                 "Disengage refused — sync motion is armed. Turn Sync Enable off "
                 "first (equivalent to opening the half nut)."

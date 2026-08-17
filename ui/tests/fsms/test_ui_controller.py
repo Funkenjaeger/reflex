@@ -999,3 +999,40 @@ class TestModeWatchSampler:
         ctrl._hal = MagicMock()
         ctrl._hal.read_current_mode.side_effect = RuntimeError("link glitch")
         ctrl._poll_mode_watch()                    # must not raise
+
+
+# ─── Disengage gate: refuse only while feeding WITH the spindle turning ────
+
+def test_disengage_refused_while_feeding_with_spindle_running(ctrl):
+    _engage(ctrl)
+    ctrl._board.servo.servoMode = 1          # sync motion armed
+    ctrl._els.spindle_is_running = True
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl.engaged is True              # refused: still engaged
+    assert ctrl._els_fsm.state == "stopped"
+
+
+def test_disengage_allowed_when_spindle_stopped_even_with_sync_armed(ctrl):
+    """Operator decision 2026-08-17, after round-1 hardware testing: with the
+    spindle stopped there are no sync deltas, nothing can move, and the
+    refusal is pure friction. Firmware-safe per the F1/F2 fixes (the
+    enable-fall handler consumes its own resume edge and cancels pending
+    motion — hardware-verified the same day)."""
+    _engage(ctrl)
+    ctrl._board.servo.servoMode = 1          # sync armed...
+    ctrl._els.spindle_is_running = False     # ...but the machine is inert
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl.engaged is False
+    assert ctrl._els_fsm.state == "disabled"
+
+
+def test_disengage_allowed_when_not_feeding_regardless_of_spindle(ctrl):
+    _engage(ctrl)
+    ctrl._board.servo.servoMode = 0
+    ctrl._els.spindle_is_running = True      # spindle turning, feed off
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl.engaged is False
+    assert ctrl._els_fsm.state == "disabled"
