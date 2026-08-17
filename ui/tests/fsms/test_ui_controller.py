@@ -968,7 +968,7 @@ def test_depth_latch_ignores_uncommitted_stop_dia():
 # ─── Rung-2 mode-watch sampler ─────────────────────────────────────────────
 
 class TestModeWatchSampler:
-    """_poll_mode_watch: dormant without the schema-4 probe, decimated when
+    """_poll_mode_watch: dormant without a mode-watch probe, decimated when
     present, and structurally incapable of raising into the update loop."""
 
     def test_dormant_without_the_mode_watch_probe(self, ctrl):
@@ -990,6 +990,22 @@ class TestModeWatchSampler:
             ctrl._poll_mode_watch()
         assert ctrl._hal.read_current_mode.call_count == 2
         ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 5)
+
+    def test_samples_under_the_v2_probe_too(self, ctrl):
+        """The schema-4 -> 5 bump (2026-08-17, effective counting only) must
+        not send the rung-2 census dormant at the flash — that would be the
+        exact silent-dormancy failure the KNOWN_SCHEMAS refusal exists to
+        make loud, produced instead by a gate nobody re-checked."""
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH_V2
+        ctrl._diag_recorder = MagicMock()
+        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH_V2
+        ctrl._hal = MagicMock()
+        ctrl._hal.read_current_mode.return_value = 4      # JOG
+        ctrl._mode_watch = MagicMock()
+        for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY):
+            ctrl._poll_mode_watch()
+        assert ctrl._hal.read_current_mode.call_count == 1
+        ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 4)
 
     def test_a_failing_read_never_reaches_the_update_loop(self, ctrl):
         from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH

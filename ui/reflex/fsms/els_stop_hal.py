@@ -321,7 +321,7 @@ class ElsStopHal:
     def read_current_mode(self) -> int:
         """Firmware-derived machine mode (ELS_MMODE_*), live.
 
-        MEANINGFUL ONLY under diag schema 4 (mode-watch), where the firmware
+        MEANINGFUL ONLY under a mode-watch schema (4 or 5), where the firmware
         republishes its derived mode into diagCaptureTicks every ~100 ms.
         Under any other schema this register means something else entirely —
         callers gate on the recorder's learned schema, never call this bare.

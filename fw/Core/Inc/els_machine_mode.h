@@ -11,8 +11,8 @@
  * behavior. A UI-side watchdog then compares its own model against this for
  * weeks of real use ("rung 2") before any authority moves.
  *
- * Published today by the mode-watch diagnostic probe (schema 4) in the
- * reserved scratchpad; promoted to a real register at the next paired
+ * Published today by the mode-watch diagnostic probe (schema 5,
+ * mode-watch-v2) in the reserved scratchpad; promoted to a real register at the next paired
  * protocolVersion bump once the taxonomy has survived contact with data.
  *
  * MODE VALUES ARE A WIRE CONTRACT once a build carrying them is flashed:

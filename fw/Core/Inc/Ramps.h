@@ -65,7 +65,8 @@
 #define ELS_DIAG_SCHEMA_TAKEUP_SETTLE 1     /* RETIRED -- see v2 */
 #define ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 2
 #define ELS_DIAG_SCHEMA_DISENGAGE_LATCH 3
-#define ELS_DIAG_SCHEMA_MODE_WATCH 4
+#define ELS_DIAG_SCHEMA_MODE_WATCH 4        /* RETIRED -- see v2 */
+#define ELS_DIAG_SCHEMA_MODE_WATCH_V2 5
 
 /* WHICH probe is compiled in, selected by the build as
  * -DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_<NAME>. scripts/build.sh --diag=<name> is the
@@ -103,6 +104,8 @@
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_DISENGAGE_LATCH
 /* recognised */
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH
+#error "ELS_DIAG_SCHEMA_MODE_WATCH is RETIRED (its diagNetCounts drowned the signal in no-op refusals); use mode-watch-v2. See DIAG.md."
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH_V2
 /* recognised */
 #else
 #error "unknown ELS_DIAG_PROBE. Register the schema id in Ramps.h and add it to this chain; see DIAG.md."

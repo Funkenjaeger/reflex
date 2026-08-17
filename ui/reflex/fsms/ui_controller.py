@@ -9,7 +9,9 @@ from reflex.fsms.els_fsm import ElsFsm
 from reflex.fsms.els_stop_hal import ElsStopHal
 from reflex.fsms.els_diag import ElsDiagRecorder
 from reflex.fsms.els_mode_watch import ElsModeWatch
-from reflex.utils.devices import takeup_failure_text, ELS_DIAG_SCHEMA_MODE_WATCH
+from reflex.utils.devices import (takeup_failure_text,
+                                  ELS_DIAG_SCHEMA_MODE_WATCH,
+                                  ELS_DIAG_SCHEMA_MODE_WATCH_V2)
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
 
 log = Logger.getChild(__name__)
@@ -131,8 +133,8 @@ class ElsUiController(EventDispatcher):
         self._diag_recorder = ElsDiagRecorder(self._hal, board)
 
         # Rung-2 sampler (log-only): compares the domain FSM's state against
-        # the firmware-published machine mode when the mode-watch probe
-        # (schema 4) is flashed. Dormant against any other firmware — the
+        # the firmware-published machine mode when a mode-watch probe
+        # (schema 4 or 5) is flashed. Dormant against any other firmware — the
         # schema gate in _poll_mode_watch is the recorder's, so this issues
         # no reads of its own until a recognised mode-watch probe is present.
         self._mode_watch = ElsModeWatch()
@@ -352,7 +354,8 @@ class ElsUiController(EventDispatcher):
         update loop.
         """
         try:
-            if self._diag_recorder.schema != ELS_DIAG_SCHEMA_MODE_WATCH:
+            if self._diag_recorder.schema not in (ELS_DIAG_SCHEMA_MODE_WATCH,
+                                                  ELS_DIAG_SCHEMA_MODE_WATCH_V2):
                 return
             self._mode_watch_tick += 1
             if self._mode_watch_tick % self.MODE_WATCH_SAMPLE_EVERY:

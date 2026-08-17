@@ -51,6 +51,7 @@ from reflex.utils.devices import (
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2,
     ELS_DIAG_SCHEMA_DISENGAGE_LATCH,
     ELS_DIAG_SCHEMA_MODE_WATCH,
+    ELS_DIAG_SCHEMA_MODE_WATCH_V2,
 )
 from reflex.utils.paths import diag_dir
 
@@ -72,22 +73,27 @@ KNOWN_SCHEMAS = frozenset({
     # re-assert the feed after a disengage", not "captures completed". A
     # non-zero value is the finding. See reflex-fw DIAG.md.
     ELS_DIAG_SCHEMA_DISENGAGE_LATCH,
-    # Schema 4: diagSeq counts MODE TRANSITIONS, so each recorded line is one
-    # transition -- capture_ticks holds the mode entered, settle_ticks the mode
-    # left, net_counts the cumulative latch-suppression count (expect 0). The
+    # Schemas 4 and 5: diagSeq counts MODE TRANSITIONS, so each recorded line
+    # is one transition -- capture_ticks holds the mode entered, settle_ticks
+    # the mode left, net_counts the cumulative latch-suppression count. The
     # continuous current-mode register is read elsewhere (ElsModeWatch); the
-    # recorder's job here is just the durable transition log.
+    # recorder's job here is just the durable transition log. Schema 4 is
+    # retired firmware-side but stays accepted (the takeup v1 reasoning
+    # above): the lathe runs a schema-4 build until its next flash + power
+    # cycle, and every line carries its own schema, so v1 net_counts ("every
+    # refusal") is never confused with v2's ("effective refusals only").
     ELS_DIAG_SCHEMA_MODE_WATCH,
+    ELS_DIAG_SCHEMA_MODE_WATCH_V2,
 })
 
 # Schemas that publish diagEndReason. Only these can be checked for "did a
 # capture actually complete" -- v1 has no such field, and its register reads as
 # 0, so applying the check there would reject every v1 capture as empty.
 #
-# Schema 4 publishes the field but MUST NOT be in this set: there it means "a
-# latch suppression has been seen", and 0 is the healthy steady state -- gating
-# on it would silently drop every mode-transition record on a machine where
-# nothing is wrong, which is all of them if the fixes hold.
+# Schemas 4 and 5 publish the field but MUST NOT be in this set: there it
+# means "a latch suppression has been seen", and 0 is the healthy steady state
+# -- gating on it would silently drop every mode-transition record on a
+# machine where nothing is wrong, which is all of them if the fixes hold.
 SCHEMAS_WITH_END_REASON = frozenset({ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2})
 
 # Consecutive failures tolerated before the recorder gives up for this
@@ -293,7 +299,8 @@ class ElsDiagRecorder:
             fh.write(json.dumps(record) + "\n")
 
         self.captures_written += 1
-        if record.get("schema") == ELS_DIAG_SCHEMA_MODE_WATCH:
+        if record.get("schema") in (ELS_DIAG_SCHEMA_MODE_WATCH,
+                                    ELS_DIAG_SCHEMA_MODE_WATCH_V2):
             # Same registers, different meanings (see KNOWN_SCHEMAS): this line
             # is one mode transition, and net_counts is the suppression count.
             log.info(

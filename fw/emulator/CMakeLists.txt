@@ -246,14 +246,14 @@ target_link_libraries(els_diag_scratch_disengage_latch_test m pthread)
 add_test(NAME els_diag_scratch_disengage_latch_test
     COMMAND els_diag_scratch_disengage_latch_test)
 
-add_executable(els_diag_scratch_mode_watch_test
+add_executable(els_diag_scratch_mode_watch_v2_test
     ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)
-target_compile_definitions(els_diag_scratch_mode_watch_test
-    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_MODE_WATCH)
-target_link_libraries(els_diag_scratch_mode_watch_test m pthread)
-add_test(NAME els_diag_scratch_mode_watch_test
-    COMMAND els_diag_scratch_mode_watch_test)
+target_compile_definitions(els_diag_scratch_mode_watch_v2_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_MODE_WATCH_V2)
+target_link_libraries(els_diag_scratch_mode_watch_v2_test m pthread)
+add_test(NAME els_diag_scratch_mode_watch_v2_test
+    COMMAND els_diag_scratch_mode_watch_v2_test)
 
 # The mode table itself — pure function, no ISR, no Ramps.c. Pins the
 # ELS_MMODE_* wire values as literals and the priority order (CAL/TAKEUP own

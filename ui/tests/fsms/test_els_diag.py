@@ -323,8 +323,8 @@ class TestReset:
 
 
 class TestModeWatchSchema:
-    """Schema 4: diagSeq counts MODE TRANSITIONS, and end_reason means 'a
-    latch suppression happened' rather than 'a capture completed'. The
+    """Schemas 4 and 5: diagSeq counts MODE TRANSITIONS, and end_reason means
+    'a latch suppression happened' rather than 'a capture completed'. The
     membership rules below are what keep those redefinitions from silently
     dropping or inventing records."""
 
@@ -337,10 +337,31 @@ class TestModeWatchSchema:
         return r
 
     def test_schema_4_is_recognised(self, hal, board, tmp_path):
+        """Retired firmware-side, still accepted here: the lathe runs a
+        schema-4 build until its next flash + power cycle, and dropping it
+        would silently lose that machine's transition log."""
         from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
         r = self._active(hal, board, tmp_path)
         assert r.enabled is True
         assert r.schema == ELS_DIAG_SCHEMA_MODE_WATCH
+
+    def test_schema_5_is_recognised_and_records_transitions(self, hal, board,
+                                                            tmp_path):
+        """mode-watch-v2 (effective-only counting) must be accepted end to
+        end — recognised at interrogation AND past the end_reason membership
+        rule, which applies to it identically (0 = healthy steady state)."""
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH_V2
+        hal.read_diag_schema.return_value = ELS_DIAG_SCHEMA_MODE_WATCH_V2
+        hal.read_diag_seq.return_value = 0
+        r = rec(hal, board, tmp_path)
+        r.poll()
+        assert r.enabled is True
+        assert r.schema == ELS_DIAG_SCHEMA_MODE_WATCH_V2
+        hal.read_diag_seq.return_value = 1
+        hal.read_diag_capture.return_value = make_capture(
+            seq=1, schema=ELS_DIAG_SCHEMA_MODE_WATCH_V2, end_reason=0)
+        r.poll()
+        assert r.captures_written == 1
 
     def test_schema_property_is_none_while_dormant(self, hal, board, tmp_path):
         hal.read_diag_schema.return_value = 0

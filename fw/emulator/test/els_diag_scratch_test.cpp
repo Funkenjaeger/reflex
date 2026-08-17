@@ -142,9 +142,9 @@ int main(void)
           "disengage latch starts with no events recorded");
     check(data.shared.elsStop.diagNetCounts == 0,
           "disengage latch starts with a zero event count");
-#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH
-    check(data.shared.elsStop.diagSchema == 4,
-          "mode watch publishes wire schema 4");
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH_V2
+    check(data.shared.elsStop.diagSchema == 5,
+          "mode watch v2 publishes wire schema 5");
     check(data.shared.elsStop.diagCaptureTicks == 0,
           "mode watch boots publishing OFF (mode 0)");
     check(data.shared.elsStop.diagSeq == 0,
@@ -173,11 +173,25 @@ int main(void)
     check(data.shared.elsStop.diagSeq == 1,
           "no transition, no seq movement (edge-detect stays honest)");
 
+    /* The v2 accounting split: suppression is unconditional while enable ==
+     * 0, but only the servoMode == 0 refusal — the one that would have
+     * switched the feed on — is counted. The servoMode == 1 case is the
+     * enable-less power-feed no-op that v1 counted 1719 times in one
+     * afternoon of hardware time, burying the signal; it must suppress
+     * silently. */
     data.shared.elsStop.enable = 0;          /* no live job */
+    check(elsDiagServoGate(&data.diag, &data.shared.elsStop, 1) == true,
+          "no-op re-assert (servoMode already 1) is still SUPPRESSED");
+    check(data.shared.elsStop.diagNetCounts == 0,
+          "…but NOT counted (the v1 noise source)");
+    check(data.shared.elsStop.diagEndReason == 0,
+          "…and leaves no latch-seen verdict");
     check(elsDiagServoGate(&data.diag, &data.shared.elsStop, 0) == true,
-          "re-assert with enable == 0 is SUPPRESSED");
+          "effective re-assert (servoMode 0) is SUPPRESSED");
     check(data.shared.elsStop.diagNetCounts == 1,
           "…and counted");
+    check(data.shared.elsStop.diagTrace[0] == 0,
+          "…recording servoMode 0 at the event (anything else is a probe bug)");
     data.shared.elsStop.enable = 1;          /* live job */
     check(elsDiagServoGate(&data.diag, &data.shared.elsStop, 0) == false,
           "re-assert with a live job passes through untouched");
