@@ -1,0 +1,114 @@
+<BacklashCalPopup>:
+    title: "Calibrate leadscrew backlash"
+    size_hint_x: 0.8
+    size_hint_y: None
+    height: 470
+    # Deliberately NOT auto-dismiss: this modal can be commanding carriage
+    # motion, and a stray tap outside it should not look like an abort.
+    auto_dismiss: False
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: dp(16)
+        spacing: dp(10)
+
+        Label:
+            id: lbl_body
+            text: root.body_text
+            halign: "left"
+            valign: "top"
+            text_size: self.width, None
+            size_hint_y: None
+            height: self.texture_size[1]
+            color: app.theme.text
+            font_size: app.formats.font_size
+
+        Label:
+            id: lbl_detail
+            text: root.detail_text
+            halign: "left"
+            valign: "top"
+            text_size: self.width, None
+            size_hint_y: None
+            height: self.texture_size[1] if root.detail_text else 0
+            opacity: 1 if root.detail_text else 0
+            color: app.theme.text_dim if hasattr(app.theme, "text_dim") else app.theme.text
+            font_size: app.formats.font_size
+
+        Widget:
+            # spacer so the buttons sit at the bottom regardless of text length
+
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(56)
+            spacing: dp(10)
+
+            # ── prompt: cancel / start ──────────────────────────────
+            FormValueButton:
+                text: "Cancel"
+                opacity: 1 if root.state == "prompt" else 0
+                disabled: root.state != "prompt"
+                size_hint_x: 1 if root.state == "prompt" else None
+                width: 0 if root.state != "prompt" else 100
+                on_press: app.beep()
+                on_release: root.cancel()
+
+            FormValueButton:
+                text: "Start"
+                opacity: 1 if root.state == "prompt" else 0
+                disabled: root.state != "prompt"
+                size_hint_x: 1 if root.state == "prompt" else None
+                width: 0 if root.state != "prompt" else 100
+                on_press: app.beep()
+                on_release: root.start()
+
+            # ── running: no controls. The run is bounded by the firmware
+            #    ceiling and by the controller's liveness timeout; offering an
+            #    "abort" the host cannot actually honour would be a lie. ──
+            Label:
+                text: "Running…"
+                opacity: 1 if root.state == "running" else 0
+                size_hint_x: 1 if root.state == "running" else None
+                width: 0 if root.state != "running" else 100
+                color: app.theme.text
+                font_size: app.formats.font_size
+
+            # ── passed: discard / accept ────────────────────────────
+            FormValueButton:
+                text: "Discard"
+                opacity: 1 if root.state == "passed" else 0
+                disabled: root.state != "passed"
+                size_hint_x: 1 if root.state == "passed" else None
+                width: 0 if root.state != "passed" else 100
+                on_press: app.beep()
+                on_release: root.cancel()
+
+            FormValueButton:
+                text: "Accept"
+                opacity: 1 if root.state == "passed" else 0
+                disabled: root.state != "passed"
+                size_hint_x: 1 if root.state == "passed" else None
+                width: 0 if root.state != "passed" else 100
+                on_press: app.beep()
+                on_release: root.accept()
+
+            # ── failed / inconsistent: close / retry ────────────────
+            # Note there is deliberately NO "use it anyway" here.
+            FormValueButton:
+                text: "Close"
+                opacity: 1 if root.state in ("refused", "inconsistent") else 0
+                disabled: root.state not in ("refused", "inconsistent")
+                size_hint_x: 1 if root.state in ("refused", "inconsistent") else None
+                width: 0 if root.state not in ("refused", "inconsistent") else 100
+                on_press: app.beep()
+                on_release: root.cancel()
+
+            FormValueButton:
+                text: "Retry"
+                opacity: 1 if root.state in ("refused", "inconsistent") else 0
+                disabled: root.state not in ("refused", "inconsistent")
+                size_hint_x: 1 if root.state in ("refused", "inconsistent") else None
+                width: 0 if root.state not in ("refused", "inconsistent") else 100
+                on_press: app.beep()
+                on_release: root.retry()

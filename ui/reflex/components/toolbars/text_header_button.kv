@@ -1,0 +1,55 @@
+# TextHeaderButton: a header label over a recessed value field (e.g. els_advbar
+# "Stop Z" / value). Facelift gives the value box a sunken inset look.
+
+<TextHeaderButton>:
+  size_hint_x: None
+  orientation: "vertical"
+  font_name: app.formats.font_name
+
+  Label:
+    size_hint_y: 0.3
+    font_name: root.font_name
+    font_size: self.height / 1.5
+    text: root.text_header
+    # accent_text (not accent): the purpose-built high-contrast accent text token
+    # (~6.6:1 light) vs accent's ~3.6:1 when used as a label color.
+    color: app.theme.accent_text if root._blink else app.theme.text_dim
+    halign: 'center'
+    valign: 'top'
+
+  Label:
+    size_hint_y: 0.7
+    font_name: app.theme.font_seg
+    font_size: self.height / 3
+    text: root.display_value
+    color: app.formats.display_color
+    halign: "center"
+    valign: "middle"
+    # Recessed inset value field. Reads as carved-in via a soft top inner
+    # shadow + a bottom inner highlight (no hard inner outline), over a fill
+    # that's a touch darker than the panel behind it.
+    canvas.before:
+      Color:
+        rgba: app.theme.recess
+      RoundedRectangle:
+        pos: self.x + 2, self.y + dp(6)
+        size: max(self.width - 4, 0), max(self.height - dp(7), 0)
+        radius: [5]
+      # Top inner shadow: a short dark band fading down from under the top lip.
+      Color:
+        rgba: 1, 1, 1, 1
+      Rectangle:
+        texture: app.theme.recess_shadow
+        pos: self.x + dp(4), self.top - 1 - dp(8)
+        size: max(self.width - dp(8), 0), dp(8)
+      # Bottom inner highlight: a 1px light line along the inside bottom edge.
+      Color:
+        rgba: app.theme.edge_light
+      Rectangle:
+        pos: self.x + dp(4), self.y + dp(6) + 1
+        size: max(self.width - dp(8), 0), 1
+      Color:
+        rgba: app.theme.accent if root._blink else app.theme.border_dim
+      Line:
+        rounded_rectangle: (self.x + 2, self.y + dp(6), max(self.width - 4, 0), max(self.height - dp(7), 0), 5)
+        width: 1.2 if root._blink else 1.0
