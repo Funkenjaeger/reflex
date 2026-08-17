@@ -63,6 +63,18 @@
  *
  * EXPECTED RESULT: FAILS (exit 1) until the enable-fall handler consumes
  * the edge it creates. Registered in CTest deliberately, as a reproduction.
+ *
+ * ------------------------------------------------------------------------
+ * STATUS UPDATE — the defect described above is FIXED.
+ *
+ * The enable-fall handler in Core/Src/Ramps.c now (a) zeroes
+ * elsStopPreviousActive, consuming the 1->0 edge it created so the resume
+ * detector never sees it, and (b) cancels the job's pending commanded
+ * motion (servo.stepsToGo, currentSpeed) along with its bookkeeping — an
+ * in-flight takeup abandoned by disengage no longer leaves debt (DEFECT D
+ * below). The DEFECT assertions were written to fail and now PASS; they are
+ * left exactly as authored — a repro that flips green is the proof.
+ * ------------------------------------------------------------------------
  */
 
 extern "C" {
@@ -302,6 +314,40 @@ int main() {
         check(servoPosAfter == servoPosBefore,
               "DEFECT B: later feed-enable must not execute a stored move, "
               "currentSteps %u -> %u",
+              (unsigned)servoPosBefore, (unsigned)servoPosAfter);
+    }
+
+    /* ---- DEFECT D: disengage MID-takeup cancels the in-flight move ---- */
+    /* A legitimate SW resume initiates a takeup; the operator disengages
+     * while it is still running. The abandoned move's remaining stepsToGo
+     * must be cancelled, not left as debt for the next feed-enable. */
+    {
+        Rig rig;
+        rig.init(BACKLASH);
+        bool armed = rig.armAndLatch();
+        rig.step(Z_CLEAR);                       /* retract clear of the stop */
+        rig.data.shared.elsStop.active = 0;      /* SW resume, enable == 1 */
+        rig.step(Z_CLEAR);                       /* takeup initiates */
+        bool inFlight = (rig.data.shared.elsStop.takeupPending == 1)
+                     && (rig.data.shared.servo.stepsToGo != 0);
+        rig.step(Z_CLEAR);                       /* a little of it executes */
+        rig.disengage();
+        rig.step(Z_CLEAR);                       /* the enable-fall pass */
+        int32_t residue = rig.data.shared.servo.stepsToGo;
+        uint16_t pending = rig.data.shared.elsStop.takeupPending;
+        uint32_t servoPosBefore = rig.data.shared.servo.currentSteps;
+        for (int i = 0; i < 50; i++) rig.step(Z_CLEAR);
+        uint32_t servoPosAfter  = rig.data.shared.servo.currentSteps;
+
+        check(armed && inFlight, "DEFECT D: takeup was armed and in flight");
+        check(pending == 0,
+              "DEFECT D: disengage abandons the takeup (takeupPending == 0), observed %u",
+              (unsigned)pending);
+        check(residue == 0,
+              "DEFECT D: the abandoned move's stepsToGo is cancelled, observed %d",
+              (int)residue);
+        check(servoPosAfter == servoPosBefore,
+              "DEFECT D: nothing executes after the cancel, currentSteps %u -> %u",
               (unsigned)servoPosBefore, (unsigned)servoPosAfter);
     }
 

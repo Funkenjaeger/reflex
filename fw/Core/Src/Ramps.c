@@ -552,6 +552,17 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   // Auto-clear active when enable is deasserted
   if (data->elsStopPreviousEnable && !shared->elsStop.enable) {
     shared->elsStop.active = 0;
+    /* Consume the 1->0 active edge this handler just created. The resume
+     * detector further down runs LATER IN THIS SAME PASS (its shadow copy
+     * elsStopPreviousActive is only refreshed after it), so it cannot
+     * otherwise tell a software resume ("go cut") from the job ending here.
+     * referenceLatched and the thread geometry survive from the last
+     * stop-fire, so without this line every threading disengage after a
+     * completed pass initiated a fresh backlash takeup — re-setting the
+     * takeupPending cleared below and banking a move in stepsToGo that
+     * executed at the next nonzero servoMode. Emulator repro:
+     * els_disengage_edge_test. */
+    data->elsStopPreviousActive = 0;
     /* Also abandon any in-flight takeup. This is the escape hatch that makes the
      * fail-closed Z confirmation gate below RECOVERABLE: a takeup withheld for
      * want of Z confirmation holds takeupPending = 1 indefinitely, which gates
@@ -560,6 +571,20 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
      * applying. Without this, failing closed would be unrecoverable — a worse
      * defect than the one being fixed. */
     shared->elsStop.takeupPending = 0;
+    /* Ending the job cancels its pending MOTION, not just its bookkeeping.
+     * A takeup abandoned mid-flight otherwise leaves its remaining
+     * stepsToGo as stored debt that executes whenever servoMode next goes
+     * nonzero; likewise any sync backlog the pulse generator had not yet
+     * emitted (desiredSteps ahead of currentSteps) would keep draining
+     * after the job ended, and with servoMode 0 it survives indefinitely
+     * as debt for the next feed-enable. Every writer of this falling edge
+     * means "make the machine inert", so BOTH commanded-motion channels
+     * are cleared with the job. All other desiredSteps writers are
+     * incremental (+=), so the snap cannot corrupt a concurrent jog or
+     * indexing ramp — they rebuild from their own state next tick. */
+    shared->servo.stepsToGo    = 0;
+    shared->servo.currentSpeed = 0;
+    shared->servo.desiredSteps = shared->servo.currentSteps;
     data->elsStopSettleCount      = 0;
     data->elsStopTakeupTicks      = 0;
     data->elsStopTakeupLatched    = 0;
