@@ -132,26 +132,22 @@ def _fsm_in_stopped(*, controller=None, z=None):
     return fsm
 
 
-@pytest.mark.parametrize("refusal", ["no_committed_stop", "z_past_stop"])
-def test_stopped_refused_rearm_clears_sync_before_teardown(refusal):
+def test_stopped_refused_rearm_clears_sync_before_teardown():
     """THE ORDERING TEST for the stopped branch. When arm_idle_stop refuses on
     reconnect, the branch clears enable+active — the same teardown the
     disabled/alarm branch performs, with the same hazard: clearing active with
     a retained syncEnable still live is a resume command (Ramps.c:826). The
-    refusal reasons are exactly the states where the firmware's retained stop
+    refusal reason is exactly the state where the firmware's retained stop
     must NOT be trusted, so the teardown here defends against the most stale
     state of all — and it must clear the motion source first, like its sibling.
 
-    Both refusal reasons, because they arrive by different code paths:
-    no committed stop (encoder is None) and Z already past the stop."""
-    if refusal == "no_committed_stop":
-        controller = _make_controller()
-        controller.stop_z_encoder = None
-        fsm = _fsm_in_stopped(controller=controller)
-    else:
-        # Default rig: z=0.0, stop_z=10, forward (cut_dir=-1) → diff=+10 > 0,
-        # Z is past the stop and arming would fire ELS on the spot.
-        fsm = _fsm_in_stopped()
+    Only ONE refusal remains since 2026-08-17: no committed stop (encoder is
+    None). The old second reason, Z past the stop, was deleted with the
+    positional refusal itself — that case now re-arms (see
+    test_stopped_rearm_succeeds_even_with_z_past_stop below)."""
+    controller = _make_controller()
+    controller.stop_z_encoder = None
+    fsm = _fsm_in_stopped(controller=controller)
 
     _reconnect(fsm, moving=False, active=True)
 
@@ -181,6 +177,20 @@ def test_stopped_successful_rearm_does_not_tear_down():
 
     fsm.hal.set_stop_position.assert_called_with(controller.stop_z_encoder)
     # One call each, and with True: any False call would be a teardown.
+    fsm.hal.set_active.assert_called_once_with(True)
+    fsm.hal.set_enable.assert_called_once_with(True)
+
+
+def test_stopped_rearm_succeeds_even_with_z_past_stop():
+    """Until 2026-08-17 the default rig here (z=0.0, stop_z=10, forward →
+    Z past the stop) was a REFUSAL case and reconnect tore engaged-idle
+    down. With the positional refusal deleted, the same geometry re-arms
+    like any other — active=1 before enable=1, no teardown. The firmware
+    side of why that is safe is pinned by els_arm_past_stop_test."""
+    fsm = _fsm_in_stopped()   # default rig: z=0.0, stop_z=10, forward
+
+    _reconnect(fsm, moving=False, active=True)
+
     fsm.hal.set_active.assert_called_once_with(True)
     fsm.hal.set_enable.assert_called_once_with(True)
 

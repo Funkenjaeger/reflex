@@ -1054,49 +1054,37 @@ def test_disengage_allowed_when_not_feeding_regardless_of_spindle(ctrl):
     assert ctrl._els_fsm.state == "disabled"
 
 
-# ─── Arm-refusal notice: the silent refusal now reaches the operator ───────
+# ─── Arming is positionally unconditional (round-2/3 repro, 2026-08-17) ────
 
-def test_engaging_with_z_past_the_stop_raises_the_banner_and_arming_clears_it():
-    """Round-2 hardware finding 2026-08-17: the carriage parks a hair past
-    the stop after a pass runs to it, so re-engaging there refuses to arm —
-    and the refusal was log-only. The whole chain is under test here:
-    arm_idle_stop refusal -> bus -> controller banner, then a successful
-    arm -> banner cleared."""
+def test_engaging_with_z_past_the_stop_arms_the_hold():
+    """The round-2 hardware repro, inverted from a banner test to an arming
+    test: the carriage parks a hair past the stop after a pass runs to it,
+    and re-engaging right there must ARM (active=1 then enable=1) exactly
+    as it would from the clear side. The Z-past-stop refusal that lived in
+    arm_idle_stop was itself the defect (it silently left the engaged
+    machine with no hold and sync armed, and produced the misleading "no
+    stop set" feed dialog); els_arm_past_stop_test in reflex-fw pins the
+    firmware side of why unconditional arming is safe."""
     z_axis = _make_z_axis(scaled_position=-0.002)   # 2 thou past a stop at 0
     board, els = _make_collaborators(z_axis=z_axis, x_axis=_make_x_axis())
     c = ElsUiController(els=els, board=board)
     _pump()
     c.commit_standalone_stop_z(0.0)
-    c.toggle_engage()          # arm refused: Z is past the stop
-    _pump()
-    assert c.engaged is True
-    assert "NOT armed" in c.arm_warning
-    assert "at/past" in c.arm_warning
-
-    z_axis.scaledPosition = 1.0            # operator moves clear...
-    c.commit_standalone_stop_z(0.0)        # ...recommits; arming now succeeds
-    _pump()
-    assert c.arm_warning == ""
-
-
-def test_arm_warning_clears_on_disengage():
-    z_axis = _make_z_axis(scaled_position=-0.002)
-    board, els = _make_collaborators(z_axis=z_axis, x_axis=_make_x_axis())
-    c = ElsUiController(els=els, board=board)
-    _pump()
-    c.commit_standalone_stop_z(0.0)
+    hal_spy = MagicMock()
+    c._els_fsm.hal = hal_spy
     c.toggle_engage()
     _pump()
-    assert c.arm_warning != ""
-    c._board.servo.servoMode = 0
-    c.toggle_engage()          # disengage
-    _pump()
-    assert c.arm_warning == ""
+    assert c.engaged is True
+    hal_spy.set_active.assert_called_once_with(True)
+    hal_spy.set_enable.assert_called_once_with(True)
 
 
 def test_unarmed_stop_message_names_the_actual_cause():
-    """Three different operator problems, three different remedies — the old
-    one-size dialog claimed "no stop is set" for all of them."""
+    """Two different operator problems, two different remedies — the old
+    one-size dialog claimed "no stop is set" for both. (A third cause,
+    "stop set but not armed with Z past it", existed while arm_idle_stop
+    carried its positional refusal; with arming unconditional that state is
+    unreachable, which is the fix, not a coverage gap.)"""
     z_axis = _make_z_axis(scaled_position=-0.002)
     board, els = _make_collaborators(z_axis=z_axis, x_axis=_make_x_axis())
     c = ElsUiController(els=els, board=board)
@@ -1107,8 +1095,3 @@ def test_unarmed_stop_message_names_the_actual_cause():
     c.toggle_engage()
     _pump()
     assert "No stop is set" in c.unarmed_stop_message()
-
-    c.commit_standalone_stop_z(0.0)
-    _pump()
-    msg = c.unarmed_stop_message()
-    assert "NOT armed" in msg and "at/past" in msg

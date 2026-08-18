@@ -268,21 +268,28 @@ def test_on_enter_stopped_does_not_arm_when_returning_from_cut():
 
 
 @pytest.mark.parametrize("els_forward, past_stop_z", [(True, 5.0), (False, 15.0)])
-def test_on_enter_stopped_does_not_arm_when_z_past_stop(els_forward, past_stop_z):
-    """When Z is past stop_z in the cutting direction, arming would cause
-    immediate ELS fire → backlash takeup. Skip arming in this case.
+def test_on_enter_stopped_arms_even_when_z_past_stop(els_forward, past_stop_z):
+    """Engaging with Z past the stop ARMS, exactly like engaging clear of it.
+
+    Inverted 2026-08-17: a refusal lived here, justified by a heritage
+    comment claiming arming past the stop would fire ELS immediately and
+    bank a takeup — false for the active-before-enable write order
+    (els_arm_past_stop_test in reflex-fw pins the firmware side). The
+    refusal was itself the defect: it silently left the engaged machine
+    with no hold and sync armed, and produced round 2's misleading "no
+    stop set" feed dialog with the carriage parked at the shoulder.
 
     "Past stop" flips sides with direction: below stop_z=10 for forward
-    (cut_dir=-1), above stop_z=10 for reverse (cut_dir=+1).
+    (cut_dir=-1), above stop_z=10 for reverse (cut_dir=+1) — both must arm.
     """
     z, _ = _make_z_axis(scaled_position=past_stop_z)
     hal = MagicMock()
     controller = _make_controller(stop_z=10.0, els_forward=els_forward)
     fsm = _build_fsm(z=z, hal=hal, controller=controller)
     fsm.enable()
-    # enable should NOT be called (Z is past stop_z)
-    hal.set_enable.assert_not_called()
-    hal.set_stop_position.assert_not_called()
+    hal.set_stop_position.assert_called_once()
+    hal.set_active.assert_called_once_with(True)
+    hal.set_enable.assert_called_once_with(True)
 
 
 def test_on_enter_stopped_does_not_arm_when_no_stop_committed():
@@ -314,11 +321,11 @@ def test_arm_idle_stop_arms_once_the_operator_sets_a_stop_while_engaged(els_forw
     with no protection until they press Cut.
 
     safe_z is on the true safe side of the stop committed below (stop_z=42):
-    above for forward (cut_dir=-1), below for reverse (cut_dir=+1). Regression:
-    with a mock that pinned stop_direction_value to +1 regardless of
-    els_forward, committing stop=42 with z=0 (forward) looked past-the-stop
-    (diff=(0-42)*-1=+42>0) and arm_idle_stop correctly-for-the-wrong-reason
-    refused — masking that the mock, not the code, was inverted.
+    above for forward (cut_dir=-1), below for reverse (cut_dir=+1). It dates
+    from when arm_idle_stop refused past-the-stop arming (a mis-pinned
+    direction mock once made a safe position look past the stop and masked
+    its own inversion); the positional refusal was deleted 2026-08-17, so
+    safe_z no longer affects the outcome — kept for the direction coverage.
     """
     z, _ = _make_z_axis(scaled_position=safe_z)
     hal = MagicMock()

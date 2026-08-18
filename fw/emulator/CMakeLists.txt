@@ -246,6 +246,16 @@ target_link_libraries(els_diag_scratch_disengage_latch_test m pthread)
 add_test(NAME els_diag_scratch_disengage_latch_test
     COMMAND els_diag_scratch_disengage_latch_test)
 
+# Arming with Z already past the stop: pins that the UI's active-before-enable
+# write order makes positional arming safe (no fire, no bogus latch, no banked
+# takeup), the clear-side control, and the enable-only heritage hazard that
+# justified the now-deleted UI refusal. See the test header.
+add_executable(els_arm_past_stop_test
+    ${CMAKE_SOURCE_DIR}/test/els_arm_past_stop_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_link_libraries(els_arm_past_stop_test m pthread)
+add_test(NAME els_arm_past_stop_test COMMAND els_arm_past_stop_test)
+
 add_executable(els_diag_scratch_mode_watch_v2_test
     ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)

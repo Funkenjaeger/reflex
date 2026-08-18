@@ -208,8 +208,7 @@ class ElsFsm:
         # operator-mode flags. When entering from disabled (operator clicked
         # "Engage"), arm ELS immediately with a fresh stopPosition so there's
         # protection against unexpected spindle starts before "Cut" is pressed.
-        # Only arm if Z is on the safe side of stop_z — arming when past
-        # stop_z would cause immediate ELS fire → backlash takeup.
+        # Arming is positionally unconditional — see arm_idle_stop.
         self.board.unbind(update_tick=self._on_board_update)
 
         if self._engaging:
@@ -422,45 +421,37 @@ class ElsFsm:
         stopPosition the FIRMWARE still holds from a previous session — a
         different shoulder, or a different part. It also made
         ``feed_without_armed_stop()`` report "armed", which silently skipped the
-        no-stop feed confirmation. Refuses too when Z is already past the stop,
-        where arming would fire ELS immediately → backlash takeup.
+        no-stop feed confirmation. That is the ONLY refusal: arming is
+        positionally unconditional (see the comment below).
         """
         if self.controller.stop_z_encoder is None:
             log.info("arm_idle_stop: no committed stop — leaving ELS disarmed")
             return False
-        z_pos = self.z_axis.scaledPosition
-        cut_dir = self.els.stop_direction_value(self.controller.els_forward)
-        diff = (z_pos - self.controller.stop_z) * cut_dir
-        if diff > 0:  # Z is past stop_z — arming would fire ELS on the spot
-            log.info(
-                f"arm_idle_stop: Z past stop — not arming "
-                f"(stop_z={self.controller.stop_z} z_pos={z_pos})"
-            )
-            # Tell the OPERATOR, not just the log. Round-2 hardware testing
-            # (2026-08-17): the carriage parks a hair past the stop after
-            # every pass that runs to it, so re-engaging right there hits
-            # this refusal — and the only surface it reached was an INFO
-            # line in a log the kiosk operator cannot watch. The confusion
-            # then surfaced three steps later as the feed guard's dialog,
-            # worded as if no stop existed at all.
-            bus.publish(
-                "els_arm_refused",
-                reason=(f"Stop {self.controller.stop_z:.4g} set but NOT "
-                        f"armed — Z ({z_pos:.4g}) is at/past it. Move Z "
-                        f"clear or set a farther stop."),
-            )
-            return False
+        # NO positional condition. A Z-past-stop refusal lived here until
+        # 2026-08-17, justified by a heritage comment ("arming when past
+        # stop_z would cause immediate ELS fire → backlash takeup") that is
+        # false for the active-BEFORE-enable order used below: the firmware's
+        # trigger gate requires !active, so it cannot fire during this arm,
+        # the enable rising edge resets referenceLatched, and the next Cut
+        # therefore banks nothing (els_arm_past_stop_test pins all of this,
+        # including the enable-only order the old comment was true for). The
+        # refusal was itself the defect: it silently left the engaged machine
+        # with no hold and sync armed — the only unprotected engaged state in
+        # the system, and the real cause of round 2's misleading "no stop
+        # set" feed dialog.
         self.push_stop_to_firmware()
         # Set active=1 before enable so ELS arms in STOPPED state — sync motion
         # paused until the operator clicks Cut (which clears active via
-        # on_enter_cutting, triggering resume/takeup).
+        # on_enter_cutting, triggering resume/takeup). This order is also
+        # load-bearing for the unconditional arming above: active-first is
+        # what makes a Z-past-stop arm inert.
         self.hal.set_active(True)
         self.hal.set_enable(True)
         log.info(
             f"arm_idle_stop: armed ELS stopped with "
-            f"stop_z={self.controller.stop_z} z_pos={z_pos}"
+            f"stop_z={self.controller.stop_z} "
+            f"z_pos={self.z_axis.scaledPosition}"
         )
-        bus.publish("els_armed")   # clears any standing arm-refusal notice
         return True
 
     def reconcile_firmware_on_connect(self):
@@ -480,10 +471,10 @@ class ElsFsm:
         - disabled / alarm → clear enable+active. A cleared enable makes the
           retained stopPosition inert.
         - stopped (engaged-idle) → re-assert direction/hysteresis and re-arm via
-          arm_idle_stop() (self-gates on a committed stop + Z on the safe
-          side). Covers a firmware reboot mid-session losing our armed stop.
-          If arming refuses, clear enable+active — a retained arm must not
-          outlive its session either.
+          arm_idle_stop() (self-gates on a committed stop; positionally
+          unconditional). Covers a firmware reboot mid-session losing our
+          armed stop. If arming refuses (no committed stop), clear
+          enable+active — a retained arm must not outlive its session either.
         - cutting / retracting → hands off, log only: motion may be live, and
           blindly rewriting could disarm a stop that is actively protecting the
           cut. (Full link-loss-mid-cut recovery is a known separate gap.)

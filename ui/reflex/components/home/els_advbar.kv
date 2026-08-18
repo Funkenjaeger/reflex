@@ -16,7 +16,7 @@
   # observed on the machine 2026-08-16 as the take-up warning appearing over a
   # DRO line in the middle of the screen. The strip itself was fine; it was
   # this line that had not been updated when it was added.
-  natural_height: 128 + (dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (dp(30) if root.controller.takeup_warning else 0) + (dp(30) if root.controller.arm_warning else 0)
+  natural_height: 128 + (dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (dp(30) if root.controller.takeup_warning else 0)
 
   # ── Re-reference notice strip (audit H1 follow-up) ─────────────────────────
   # Shown when a committed Stop/Start value was re-referenced by a DRO re-zero /
@@ -85,36 +85,6 @@
         size: self.size
     Label:
       text: root.controller.takeup_warning
-      text_size: self.size
-      halign: 'left'
-      valign: 'middle'
-      font_name: app.theme.font_bold
-      font_size: dp(13)
-      color: app.theme.text
-
-  # ── Arm-refusal notice ─────────────────────────────────────────────────────
-  # Amber strip shown while a committed stop could NOT be armed (Z at/past
-  # it). Round-2 hardware finding 2026-08-17: the refusal was log-only, and
-  # the carriage parks a hair past the stop after every pass that runs to
-  # it, so re-engaging right there hit this silently every time. Collapses
-  # to zero height when armed or disengaged.
-  BoxLayout:
-    id: arm_notice
-    orientation: 'horizontal'
-    size_hint_y: None
-    spacing: dp(8)
-    padding: dp(8), 0
-    height: dp(30) if root.controller.arm_warning else 0
-    opacity: 1 if self.height else 0
-    disabled: not self.height
-    canvas.before:
-      Color:
-        rgba: (0.95, 0.65, 0.10, 0.30)
-      Rectangle:
-        pos: self.pos
-        size: self.size
-    Label:
-      text: root.controller.arm_warning
       text_size: self.size
       halign: 'left'
       valign: 'middle'
