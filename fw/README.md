@@ -1,26 +1,22 @@
-# Reflex Firmware
+# Reflex firmware (`fw/`)
 
-This repository contains the **firmware** for a digital controller board based on the **STM32F411** microcontroller. It provides Digital Read Out (DRO) and Electronic Leadscrew (ELS) functionality for lathes when integrated with the corresponding [Reflex UI software](https://github.com/Funkenjaeger/reflex-ui).
-
-This firmware handles all necessary low-level real-time control functionality for operations including:
- - Jogging (with trapezoidal velocity profile)
- - Spindle-synchronized carriage feed for controlled feeding or threading operations (standard ELS functionality)
- - Automatic electronic stop, usable when feeding or threading
- - Electronic retract
- - Automatic phase re-sync to thread pitch between passes (allows free use of half nut between threading passes)
-
-This firmware is based on the [rotary-controller-f4](https://github.com/bartei/rotary-controller-f4) project and as of the present version, remains compatible with the associated hardware.  
-This project (along with the corresponding UI SW project) was hard forked from the original primarily due to natural divergence that followed from a focus on lathe use cases, where the original rotary-controller project was designed for CNC-style rotary table use cases.
+The **real-time half** of [Reflex](../README.md): STM32F411 firmware providing
+encoder capture, step generation, and all motion control the UI must never be
+trusted with — spindle-synchronized feed, the electronic stop, retract, jog
+profiles, and thread-phase re-sync all execute here, in a 100 kHz ISR with
+FreeRTOS tasks alongside. The UI talks to it as a Modbus RTU master over
+RS-485; the register contract is defined in `Core/Inc/Ramps.h` and mirrored by
+`../ui/reflex/utils/devices.py`, guarded by `protocolVersion`.
 
 ---
 
-## ⚙️ Features
+## ⚙️ Structure
 
-* Utilizes **STM32CubeMX** for hardware configuration (.ioc file included)
-* Modular firmware structure with FreeRTOS support
-* Programmed over SWD with an ST‑Link V2
+* **STM32CubeMX** hardware configuration (`.ioc` included)
+* Modular firmware with FreeRTOS support
+* Programmed over SWD with an ST-Link V2
 * Optimized for high-speed encoder + stepper/servo motor control
-* Includes a native FW+lathe emulator for hardware-free testing with the Python GUI
+* Native FW+lathe **emulator** for hardware-free testing (below)
 
 ---
 
@@ -53,15 +49,15 @@ That builds, flashes over SWD, and records what it did.
 > start the new firmware on this board. openocd's `Verified OK` confirms the
 > flash *contents*, not what the core is *executing* — so programming and
 > verification both report success while the machine keeps running the previous
-> firmware, silently and with no error anywhere. Confirm from the reflex-ui log
+> firmware, silently and with no error anywhere. Confirm from the UI log
 > that `Firmware register protocol version N (expected N)` matches what you
 > flashed before believing it took.
 
 ```bash
-./scripts/flash.sh --diag        # with the ELS settle-trace probe
+./scripts/flash.sh --diag=NAME   # with a diagnostic probe compiled in
 ./scripts/flash.sh --dry-run     # everything except the write
 ./scripts/build.sh               # build only, no flashing
-./scripts/build.sh --diag --clean
+./scripts/build.sh --diag        # lists the available probes
 ```
 
 **It rebuilds every time by default.** `--no-build` opts out. A stale binary is
@@ -73,12 +69,16 @@ that can silently truncate is worth verifying before it is written to the
 controller of a machine with moving parts. Prefer the local path: it makes that
 whole failure mode, and the version ambiguity that comes with it, not exist.
 
-**Two variants, two build directories.** `build/` is the release firmware.
-`build-diag/` adds `-DELS_DIAG_SCRATCH`, compiling in the ELS settle-trace probe
-— **never** put that on `dev-staging`, `dev` or `main`. They are separate
-directories so the flag can never depend on what the last `cmake` invocation
-happened to say. At runtime the `elsStop.diagSchema` register tells you which one
-is running, and the UI logs it at connect.
+**Release and diagnostic builds live in separate directories.** `build/` is the
+release firmware; each `--diag=NAME` build gets its own directory, so the flag
+can never depend on what the last `cmake` invocation happened to say. A
+diagnostic build compiles in **one** measurement probe and must **never** reach
+`dev-staging`, `dev` or `main`. At runtime the `elsStop.diagSchema` register says
+which probe is running (`0` = none), and the UI logs it at connect.
+
+Which probes exist, what they measure, how to add or retire one, and why only one
+can be compiled in at a time: **[DIAG.md](DIAG.md)**. `./scripts/build.sh --diag`
+with no name lists them.
 
 **Every flash is recorded** in `~/firmware/flashed.json` on the probe host: UTC
 timestamp, variant, git revision, whether the tree was dirty, and the ELF's MD5.
@@ -114,6 +114,9 @@ A native Linux emulator is included for hardware-free firmware testing. It compi
 
 A two-pane ANSI terminal dashboard with sparklines provides live visualization, with keyboard controls for spindle RPM, manual axis movement, half-nut engagement, and more. All parameters are configurable via TOML file.
 
+The emulator also hosts the firmware test suite (`emulator/test/`), which drives
+the real ISR directly — run it with `ctest` from `emulator/build`.
+
 ### Emulator Build & Run
 
 ```bash
@@ -131,21 +134,10 @@ cmake --build build
 * Pin assignments for encoder, buttons, LEDs, SWD, etc. reviewed and tested
 * Memory layout defined by `STM32F411CEUX_FLASH.ld` and `STM32F411CEUX_RAM.ld`
 
----
-
-## 🧩 PCB & Schematic
-
-Firmware integrates with hardware design available at:
-
-* **Compatible PCB**: [rotary-controller-pcb](https://github.com/bartei/rotary-controller-pcb)
-
-Together, they form a complete controller + UI system when paired with:
-
-* [reflex-ui](https://github.com/Funkenjaeger/reflex-ui) — a Raspberry Pi Kivy-based DRO + control UI
+Board design and system-level hardware: see the [top-level README](../README.md).
 
 ---
 
 ## 📄 License
 
-Licensed under MIT. See `LICENSE` for full terms.
-
+MIT — see `LICENSE`.

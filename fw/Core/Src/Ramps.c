@@ -104,47 +104,9 @@
  * confirms reliably, never up to make a refusal go away. */
 #define ELS_SLIP_SETTLE_TICKS 1000
 
-/* --- Diagnostic scratchpad probe: TAKE-UP SETTLE TRACE ----------------------
- * Compiled in only when ELS_DIAG_SCRATCH is defined. Exists to measure the two
- * numbers this file currently GUESSES at:
- *
- *   1. How long the carriage actually keeps moving after the last step pulse.
- *      That is what ELS_SLIP_SETTLE_TICKS above is supposed to be, and it has
- *      never been measured — it cannot be derived from the emulator, whose lash
- *      model moves the carriage instantaneously with the pulse, so it has no
- *      settle behaviour to observe at all.
- *   2. Whether Z ever goes properly QUIET, or dithers indefinitely under
- *      spindle vibration. That sets the tolerance band for any future
- *      "has the carriage stopped" test, and a band chosen without it could
- *      make a healthy machine refuse every pass.
- *
- * The capture is a DECIMATED trace, not a raw one: each bucket is the SIGNED
- * sum of dZ over ELS_DIAG_BUCKET_TICKS. Signed matters — dither around a fixed
- * position cancels while genuine drift accumulates, which is the same reason a
- * quiescence test must use net displacement rather than summed |dZ|. Summing in
- * the ISR is what makes this affordable: 50 buckets covers 50 ms, where a raw
- * per-tick trace of the same span would be 5000 samples and fit nowhere.
- *
- * Capture starts when the commanded take-up motion completes (the last pulse)
- * and runs for the full window regardless of what the gate decides, so the
- * trace covers the confirm decision rather than stopping at it. */
-/* Schema ids live in Ramps.h -- they are part of the register contract that
- * reflex-ui mirrors, not a detail of this file.
- *
- * v2, after the 2026-08-16 machine run. v1 started at commanded-take-up
- * completion and then ran unconditionally for its whole window -- so it kept
- * recording after the gate confirmed and the PASS STARTED, and most of every
- * trace was the carriage traversing under sync at a flat ~1.9 counts/ms. That
- * is not a settle tail; a settle tail decays. diagSettleTicks was worse than
- * useless: it reported the last nonzero dZ, which once the pass is running is
- * always "just before the window closed" (measured: 4954-4995 out of 5000).
- *
- * v2 ends the capture the moment the servo issues its next step pulse. That is
- * exactly the boundary between settling and being driven again, and it makes
- * every field mean what its name says. Buckets drop 100 ticks -> 10 so the
- * sub-millisecond tail is resolvable: v1 showed 3-6 whole buckets of ZERO at
- * 1 ms each, which bounds the settle below 3 ms but cannot see inside it. */
-#define ELS_DIAG_BUCKET_TICKS 10   /* ~0.097 ms at the measured 103 kHz ISR rate */
+/* Diagnostic probes live in Core/Inc/els_diag_*.h, dispatched by els_diag.h.
+ * Their bodies are NOT in this file; their four call sites are, and each one
+ * documents the instant it must fire at. See DIAG.md. */
 
 #ifdef EMULATOR_BUILD
 #include "emulator_state.h"
@@ -246,25 +208,7 @@ void RampsStart(rampsHandler_t *rampsData) {
    * explicitly zeroed when no probe is compiled in, rather than left to whatever
    * the struct happened to be initialised with. A reader that finds 0 must not
    * interpret the block; see the note at elsStop_t. */
-#ifdef ELS_DIAG_SCRATCH
-  rampsData->shared.elsStop.diagSchema      = ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2;
-  rampsData->shared.elsStop.diagBucketTicks = ELS_DIAG_BUCKET_TICKS;
-  rampsData->shared.elsStop.diagBucketCount = ELS_DIAG_TRACE_BUCKETS;
-  /* Explicitly cleared rather than left to BSS. A host that connects before the
-   * first take-up must see "no capture yet", not whatever was in RAM -- and on
-   * this part BSS happens to be zero, which would make the invariant look held
-   * while nothing actually enforced it. */
-  rampsData->shared.elsStop.diagCaptureTicks = 0;
-  rampsData->shared.elsStop.diagEndReason    = 0;
-  rampsData->shared.elsStop.diagSettleTicks  = 0;
-  rampsData->shared.elsStop.diagNetCounts    = 0;
-  rampsData->diagState                      = 0;
-  rampsData->diagCaptureTick                = 0;
-#else
-  rampsData->shared.elsStop.diagSchema      = 0;
-  rampsData->shared.elsStop.diagBucketTicks = 0;
-  rampsData->shared.elsStop.diagBucketCount = 0;
-#endif
+  elsDiagInit(&rampsData->diag, &rampsData->shared.elsStop);
   rampsData->shared.elsStop.calCommand   = 0;
   rampsData->shared.elsStop.calSeq       = 0;
   rampsData->shared.elsStop.calResult    = ELS_CAL_OK;
@@ -608,6 +552,17 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   // Auto-clear active when enable is deasserted
   if (data->elsStopPreviousEnable && !shared->elsStop.enable) {
     shared->elsStop.active = 0;
+    /* Consume the 1->0 active edge this handler just created. The resume
+     * detector further down runs LATER IN THIS SAME PASS (its shadow copy
+     * elsStopPreviousActive is only refreshed after it), so it cannot
+     * otherwise tell a software resume ("go cut") from the job ending here.
+     * referenceLatched and the thread geometry survive from the last
+     * stop-fire, so without this line every threading disengage after a
+     * completed pass initiated a fresh backlash takeup — re-setting the
+     * takeupPending cleared below and banking a move in stepsToGo that
+     * executed at the next nonzero servoMode. Emulator repro:
+     * els_disengage_edge_test. */
+    data->elsStopPreviousActive = 0;
     /* Also abandon any in-flight takeup. This is the escape hatch that makes the
      * fail-closed Z confirmation gate below RECOVERABLE: a takeup withheld for
      * want of Z confirmation holds takeupPending = 1 indefinitely, which gates
@@ -616,6 +571,20 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
      * applying. Without this, failing closed would be unrecoverable — a worse
      * defect than the one being fixed. */
     shared->elsStop.takeupPending = 0;
+    /* Ending the job cancels its pending MOTION, not just its bookkeeping.
+     * A takeup abandoned mid-flight otherwise leaves its remaining
+     * stepsToGo as stored debt that executes whenever servoMode next goes
+     * nonzero; likewise any sync backlog the pulse generator had not yet
+     * emitted (desiredSteps ahead of currentSteps) would keep draining
+     * after the job ended, and with servoMode 0 it survives indefinitely
+     * as debt for the next feed-enable. Every writer of this falling edge
+     * means "make the machine inert", so BOTH commanded-motion channels
+     * are cleared with the job. All other desiredSteps writers are
+     * incremental (+=), so the snap cannot corrupt a concurrent jog or
+     * indexing ramp — they rebuild from their own state next tick. */
+    shared->servo.stepsToGo    = 0;
+    shared->servo.currentSpeed = 0;
+    shared->servo.desiredSteps = shared->servo.currentSteps;
     data->elsStopSettleCount      = 0;
     data->elsStopTakeupTicks      = 0;
     data->elsStopTakeupLatched    = 0;
@@ -639,16 +608,10 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
                          ? (cur >= data->elsStopTakeupTargetSteps)
                          : (cur <= data->elsStopTakeupTargetSteps);
     if (takeupReached) {
-#ifdef ELS_DIAG_SCRATCH
-      /* First tick on which the commanded motion is complete. That is the last
-       * step pulse, and therefore t=0 for the settle question. Note this fires
-       * BEFORE the ELS_SETTLE_TICKS dwell and before the gate's first
-       * evaluation, so the trace covers the whole of both. */
-      if (data->diagState == 1) {
-        data->diagState       = 2;
-        data->diagCaptureTick = 0;
-      }
-#endif
+      /* First tick on which the commanded motion is complete -- t=0 for the
+       * settle question. Fires BEFORE the ELS_SETTLE_TICKS dwell and before the
+       * gate's first evaluation, so a trace covers the whole of both. */
+      elsDiagCaptureStart(&data->diag);
       if (data->elsStopSettleCount < ELS_SETTLE_TICKS) {
         data->elsStopSettleCount++;        // dwell after commanded-complete
       } else {
@@ -874,8 +837,18 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
        * drivetrain before this gate existed). A calibration leg is only
        * meaningful if the leadscrew is moved by the calibration and nothing
        * else. */
+      /* The servoMode == 1 term keeps accumulation and emission on the SAME
+       * gate. Emission (further down) only runs with servoMode != 0, so
+       * deltas accepted here in mode 0 are not motion — they are stored
+       * debt the servo chases wholesale whenever mode next becomes 1, and
+       * in mode 2 they superimpose spindle-sync creep onto the jog. Sync
+       * counts that arrive while not in sync-follow mode are DISCARDED,
+       * not banked: threading does not rely on banked deltas across a
+       * pause — the resume machinery re-syncs phase from scale positions.
+       * Emulator repro: els_sync_debt_test. */
       if (!shared->elsStop.active && !shared->elsStop.takeupPending
-          && data->elsCal.phase == ELS_CAL_IDLE) {
+          && data->elsCal.phase == ELS_CAL_IDLE
+          && shared->fastData.servoMode == 1) {
         shared->servo.desiredSteps += data->scalesSyncDeltaPos[i].scaledDelta;
       }
     }
@@ -912,24 +885,11 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
          * this initiation tick — which physically predates the take-up — cannot
          * be counted as evidence for it. */
         elsSlipReset(&data->elsSlip);
-#ifdef ELS_DIAG_SCRATCH
-        /* Arm the settle trace. Cleared HERE, at initiation, rather than when
-         * the capture starts: this tick already does a pile of one-off work, so
-         * a 50-entry clear costs nothing measurable, whereas clearing at capture
-         * start would put it on the tick where the take-up completes — the one
-         * tick whose timing this probe exists to measure. Do not move it. */
-        data->diagState       = 1;
-        data->diagCaptureTick = 0;
-        shared->elsStop.diagSettleTicks  = 0;
-        shared->elsStop.diagNetCounts    = 0;
-        /* Cleared too, so a reader can never see the PREVIOUS capture's outcome
-         * beside this one's trace if it reads mid-flight. */
-        shared->elsStop.diagCaptureTicks = 0;
-        shared->elsStop.diagEndReason    = 0;
-        for (int b = 0; b < ELS_DIAG_TRACE_BUCKETS; b++) {
-          shared->elsStop.diagTrace[b] = 0;
-        }
-#endif
+        /* Arm any diagnostic probe, at INITIATION. A trace probe clears itself
+         * here rather than at capture start, because this tick already does a
+         * pile of one-off work whereas the capture-start tick is the one whose
+         * timing a settle probe exists to measure. Do not move this call. */
+        elsDiagArm(&data->diag, &shared->elsStop);
         data->elsStopTakeupTicks       = 0;
         data->elsStopTakeupLatched     = 0;
         shared->elsStop.takeupResult   = ELS_CAL_OK;
@@ -1040,60 +1000,17 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
                 elsSlipSettleTicks(ELS_SLIP_SETTLE_TICKS, (int32_t)servoCycles));
   }
 
-#ifdef ELS_DIAG_SCRATCH
-  /* Take-up settle trace, v2. Same placement as the attribution blocks above and
-   * for the same reason: this is the only point in the ISR where dZ is this
-   * tick's.
-   *
-   * IT ENDS ON THE SERVO'S NEXT PULSE, and that is the whole correction over v1.
-   * v1 was deliberately not gated on takeupPending, on the reasoning that the
-   * interesting part is what Z does AFTER the gate decides. True, but it ran on
-   * unconditionally afterwards -- and what comes after the decision is the PASS,
-   * so most of every v1 trace was the carriage traversing under sync at a flat
-   * ~1.9 counts/ms. Flat is the tell: a settle tail decays.
-   *
-   * The next commanded pulse is the exact boundary between "still settling from
-   * the take-up" and "being driven again", and it does not depend on which
-   * firmware state machine happens to clear which flag first. Checked BEFORE
-   * accumulating, so the driving tick itself is never counted as settle. */
-  if (data->diagState == 2) {
+  /* Diagnostic probe tick. THIS placement, not another: it is the only point
+   * in the ISR where dZ is this tick's delta, which is the whole reason the
+   * attribution blocks above sit here too. A probe that measures WHEN things
+   * happen within a tick measures something else from anywhere else, so this
+   * call does not move even though its body now lives in els_diag_*.h. */
+  if (elsDiagCapturing(&data->diag)) {
     uint16_t zIdx   = shared->elsStop.scaleIndex;
     int32_t  dZ     = data->scalesDeltaPos[zIdx].delta * shared->scales[zIdx].scaleDir;
     int32_t  dServo = (int32_t)(shared->servo.currentSteps - servoStepsBeforePulse);
-
-    if (dServo != 0) {
-      shared->elsStop.diagCaptureTicks = (uint16_t)data->diagCaptureTick;
-      shared->elsStop.diagEndReason    = ELS_DIAG_END_PULSE;
-      data->diagState = 0;
-      shared->elsStop.diagSeq++;   /* publish LAST: the seq bump is the ack that the block is complete and readable */
-    } else {
-      uint32_t bucket = data->diagCaptureTick / ELS_DIAG_BUCKET_TICKS;
-      if (bucket < (uint32_t)ELS_DIAG_TRACE_BUCKETS) {
-        /* int16 per bucket. Per-tick dZ is bounded by the int16 cast in the
-         * scale-refresh loop and a settle tail is single-digit counts, so a
-         * 10-tick bucket has orders of magnitude of headroom. A probe is not
-         * worth saturation logic in a 100 kHz ISR. */
-        shared->elsStop.diagTrace[bucket] = (int16_t)(shared->elsStop.diagTrace[bucket] + dZ);
-      }
-
-      shared->elsStop.diagNetCounts += dZ;
-      if (dZ != 0) {
-        shared->elsStop.diagSettleTicks = (int32_t)data->diagCaptureTick;
-      }
-
-      data->diagCaptureTick++;
-      if (data->diagCaptureTick >= (uint32_t)ELS_DIAG_TRACE_BUCKETS * ELS_DIAG_BUCKET_TICKS) {
-        /* Ran out of buckets before the servo moved again. The capture did NOT
-         * finish measuring: report that rather than letting a truncated trace
-         * pass for a complete one. */
-        shared->elsStop.diagCaptureTicks = (uint16_t)data->diagCaptureTick;
-        shared->elsStop.diagEndReason    = ELS_DIAG_END_WINDOW;
-        data->diagState = 0;
-        shared->elsStop.diagSeq++;
-      }
-    }
+    elsDiagTick(&data->diag, &shared->elsStop, dZ, dServo);
   }
-#endif
 
   /* Divide-by-zero guard. The zero window is REACHABLE, not theoretical:
    * servoCycles is 0 from reset (Ramps.c:64) and its only writer is
@@ -1233,11 +1150,26 @@ _Noreturn void servoEnableTask(void *argument) {
       anySyncMotionEnabled = anySyncMotionEnabled || (shared->scales[i].syncEnable != 0);
     }
 
-    if (anySyncMotionEnabled && !shared->elsStop.active && rampsData->shared.fastData.servoMode != 2)
-      rampsData->shared.fastData.servoMode = 1;
+    /* The re-assert. elsDiagServoGate is a no-op returning false in every
+     * release build; a diagnostic probe may refuse the assert and record that
+     * it did (see els_diag_disengage_latch.h, which exists precisely because
+     * this line can switch the feed back on after a disengage). */
+    if (anySyncMotionEnabled && !shared->elsStop.active && rampsData->shared.fastData.servoMode != 2) {
+      if (!elsDiagServoGate(&rampsData->diag, &shared->elsStop,
+                            rampsData->shared.fastData.servoMode)) {
+        rampsData->shared.fastData.servoMode = 1;
+      }
+    }
 
     rampsData->shared.fastData.servoSpeed = (float)(int32_t)(rampsData->shared.servo.currentSteps - previousPosition) * 10;
     previousPosition = rampsData->shared.servo.currentSteps;
+
+    /* Probe hook: a mode-watch probe derives and publishes the machine mode
+     * once per task tick. No code in a release build or any other probe.
+     * AFTER the re-assert above, so the published mode reflects this tick's
+     * decision rather than last tick's. */
+    elsDiagTaskTick(&rampsData->diag, shared,
+                    (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
 
     if (shared->fastData.servoMode != 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_RESET);
     if (shared->fastData.servoMode == 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_SET);

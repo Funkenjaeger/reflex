@@ -28,10 +28,17 @@ THREE PROPERTIES THIS MUST HAVE, and each one is load-bearing:
 NO UNIT CONVERSION HAPPENS HERE. Bucket width is recorded in ISR ticks, and the
 ISR's measured interval in CPU cycles is recorded alongside it, so ticks can be
 converted to seconds from the capture itself. reflex-fw's own documentation
-disagrees with itself about the ISR rate by 10x (AGENTS.md and ARCHITECTURE.md
-say ~100 us, todo.md and els_slip.h say 100 kHz, and reflex.ioc describes a third
-rate it has not matched since 2024), so a conversion baked in here would be a
-confident wrong answer. Record what was measured; convert when analysing.
+disagreed with itself about the ISR rate by 10x when this was written -- AGENTS.md
+and ARCHITECTURE.md said ~100 us, todo.md and els_slip.h said 100 kHz, and
+reflex.ioc described a third rate it had not matched since 2024. Those were
+reconciled to 100 kHz on 2026-08-16, so the contradiction is gone.
+
+THE RULE STANDS ANYWAY, and not merely out of caution. A rate compiled into this
+file is an assumption about a number the firmware is free to change, and the
+capture would keep parsing cleanly and silently mean something else -- the same
+class of failure diagSchema exists to prevent one level up. That is why the
+firmware PUBLISHES diagBucketTicks rather than expecting anyone to know it.
+Record what was measured; convert when analysing.
 """
 
 import json
@@ -42,6 +49,9 @@ from reflex.utils.devices import (
     ELS_DIAG_SCHEMA_NONE,
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE,
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2,
+    ELS_DIAG_SCHEMA_DISENGAGE_LATCH,
+    ELS_DIAG_SCHEMA_MODE_WATCH,
+    ELS_DIAG_SCHEMA_MODE_WATCH_V2,
 )
 from reflex.utils.paths import diag_dir
 
@@ -58,11 +68,32 @@ log = logging.getLogger(__name__)
 KNOWN_SCHEMAS = frozenset({
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE,
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2,
+    # Schema 3 is NOT a trace. It counts events, and its fields mean different
+    # things -- diagSeq is "times the firmware caught servoEnableTask trying to
+    # re-assert the feed after a disengage", not "captures completed". A
+    # non-zero value is the finding. See reflex-fw DIAG.md.
+    ELS_DIAG_SCHEMA_DISENGAGE_LATCH,
+    # Schemas 4 and 5: diagSeq counts MODE TRANSITIONS, so each recorded line
+    # is one transition -- capture_ticks holds the mode entered, settle_ticks
+    # the mode left, net_counts the cumulative latch-suppression count. The
+    # continuous current-mode register is read elsewhere (ElsModeWatch); the
+    # recorder's job here is just the durable transition log. Schema 4 is
+    # retired firmware-side but stays accepted (the takeup v1 reasoning
+    # above): the lathe runs a schema-4 build until its next flash + power
+    # cycle, and every line carries its own schema, so v1 net_counts ("every
+    # refusal") is never confused with v2's ("effective refusals only").
+    ELS_DIAG_SCHEMA_MODE_WATCH,
+    ELS_DIAG_SCHEMA_MODE_WATCH_V2,
 })
 
 # Schemas that publish diagEndReason. Only these can be checked for "did a
 # capture actually complete" -- v1 has no such field, and its register reads as
 # 0, so applying the check there would reject every v1 capture as empty.
+#
+# Schemas 4 and 5 publish the field but MUST NOT be in this set: there it
+# means "a latch suppression has been seen", and 0 is the healthy steady state
+# -- gating on it would silently drop every mode-transition record on a
+# machine where nothing is wrong, which is all of them if the fixes hold.
 SCHEMAS_WITH_END_REASON = frozenset({ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2})
 
 # Consecutive failures tolerated before the recorder gives up for this
@@ -97,6 +128,13 @@ class ElsDiagRecorder:
     def enabled(self) -> bool:
         """True only once a recognised probe has actually been found."""
         return self._enabled is True
+
+    @property
+    def schema(self):
+        """The recognised probe's schema id, or None before interrogation /
+        when dormant. Lets other consumers (the mode watch) key on which
+        probe is present without issuing their own diagSchema read."""
+        return self._schema if self._enabled is True else None
 
     def _disable(self, reason: str):
         if self._enabled is not False:
@@ -261,7 +299,17 @@ class ElsDiagRecorder:
             fh.write(json.dumps(record) + "\n")
 
         self.captures_written += 1
-        log.info(
-            f"ELS settle capture #{seq}: settle_ticks={record['settle_ticks']}, "
-            f"net_counts={record['net_counts']} -> {path}"
-        )
+        if record.get("schema") in (ELS_DIAG_SCHEMA_MODE_WATCH,
+                                    ELS_DIAG_SCHEMA_MODE_WATCH_V2):
+            # Same registers, different meanings (see KNOWN_SCHEMAS): this line
+            # is one mode transition, and net_counts is the suppression count.
+            log.info(
+                f"ELS mode transition #{seq}: "
+                f"{record['settle_ticks']} -> {record['capture_ticks']}, "
+                f"suppressions={record['net_counts']} -> {path}"
+            )
+        else:
+            log.info(
+                f"ELS settle capture #{seq}: settle_ticks={record['settle_ticks']}, "
+                f"net_counts={record['net_counts']} -> {path}"
+            )

@@ -1,5 +1,6 @@
 import glob
 import os
+import re
 
 from kivy.clock import Clock
 from kivy.logger import Logger, FileHandler
@@ -11,6 +12,25 @@ from reflex.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
 load_kv(__file__)
+
+_LOG_NAME_RE = re.compile(r"kivy_(\d+)-(\d+)-(\d+)_(\d+)\.txt$")
+
+
+def _log_sort_key(path):
+    """Newest-first by the FILENAME's (date, run counter), mtime only as a
+    fallback for foreign names. The kiosk loses power mid-write as a matter
+    of routine (machine power is common to the Pi), and journal replay can
+    leave the dead log's mtime NEWER than the live one — which is how the
+    current session's log sorted second in the browser on 2026-08-17. The
+    name counter is ground truth kivy itself maintains; mtime is not."""
+    m = _LOG_NAME_RE.search(os.path.basename(path))
+    if m:
+        yy, mm, dd, n = (int(g) for g in m.groups())
+        return (1, yy, mm, dd, n)
+    try:
+        return (0, 0, 0, 0, os.path.getmtime(path))
+    except OSError:
+        return (0, 0, 0, 0, 0)
 
 
 class LogsPanel(BoxLayout):
@@ -33,7 +53,7 @@ class LogsPanel(BoxLayout):
     def refresh_logs(self):
         log_dir = self.get_log_dir()
         pattern = os.path.join(log_dir, "kivy_*.txt")
-        files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+        files = sorted(glob.glob(pattern), key=_log_sort_key, reverse=True)
         self.log_files = files
         self._rebuild_file_list()
 

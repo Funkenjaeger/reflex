@@ -45,10 +45,11 @@ def _candidates():
         yield Path(override).expanduser()
         return
 
-    here = Path(__file__).resolve().parent.parent      # the reflex-ui checkout
-    yield here.parent / "reflex-fw"                    # CI, and any flat layout
-    yield here.parent.parent / "embedded" / "reflex-fw"  # desktop: rpi/ + embedded/
-    yield Path.home() / "projects" / "reflex-fw"       # laptop
+    here = Path(__file__).resolve().parent.parent      # the ui/ checkout
+    yield here.parent / "fw"                           # the monorepo: fw/ beside ui/
+    yield here.parent / "reflex-fw"                    # legacy flat two-repo layout
+    yield here.parent.parent / "embedded" / "reflex-fw"  # legacy desktop split
+    yield Path.home() / "projects" / "reflex-fw"       # legacy laptop
 
 
 def fw_dir():

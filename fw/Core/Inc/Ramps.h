@@ -64,12 +64,73 @@
 #define ELS_DIAG_SCHEMA_NONE 0
 #define ELS_DIAG_SCHEMA_TAKEUP_SETTLE 1     /* RETIRED -- see v2 */
 #define ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 2
+#define ELS_DIAG_SCHEMA_DISENGAGE_LATCH 3
+#define ELS_DIAG_SCHEMA_MODE_WATCH 4        /* RETIRED -- see v2 */
+#define ELS_DIAG_SCHEMA_MODE_WATCH_V2 5
+
+/* WHICH probe is compiled in, selected by the build as
+ * -DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_<NAME>. scripts/build.sh --diag=<name> is the
+ * supported way to set it; scripts/lib/diag.sh derives the legal names from the
+ * schema defines above, so the script cannot offer a probe the firmware does not
+ * have.
+ *
+ * ONE PROBE AT A TIME, AND THAT IS A PROPERTY OF THE SHAPE, NOT A RULE TO
+ * REMEMBER. Every probe writes the same 64 reserved registers; two of them
+ * compiled in together would interleave their fields and produce a capture that
+ * looks well-formed and means nothing. Because the selection is a single macro
+ * holding a single value, "two probes at once" is not a state this build system
+ * can represent -- there is no combination of flags that expresses it. A
+ * documented prohibition would have needed somebody to read the document.
+ *
+ * ELS_DIAG_SCRATCH is DERIVED, never passed. It is the "some probe is active"
+ * umbrella the shared plumbing keys off; the per-probe capture code keys off
+ * ELS_DIAG_PROBE. Passing ELS_DIAG_SCRATCH by hand is rejected below rather than
+ * silently reserving the block for a probe that does not exist. */
+#if defined(ELS_DIAG_SCRATCH) && !defined(ELS_DIAG_PROBE)
+#error "ELS_DIAG_SCRATCH is derived, not passed. Use scripts/build.sh --diag=<probe>; see DIAG.md."
+#endif
+
+#ifdef ELS_DIAG_PROBE
+/* A misspelled macro name expands to an undefined identifier, which the
+ * preprocessor evaluates to 0 -- i.e. silently to "no probe" while the build
+ * still calls itself diagnostic. Rejecting NONE explicitly is what turns that
+ * into a compile error instead of a diagnostic build that measures nothing. */
+#if ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_NONE
+#error "ELS_DIAG_PROBE is unset, misspelled, or NONE. Use scripts/build.sh --diag=<probe>; see DIAG.md."
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE
+#error "ELS_DIAG_SCHEMA_TAKEUP_SETTLE is RETIRED; use takeup-settle-v2. See DIAG.md."
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
+/* recognised */
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_DISENGAGE_LATCH
+/* recognised */
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH
+#error "ELS_DIAG_SCHEMA_MODE_WATCH is RETIRED (its diagNetCounts drowned the signal in no-op refusals); use mode-watch-v2. See DIAG.md."
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH_V2
+/* recognised */
+#else
+#error "unknown ELS_DIAG_PROBE. Register the schema id in Ramps.h and add it to this chain; see DIAG.md."
+#endif
+#define ELS_DIAG_SCRATCH 1
+#endif
 
 /* Why the capture stopped. The distinction matters: a capture that ran out of
  * buckets did not finish measuring, and its last bucket is a floor rather than
  * a result. */
 #define ELS_DIAG_END_PULSE  1   /* servo drove again -- settling is over */
 #define ELS_DIAG_END_WINDOW 2   /* ran out of buckets while still quiet-or-moving */
+
+/* Probe capture state, held in rampsHandler_t. Deliberately generic and shared
+ * by every probe rather than per-probe: it is two words of ISR-owned scratch,
+ * and a per-probe union here would change rampsHandler_t's size from build to
+ * build for no benefit. A probe needing more than this can keep its own statics
+ * in its own header.
+ *
+ * 0 = idle, 1 = armed, 2 = capturing -- the states the existing probe uses; a
+ * probe is free to mean something else by them. */
+typedef struct {
+  uint16_t state;
+  uint32_t captureTick;   // ISR ticks since capture start
+} elsDiagCtx_t;
 
 
 typedef struct {
@@ -238,13 +299,16 @@ typedef struct {
    * say with it — "moved 20 counts, none of them ours" is a much better refusal
    * message than the current one, and that is a UI change, not a firmware one. */
   elsSlipAccum_t elsSlip;
-#ifdef ELS_DIAG_SCRATCH
-  /* Take-up settle-trace capture state. Non-Modbus, ISR-owned, and compiled out
-   * entirely in a release build along with every write to the scratchpad.
-   * 0 = idle, 1 = armed at take-up initiation, 2 = capturing. */
-  uint16_t diagState;
-  uint32_t diagCaptureTick;   // ISR ticks since capture start
-#endif
+  /* Diagnostic probe capture state. Non-Modbus, ISR-owned, and untouched by a
+   * release build -- the no-op entry points in els_diag.h ignore it.
+   *
+   * UNCONDITIONAL, and LAST IN THE STRUCT, both on purpose. Unconditional so
+   * every call site in Ramps.c can pass &data->diag with no #ifdef; last so
+   * that carrying it in a release build cannot shift the offset of any field
+   * above it. It is zero-initialised handler RAM, so it lives in .bss and never
+   * reaches the .bin -- which is why this refactor left the release image
+   * byte-identical. Keep it here at the tail. */
+  elsDiagCtx_t diag;
 } rampsHandler_t;
 
 extern modbusHandler_t RampsModbusData;
@@ -261,5 +325,13 @@ _Noreturn void servoEnableTask(void *argument);
 
 //static void timServoEnableOnCallback(xTimerHandle pxTimer);
 //static void timServoEnableOffCallback(xTimerHandle pxTimer);
+
+/* LAST, and it has to be. els_diag.h's entry points take elsStop_t* and
+ * elsDiagCtx_t*, so it cannot be included until both exist -- which is why this
+ * sits at the foot of the header rather than up with the other includes.
+ * els_machine_mode.h needs rampsSharedData_t for the same reason, and must
+ * precede els_diag.h because the mode-watch probe calls its function. */
+#include "els_machine_mode.h"
+#include "els_diag.h"
 
 #endif

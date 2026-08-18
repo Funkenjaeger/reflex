@@ -60,7 +60,10 @@ pytestmark = pytest.mark.system
 
 # Mirrors conftest.py's REFLEX_FW_DIR default exactly (same pattern as
 # test_els_x_dimension.py -- conftest.py is read-only for this file).
-_REFLEX_FW_DIR = Path(os.environ.get("REFLEX_FW_DIR", "/mnt/c/projects/embedded/reflex-fw"))
+_REFLEX_FW_DIR = Path(
+    os.environ.get("REFLEX_FW_DIR")
+    or Path(__file__).resolve().parents[3] / "fw"
+)
 _BASE_TOML = _REFLEX_FW_DIR / "emulator" / "config" / "lathe.toml"
 
 # elspi's live-read geometry (2026-08-03) -- ground truth for both the UI

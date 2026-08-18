@@ -68,6 +68,13 @@ class ElsFsm:
         # on_enter_stopped know to arm ELS with a fresh stopPosition.
         self._engaging = False
 
+        # Set by reconcile_firmware_on_connect when it finds the firmware was
+        # driving the carriage at connect and stops it. Holds the register
+        # snapshot so the UI can tell the operator WHAT it interrupted; None
+        # means no pass was interrupted this session. Read once and cleared by
+        # whoever presents it.
+        self.interrupted_pass = None
+
 
     # ——— transition side effects ———
 
@@ -201,8 +208,7 @@ class ElsFsm:
         # operator-mode flags. When entering from disabled (operator clicked
         # "Engage"), arm ELS immediately with a fresh stopPosition so there's
         # protection against unexpected spindle starts before "Cut" is pressed.
-        # Only arm if Z is on the safe side of stop_z — arming when past
-        # stop_z would cause immediate ELS fire → backlash takeup.
+        # Arming is positionally unconditional — see arm_idle_stop.
         self.board.unbind(update_tick=self._on_board_update)
 
         if self._engaging:
@@ -222,11 +228,26 @@ class ElsFsm:
         # so conservatively assume the next retract needs full takeup.
         self._retract_backlash_applied = False
         self.board.unbind(update_tick=self._on_board_update)
-        self.hal.set_enable(False)
         # Safety: disengaging ELS removes the stop that was gating the feed, so
         # also stop any running sync feed — otherwise a spindle-synced feed keeps
         # driving the carriage with no auto-stop (audit H6). Idempotent.
+        #
+        # SYNC OFF FIRST, THEN ENABLE, THEN FEED. Not cosmetic ordering.
+        # Dropping enable clears elsStop.active in firmware, and the firmware's
+        # servoEnableTask turns the feed back ON whenever it sees
+        # (any syncEnable) && !active. So between "enable = 0" and "syncEnable =
+        # 0" there is a window in which that task re-asserts servoMode = 1 —
+        # and nothing in firmware ever clears it again.
+        #
+        # Previously syncEnable was cleared only as a side effect of the
+        # servoMode binding in dispatchers/els.py, which by construction fires
+        # AFTER servoMode changes, so the window was always open. Measured at
+        # ~1 disengage in 7-10 leaving the carriage feeding — 1.825 mm in 3 s and
+        # still going — with the ELS stop simultaneously disarmed, because the
+        # firmware gates the stop check on enable. Feed running, backstop gone.
         feed_was_on = self.board.servo.servoMode != 0
+        self.hal.stop_sync()
+        self.hal.set_enable(False)
         self.board.servo.stop_feed()
         if feed_was_on and not self.board.connection_manager.connected:
             # A stop-feed write was attempted but not acknowledged (link down).
@@ -248,6 +269,21 @@ class ElsFsm:
         # the stop, and detach the move poller. Reached e.g. when a cut's stop
         # writes weren't acknowledged (on_enter_cutting).
         self.board.unbind(update_tick=self._on_board_update)
+        # SYNC OFF FIRST, explicitly, for the same reason as on_enter_disabled
+        # and reconcile_firmware_on_connect: set_enable(False) clears
+        # elsStop.active in firmware, and active == 1 is what HOLDS the carriage
+        # (Ramps.c:815 only accumulates sync steps while active == 0; clearing it
+        # 1->0 is the resume trigger, Ramps.c:826).
+        #
+        # This path happened to be safe already, because stop_feed() drops
+        # servoMode and the dispatchers/els.py binding clears syncEnable as a
+        # side effect BEFORE set_enable runs. But that safety was IMPLICIT --
+        # inherited from the ordering of two unrelated calls and a property
+        # binding in another module. Anyone reordering these three lines, or
+        # changing what that binding does, would silently re-arm the hazard with
+        # nothing here to say why the order mattered. Being explicit costs one
+        # call and makes the requirement local and stateable.
+        self.hal.stop_sync()
         self.board.servo.stop_feed()
         self.hal.set_enable(False)
 
@@ -385,30 +421,36 @@ class ElsFsm:
         stopPosition the FIRMWARE still holds from a previous session — a
         different shoulder, or a different part. It also made
         ``feed_without_armed_stop()`` report "armed", which silently skipped the
-        no-stop feed confirmation. Refuses too when Z is already past the stop,
-        where arming would fire ELS immediately → backlash takeup.
+        no-stop feed confirmation. That is the ONLY refusal: arming is
+        positionally unconditional (see the comment below).
         """
         if self.controller.stop_z_encoder is None:
             log.info("arm_idle_stop: no committed stop — leaving ELS disarmed")
             return False
-        z_pos = self.z_axis.scaledPosition
-        cut_dir = self.els.stop_direction_value(self.controller.els_forward)
-        diff = (z_pos - self.controller.stop_z) * cut_dir
-        if diff > 0:  # Z is past stop_z — arming would fire ELS on the spot
-            log.info(
-                f"arm_idle_stop: Z past stop — not arming "
-                f"(stop_z={self.controller.stop_z} z_pos={z_pos})"
-            )
-            return False
+        # NO positional condition. A Z-past-stop refusal lived here until
+        # 2026-08-17, justified by a heritage comment ("arming when past
+        # stop_z would cause immediate ELS fire → backlash takeup") that is
+        # false for the active-BEFORE-enable order used below: the firmware's
+        # trigger gate requires !active, so it cannot fire during this arm,
+        # the enable rising edge resets referenceLatched, and the next Cut
+        # therefore banks nothing (els_arm_past_stop_test pins all of this,
+        # including the enable-only order the old comment was true for). The
+        # refusal was itself the defect: it silently left the engaged machine
+        # with no hold and sync armed — the only unprotected engaged state in
+        # the system, and the real cause of round 2's misleading "no stop
+        # set" feed dialog.
         self.push_stop_to_firmware()
         # Set active=1 before enable so ELS arms in STOPPED state — sync motion
         # paused until the operator clicks Cut (which clears active via
-        # on_enter_cutting, triggering resume/takeup).
+        # on_enter_cutting, triggering resume/takeup). This order is also
+        # load-bearing for the unconditional arming above: active-first is
+        # what makes a Z-past-stop arm inert.
         self.hal.set_active(True)
         self.hal.set_enable(True)
         log.info(
             f"arm_idle_stop: armed ELS stopped with "
-            f"stop_z={self.controller.stop_z} z_pos={z_pos}"
+            f"stop_z={self.controller.stop_z} "
+            f"z_pos={self.z_axis.scaledPosition}"
         )
         return True
 
@@ -429,10 +471,10 @@ class ElsFsm:
         - disabled / alarm → clear enable+active. A cleared enable makes the
           retained stopPosition inert.
         - stopped (engaged-idle) → re-assert direction/hysteresis and re-arm via
-          arm_idle_stop() (self-gates on a committed stop + Z on the safe
-          side). Covers a firmware reboot mid-session losing our armed stop.
-          If arming refuses, clear enable+active — a retained arm must not
-          outlive its session either.
+          arm_idle_stop() (self-gates on a committed stop; positionally
+          unconditional). Covers a firmware reboot mid-session losing our
+          armed stop. If arming refuses (no committed stop), clear
+          enable+active — a retained arm must not outlive its session either.
         - cutting / retracting → hands off, log only: motion may be live, and
           blindly rewriting could disarm a stop that is actively protecting the
           cut. (Full link-loss-mid-cut recovery is a known separate gap.)
@@ -453,14 +495,62 @@ class ElsFsm:
             int(self.els.els_cal_motion_thresh_counts),
         )
 
+        # SNAPSHOT BEFORE TEARDOWN. The firmware keeps running across a UI
+        # restart, so these registers are the only surviving evidence of what
+        # the machine was doing. Read first, because everything below destroys
+        # it. Never raises -- a diagnostic must not block a safety teardown.
+        flight = self.hal.read_motion_in_flight()
+
         state = self.state
         if state in ('disabled', 'alarm'):
+            # SYNC OFF FIRST, ALWAYS, and before enable/active. Decided
+            # 2026-08-16; see the method docstring for the full reasoning.
+            #
+            # Two distinct hazards, both closed by this one call:
+            #
+            # 1. RELEASING A HELD STOP. active == 1 is what physically holds the
+            #    carriage at the shoulder -- firmware only accumulates sync steps
+            #    while active == 0 (reflex-fw Ramps.c:815), and clearing active
+            #    1->0 is the RESUME trigger (Ramps.c:826). So clearing active
+            #    with sync still live is a resume command, issued while enable is
+            #    also being cleared -- carriage off the shoulder with no armed
+            #    stop. The dwell at a shoulder is unbounded (operator backing out
+            #    a tool, checking a thread), which makes this the WIDE window,
+            #    not the narrow one.
+            #
+            # 2. THE SERVOENABLETASK RACE. Clearing enable clears active, and
+            #    while any syncEnable remains set the firmware task re-asserts
+            #    servoMode = 1 and nothing ever clears it.
+            #
+            # ACCEPTED COST: if the previous session died MID-PASS, this stops
+            # the carriage with the tool in the cut. In threading that risks a
+            # minor crash. Chosen deliberately over the alternative -- leaving a
+            # pass running with the stop disarmed -- because that is worse in
+            # every case, and this is safest in the large majority. The operator
+            # is TOLD when it happens rather than left to infer it (below), so
+            # the one time it bites there is no ambiguity about why.
+            #
+            # Window for that cost: ~10 s (RestartSec=5 plus ~5 s to connect,
+            # measured on elspi 2026-08-16) against a pass of comparable length,
+            # and it needs a crash to reach at all.
+            self.hal.stop_sync()
             self.hal.set_enable(False)
             self.hal.set_active(False)
             log.info(
                 f"reconcile_firmware_on_connect: cleared retained ELS stop "
-                f"(state={state})"
+                f"(state={state}, motion_in_flight={flight})"
             )
+            if flight.get('moving'):
+                # Deliberately loud. This is the accepted-cost case actually
+                # occurring, and the operator needs to know the carriage was
+                # stopped BY US and not by the machine finishing its pass.
+                log.warning(
+                    f"reconcile_firmware_on_connect: firmware was driving the "
+                    f"carriage at connect ({flight}) — sync disabled and stop "
+                    f"cleared; a pass was interrupted"
+                )
+                self.interrupted_pass = flight
+                bus.publish("els_pass_interrupted")
         elif state == 'stopped':
             self.hal.set_stop_direction(
                 self.els.stop_direction_value(self.controller.els_forward)
@@ -471,6 +561,13 @@ class ElsFsm:
                 self.hal.set_hysteresis_loose()
             armed = self.arm_idle_stop()
             if not armed:
+                # SYNC OFF FIRST here too. Same two hazards as the
+                # disabled/alarm branch above (releasing a held stop, and the
+                # servoEnableTask race) — see that branch's comment for the
+                # full reasoning. A refused re-arm tears down enable/active,
+                # and doing that with a retained syncEnable still set would
+                # turn the teardown into a resume command.
+                self.hal.stop_sync()
                 self.hal.set_enable(False)
                 self.hal.set_active(False)
             log.info(

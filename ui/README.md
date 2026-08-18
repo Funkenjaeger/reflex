@@ -1,73 +1,48 @@
-# Reflex UI
+# Reflex UI (`ui/`)
 
-A **Kivy-based Digital Read-Out (DRO) and Electronic Leadscrew (ELS) controller UI** for lathes, designed to run on Raspberry Pi or desktop environments (Windows, macOS, Linux). Interfaces via RS-485/Modbus RTU with a dedicated STM32-based control board running the associated [Reflex firmware](https://github.com/Funkenjaeger/reflex-fw)
+The **operator half** of [Reflex](../README.md): a Kivy touchscreen DRO/ELS
+app that runs on a Raspberry Pi at the machine (or any desktop for
+development) and drives the STM32 controller in [`../fw/`](../fw/) as an
+RS-485 Modbus RTU master. Workflow, configuration, validation, and display
+live here; everything real-time lives in the firmware.
 
-This software is based on the [rotary-controller-python (RCP)](https://github.com/bartei/rotary-controller-python) project and as of the present version, remains compatible with the associated hardware.  
-This project (along with the corresponding FW project) was hard forked from the original primarily due to natural divergence that followed from a focus on lathe use cases, where the original rotary-controller was designed for CNC-style rotary table use cases.
-
----
-
-## 📸 Screenshots
-
-Home screen in ELS (Electronic Lead Screw) mode with the advanced bar expanded. These images are
-regenerated automatically by CI and committed with each release, so they always reflect the
-current UI on this branch.
-
-| Dark | Light |
-|------|-------|
-| ![ELS mode — dark theme](docs/screenshots/home_els_dark.png) | ![ELS mode — light theme](docs/screenshots/home_els_light.png) |
+Screenshots and a demo video are in the [top-level README](../README.md).
 
 ---
 
-## 🚀 Features
+## 🚀 UI features
 
 * Responsive touch-capable UI built with **Kivy**
-* Communicates over **RS-485 Modbus RTU** with an STM32 controller running [Reflex firmware](https://github.com/Funkenjaeger/reflex-fw)
-* **Configurable axes** — add/remove axes, assign hardware scale inputs, apply transforms (identity, scaling, weighted sum, angle cos/sin)
-* **Electronic Lead Screw (ELS)** mode for synchronized threading and power feed on manual lathes
-  - Automatic electronic stop, usable when feeding or threading
-  - Optional electronic retract
-  - Automatic phase re-sync to thread pitch between passes (allows free use of half nut between threading passes)
+* **Configurable axes** — add/remove axes, assign hardware scale inputs, apply
+  transforms (identity, scaling, weighted sum, angle cos/sin)
+* ELS operator flows: threading wizard, electronic stop and retract targets,
+  feeds/threads table
 * Customizable display: fonts, colors, digit formats (metric/imperial/angle)
-* **Contextual help** — info button on every setting field with documentation and examples
+* **Contextual help** — info button on every setting field with documentation
+  and examples
 * Works on Raspberry Pi 3/4/5, Windows, macOS, and Linux
 
 ---
 
-## 🎥 Demo
+## 🎯 Software requirements
 
-[![Reflex UI demo video](https://img.youtube.com/vi/38qAaq2tOGU/maxresdefault.jpg)](https://www.youtube.com/watch?v=38qAaq2tOGU)
-
----
-
-## 🎯 Requirements
-
-* **Hardware**
-
-  * STM32-based controller board (with STM32 firmware from [reflex-fw](https://github.com/Funkenjaeger/reflex-fw))
-    - Compatible with the rotary-controller board available from [Provvedo](https://www.provvedo.com) (no affiliation)
-  * RS-485 interface (e.g. via Power Hat)
-  * Raspberry Pi 3/4/5 for Pi deployments
-
-* **Software**
-
-  * Python 3.10+
-  * [`uv`](https://docs.astral.sh/uv/) package manager
+* Python 3.10+
+* [`uv`](https://docs.astral.sh/uv/) package manager
 
 ---
 
 ## ⚙️ Installation & Setup
 
-### 1. Clone the Repository
+### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Funkenjaeger/reflex-ui.git
-cd reflex-ui
+git clone https://github.com/Funkenjaeger/reflex.git
+cd reflex/ui
 ```
 
 ### 2. Install `uv`
 
-Install `uv` (Linux/macOS):
+Linux/macOS:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -75,23 +50,27 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 For Windows, see the [uv installation docs](https://docs.astral.sh/uv/getting-started/installation/).
 
-### 3. Install Dependencies
+### 3. Install dependencies
 
 ```bash
 uv sync
 ```
 
-### 4. Run the App
+### 4. Run the app
 
 ```bash
 uv run python -m reflex.main
 ```
 
-### 5. Run Tests
+### 5. Run tests
 
 ```bash
 uv run pytest
 ```
+
+(The default suite includes the cross-half register-map contract test against
+`../fw/Core/Inc/Ramps.h`; the emulator-backed system suite runs with
+`uv run pytest -m system tests/system`.)
 
 ---
 
@@ -113,10 +92,10 @@ uv run pytest
   # Stop the existing RCP service
   sudo systemctl stop rotary-controller
 
-  # Clone reflex-ui
+  # Clone the reflex monorepo
   cd /root
-  git clone https://github.com/Funkenjaeger/reflex-ui.git
-  cd reflex-ui
+  git clone https://github.com/Funkenjaeger/reflex.git
+  cd reflex/ui
   uv sync
 
   # Update the systemd service unit to point to the new path and module
@@ -168,6 +147,7 @@ reflex/
 ├── fsms/                      # State machines
 │   ├── els_fsm.py             # ELS state machine
 │   ├── els_stop_hal.py        # ELS stop hardware abstraction
+│   ├── els_mode_watch.py      # Firmware-mode census/divergence sampler
 │   ├── fsm_event_bus.py       # Event bus for FSM communication
 │   ├── ui_controller.py       # UI controller (mediates UI and FSM)
 │   └── ui_fsm.py              # UI state machine
@@ -190,29 +170,14 @@ reflex/
 
 ---
 
-## 📚 References & Related Projects
-
-* **Firmware:** [reflex-fw](https://github.com/Funkenjaeger/reflex-fw)
-* **Compatible PCB:** [rotary-controller-pcb](https://github.com/bartei/rotary-controller-pcb)
-* **OSPI OS:** [ospi](https://github.com/bartei/ospi) — ships with RCP pre-installed; see deployment notes below for replacing it with Reflex UI
-
-### Internal docs
+## 📚 Internal docs
 
 * **FSM architecture pattern:** [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md)
 * **ELS shoulder-stop orchestration:** [`ELS_STOP.md`](ELS_STOP.md)
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please:
-
-* Open issues for bugs or feature requests
-* Submit pull requests or improvements
-* Help with testing, documentation, porting new features
+* **Repo structure ADR:** [`docs/decisions/repo-structure-monorepo.md`](docs/decisions/repo-structure-monorepo.md)
 
 ---
 
 ## 📄 License
 
-Licensed under MIT. See `LICENSE` for full terms.
+MIT — see `LICENSE`.

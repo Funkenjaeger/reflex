@@ -963,3 +963,135 @@ def test_depth_latch_ignores_uncommitted_stop_dia():
     c._ui_fsm.fsm.set_state("in_cycle.waiting_to_retract")
     c._apply_policy()
     assert c.depth_reached is False
+
+
+# ─── Rung-2 mode-watch sampler ─────────────────────────────────────────────
+
+class TestModeWatchSampler:
+    """_poll_mode_watch: dormant without a mode-watch probe, decimated when
+    present, and structurally incapable of raising into the update loop."""
+
+    def test_dormant_without_the_mode_watch_probe(self, ctrl):
+        ctrl._diag_recorder = MagicMock()
+        ctrl._diag_recorder.schema = None          # release firmware
+        ctrl._hal = MagicMock()
+        for _ in range(20):
+            ctrl._poll_mode_watch()
+        ctrl._hal.read_current_mode.assert_not_called()
+
+    def test_samples_every_nth_tick_and_feeds_the_watch(self, ctrl):
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
+        ctrl._diag_recorder = MagicMock()
+        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH
+        ctrl._hal = MagicMock()
+        ctrl._hal.read_current_mode.return_value = 5      # HELD
+        ctrl._mode_watch = MagicMock()
+        for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY * 2):
+            ctrl._poll_mode_watch()
+        assert ctrl._hal.read_current_mode.call_count == 2
+        ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 5)
+
+    def test_samples_under_the_v2_probe_too(self, ctrl):
+        """The schema-4 -> 5 bump (2026-08-17, effective counting only) must
+        not send the rung-2 census dormant at the flash — that would be the
+        exact silent-dormancy failure the KNOWN_SCHEMAS refusal exists to
+        make loud, produced instead by a gate nobody re-checked."""
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH_V2
+        ctrl._diag_recorder = MagicMock()
+        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH_V2
+        ctrl._hal = MagicMock()
+        ctrl._hal.read_current_mode.return_value = 4      # JOG
+        ctrl._mode_watch = MagicMock()
+        for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY):
+            ctrl._poll_mode_watch()
+        assert ctrl._hal.read_current_mode.call_count == 1
+        ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 4)
+
+    def test_a_failing_read_never_reaches_the_update_loop(self, ctrl):
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
+        ctrl._diag_recorder = MagicMock()
+        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH
+        ctrl._mode_watch_tick = ctrl.MODE_WATCH_SAMPLE_EVERY - 1
+        ctrl._hal = MagicMock()
+        ctrl._hal.read_current_mode.side_effect = RuntimeError("link glitch")
+        ctrl._poll_mode_watch()                    # must not raise
+
+
+# ─── Disengage gate: refuse only while feeding WITH the spindle turning ────
+
+def test_disengage_refused_while_feeding_with_spindle_running(ctrl):
+    _engage(ctrl)
+    ctrl._board.servo.servoMode = 1          # sync motion armed
+    ctrl._els.spindle_is_running = True
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl.engaged is True              # refused: still engaged
+    assert ctrl._els_fsm.state == "stopped"
+
+
+def test_disengage_allowed_when_spindle_stopped_even_with_sync_armed(ctrl):
+    """Operator decision 2026-08-17, after round-1 hardware testing: with the
+    spindle stopped there are no sync deltas, nothing can move, and the
+    refusal is pure friction. Firmware-safe per the F1/F2 fixes (the
+    enable-fall handler consumes its own resume edge and cancels pending
+    motion — hardware-verified the same day)."""
+    _engage(ctrl)
+    ctrl._board.servo.servoMode = 1          # sync armed...
+    ctrl._els.spindle_is_running = False     # ...but the machine is inert
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl.engaged is False
+    assert ctrl._els_fsm.state == "disabled"
+
+
+def test_disengage_allowed_when_not_feeding_regardless_of_spindle(ctrl):
+    _engage(ctrl)
+    ctrl._board.servo.servoMode = 0
+    ctrl._els.spindle_is_running = True      # spindle turning, feed off
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl.engaged is False
+    assert ctrl._els_fsm.state == "disabled"
+
+
+# ─── Arming is positionally unconditional (round-2/3 repro, 2026-08-17) ────
+
+def test_engaging_with_z_past_the_stop_arms_the_hold():
+    """The round-2 hardware repro, inverted from a banner test to an arming
+    test: the carriage parks a hair past the stop after a pass runs to it,
+    and re-engaging right there must ARM (active=1 then enable=1) exactly
+    as it would from the clear side. The Z-past-stop refusal that lived in
+    arm_idle_stop was itself the defect (it silently left the engaged
+    machine with no hold and sync armed, and produced the misleading "no
+    stop set" feed dialog); els_arm_past_stop_test in reflex-fw pins the
+    firmware side of why unconditional arming is safe."""
+    z_axis = _make_z_axis(scaled_position=-0.002)   # 2 thou past a stop at 0
+    board, els = _make_collaborators(z_axis=z_axis, x_axis=_make_x_axis())
+    c = ElsUiController(els=els, board=board)
+    _pump()
+    c.commit_standalone_stop_z(0.0)
+    hal_spy = MagicMock()
+    c._els_fsm.hal = hal_spy
+    c.toggle_engage()
+    _pump()
+    assert c.engaged is True
+    hal_spy.set_active.assert_called_once_with(True)
+    hal_spy.set_enable.assert_called_once_with(True)
+
+
+def test_unarmed_stop_message_names_the_actual_cause():
+    """Two different operator problems, two different remedies — the old
+    one-size dialog claimed "no stop is set" for both. (A third cause,
+    "stop set but not armed with Z past it", existed while arm_idle_stop
+    carried its positional refusal; with arming unconditional that state is
+    unreachable, which is the fix, not a coverage gap.)"""
+    z_axis = _make_z_axis(scaled_position=-0.002)
+    board, els = _make_collaborators(z_axis=z_axis, x_axis=_make_x_axis())
+    c = ElsUiController(els=els, board=board)
+    _pump()
+
+    assert "not engaged" in c.unarmed_stop_message()
+
+    c.toggle_engage()
+    _pump()
+    assert "No stop is set" in c.unarmed_stop_message()

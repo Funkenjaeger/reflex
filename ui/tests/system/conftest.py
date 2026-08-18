@@ -33,7 +33,12 @@ from pathlib import Path
 
 import pytest
 
-REFLEX_FW_DIR = Path(os.environ.get("REFLEX_FW_DIR", "/mnt/c/projects/embedded/reflex-fw"))
+# Default: the in-repo firmware, two levels up from ui/ in the monorepo. The
+# env override remains for pointing a run at some other checkout deliberately.
+REFLEX_FW_DIR = Path(
+    os.environ.get("REFLEX_FW_DIR")
+    or Path(__file__).resolve().parents[3] / "fw"
+)
 EMULATOR_DIR = REFLEX_FW_DIR / "emulator"
 EMULATOR_BIN = EMULATOR_DIR / "build" / "lathe-emulator"
 

@@ -59,7 +59,10 @@ pytestmark = pytest.mark.system
 # Mirrors conftest.py's REFLEX_FW_DIR default exactly. Kept independent here
 # (rather than importing conftest.REFLEX_FW_DIR) since conftest.py is
 # read-only for this file and this only needs the one derived path.
-_REFLEX_FW_DIR = Path(os.environ.get("REFLEX_FW_DIR", "/mnt/c/projects/embedded/reflex-fw"))
+_REFLEX_FW_DIR = Path(
+    os.environ.get("REFLEX_FW_DIR")
+    or Path(__file__).resolve().parents[3] / "fw"
+)
 _BASE_TOML = _REFLEX_FW_DIR / "emulator" / "config" / "lathe.toml"
 
 # Real machine commissioning (forward +30 spindle, servo reversed at

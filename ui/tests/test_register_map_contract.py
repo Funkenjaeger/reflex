@@ -273,3 +273,102 @@ def test_layout_engine_models_padding():
     leaves = {p: o for (p, _t, o, _s) in _flatten("pad_probe_t", structs)}
     assert leaves == {"a": 0, "b": 4, "c": 8, "d": 12}
     assert _type_size("pad_probe_t", structs) == 16
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic schema registry, firmware <-> UI
+#
+# The tests above compare the register LAYOUT. They say nothing about the
+# diagnostic schema ids, and those are a second cross-repo contract living in
+# the same header: reflex-fw registers a probe as ELS_DIAG_SCHEMA_<NAME>, and
+# reflex-ui refuses any schema outside els_diag.KNOWN_SCHEMAS.
+#
+# Nothing connected the two until 2026-08-16. A probe added in firmware and
+# forgotten here flashed fine, ran fine, and recorded nothing -- the recorder
+# logged "diagSchema=N, which this UI does not recognise", went dormant, and CI
+# stayed green. Soft failure, clear message, and still a wasted trip to the
+# lathe, which is the expensive currency on this project.
+#
+# Deliberately NOT asserting that retired schemas are absent from KNOWN_SCHEMAS.
+# The UI keeps them on purpose: every recorded .jsonl line carries its own
+# schema, so historical captures taken under an older probe stay readable long
+# after the firmware refuses to build it.
+# ---------------------------------------------------------------------------
+
+DIAG_SCHEMA_RE = re.compile(
+    r"^#define\s+(ELS_DIAG_SCHEMA_[A-Z0-9_]+)\s+(\d+)[ \t]*(?:/\*(.*?)\*/)?",
+    re.M,
+)
+
+
+def _firmware_diag_schemas() -> dict:
+    """{macro_name: (value, retired)} parsed from the firmware header.
+
+    Retirement is read from the trailing comment, which is where reflex-fw
+    already records it and what scripts/lib/diag.sh parses to decide which
+    probes --diag will offer. One source, three readers.
+    """
+    out = {}
+    for m in DIAG_SCHEMA_RE.finditer(RAMPS_H.read_text()):
+        comment = (m.group(3) or "").upper()
+        out[m.group(1)] = (int(m.group(2)), "RETIRED" in comment)
+    return out
+
+
+def test_diag_schema_parse_is_not_vacuous():
+    """Guards every assertion below. A regex that silently matched nothing would
+    make the whole registry check pass against an empty set -- the exact shape of
+    a check incapable of failing. Pin the floor: NONE, plus at least one live and
+    one retired probe, which is the state as of 2026-08-16."""
+    fw = _firmware_diag_schemas()
+    assert "ELS_DIAG_SCHEMA_NONE" in fw, f"parsed no NONE from {RAMPS_H}: {fw}"
+    live = {n for n, (_v, r) in fw.items() if not r and n != "ELS_DIAG_SCHEMA_NONE"}
+    retired = {n for n, (_v, r) in fw.items() if r}
+    assert live, f"parsed no live probe schemas: {fw}"
+    assert retired, f"parsed no retired schemas -- is the RETIRED comment still there? {fw}"
+
+
+def test_every_live_firmware_probe_is_known_to_the_ui():
+    """A probe the firmware can build but the UI refuses records nothing."""
+    from reflex.fsms.els_diag import KNOWN_SCHEMAS
+
+    fw = _firmware_diag_schemas()
+    live = {v for n, (v, r) in fw.items() if not r and n != "ELS_DIAG_SCHEMA_NONE"}
+    missing = live - set(KNOWN_SCHEMAS)
+    assert not missing, (
+        f"reflex-fw can build probe schema(s) {sorted(missing)} that this UI does "
+        f"not recognise. Add them to KNOWN_SCHEMAS in reflex/fsms/els_diag.py "
+        f"(and SCHEMAS_WITH_END_REASON if they publish diagEndReason). See "
+        f"reflex-fw DIAG.md."
+    )
+
+
+def test_schema_ids_agree_by_name_and_value():
+    """Membership is not enough: the ids are a wire contract, so a renumbering on
+    one side has to fail here rather than silently reinterpret a capture."""
+    from reflex.utils import devices
+
+    for name, (value, _retired) in _firmware_diag_schemas().items():
+        ui_value = getattr(devices, name, None)
+        assert ui_value is not None, (
+            f"{name} is defined in reflex-fw but not mirrored in "
+            f"reflex/utils/devices.py"
+        )
+        assert ui_value == value, (
+            f"{name}: firmware says {value}, reflex-ui says {ui_value}. Schema "
+            f"ids are append-only and must never be renumbered."
+        )
+
+
+def test_ui_recognises_no_schema_the_firmware_never_defined():
+    """Drift the other way: an id the UI would accept but no firmware can emit
+    means either a stale constant here or a probe deleted rather than retired."""
+    from reflex.fsms.els_diag import KNOWN_SCHEMAS
+
+    fw_values = {v for (v, _r) in _firmware_diag_schemas().values()}
+    phantom = set(KNOWN_SCHEMAS) - fw_values
+    assert not phantom, (
+        f"this UI would accept schema(s) {sorted(phantom)} that reflex-fw does "
+        f"not define. Retired probes keep their id in Ramps.h forever; they are "
+        f"never deleted."
+    )
