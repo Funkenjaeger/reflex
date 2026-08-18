@@ -16,6 +16,11 @@
 DIAG_HEADER_REL="Core/Inc/Ramps.h"
 
 # CLI name <-> macro name. `ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2` <-> `takeup-settle-v2`.
+# These print WITHOUT a trailing newline because callers use them in command
+# substitution; diag_probe_list adds the newline itself. Getting that backwards
+# ran the names together ("takeup-settle-v2disengage-latch") -- invisible while
+# there was only one probe, which is the whole reason a second one is worth
+# adding early.
 _diag_macro_to_name() {
     printf '%s' "${1#ELS_DIAG_SCHEMA_}" | tr 'A-Z_' 'a-z-'
 }
@@ -32,7 +37,8 @@ diag_probe_list() {
       | grep -v 'RETIRED' \
       | awk '{print $2}' \
       | grep -v '^ELS_DIAG_SCHEMA_NONE$' \
-      | while read -r macro; do _diag_macro_to_name "$macro"; done
+      | while read -r macro; do printf '%s
+' "$(_diag_macro_to_name "$macro")"; done
 }
 
 # Resolve a CLI name to its macro, or fail. Validating against the parsed header

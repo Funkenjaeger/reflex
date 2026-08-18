@@ -211,6 +211,36 @@ class TestOnConnected:
         servo.board.connected = True
         assert servo.disableControls is False
 
+    def test_adoption_does_not_seed_the_commanded_baseline(self, servo):
+        """Adopting the retained firmware servoMode at connect is an
+        OBSERVATION: the operator has not asked for anything, so the
+        watchdog's baseline (_commanded_servo_mode) must not move. Seeding it
+        with the observed value would make the watchdog compare the firmware
+        against itself on the very connect where a stale retained feed is the
+        thing worth noticing."""
+        servo.board.fast_data_values = {
+            'servoCurrent': 0,
+            'servoMode': 1,
+        }
+        servo.board.connected = True
+        assert servo.servoMode == 1                  # adopted for display
+        assert servo._commanded_servo_mode is None   # but never commanded
+
+    def test_adoption_is_flagged_as_firmware_originated(self, servo):
+        """The flag must be True for every listener fired by the adoption
+        assignment (dispatchers/els.py checks it before driving syncEnable),
+        and False again afterwards so real UI commands still count."""
+        seen = []
+        servo.bind(servoMode=lambda *_:
+                   seen.append(servo.servoMode_from_firmware))
+        servo.board.fast_data_values = {
+            'servoCurrent': 0,
+            'servoMode': 1,
+        }
+        servo.board.connected = True
+        assert seen == [True], "listener saw an unflagged adoption"
+        assert servo.servoMode_from_firmware is False
+
 
 class TestToggleEnable:
     def test_toggle_when_disconnected(self, servo):

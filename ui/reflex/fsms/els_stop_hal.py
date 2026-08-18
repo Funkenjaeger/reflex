@@ -34,6 +34,72 @@ class ElsStopHal:
             return
         self._board.device['elsStop']['active'] = 1 if active else 0
 
+    def stop_sync(self) -> None:
+        """Clear syncEnable on every scale. The MOTION SOURCE off-switch.
+
+        ORDER MATTERS AT DISENGAGE, and this is the whole point of the method.
+        The firmware's servoEnableTask (reflex-fw Ramps.c, 100 ms period) does:
+
+            if (anySyncMotionEnabled && !elsStop.active && servoMode != 2)
+                servoMode = 1;
+
+        -- it only ever turns the feed ON, and the `!active` term is a condition
+        that DISENGAGE ITSELF CREATES, because dropping enable clears active. So
+        for as long as any syncEnable is still set after enable has gone to 0,
+        that task is entitled to switch the feed back on, and nothing in the
+        firmware will ever switch it off again.
+
+        Clearing sync FIRST removes the `anySyncMotionEnabled` term before the
+        window can open. Relying on the servoMode->syncEnable binding to do it
+        (dispatchers/els.py) is what left the window: the binding fires as a
+        REACTION to servoMode, so syncEnable was necessarily written LAST.
+
+        Measured before this existed: ~1 disengage in 7-10 left the carriage
+        feeding, 1.825 mm in 3 s and still going, with the ELS stop disarmed
+        (enable == 0 gates the stop check off) -- i.e. no backstop left.
+        """
+        if not self._board.connected:
+            return
+        for scale in self._board.device['scales']:
+            scale['syncEnable'] = 0
+
+    def read_motion_in_flight(self) -> dict:
+        """Snapshot of whether the FIRMWARE is driving the carriage right now.
+
+        Read BEFORE init tears anything down. The firmware keeps running across a
+        UI restart -- observed on the real machine 2026-08-01 -- so these
+        registers are the only surviving evidence of what the machine was doing
+        when the previous session ended. The FSM's own state does not survive the
+        process and always comes up 'disabled', which is why it cannot be used to
+        make this call.
+
+        moving := a live motion SOURCE (some syncEnable) and a commanded servo
+        (servoMode != 0) and NOT held at a shoulder (active == 0). The active
+        term is what separates 'mid-pass' from 'parked at the stop waiting for
+        the operator' -- both have sync on, only one is moving.
+        """
+        if not self._board.connected:
+            return {'moving': False, 'reason': 'not connected'}
+        try:
+            stop = self._board.device['elsStop'].refresh()
+            sync = any(
+                self._board.device['scales'][i]['syncEnable']
+                for i in range(len(self._board.device['scales']))
+            )
+            servo_mode = self._board.servo.servoMode
+            active = bool(stop.get('active'))
+            enable = bool(stop.get('enable'))
+            return {
+                'moving': bool(sync) and servo_mode != 0 and not active,
+                'sync': bool(sync),
+                'servoMode': servo_mode,
+                'active': active,
+                'enable': enable,
+            }
+        except Exception as e:
+            # Never let a diagnostic read block the teardown that follows it.
+            return {'moving': False, 'reason': f'read failed: {e}'}
+
     def read_enable(self) -> bool:
         if not self._board.connected:
             return False
@@ -251,6 +317,18 @@ class ElsStopHal:
         if not self._board.connected:
             return 0
         return int(self._board.device['elsStop']['diagSchema'])
+
+    def read_current_mode(self) -> int:
+        """Firmware-derived machine mode (ELS_MMODE_*), live.
+
+        MEANINGFUL ONLY under a mode-watch schema (4 or 5), where the firmware
+        republishes its derived mode into diagCaptureTicks every ~100 ms.
+        Under any other schema this register means something else entirely —
+        callers gate on the recorder's learned schema, never call this bare.
+        """
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['diagCaptureTicks'])
 
     def read_diag_seq(self) -> int:
         """Increments once per COMPLETED capture. Edge-detect this.

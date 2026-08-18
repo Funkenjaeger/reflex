@@ -8,4 +8,11 @@ load_kv(__file__)
 
 
 class LogsScreen(Screen):
-    pass
+    def on_pre_enter(self, *args):
+        """Re-list the log files every time the screen is shown. The panel
+        used to populate once at app construction and never again, so the
+        list was a startup snapshot: files created later never appeared and
+        the ordering aged with it."""
+        panel = self.ids.get("logs_panel")
+        if panel is not None:
+            panel.refresh_logs()

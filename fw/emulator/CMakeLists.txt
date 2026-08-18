@@ -145,6 +145,34 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
 target_link_libraries(els_stop_resume_relatch_test m pthread)
 add_test(NAME els_stop_resume_relatch_test COMMAND els_stop_resume_relatch_test)
 
+# Mirror image of the relatch test: there the stop trigger (early in the pass)
+# consumed a SW-written active 1->0 edge before the resume detector saw it;
+# here the enable-fall handler (early) CREATES an active 1->0 edge that the
+# resume detector (late, same pass) sees and must not act on. Reproduces
+# finding F2 of the 2026-08-16 independent architecture review: disengaging
+# after a completed threading pass banks a backlash takeup. Expect this
+# target RED until the enable-fall handler consumes its own edge.
+add_executable(els_disengage_edge_test
+    ${CMAKE_SOURCE_DIR}/test/els_disengage_edge_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_disengage_edge_test m pthread)
+add_test(NAME els_disengage_edge_test COMMAND els_disengage_edge_test)
+
+# Sync deltas accumulate into desiredSteps gated on the hold conditions but
+# NOT on servoMode, while pulse emission IS mode-gated — so sync + mode 0
+# (or jog) banks unbounded motion debt that the servo chases at the next
+# mode 1. Reproduces finding F1 of the 2026-08-16 independent architecture
+# review. Expect RED until accumulation is gated on servoMode == 1.
+add_executable(els_sync_debt_test
+    ${CMAKE_SOURCE_DIR}/test/els_sync_debt_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_sync_debt_test m pthread)
+add_test(NAME els_sync_debt_test COMMAND els_sync_debt_test)
+
 # ISR-level backlash-CALIBRATION motion attribution (task 6a7c455e). Drives
 # data->elsCal through the real SynchroRefreshTimerIsr(), same stub strategy
 # as els_takeup_confirm_test. REQUIRES the calibration slip-attribution
@@ -208,3 +236,41 @@ target_compile_definitions(els_diag_scratch_takeup_settle_v2_test
 target_link_libraries(els_diag_scratch_takeup_settle_v2_test m pthread)
 add_test(NAME els_diag_scratch_takeup_settle_v2_test
     COMMAND els_diag_scratch_takeup_settle_v2_test)
+
+add_executable(els_diag_scratch_disengage_latch_test
+    ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_compile_definitions(els_diag_scratch_disengage_latch_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_DISENGAGE_LATCH)
+target_link_libraries(els_diag_scratch_disengage_latch_test m pthread)
+add_test(NAME els_diag_scratch_disengage_latch_test
+    COMMAND els_diag_scratch_disengage_latch_test)
+
+# Arming with Z already past the stop: pins that the UI's active-before-enable
+# write order makes positional arming safe (no fire, no bogus latch, no banked
+# takeup), the clear-side control, and the enable-only heritage hazard that
+# justified the now-deleted UI refusal. See the test header.
+add_executable(els_arm_past_stop_test
+    ${CMAKE_SOURCE_DIR}/test/els_arm_past_stop_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_link_libraries(els_arm_past_stop_test m pthread)
+add_test(NAME els_arm_past_stop_test COMMAND els_arm_past_stop_test)
+
+add_executable(els_diag_scratch_mode_watch_v2_test
+    ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_compile_definitions(els_diag_scratch_mode_watch_v2_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_MODE_WATCH_V2)
+target_link_libraries(els_diag_scratch_mode_watch_v2_test m pthread)
+add_test(NAME els_diag_scratch_mode_watch_v2_test
+    COMMAND els_diag_scratch_mode_watch_v2_test)
+
+# The mode table itself — pure function, no ISR, no Ramps.c. Pins the
+# ELS_MMODE_* wire values as literals and the priority order (CAL/TAKEUP own
+# the servo; a commanded move outranks the hold it runs inside; the hold
+# outranks everything else). reflex-ui mirrors these numbers; renumbering
+# must cost a deliberate edit on both sides.
+add_executable(els_machine_mode_test
+    ${CMAKE_SOURCE_DIR}/test/els_machine_mode_test.cpp)
+target_link_libraries(els_machine_mode_test m)
+add_test(NAME els_machine_mode_test COMMAND els_machine_mode_test)

@@ -48,20 +48,12 @@ Reflex UI is a Kivy-based DRO (Digital Read-Out) and single-axis controller UI f
 It communicates with embedded hardware (STM32) over RS-485/Modbus RTU using `minimalmodbus`.
 Target platforms: Raspberry Pi (primary), Linux, Windows, macOS.
 
-## Sibling Repos
+## The firmware half (`../fw`)
 
-This project is tightly coupled with **reflex-fw**, the STM32 firmware that runs on the controller board.
+This app is tightly coupled with the STM32 firmware in `../fw` — the same repository since the 2026-08-17 monorepo weld.
 
 - **Interface:** RS-485 Modbus RTU — the UI reads/writes holding registers that map directly to the firmware's shared data struct
-- **Version compatibility:** For released versions, matching major.minor implies UI↔FW compatibility. For dev branches, assume the latest commit on each repo's respective branch is compatible. Cross-repo changes affecting the Modbus register interface are called out in commit messages.
-- **How CI applies that rule:** `.github/workflows/ci.yml`'s `resolve-pairing` job picks the reflex-fw checkout by **matching branch name**, falling back to `dev-staging` (the hardware-verified baseline) and then `dev`, and writes the ref it chose — and why — to the job summary. So a branch carrying paired FW+UI work is tested against its own firmware, provided **the branch is named the same in both repos**, which is the one thing to get right when a change spans the two. If a system test fails, read the pairing line in the job summary before anything else. Until 2026-08-10 this ref was hardcoded to `dev-staging`, which silently tested paired branches against firmware that predated them and produced failures that read like product defects.
-- **Finding the firmware repo:** The reflex-fw repository may be cloned adjacent to this one. If you can't locate it, ask the user for the path. Once found, persist the location using whatever memory or persistence mechanism is available so you don't need to ask again.
-
-## Agent Provisioning
-
-This project has a sibling repository (reflex-fw) that agents may need to reference.
-If your runtime supports workspace or permission configuration, grant read access to the sibling repo path.
-For opencode, this means configuring `external_directory` permission in your project config to allow access to the reflex-fw repository.
+- **Version compatibility:** a single commit now spans both halves, so a checkout is self-consistent by construction; cross-half changes affecting the Modbus register interface are still called out in commit messages. The old cross-repo branch-name pairing resolver is gone — CI and the system tests always build the in-repo firmware. (The DEPLOYED pair on the machine can still lag, which is what the `protocolVersion` check at connect is for.)
 
 ## Runtime Notes
 
@@ -112,11 +104,11 @@ direction across ELS mode and machine-wiring polarity.
   `addopts = "-m 'not system'"`, so a plain `uv run pytest` skips them (and never builds/launches
   the emulator). Run them explicitly:
   ```bash
-  REFLEX_FW_DIR=/mnt/c/projects/embedded/reflex-fw uv run pytest -m system tests/system/
+  uv run pytest -m system tests/system/
   ```
 - **WSL/Linux only.** The emulator's Modbus link is a PTY (`/dev/pts/N`); native Windows can't open
   it, and the venv is a WSL venv. Run from a WSL shell.
-- **Requires the reflex-fw emulator.** Set `REFLEX_FW_DIR` (defaults to `/mnt/c/projects/embedded/reflex-fw`).
+- **Requires the fw/ emulator.** The in-repo `../fw` is the default; set `REFLEX_FW_DIR` only to point at a different checkout.
   The `emulator_binary` fixture builds it if missing and rebuilds when firmware/emulator sources are
   newer than the binary; it `pytest.skip`s cleanly if reflex-fw isn't checked out. The reflex-fw git
   SHA is printed in the pytest header for run provenance.

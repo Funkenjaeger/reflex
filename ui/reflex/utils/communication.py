@@ -7,7 +7,8 @@ import minimalmodbus
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
 
-_ERROR_REPEAT_INTERVAL_S = 10.0
+_ERROR_REPEAT_INTERVAL_S = 10.0        # first repeat of a persisting error
+_ERROR_REPEAT_INTERVAL_MAX_S = 600.0   # backoff cap: one line per 10 min while stuck
 
 
 class ConnectionManager:
@@ -23,6 +24,8 @@ class ConnectionManager:
 
         self._last_error_message: str | None = None
         self._last_error_time: float = 0.0
+        self._error_repeat_interval: float = _ERROR_REPEAT_INTERVAL_S
+        self._error_suppressed: int = 0
 
         self.definitions = []
         self.structures = dict()
@@ -39,6 +42,8 @@ class ConnectionManager:
         self._connected = value
         if value:
             self._last_error_message = None
+            self._error_repeat_interval = _ERROR_REPEAT_INTERVAL_S
+            self._error_suppressed = 0
             log.info(
                 f"Communication established with {self.serial_device} "
                 f"(baudrate={self.baudrate}, address={self.address})"
@@ -47,16 +52,33 @@ class ConnectionManager:
             log.warning(f"Communication lost with {self.serial_device}")
 
     def _log_error_once(self, message: str):
-        """Log an error message on first occurrence, then re-log periodically
-        while the same error persists so the user can still see the problem."""
+        """Log an error on first occurrence; while the SAME error persists,
+        re-log on a DOUBLING interval (10 s, 20, 40, ... capped at 10 min),
+        each time saying how many identical repeats were swallowed since the
+        last line. A flat 10 s cadence turned the 42-minute post-flash limbo
+        of 2026-08-17 into 244 identical checksum-error lines — each also a
+        Sentry envelope — which buried the session log. A persistent fault
+        now costs ~8 lines the first hour and 6 per hour after, and the
+        suppressed-count keeps the line honest about what it stands for.
+        Any success (the connected setter) or a different message resets the
+        backoff, so a NEW problem always logs immediately."""
         now = time.monotonic()
         if message != self._last_error_message:
             self._last_error_message = message
             self._last_error_time = now
+            self._error_repeat_interval = _ERROR_REPEAT_INTERVAL_S
+            self._error_suppressed = 0
             log.error(message)
-        elif now - self._last_error_time >= _ERROR_REPEAT_INTERVAL_S:
+        elif now - self._last_error_time >= self._error_repeat_interval:
             self._last_error_time = now
-            log.error(f"{message} (still failing)")
+            suppressed = self._error_suppressed
+            self._error_suppressed = 0
+            self._error_repeat_interval = min(
+                self._error_repeat_interval * 2, _ERROR_REPEAT_INTERVAL_MAX_S)
+            log.error(f"{message} (still failing; {suppressed} identical "
+                      f"repeats suppressed)")
+        else:
+            self._error_suppressed += 1
 
     def connect(self):
         if self.connected:

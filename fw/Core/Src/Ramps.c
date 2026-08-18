@@ -552,6 +552,17 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   // Auto-clear active when enable is deasserted
   if (data->elsStopPreviousEnable && !shared->elsStop.enable) {
     shared->elsStop.active = 0;
+    /* Consume the 1->0 active edge this handler just created. The resume
+     * detector further down runs LATER IN THIS SAME PASS (its shadow copy
+     * elsStopPreviousActive is only refreshed after it), so it cannot
+     * otherwise tell a software resume ("go cut") from the job ending here.
+     * referenceLatched and the thread geometry survive from the last
+     * stop-fire, so without this line every threading disengage after a
+     * completed pass initiated a fresh backlash takeup — re-setting the
+     * takeupPending cleared below and banking a move in stepsToGo that
+     * executed at the next nonzero servoMode. Emulator repro:
+     * els_disengage_edge_test. */
+    data->elsStopPreviousActive = 0;
     /* Also abandon any in-flight takeup. This is the escape hatch that makes the
      * fail-closed Z confirmation gate below RECOVERABLE: a takeup withheld for
      * want of Z confirmation holds takeupPending = 1 indefinitely, which gates
@@ -560,6 +571,20 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
      * applying. Without this, failing closed would be unrecoverable — a worse
      * defect than the one being fixed. */
     shared->elsStop.takeupPending = 0;
+    /* Ending the job cancels its pending MOTION, not just its bookkeeping.
+     * A takeup abandoned mid-flight otherwise leaves its remaining
+     * stepsToGo as stored debt that executes whenever servoMode next goes
+     * nonzero; likewise any sync backlog the pulse generator had not yet
+     * emitted (desiredSteps ahead of currentSteps) would keep draining
+     * after the job ended, and with servoMode 0 it survives indefinitely
+     * as debt for the next feed-enable. Every writer of this falling edge
+     * means "make the machine inert", so BOTH commanded-motion channels
+     * are cleared with the job. All other desiredSteps writers are
+     * incremental (+=), so the snap cannot corrupt a concurrent jog or
+     * indexing ramp — they rebuild from their own state next tick. */
+    shared->servo.stepsToGo    = 0;
+    shared->servo.currentSpeed = 0;
+    shared->servo.desiredSteps = shared->servo.currentSteps;
     data->elsStopSettleCount      = 0;
     data->elsStopTakeupTicks      = 0;
     data->elsStopTakeupLatched    = 0;
@@ -812,8 +837,18 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
        * drivetrain before this gate existed). A calibration leg is only
        * meaningful if the leadscrew is moved by the calibration and nothing
        * else. */
+      /* The servoMode == 1 term keeps accumulation and emission on the SAME
+       * gate. Emission (further down) only runs with servoMode != 0, so
+       * deltas accepted here in mode 0 are not motion — they are stored
+       * debt the servo chases wholesale whenever mode next becomes 1, and
+       * in mode 2 they superimpose spindle-sync creep onto the jog. Sync
+       * counts that arrive while not in sync-follow mode are DISCARDED,
+       * not banked: threading does not rely on banked deltas across a
+       * pause — the resume machinery re-syncs phase from scale positions.
+       * Emulator repro: els_sync_debt_test. */
       if (!shared->elsStop.active && !shared->elsStop.takeupPending
-          && data->elsCal.phase == ELS_CAL_IDLE) {
+          && data->elsCal.phase == ELS_CAL_IDLE
+          && shared->fastData.servoMode == 1) {
         shared->servo.desiredSteps += data->scalesSyncDeltaPos[i].scaledDelta;
       }
     }
@@ -1115,11 +1150,26 @@ _Noreturn void servoEnableTask(void *argument) {
       anySyncMotionEnabled = anySyncMotionEnabled || (shared->scales[i].syncEnable != 0);
     }
 
-    if (anySyncMotionEnabled && !shared->elsStop.active && rampsData->shared.fastData.servoMode != 2)
-      rampsData->shared.fastData.servoMode = 1;
+    /* The re-assert. elsDiagServoGate is a no-op returning false in every
+     * release build; a diagnostic probe may refuse the assert and record that
+     * it did (see els_diag_disengage_latch.h, which exists precisely because
+     * this line can switch the feed back on after a disengage). */
+    if (anySyncMotionEnabled && !shared->elsStop.active && rampsData->shared.fastData.servoMode != 2) {
+      if (!elsDiagServoGate(&rampsData->diag, &shared->elsStop,
+                            rampsData->shared.fastData.servoMode)) {
+        rampsData->shared.fastData.servoMode = 1;
+      }
+    }
 
     rampsData->shared.fastData.servoSpeed = (float)(int32_t)(rampsData->shared.servo.currentSteps - previousPosition) * 10;
     previousPosition = rampsData->shared.servo.currentSteps;
+
+    /* Probe hook: a mode-watch probe derives and publishes the machine mode
+     * once per task tick. No code in a release build or any other probe.
+     * AFTER the re-assert above, so the published mode reflects this tick's
+     * decision rather than last tick's. */
+    elsDiagTaskTick(&rampsData->diag, shared,
+                    (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
 
     if (shared->fastData.servoMode != 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_RESET);
     if (shared->fastData.servoMode == 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_SET);

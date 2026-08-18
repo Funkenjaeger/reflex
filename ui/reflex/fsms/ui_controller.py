@@ -8,7 +8,10 @@ from reflex.fsms.ui_fsm import ElsUiFsm
 from reflex.fsms.els_fsm import ElsFsm
 from reflex.fsms.els_stop_hal import ElsStopHal
 from reflex.fsms.els_diag import ElsDiagRecorder
-from reflex.utils.devices import takeup_failure_text
+from reflex.fsms.els_mode_watch import ElsModeWatch
+from reflex.utils.devices import (takeup_failure_text,
+                                  ELS_DIAG_SCHEMA_MODE_WATCH,
+                                  ELS_DIAG_SCHEMA_MODE_WATCH_V2)
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
 
 log = Logger.getChild(__name__)
@@ -123,6 +126,14 @@ class ElsUiController(EventDispatcher):
         self._hal = ElsStopHal(board)
         self._diag_recorder = ElsDiagRecorder(self._hal, board)
 
+        # Rung-2 sampler (log-only): compares the domain FSM's state against
+        # the firmware-published machine mode when a mode-watch probe
+        # (schema 4 or 5) is flashed. Dormant against any other firmware — the
+        # schema gate in _poll_mode_watch is the recorder's, so this issues
+        # no reads of its own until a recognised mode-watch probe is present.
+        self._mode_watch = ElsModeWatch()
+        self._mode_watch_tick = 0
+
         # ── Encoder-anchored ELS targets ─────────────────────────────────────
         # stop_z / retract_z are stored as the PHYSICAL Z-leadscrew encoder count
         # captured when the operator set them (source of truth), NOT the scaled
@@ -180,6 +191,7 @@ class ElsUiController(EventDispatcher):
         bus.subscribe("ui_state_changed", self._on_ui_state_changed)
         bus.subscribe("state_changed", self._on_domain_state_changed)
         bus.subscribe("alarm_raised", self._on_alarm)
+        bus.subscribe("els_pass_interrupted", self._on_pass_interrupted)
 
         # 6. Apply initial state policy and connect HW bindings.
         self._apply_policy()
@@ -200,6 +212,8 @@ class ElsUiController(EventDispatcher):
         # it reads diagSchema once per connection and, finding 0, issues no
         # further reads at all. See reflex/fsms/els_diag.py.
         self._board.bind(update_tick=self._poll_diag_capture)
+        # Rung-2 mode sampler; equally dormant without the schema-4 probe.
+        self._board.bind(update_tick=self._poll_mode_watch)
 
         # 7. Re-arm HAL when mode flags change so firmware tracks the operator.
         self.bind(retract_enabled=self._on_modes_changed,
@@ -314,6 +328,32 @@ class ElsUiController(EventDispatcher):
         Never raises -- see ElsDiagRecorder.poll().
         """
         self._diag_recorder.poll()
+
+    # Every 5th update tick ≈ 6 Hz against the firmware's ~10 Hz publication:
+    # fast enough that no dwell in a mode is missed, slow enough that the one
+    # extra single-register read stays a rounding error on the serial budget.
+    MODE_WATCH_SAMPLE_EVERY = 5
+
+    def _poll_mode_watch(self, *args):
+        """Rung-2 sampler: (domain FSM state, published machine mode) into the
+        mode watch. Log-only by design — see els_mode_watch.py.
+
+        Keys on the recorder's learned schema rather than reading diagSchema
+        itself, so against release firmware (or any other probe) this method
+        is a compare-and-return with zero serial cost. Never raises into the
+        update loop.
+        """
+        try:
+            if self._diag_recorder.schema not in (ELS_DIAG_SCHEMA_MODE_WATCH,
+                                                  ELS_DIAG_SCHEMA_MODE_WATCH_V2):
+                return
+            self._mode_watch_tick += 1
+            if self._mode_watch_tick % self.MODE_WATCH_SAMPLE_EVERY:
+                return
+            mode = self._hal.read_current_mode()
+            self._mode_watch.feed(self._els_fsm.state, mode)
+        except Exception as e:
+            log.warning(f"mode-watch sample failed: {e}")
 
     def _poll_els_stop_active(self, *args):
         # Bound to board.update_tick. Kivy property writes from the polling
@@ -589,8 +629,54 @@ class ElsUiController(EventDispatcher):
         return x >= self.stop_dia if self.is_inner else x <= self.stop_dia
 
     # ——— intents from UI ———
+    @property
+    def is_feeding(self):
+        """Sync motion is ARMED -- the servo is commanded.
+
+        NOT "the carriage is moving". After engage the carriage is HELD by
+        elsStop.active == 1 even with servoMode == 1, and it starts moving the
+        instant that hold is released. The hazard is the state where motion CAN
+        begin, so that is what this reports.
+
+        A read-through property, not a mirrored BooleanProperty. kv binds
+        `app.servo.servoMode` directly (as elsbar.kv already does), so a second
+        copy here would add a synchronisation problem to solve a formatting one.
+        This exists for the FSM-side refusal, where the value is read once at the
+        moment of the decision.
+        """
+        return bool(self._board.servo.servoMode)
+
     def toggle_engage(self):
         """Engage/disengage button intent. Drives the domain FSM."""
+        if self.engaged and self.is_feeding and self._els.spindle_is_running:
+            # REFUSE. "Disable the stop" while sync motion is armed is an
+            # ambiguous instruction: it reads equally as "stop the carriage" and
+            # as "remove the stop and keep going". The firmware resolves it the
+            # second way -- clearing enable clears elsStop.active, which is what
+            # HOLDS the carriage, so disengaging RELEASES it.
+            #
+            # The teardown in on_enter_disabled makes that safe (sync is cleared
+            # before the hold is released), so this is not the safety mechanism.
+            # It removes the ambiguous input instead of interpreting it: turning
+            # sync off is the unambiguous way to stop the carriage, and it is
+            # exactly equivalent to opening the half nut.
+            #
+            # Gated on is_feeding (servoMode != 0) AND the spindle actually
+            # turning. With the spindle STOPPED there are no sync deltas, so
+            # nothing is moving or can begin to move, and "disengage" stops
+            # being ambiguous -- the refusal would be pure friction (operator
+            # decision 2026-08-17, after round-1 hardware testing found the
+            # greyed button annoying with the machine plainly inert). The
+            # firmware side is safe either way as of the F1/F2 fixes: the
+            # enable-fall handler consumes its own resume edge and cancels
+            # pending motion, hardware-verified 2026-08-17. With the spindle
+            # RUNNING the original reasoning stands: the escape hatch is the
+            # Sync Enable button, which stays live -- press it, then disengage.
+            log.info(
+                "Disengage refused — sync motion is armed. Turn Sync Enable off "
+                "first (equivalent to opening the half nut)."
+            )
+            return
         if self.engaged:
             # Guard the trigger: disable() is only valid from stopped/retracting/
             # alarm. The button is disabled mid-cycle, but check anyway so a
@@ -960,6 +1046,64 @@ class ElsUiController(EventDispatcher):
             return not bool(self._board.device['elsStop']['enable'])
         except Exception:
             return True  # can't tell → treat as unsafe, confirm
+
+    def unarmed_stop_message(self) -> str:
+        """Why enabling the feed right now has no armed stop behind it —
+        operator-facing, cause-specific. With arming positionally
+        unconditional (2026-08-17: the Z-past-stop refusal was deleted as the
+        actual cause of round 2's misleading dialog), an engaged machine with
+        a committed stop is always armed, so only two honest causes remain."""
+        if not self.engaged:
+            return ("ELS is not engaged. The feed will run with no "
+                    "automatic stop.\n\nEnable feed anyway?")
+        if self.stop_z_encoder is None:
+            return ("No stop is set. The feed will run with no automatic "
+                    "stop.\n\nEnable feed anyway?")
+        return ("The ELS stop is not armed. The feed will run with no "
+                "automatic stop.\n\nEnable feed anyway?")
+
+    def _on_pass_interrupted(self):
+        """Tell the operator we stopped a pass that the firmware was still running.
+
+        Fired by ElsFsm.reconcile_firmware_on_connect when it comes up to find the
+        carriage moving -- i.e. the previous session died mid-pass and the
+        firmware carried on without it.
+
+        THE WHOLE POINT IS REMOVING AMBIGUITY. Disabling sync on connect is a
+        deliberate choice (safest in the large majority of cases; see the note in
+        reconcile_firmware_on_connect), but its cost lands exactly where it is
+        hardest to interpret -- a thread that stops partway with no explanation.
+        Saying so plainly turns a mystery into a known event.
+
+        Non-blocking and informational: the stop has ALREADY happened by the time
+        this runs. There is nothing to confirm and nothing to undo, so it is an
+        acknowledgement, not a choice.
+        """
+        fsm = self._els_fsm
+        flight = getattr(fsm, 'interrupted_pass', None)
+        if not flight:
+            return
+        fsm.interrupted_pass = None   # one-shot; do not re-warn on a later event
+
+        armed = "with an armed stop" if flight.get('enable') else "with NO armed stop"
+        log.warning(f"presenting interrupted-pass notice to operator: {flight}")
+        try:
+            from reflex.components.popups.custom_popup import CustomPopup
+            CustomPopup(
+                title="Feed Stopped On Startup",
+                message="\n\n".join([
+                    "The controller was still driving the carriage when this app "
+                    f"started ({armed}).",
+                    "That means the previous session ended mid-pass. Sync has been "
+                    "disabled and the ELS stop cleared, so the carriage was stopped "
+                    "HERE rather than at a shoulder.",
+                    "Check the workpiece and tool before continuing.",
+                ]),
+                button_text="OK",
+            ).open()
+        except Exception as e:
+            # A notice that cannot be drawn must not take the app down on startup.
+            log.error(f"could not show interrupted-pass notice: {e}")
 
     def request_feed_enable(self, confirmed: bool = False) -> bool:
         """Operator asked to toggle the sync/power feed (advanced ELS context).

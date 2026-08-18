@@ -51,19 +51,12 @@ Do NOT leave `TODO`/`FIXME` comments in code, documentation, or bash snippets �
 
 Reflex Firmware is the STM32F411 firmware for a rotary controller board. It provides Digital Read Out (DRO) and single-axis control for CNC-style rotary tables, communicating with the host UI over RS-485/Modbus RTU.
 
-## Sibling Repos
+## The UI half (`../ui`)
 
-This project is tightly coupled with **reflex-ui**, the Python/Kivy host application.
+This firmware is tightly coupled with the Python/Kivy host application in `../ui` — the same repository since the 2026-08-17 monorepo weld.
 
 - **Interface:** RS-485 Modbus RTU — the entire `rampsSharedData_t` struct is memory-mapped to Modbus holding registers
-- **Version compatibility:** For released versions, matching major.minor implies UI↔FW compatibility. For dev branches, assume the latest commit on each repo's respective branch is compatible. Cross-repo changes affecting the Modbus register interface are called out in commit messages.
-- **Finding the UI repo:** The reflex-ui repository may be cloned adjacent to this one. If you can't locate it, ask the user for the path. Once found, persist the location using whatever memory or persistence mechanism is available so you don't need to ask again.
-
-## Agent Provisioning
-
-This project has a sibling repository (reflex-ui) that agents may need to reference.
-If your runtime supports workspace or permission configuration, grant read access to the sibling repo path.
-For opencode, this means configuring `external_directory` permission in your project config to allow access to the reflex-ui repository.
+- **Version compatibility:** a single commit now spans both halves, so a checkout is self-consistent by construction; cross-half changes affecting the Modbus register interface are still called out in commit messages. (The DEPLOYED pair on the machine can still lag — the `protocolVersion` register guards that seam.)
 
 ## Building
 

@@ -133,13 +133,81 @@ int main(void)
           "take-up settle v2 publishes wire schema 2");
     check(data.shared.elsStop.diagBucketCount == ELS_DIAG_TRACE_BUCKETS,
           "take-up settle v2 publishes its bucket count");
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_DISENGAGE_LATCH
+    check(data.shared.elsStop.diagSchema == 3,
+          "disengage latch publishes wire schema 3");
+    /* Zero events at startup. This probe reports a PROBLEM by counting up, so a
+     * non-zero seq out of RampsStart would be a false positive on every run. */
+    check(data.shared.elsStop.diagSeq == 0,
+          "disengage latch starts with no events recorded");
+    check(data.shared.elsStop.diagNetCounts == 0,
+          "disengage latch starts with a zero event count");
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH_V2
+    check(data.shared.elsStop.diagSchema == 5,
+          "mode watch v2 publishes wire schema 5");
+    check(data.shared.elsStop.diagCaptureTicks == 0,
+          "mode watch boots publishing OFF (mode 0)");
+    check(data.shared.elsStop.diagSeq == 0,
+          "mode watch starts with no transitions recorded");
+    check(data.shared.elsStop.diagNetCounts == 0,
+          "mode watch starts with a zero suppression count");
+
+    /* Behavioral half, both duties. The entry points are static inlines from
+     * the probe header, so calling them here exercises exactly what the task
+     * will run. The derivation reads registers RampsStart does not
+     * initialize — on the real part they are BSS-zero, here they are 0xA5
+     * poison — so set every input the mode function consumes. */
+    data.shared.elsStop.enable = 0;
+    data.shared.elsStop.active = 0;
+    data.shared.servo.stepsToGo = 0;
+    for (int i = 0; i < SCALES_COUNT; i++) data.shared.scales[i].syncEnable = 0;
+    data.shared.fastData.servoMode = 2;      /* operator jogs */
+    elsDiagTaskTick(&data.diag, &data.shared, 0);
+    check(data.shared.elsStop.diagCaptureTicks == 4,   /* ELS_MMODE_JOG */
+          "task tick publishes the derived mode (JOG) on change");
+    check(data.shared.elsStop.diagSettleTicks == 0,
+          "…and the from-side of the transition (OFF)");
+    check(data.shared.elsStop.diagSeq == 1,
+          "…and bumps the transition counter once");
+    elsDiagTaskTick(&data.diag, &data.shared, 0);
+    check(data.shared.elsStop.diagSeq == 1,
+          "no transition, no seq movement (edge-detect stays honest)");
+
+    /* The v2 accounting split: suppression is unconditional while enable ==
+     * 0, but only the servoMode == 0 refusal — the one that would have
+     * switched the feed on — is counted. The servoMode == 1 case is the
+     * enable-less power-feed no-op that v1 counted 1719 times in one
+     * afternoon of hardware time, burying the signal; it must suppress
+     * silently. */
+    data.shared.elsStop.enable = 0;          /* no live job */
+    check(elsDiagServoGate(&data.diag, &data.shared.elsStop, 1) == true,
+          "no-op re-assert (servoMode already 1) is still SUPPRESSED");
+    check(data.shared.elsStop.diagNetCounts == 0,
+          "…but NOT counted (the v1 noise source)");
+    check(data.shared.elsStop.diagEndReason == 0,
+          "…and leaves no latch-seen verdict");
+    check(elsDiagServoGate(&data.diag, &data.shared.elsStop, 0) == true,
+          "effective re-assert (servoMode 0) is SUPPRESSED");
+    check(data.shared.elsStop.diagNetCounts == 1,
+          "…and counted");
+    check(data.shared.elsStop.diagTrace[0] == 0,
+          "…recording servoMode 0 at the event (anything else is a probe bug)");
+    data.shared.elsStop.enable = 1;          /* live job */
+    check(elsDiagServoGate(&data.diag, &data.shared.elsStop, 0) == false,
+          "re-assert with a live job passes through untouched");
+    /* The shared end-reason check below asserts the INIT state; this arm is
+     * the only one that exercises behavior, so restore what the suppression
+     * wrote before falling through to it. */
+    data.shared.elsStop.diagEndReason = 0;
 #else
 #error "this probe has no assertions in els_diag_scratch_test.cpp -- add an arm above"
 #endif
     check(data.shared.elsStop.diagEndReason == 0,
           "end reason starts cleared (no stale verdict beside a fresh trace)");
+#if ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
     check(data.shared.elsStop.diagBucketTicks > 0,
-          "flagged build publishes bucket width (host must not assume the ISR rate)");
+          "trace probe publishes bucket width (host must not assume the ISR rate)");
+#endif
     printf("=== %s (probe build, schema %u) ===\n",
            failures == 0 ? "ALL PASS" : "FAILURES",
            (unsigned)data.shared.elsStop.diagSchema);

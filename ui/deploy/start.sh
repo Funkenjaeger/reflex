@@ -1,7 +1,11 @@
 #!/bin/sh
 # Launch wrapper for reflex-ui, invoked by reflex-ui.service.
-# Mirrors the original rotary-controller-python /start.sh, but points at the
-# reflex package and the uv-managed virtualenv.
+#
+# LOCATION-AGNOSTIC since the 2026-08-17 monorepo: every path derives from
+# this script's own resolved location, so the same file works from the old
+# /reflex-ui layout and from <monorepo>/ui/deploy — the service's symlink
+# (/reflex-ui/start.sh) just points wherever the live checkout is, and the
+# unit's WorkingDirectory is overridden by the explicit cd below.
 #
 # Kivy renders directly via KMS/DRM on the Pi (no X server), so no DISPLAY is set.
 # These KCFG_* vars configure Kivy via its environment-variable config overrides.
@@ -21,7 +25,13 @@ export KCFG_GRAPHICS_FULLSCREEN=auto
 # Default when unset is ~/.config/reflex -- see reflex/utils/paths.py.
 export REFLEX_CONFIG_DIR=/var/lib/reflex-config
 
-# Activate the project venv (created by `uv sync`) and run from source.
-# WorkingDirectory=/reflex-ui (set in the unit) puts the reflex package on sys.path.
-. /reflex-ui/.venv/bin/activate
+# Resolve the ui checkout this script lives in (deploy/ -> its parent).
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd)
+UI_DIR=$(dirname -- "$SCRIPT_DIR")
+
+# Activate the checkout's own venv (created by `uv sync`) and run from source.
+# The explicit cd puts the reflex package on sys.path regardless of the unit's
+# WorkingDirectory.
+. "$UI_DIR/.venv/bin/activate"
+cd "$UI_DIR"
 exec python -m reflex.main

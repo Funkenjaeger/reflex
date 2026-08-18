@@ -87,6 +87,8 @@ what keeps `Ramps.c` probe-agnostic:
 | `elsDiagCaptureStart(ctx)` | first tick at which commanded motion is complete |
 | `elsDiagCapturing(ctx)` | cheap predicate — see below |
 | `elsDiagTick(ctx, stop, dZ, dServo)` | once per ISR tick while capturing |
+| `elsDiagServoGate(ctx, stop, mode)` | `servoEnableTask`, at the re-assert decision; `true` suppresses it (schema 3+) |
+| `elsDiagTaskTick(ctx, shared, cal)` | once per `servoEnableTask` iteration (~100 ms), after the re-assert (schema 4+) |
 
 **`elsDiagCapturing` must stay trivial, and the ISR must call it before
 computing `elsDiagTick`'s arguments.** C evaluates arguments before the callee
@@ -151,6 +153,95 @@ writing another one, and because the geometry it publishes (`diagBucketTicks`,
 `diagBucketCount`) is the pattern every trace-shaped probe should copy. Expect
 most probes to be like this one: used once, then inert.
 
+### `disengage-latch` — schema 3 — **INTERVENING probe, for catching a live defect**
+
+Counts `servoEnableTask` re-asserting `servoMode = 1` while `elsStop.enable == 0`
+— i.e. switching a spindle-synced feed back on after a disengage, with the ELS
+stop simultaneously disarmed.
+
+**This probe changes behaviour: it REFUSES the re-assert and records that it
+did.** Every other probe only observes. The reason is that catching this by
+observation alone means letting a carriage actually run away on a lathe with the
+stop disarmed — that is not a test, it is the accident. Suppressing makes the
+dangerous outcome impossible while the counter still proves whether the condition
+arises.
+
+**A non-zero `diagSeq` is the finding.** It means the race occurred and was
+caught, not that anything went wrong during the run.
+
+| Field | Meaning (NOT the same as schema 2 — check `diagSchema` first) |
+|---|---|
+| `diagSeq` | events caught. **The result.** 0 = never happened this run |
+| `diagNetCounts` | same count in 32 bits, so a long run cannot wrap unnoticed |
+| `diagCaptureTicks` | `elsStop.active` at the most recent event (expect 0) |
+| `diagSettleTicks` | `servoMode` at the event: 0 = this would have STARTED a feed |
+| `diagEndReason` | 1 once any event has been seen |
+| `diagTrace[]` | unused |
+
+Scope of the intervention: suppression is conditional on `enable == 0`, so while
+this is compiled in, sync motion started by a non-ELS path also stops being
+auto-enabled. Acceptable in a diagnostic build; it is why this must never reach a
+release branch.
+
+More sensitive than the end-to-end system test, which only fails when the timing
+escalates all the way to visible carriage travel — an A/B over 20 runs showed
+zero failures in *both* arms and proved nothing. This fires on the condition.
+
+### `mode-watch-v2` — schema 5 — **durable: rung 1 of the 2026-08-16 architecture direction**
+
+Publishes the firmware-derived machine mode (`els_machine_mode.h`, `ELS_MMODE_*`)
+once per `servoEnableTask` tick, and **carries schema 3's intervention forward**:
+it still suppresses the `servoEnableTask` re-assert while `elsStop.enable == 0`.
+One probe fits a build and a flash costs a physical session (the board does not
+run new firmware until power-cycled, which cannot be done remotely) — so the
+probe that collects mode data for weeks must also keep the latch counter
+running. With the F1/F2 fixes on this branch the counter is **expected to stay
+0**; nonzero means some path still leaves sync armed across a disengage, which
+is a finding, not noise. Schema 3's non-ELS-sync caveat applies unchanged.
+
+**What v2 changed (and why schema 4 is retired): only the counting.** The
+suppression itself is unconditional exactly as before, but `diagNetCounts` now
+ticks only when `servoMode` was 0 — the refusal that would have *switched the
+feed on*. The 2026-08-17 hardware sessions showed the v1 counter climbing 1719
+in an afternoon, every event a no-op refusal during enable-less power feed
+(`servoMode` already 1, so the refused assert would have changed nothing); the
+one event the counter exists to catch would have been three digits of noise
+deep. Under v2 the "expect 0" reading is finally literal: **any nonzero count
+is a finding.** Changing what schema 4's numbers meant in place would have
+silently corrupted the recorded round-1/2 data — hence the new id, same
+discipline as takeup-settle v1 → v2.
+
+The purpose is rung 2: reflex-ui's watchdog compares the UI's model against this
+register during normal use, and the divergence log — not anyone's confidence —
+decides when the mode becomes a real (protocol-versioned) register and the UI
+starts acting on it.
+
+| Field | Meaning (NOT schema 2's, 3's, or 4's — check `diagSchema` first) |
+|---|---|
+| `diagCaptureTicks` | **current derived mode** (`ELS_MMODE_*`) |
+| `diagSettleTicks` | previous mode — the from-side of the last transition |
+| `diagSeq` | mode-transition counter; bumped last, so an edge-detected read sees a consistent pair |
+| `diagNetCounts` | **effective** latch suppressions (`servoMode` was 0), cumulative. **Expect 0; nonzero is always a finding** |
+| `diagEndReason` | 1 once any counted suppression has been seen |
+| `diagTrace[0]`, `[1]` | `servoMode` (0 by construction) and `active` at the most recent counted suppression |
+
+Mode values are a wire contract (append, never renumber), pinned as literals in
+`els_machine_mode_test` on the firmware side and mirrored by reflex-ui. Known
+limitation, deliberate: `HELD` does not split "armed idle" from "stop fired" —
+the registers cannot tell them apart today (the `active` overload); publishing
+the merged state honestly beats guessing.
+
+`disengage-latch` (schema 3) stays selectable for a pure-latch run with no mode
+publication; for the combined agenda this probe supersedes it.
+
+### `mode-watch` — schema 4 — **RETIRED**
+
+Superseded by v2, which counts only the effective suppressions instead of every
+refusal — v1's counter climbed by one per 100 ms tick during any enable-less
+power feed, which is noise, not signal. Its id is burned and will not be
+reused; the round-1/2 hardware data recorded under schema 4 keeps its v1
+meaning. Selecting it is a compile error that names the replacement.
+
 ### `takeup-settle` — schema 1 — **RETIRED**
 
 Superseded by v2, which ends the capture at the servo's next pulse instead of a
@@ -177,10 +268,10 @@ error that names the replacement.
    "added a probe, wrote no assertions" a build failure. Pin the **literal** wire
    value, not `ELS_DIAG_PROBE` — asserting the published schema equals the macro
    that set it is a tautology that cannot fail.
-5. **Mirror it in reflex-ui**, in all the places — mirroring the id alone is not
+5. **Mirror it in the UI**, in all the places — mirroring the id alone is not
    enough, and the failure is silent until you are standing at the lathe:
-   - `reflex/utils/devices.py` — the schema constant.
-   - `reflex/fsms/els_diag.py` — add it to `KNOWN_SCHEMAS`. **This is the one
+   - `ui/reflex/utils/devices.py` — the schema constant.
+   - `ui/reflex/fsms/els_diag.py` — add it to `KNOWN_SCHEMAS`. **This is the one
      that bites.** The recorder refuses any schema outside that set, so a probe
      registered in firmware but missing here makes the UI log *"firmware reports
      diagSchema=N, which this UI does not recognise"* and go dormant. The
@@ -188,10 +279,11 @@ error that names the replacement.
    - `SCHEMAS_WITH_END_REASON` in the same file, if the probe publishes
      `diagEndReason`.
 
-   Nothing cross-checks these two registries: the register-map contract test
+   Nothing cross-checks these two registries yet: the register-map contract test
    compares layout (field sets, offsets, types, total size) and says nothing
-   about schema ids, so a probe added on one side and forgotten on the other
-   passes CI green. Until that check exists, this step is the check.
+   about schema ids. Until that check exists, this step is the check — though
+   since the weld both files live in this repository, so the cross-check is now
+   a plain test away rather than a cross-repo problem.
 6. **Document it here**, including whether it is one-off or durable, and what its
    result was once you have one.
 

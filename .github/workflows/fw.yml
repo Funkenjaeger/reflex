@@ -1,0 +1,47 @@
+# Firmware checks: the host-side emulator suite (real firmware C against the
+# shim) and the ARM cross-build — the latter is the only place the actual
+# STM32 image gets compiled off the bench, so ISR-adjacent changes can't sail
+# through on host gcc alone.
+name: fw
+
+on:
+  push:
+    paths:
+      - "fw/**"
+      - ".github/workflows/fw.yml"
+  pull_request:
+    paths:
+      - "fw/**"
+      - ".github/workflows/fw.yml"
+
+jobs:
+  emulator-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+      - name: Build emulator + tests
+        working-directory: fw/emulator
+        run: |
+          cmake -B build
+          cmake --build build -j
+      - name: Run firmware emulator suite
+        working-directory: fw/emulator/build
+        run: ctest --output-on-failure
+
+  arm-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi cmake build-essential
+      - name: Cross-build the release image
+        working-directory: fw
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
