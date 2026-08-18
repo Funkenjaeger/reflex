@@ -124,7 +124,7 @@ can move into `els_diag.h` — that is the open loop, not an oversight.
 
 ## Registry
 
-### `takeup-settle-v2` — schema 2 — **one-off, retained as a worked example**
+### `takeup-settle-v2` — schema 2 — **retained as a worked example; its question is still open**
 
 Measures how long the carriage keeps moving after the ELS take-up finishes, to
 put a number on `ELS_SLIP_SETTLE_TICKS`, which until then was a guess.
@@ -145,13 +145,36 @@ result.
 | `diagCaptureTicks` | how long the capture ran; distinct from `diagSettleTicks`, which is when Z last *moved* |
 | `diagEndReason` | `ELS_DIAG_END_*` |
 
-**Result (2026-08-16):** the carriage stops dead — zero dither, settle measured
-at the floor. The question it existed to answer is answered.
+**Result (2026-08-16), downgraded 2026-08-18:** the 13 captures read all-zero
+— `settle_ticks` and `net_counts` identically 0 in every row. An earlier
+version of this block read that as *"the carriage stops dead; the question is
+answered."* An audit of the recorded data
+(`els-settle-measurement-findings-2026-08-18.md`) showed the claim cannot be
+carried by those captures, for three independent reasons:
+
+1. **The window was half the gate.** `ELS_DIAG_BUCKET_TICKS` was 10, giving a
+   500-tick observable span against `ELS_SLIP_SETTLE_TICKS = 1000`. No capture
+   could distinguish a good constant from one 10× too large. Fixed 2026-08-18:
+   bucket width is now 40 (2000-tick window, 2× the gate). No schema bump —
+   bucket width is self-describing via `diagBucketTicks`.
+2. **The recorder of that era discarded `diagEndReason`**, so this section's
+   own floor-not-a-result rule is unappliable to all 13 rows — none can be
+   classified `END_PULSE` vs `END_WINDOW`. The export gap is closed (the
+   recorder now stores `end_reason` and `capture_ticks`); the 13 legacy rows
+   stay permanently ambiguous.
+3. **The armed window has never demonstrated a nonzero.** "Perfectly still"
+   and "not looking during the window" produce identical output. Schema 1's
+   nonzero traversal data vouches for the dZ read path itself, but not for
+   v2's `takeupPending`-gated window. The next capture session must include a
+   condition known to move Z during the window before any zero is trusted.
+
+`ELS_SLIP_SETTLE_TICKS` therefore remains an **unmeasured parameter** —
+`fw/todo.md`'s commissioning entry is the open item, and only `END_PULSE`
+captures from the widened window count when it runs.
 
 It is kept rather than deleted because it is the reference implementation for
 writing another one, and because the geometry it publishes (`diagBucketTicks`,
-`diagBucketCount`) is the pattern every trace-shaped probe should copy. Expect
-most probes to be like this one: used once, then inert.
+`diagBucketCount`) is the pattern every trace-shaped probe should copy.
 
 ### `disengage-latch` — schema 3 — **INTERVENING probe, for catching a live defect**
 
