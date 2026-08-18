@@ -55,17 +55,36 @@
  * sub-millisecond tail is resolvable: v1 showed 3-6 whole buckets of ZERO at 1 ms
  * each, which bounds the settle below 3 ms but cannot see inside it.
  *
- * RESULT (2026-08-16): the carriage stops dead. Zero dither, settle at the
- * floor. The question is answered; this probe is retained as the worked example
- * for writing the next one. Schema ids live in Ramps.h -- they are part of the
- * register contract reflex-ui mirrors, not a detail of this file. */
+ * RESULT (2026-08-16), DOWNGRADED 2026-08-18: the 13 captures read all-zero,
+ * which is consistent with "stops dead" but does not establish it. Audit of
+ * the recorded data (els-settle-measurement-findings-2026-08-18.md) found the
+ * claim unsupportable three ways: the 500-tick window could not observe past
+ * HALF of ELS_SLIP_SETTLE_TICKS (1000), so no capture could distinguish a
+ * good constant from a 10x-too-large one; the recorder of that era did not
+ * export diagEndReason, so END_PULSE ("finished measuring") cannot be told
+ * from END_WINDOW ("truncated") for any of the 13; and the v2 armed window
+ * has never demonstrated a nonzero, so "still" and "not looking" are
+ * indistinguishable in its own data (v1's nonzero traversal data exercises
+ * the same dZ read path, which vouches for the plumbing but not the window).
+ * ELS_SLIP_SETTLE_TICKS therefore remains UNMEASURED (fw/todo.md). This probe
+ * is retained as the worked example for writing the next one. Schema ids live
+ * in Ramps.h -- they are part of the register contract reflex-ui mirrors, not
+ * a detail of this file. */
 
-/* Bucket width in ISR ticks. ~0.097 ms at the measured 103 kHz ISR rate.
+/* Bucket width in ISR ticks. ~0.39 ms at the measured 103 kHz ISR rate.
  * PROBE-SPECIFIC: it belongs to this probe's trace geometry, not to the
  * scratchpad, which is why it moved here from Ramps.c with the rest of the
  * probe. The firmware PUBLISHES it in diagBucketTicks so no reader has to know
- * it -- see the note in els_diag.py about not baking rates into the host. */
-#define ELS_DIAG_BUCKET_TICKS 10
+ * it -- see the note in els_diag.py about not baking rates into the host.
+ *
+ * 40, not the historical 10: 10 gave a 50-bucket window of 500 ticks, HALF of
+ * the ELS_SLIP_SETTLE_TICKS = 1000 gate this probe exists to validate -- a
+ * capture that runs out of window below the constant cannot justify keeping
+ * it, let alone lowering it (2026-08-18 finding). 40 x 50 = 2000 ticks covers
+ * the constant with 2x margin. No schema bump: bucket width is self-describing
+ * (published per capture), unlike the v1->v2 gating change which altered what
+ * the numbers MEANT. */
+#define ELS_DIAG_BUCKET_TICKS 40
 
 /* Startup. Publishes which probe is compiled in and its trace geometry, then
  * clears the block.

@@ -165,6 +165,20 @@ horizon just above that. Tune it **down** from 1000 against a machine that still
 confirms reliably — never up to make a refusal go away, since the horizon is
 exactly the interval in which a hand nudge is still accepted as evidence.
 
+**2026-08-18 status — this entry was nearly closed on bad data; it stays
+open.** The 2026-08-16 takeup-settle-v2 captures (13 rows, all-zero) were for
+a time read as answering this. An audit
+(`els-settle-measurement-findings-2026-08-18.md`; DIAG.md's schema-2 section
+carries the summary) showed they cannot: the capture window was 500 ticks —
+half this constant — the era's recorder discarded `end_reason` so truncated
+captures are indistinguishable from finished ones, and the armed window never
+demonstrated it could see motion at all. All three are now addressed in code
+or procedure: the window is 2000 ticks (`ELS_DIAG_BUCKET_TICKS` 40), the
+recorder exports `end_reason`/`capture_ticks`, and the next capture session
+MUST (a) include one condition known to move Z during the armed window —
+prove a nonzero before trusting a zero — and (b) read `settle_ticks` only
+from `END_PULSE` captures; an `END_WINDOW` capture is a lower bound.
+
 Two unit traps, both live (full list in `els_slip.h`):
 - **Ticks, not milliseconds.** The emulator's real-time serve loop drives the
   same ISR ~10x slower than hardware (`emulator/src/main.cpp`), so a horizon
