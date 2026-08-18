@@ -22,12 +22,16 @@ on:
 jobs:
   system-tests:
     runs-on: ubuntu-latest
+    # timeout + checkout@v7 + apt retries: see fw.yml's header comment
+    # (2026-08-18 wedge; the old repos had already moved off @v4 and the
+    # weld regressed it).
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install build deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true install -y cmake build-essential
       - name: Install uv and sync deps
         working-directory: ui
         run: |

@@ -18,8 +18,11 @@ on:
 jobs:
   ui-tests:
     runs-on: ubuntu-latest
+    # timeout + checkout@v7: see fw.yml's header comment (2026-08-18 wedge;
+    # the old repos had already moved off @v4 and the weld regressed it).
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv and sync deps
         working-directory: ui
         run: |
