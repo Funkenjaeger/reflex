@@ -43,6 +43,9 @@ jobs:
       - name: Run firmware emulator suite
         working-directory: fw/emulator/build
         run: ctest --output-on-failure
+      - name: Probe registry scripts resolve every listed probe
+        working-directory: fw
+        run: bash scripts/lib/diag-test.sh
 
   arm-build:
     runs-on: ubuntu-latest
