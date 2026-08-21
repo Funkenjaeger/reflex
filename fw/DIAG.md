@@ -157,6 +157,20 @@ carried by those captures, for three independent reasons:
    could distinguish a good constant from one 10× too large. Fixed 2026-08-18:
    bucket width is now 40 (2000-tick window, 2× the gate). No schema bump —
    bucket width is self-describing via `diagBucketTicks`.
+
+   **This probe sits inside TWO windows and the 08-18 fix sized it against only
+   one of them.** `ELS_DIAG_BUCKET_TICKS (40) × ELS_DIAG_TRACE_BUCKETS (50)` =
+   **2000 ticks ≈ 19.4 ms** at the measured 103 kHz ISR rate. That is 2× the
+   1000-tick `ELS_SLIP_SETTLE_TICKS` gate, as intended — but the capture also
+   lives inside `ELS_TAKEUP_CONFIRM_WINDOW_TICKS` (`fw/Core/Src/Ramps.c:73`) =
+   **25000 ticks ≈ 242.7 ms**, against which it is still ~12.5× short.
+   Demonstrated, not computed: the existing "hand nudge long after the last
+   pulse" case in `els_takeup_confirm_test.cpp` injects at +5000 ticks —
+   deliberately inside the confirm window — and the capture has already ended
+   and published before the nudge arrives, so `diagNetCounts` stays 0. **A
+   disturbance timed correctly for the confirm gate is invisible to this
+   capture.** Do not read a zero as "nothing moved during the take-up
+   confirmation"; it only ever spoke about the first ~19 ms.
 2. **The recorder of that era discarded `diagEndReason`**, so this section's
    own floor-not-a-result rule is unappliable to all 13 rows — none can be
    classified `END_PULSE` vs `END_WINDOW`. The export gap is closed (the
@@ -167,6 +181,26 @@ carried by those captures, for three independent reasons:
    nonzero traversal data vouches for the dZ read path itself, but not for
    v2's `takeupPending`-gated window. The next capture session must include a
    condition known to move Z during the window before any zero is trusted.
+
+   **TIMING — this is the part that decides whether the session succeeds.**
+   "During the window" means *this probe's* ~2000-tick capture, **not** the
+   242.7 ms take-up confirm window. Inject the known Z motion **within roughly
+   19 ms of the take-up completing.** A nudge timed for the confirm gate lands
+   after the capture has already ended and yields a fourteenth uninterpretable
+   zero — a wasted trip to the machine. If a 19 ms hand movement is not
+   practical, widen `ELS_DIAG_BUCKET_TICKS` for that session first (it is
+   self-describing via `diagBucketTicks`, so no schema bump and no host
+   change) rather than trying to hit the window by hand.
+
+   **The firmware half of this is already settled and does NOT need the
+   lathe.** Building `Ramps.c` together with `els_takeup_confirm_test.cpp`
+   under `-DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2` and injecting a
+   known 20-count nudge through the real `SynchroRefreshTimerIsr()` reads back
+   `diagNetCounts` = 20 exactly, with `end_reason = ELS_DIAG_END_PULSE`
+   (2026-08-20). So the ISR → `diagNetCounts` path is proven live and the
+   remaining ambiguity in the 13 zeros is **only** about whether elspi's
+   encoder was delivering counts — not about whether the firmware was
+   looking.
 
 `ELS_SLIP_SETTLE_TICKS` therefore remains an **unmeasured parameter** —
 `fw/todo.md`'s commissioning entry is the open item, and only `END_PULSE`

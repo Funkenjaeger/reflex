@@ -83,7 +83,17 @@
  * it, let alone lowering it (2026-08-18 finding). 40 x 50 = 2000 ticks covers
  * the constant with 2x margin. No schema bump: bucket width is self-describing
  * (published per capture), unlike the v1->v2 gating change which altered what
- * the numbers MEANT. */
+ * the numbers MEANT.
+ *
+ * TWO WINDOWS, AND THIS CONSTANT IS SIZED AGAINST ONLY ONE. 40 x 50 = 2000
+ * ticks ~= 19.4 ms at 103 kHz. That covers ELS_SLIP_SETTLE_TICKS (1000) with
+ * 2x margin, which is what the 2026-08-18 change was for. It does NOT cover
+ * ELS_TAKEUP_CONFIRM_WINDOW_TICKS (Ramps.c:73) = 25000 ~= 242.7 ms, inside
+ * which this capture also sits and against which it is ~12.5x short. A
+ * disturbance timed for the confirm gate is INVISIBLE here -- reproduced by
+ * the "+5000 ticks" nudge case in els_takeup_confirm_test.cpp, where the
+ * capture has already ended and diagNetCounts stays 0. Do not read a zero
+ * from this probe as a statement about the confirm window. See DIAG.md. */
 #define ELS_DIAG_BUCKET_TICKS 40
 
 /* Startup. Publishes which probe is compiled in and its trace geometry, then
