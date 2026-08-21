@@ -16,10 +16,7 @@ def board():
 
 @pytest.fixture
 def inp(board, tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "reflex.dispatchers.saving_dispatcher.Path.home",
-        lambda: tmp_path,
-    )
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
     return InputDispatcher(
         board=board, inputIndex=0, id_override="0",
     )
@@ -30,10 +27,7 @@ class TestInputDispatcherFilename:
         assert inp.filename.name == "CoordBar-0.yaml"
 
     def test_different_indices_different_files(self, board, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "reflex.dispatchers.saving_dispatcher.Path.home",
-            lambda: tmp_path,
-        )
+        monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
         i0 = InputDispatcher(board=board, inputIndex=0, id_override="0")
         i1 = InputDispatcher(board=board, inputIndex=1, id_override="1")
         assert i0.filename.name == "CoordBar-0.yaml"
@@ -203,10 +197,7 @@ class TestSpeed:
 
 class TestSaveRestore:
     def test_round_trip_ratio(self, board, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "reflex.dispatchers.saving_dispatcher.Path.home",
-            lambda: tmp_path,
-        )
+        monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
         i1 = InputDispatcher(board=board, inputIndex=2, id_override="test_rt")
         i1.ratioNum = 360
         i1.ratioDen = 1000
@@ -219,10 +210,7 @@ class TestSaveRestore:
 
     def test_old_yaml_keys_silently_ignored(self, board, tmp_path, monkeypatch):
         """Old CoordBar YAML keys (offsets, syncRatioNum, axisName) should be silently ignored."""
-        monkeypatch.setattr(
-            "reflex.dispatchers.saving_dispatcher.Path.home",
-            lambda: tmp_path,
-        )
+        monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
         config_dir = tmp_path / ".config" / "reflex"
         config_dir.mkdir(parents=True)
         yaml_file = config_dir / "CoordBar-test_old.yaml"
@@ -245,10 +233,7 @@ class TestSaveRestore:
 
     def test_spindle_mode_persists(self, board, tmp_path, monkeypatch):
         """spindleMode is now persisted (not transient)."""
-        monkeypatch.setattr(
-            "reflex.dispatchers.saving_dispatcher.Path.home",
-            lambda: tmp_path,
-        )
+        monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
         i1 = InputDispatcher(board=board, inputIndex=0, id_override="test_spindle_persist")
         i1.spindleMode = True
         i1.encoder_ppr = 2000
@@ -263,10 +248,7 @@ class TestSaveRestore:
 
     def test_yaml_contains_only_input_properties(self, board, tmp_path, monkeypatch):
         """YAML file should only contain InputDispatcher properties after save."""
-        monkeypatch.setattr(
-            "reflex.dispatchers.saving_dispatcher.Path.home",
-            lambda: tmp_path,
-        )
+        monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
         inp = InputDispatcher(board=board, inputIndex=0, id_override="test_clean")
         inp.ratioNum = 100
 
@@ -290,10 +272,7 @@ class TestSaveRestore:
         assert "syncButtonColor" not in data
 
     def test_default_values_when_no_yaml(self, board, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "reflex.dispatchers.saving_dispatcher.Path.home",
-            lambda: tmp_path,
-        )
+        monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
         inp = InputDispatcher(board=board, inputIndex=0, id_override="test_defaults")
         assert inp.ratioNum == 1
         assert inp.ratioDen == 1

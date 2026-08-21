@@ -90,7 +90,6 @@ class ElsModeLayout(ModeLayout):
         self.spacer = Widget()
         self.els_adv_bar = ElsAdvancedBar(els_bar=els_bar)
         self.els_adv_bar.size_hint_y = None
-        self._adv_expanded_height = self.els_adv_bar.height
 
         self.build_axis_bars()
         self.add_widget(self.spindle_info)
@@ -109,12 +108,23 @@ class ElsModeLayout(ModeLayout):
         self.app.formats.bind(show_speeds=lambda *_: self.rebuild_axes())
         self.bind(height=self._update_row_heights)
         self.els_bar.bind(enable_advanced=self._apply_adv_visibility)
+        # A notice strip appearing changes what the bar needs. Without this the
+        # bar keeps whatever height it was last given and the strip overflows it.
+        self.els_adv_bar.bind(natural_height=self._apply_adv_visibility)
         self._apply_adv_visibility()
         self._update_row_heights()
 
     def _apply_adv_visibility(self, *_):
+        """Show or hide the advanced bar, at whatever height it currently needs.
+
+        Reads `natural_height` LIVE rather than a height measured once at
+        construction. The bar grows when a notice strip appears, and a snapshot
+        taken before any strip existed pins it at the base height forever — which
+        is what made the take-up warning render over the DRO rows on 2026-08-16.
+        Bound to natural_height in __init__ so a strip appearing re-applies this.
+        """
         shown = bool(self.els_bar.enable_advanced)
-        self.els_adv_bar.height = self._adv_expanded_height if shown else 0
+        self.els_adv_bar.height = self.els_adv_bar.natural_height if shown else 0
         self.els_adv_bar.opacity = 1 if shown else 0
         self.els_adv_bar.disabled = not shown
         self._update_row_heights()

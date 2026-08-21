@@ -12,6 +12,9 @@
 #include <atomic>
 #include <csignal>
 #include <cmath>
+#include <iostream>
+#include <sstream>
+#include <string>
 
 #include "config.h"
 #include "physics.h"
@@ -275,6 +278,101 @@ static void runElsScenario(LathePhysics *physics, rampsHandler_t *rampsData,
  * Retract home: the carriage position at startup (the host must place stop_z on
  * the cutting side of it). Override the retract distance via EMU_RETRACT_MM.
  */
+/*
+ * Serve-mode stdin command channel: gives system tests a way to drive the
+ * machine's MANUAL degrees of freedom mid-test without inventing a Modbus
+ * register for each one. One command per line, whitespace-separated:
+ *
+ *   x move <mm>         -> physics->moveCrossSlideTo(mm)
+ *   x jog <-1|0|1>      -> physics->jogCrossSlide(dir)
+ *   z move <mm>         -> physics->moveCarriageTo(mm)
+ *   z jog <-1|0|1>      -> physics->jogCarriage(dir)
+ *   halfnut open        -> physics->setHalfNutEngaged(false)
+ *   halfnut close       -> physics->setHalfNutEngaged(true)
+ *
+ * WHY THE Z AND HALFNUT COMMANDS EXIST
+ * ------------------------------------
+ * Together they are the third machine state the emulator could not previously
+ * represent: UNCOUPLED BUT MOVING ANYWAY. The model had exactly two worlds --
+ * coupled (Z follows the leadscrew) and uncoupled (Z never moves) -- while a
+ * real lathe has a third, because the operator can push the carriage with the
+ * half-nut open. That is not a corner case here: the whole ELS stop/resume
+ * model is built on hand-cranking between passes.
+ *
+ * Its absence is why the 2026-08-08 take-up gate defect shipped with passing
+ * tests. A fixture that cannot express a failure produces tests that agree with
+ * the code and are wrong together. See reflex-fw/todo.md.
+ *
+ * The z branch adds NO new coupling logic: LathePhysics::moveCarriageTo() /
+ * jogCarriage() already refuse to move the carriage while the half-nut is
+ * ENGAGED, so "only valid while the nut is open" is enforced inside the physics
+ * model, not here.
+ *
+ * halfnut takes an explicit STATE (open/close), not a toggle, and the
+ * distinction is load-bearing rather than cosmetic: a toggle issued while an
+ * engage is waiting for phase alignment CANCELS it, so a toggle-shaped command
+ * means different things depending on state the test cannot see. setHalfNutEngaged()
+ * is idempotent; `halfnut close` never means "give up".
+ *
+ * Runs on its own thread (same pattern as isrThreadFunc) because
+ * runPhysicsServer's loop can block for several seconds inside the
+ * auto-retract and must never be the thing blocked on stdin. Unknown or
+ * malformed lines are logged and skipped; EOF quietly ends the thread. The
+ * thread is started detached, so it is never joined -- fine, since it makes
+ * no further use of *physics after returning.
+ */
+static void stdinCommandThreadFunc(LathePhysics *physics) {
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        std::istringstream iss(line);
+        std::string noun, verb;
+        iss >> noun >> verb;
+
+        if (noun == "halfnut") {
+            if (verb == "open" || verb == "close") {
+                physics->setHalfNutEngaged(verb == "close");
+                emu_log_event("stdin cmd: halfnut %s", verb.c_str());
+            } else {
+                emu_log_event("stdin cmd: malformed 'halfnut' verb '%s' "
+                              "(want open|close) (line: \"%s\")",
+                              verb.c_str(), line.c_str());
+            }
+            continue;
+        }
+
+        if (noun != "x" && noun != "z") {
+            emu_log_event("stdin cmd: unknown axis '%s' (line: \"%s\")",
+                          noun.c_str(), line.c_str());
+            continue;
+        }
+
+        if (verb == "move") {
+            double mm;
+            if (iss >> mm) {
+                if (noun == "x") physics->moveCrossSlideTo(mm);
+                else             physics->moveCarriageTo(mm);
+                emu_log_event("stdin cmd: %s move %.4f", noun.c_str(), mm);
+            } else {
+                emu_log_event("stdin cmd: malformed '%s move' (line: \"%s\")",
+                              noun.c_str(), line.c_str());
+            }
+        } else if (verb == "jog") {
+            int dir;
+            if ((iss >> dir) && (dir == -1 || dir == 0 || dir == 1)) {
+                if (noun == "x") physics->jogCrossSlide(dir);
+                else             physics->jogCarriage(dir);
+                emu_log_event("stdin cmd: %s jog %d", noun.c_str(), dir);
+            } else {
+                emu_log_event("stdin cmd: malformed '%s jog' (line: \"%s\")",
+                              noun.c_str(), line.c_str());
+            }
+        } else {
+            emu_log_event("stdin cmd: unknown verb '%s' (line: \"%s\")", verb.c_str(), line.c_str());
+        }
+    }
+    emu_log_event("stdin cmd: EOF, command channel closed");
+}
+
 static void runPhysicsServer(LathePhysics *physics, rampsHandler_t *rampsData,
                              const EmuConfig &cfg) {
     using namespace std::chrono;
@@ -296,10 +394,23 @@ static void runPhysicsServer(LathePhysics *physics, rampsHandler_t *rampsData,
     double homeMM = physics->getCarriageMM();
     if (const char *h = getenv("EMU_RETRACT_MM")) homeMM = atof(h);
 
-    printf("=== PHYSICS SERVER: rpm=%.1f homeMM=%.4f (reflex-ui drives ELS over Modbus) ===\n",
-           rpm, homeMM);
-    printf("    spindle running; manual half-nut retract on each ELS stop.\n");
+    // EMU_NO_AUTO_RETRACT: skip the simulated operator hand-retract on each ELS
+    // stop. Use this to test reflex-ui's OWN retract workflow (stop+retract /
+    // wizard modes), where the host drives the servo retract with the half-nut
+    // kept engaged. Default (unset) = simulate the manual retract (stop-only).
+    bool noAutoRetract = getenv("EMU_NO_AUTO_RETRACT") != nullptr;
+
+    printf("=== PHYSICS SERVER: rpm=%.1f homeMM=%.4f auto_retract=%d (reflex-ui drives ELS over Modbus) ===\n",
+           rpm, homeMM, (int)!noAutoRetract);
+    printf("    spindle running; %s on each ELS stop.\n",
+           noAutoRetract ? "host-driven retract (no auto-retract)"
+                         : "manual half-nut retract");
     fflush(stdout);
+
+    // X-axis command channel: system tests write "x move <mm>" / "x jog <dir>"
+    // lines to our stdin. Own thread so this loop's occasional multi-second
+    // blocking (auto-retract, below) never stalls command delivery.
+    std::thread(stdinCommandThreadFunc, physics).detach();
 
     uint32_t prevSeq = emu_hw.els_last_stop_seq;
     while (g_running.load()) {
@@ -317,13 +428,30 @@ static void runPhysicsServer(LathePhysics *physics, rampsHandler_t *rampsData,
 
         // Let the host observe active=1 and settle its FSM into 'stopped'.
         ms(400);
+
+        if (noAutoRetract) {
+            // Host (reflex-ui) drives the retract via the servo with the
+            // half-nut kept engaged; the emulator does nothing but log.
+            printf("  [stop #%u] host-driven retract; half-nut left engaged\n",
+                   (unsigned)seq);
+            fflush(stdout);
+            continue;
+        }
+
         // Manual retract: open half-nut, hand-move carriage home, re-engage.
+        // Park on a lattice-aligned position so the re-engage snap is a no-op
+        // and legacy stationary re-engagements stay deterministic. Computed
+        // per stop: the lattice offset shifts every pass (takeup/correction
+        // move the leadscrew), but it is frozen between the stop trigger and
+        // re-engage (sync is gated while active=1, released by the host only
+        // after we re-engage).
         physics->requestHalfNutToggle();
         ms(80);
-        physics->moveCarriageTo(homeMM);
+        double alignedHome = physics->nearestGridPositionMM(homeMM);
+        physics->moveCarriageTo(alignedHome);
         int guard = 0;
         while ((physics->isZMoveTargetActive()
-                || std::abs(physics->getCarriageMM() - homeMM) > 0.02)
+                || std::abs(physics->getCarriageMM() - alignedHome) > 0.02)
                && g_running.load() && guard < 8000) { ms(2); guard++; }
         ms(120);
         physics->requestHalfNutToggle();
@@ -475,10 +603,16 @@ int main(int argc, char *argv[]) {
     RampsStart(&rampsData);
     printf("Firmware initialized.\n");
 
-    /* Apply direction config after RampsStart defaults */
-    rampsData.shared.scales[0].scaleDir = (int16_t)cfg.spindle_scale_dir;
-    rampsData.shared.scales[1].scaleDir = (int16_t)cfg.z_scale_dir;
-    rampsData.shared.servo.servoDir = (int16_t)cfg.servo_dir;
+    /* NOTE: the scaleDir/servoDir REGISTERS keep their canonical +1 firmware
+     * defaults (RampsStart) here. They represent the HOST's (reflex-ui's)
+     * direction canonicalization, which the UI writes on connect from its
+     * Reverse toggles. The `*_scale_dir`/`servo_dir` config keys instead drive
+     * the PHYSICAL wiring signs in the physics model (see physics.cpp) — the
+     * thing those toggles must cancel. Preloading the registers from the same
+     * config double-applied the sign (self-cancelling in dashboard mode), so we
+     * no longer do it. In dashboard/standalone mode (no host) an inverted wiring
+     * therefore shows as an inverted DRO — the honest uncommissioned-machine view.
+     */
 
     /* Initialize servoCycles to avoid division by zero on first ISR tick.
      * On real hardware updateSpeedTask() sets this within 50ms of boot,

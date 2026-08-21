@@ -13,9 +13,28 @@
         color: app.theme.text
         font_size: "18sp"
 
-    FormValueButton:
-        id: btn_close
-        text: root.button_text
+    BoxLayout:
+        orientation: "horizontal"
         size_hint_y: None
         height: dp(48)
-        on_release: root.on_button_press()
+        spacing: dp(10)
+
+        # Optional cancel button — collapses to nothing when cancel_text is empty
+        # (single-button dialogs stay exactly as before).
+        FormValueButton:
+            id: btn_cancel
+            text: root.cancel_text
+            opacity: 1 if root.cancel_text else 0
+            disabled: not root.cancel_text
+            # Present → share the row (size_hint_x drives width). Absent →
+            # collapse to zero width. (width is only consulted when size_hint_x
+            # is None, i.e. the absent case, so the else value is a placeholder.)
+            size_hint_x: 1 if root.cancel_text else None
+            width: dp(80) if root.cancel_text else 0
+            on_release: root.on_cancel_press()
+
+        FormValueButton:
+            id: btn_close
+            text: root.button_text
+            size_hint_x: 1
+            on_release: root.on_button_press()

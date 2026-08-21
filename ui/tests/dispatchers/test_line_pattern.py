@@ -5,10 +5,7 @@ from reflex.dispatchers.line_pattern import LinePatternDispatcher
 
 @pytest.fixture
 def pattern(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "reflex.dispatchers.saving_dispatcher.Path.home",
-        lambda: tmp_path,
-    )
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
     p = LinePatternDispatcher(id_override="test_line")
     p.recalculate()
     return p

@@ -1,0 +1,38 @@
+# UI default suite. Triggers include fw/Core/Inc because the cross-half
+# contract tests (register map, schema/mode registries) read the firmware
+# headers — a firmware-side header change must rerun them.
+name: ui
+
+on:
+  push:
+    paths:
+      - "ui/**"
+      - "fw/Core/Inc/**"
+      - ".github/workflows/ui.yml"
+  pull_request:
+    paths:
+      - "ui/**"
+      - "fw/Core/Inc/**"
+      - ".github/workflows/ui.yml"
+
+jobs:
+  ui-tests:
+    runs-on: ubuntu-latest
+    # timeout + checkout@v7: see fw.yml's header comment (2026-08-18 wedge;
+    # the old repos had already moved off @v4 and the weld regressed it).
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv and sync deps
+        working-directory: ui
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv venv
+          uv sync
+      - name: Run the default (non-system) suite
+        working-directory: ui
+        env:
+          # The firmware is always in-repo; a skip in the contract tests can
+          # only mean a broken resolver, and must fail loudly, not pass quietly.
+          REFLEX_FW_REQUIRED: "1"
+        run: uv run --frozen pytest -q

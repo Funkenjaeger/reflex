@@ -1,12 +1,13 @@
 import os
 import shutil
-from pathlib import Path
 from typing import Optional
 
 import yaml
 from kivy.logger import Logger
 from kivy.event import EventDispatcher
 from kivy.properties import StringProperty, NumericProperty, BooleanProperty, ObservableList, partial
+
+from reflex.utils.paths import config_dir
 
 log = Logger.getChild(__name__)
 
@@ -44,7 +45,7 @@ class SavingDispatcher(EventDispatcher):
 
     @property
     def filename(self):
-        settings_folder = Path.home() / ".config" / "reflex"
+        settings_folder = config_dir()
         os.makedirs(settings_folder, exist_ok=True)
 
         class_name = self._save_class_name or self.__class__.__name__

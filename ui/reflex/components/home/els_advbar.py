@@ -27,6 +27,23 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     enable_retract = BooleanProperty(True)
     enable_wizard = BooleanProperty(True)
 
+    # Height this bar WANTS, i.e. its base plus whichever collapsible notice
+    # strips are currently showing. Computed in the kv rule.
+    #
+    # It is a separate property from `height` because the two have different
+    # owners and conflating them broke the bar on 2026-08-16. ElsModeLayout owns
+    # `height`, because it is what decides whether the advanced bar is shown at
+    # all — and in Kivy, assigning to a property REPLACES any kv binding on it.
+    # So the moment the layout wrote `height`, the kv expression stopped driving
+    # it, and the bar was frozen at whatever it measured at construction time:
+    # base height, with no strip showing. A strip appearing then made the
+    # children taller than the parent and the warning rendered outside the bar,
+    # up over the DRO rows.
+    #
+    # With the two split, kv owns what the bar needs and the layout owns whether
+    # it gets it, and neither silently overwrites the other.
+    natural_height = NumericProperty(128)
+
     # ── One-hot tri-state operating mode (derived from the flags above) ───────
     # The single mode button in the advanced bar cycles through these three:
     #   "wizard"        -> guided multi-step cut (enable_wizard)
@@ -145,9 +162,14 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         self.controller.els_forward = value
 
     def _sync_is_threading(self):
-        # ElsBar.mode_name uses the "Thread" prefix for threading feed tables
-        # (e.g. "Thread MM", "Thread IN"); feed tables don't contain it.
-        self.controller.is_threading = "Thread" in (self.els_bar.mode_name or "")
+        # Classify via the feeds table's structured mode field (see
+        # feeds.is_threading_table). is_threading gates SAFETY behavior (thread
+        # geometry push, the X-clear-of-start-dia retract gate), so it must not
+        # hang off a display string — the old `"Thread" in mode_name` check
+        # silently flipped ELS into feed mode if a table was ever renamed.
+        from reflex import feeds
+        self.controller.is_threading = feeds.is_threading_table(
+            self.els_bar.mode_name or "")
 
     # ── Engage / disengage (delegates to controller) ─────────────────────────
 
@@ -211,9 +233,20 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         """
         if which in ("stop_z", "start_z"):
             axis = self.app.els.get_z_axis()
+            axis_label = "Saddle (Z)"
         else:
             axis = self.app.els.get_x_axis()
+            axis_label = "Cross-slide (X)"
         if axis is None:
+            # Same guard as the keypad-entry paths — and the same FEEDBACK.
+            # Silently returning here left a long-press indistinguishable from
+            # a dead button when the axis wasn't mapped in ELS settings.
+            from reflex.components.popups.custom_popup import CustomPopup
+            CustomPopup(
+                title="Axis Not Configured",
+                message=f"{axis_label} axis is not set in ELS settings.",
+                button_text="OK",
+            ).open()
             return
         position = float(axis.scaledPosition)
         if which == "stop_z":
@@ -221,9 +254,9 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         elif which == "start_z":
             self.controller.commit_standalone_retract_z(position)
         elif which == "major_dia":
-            self.controller.start_dia = position
+            self.controller.commit_standalone_start_dia(position)
         elif which == "minor_dia":
-            self.controller.stop_dia = position
+            self.controller.commit_standalone_stop_dia(position)
         self.controller.try_advance_wizard()
 
     def _open_standalone_stop_z_keypad(self):
@@ -331,13 +364,15 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         is_metric = self.app.formats.current_format == "MM"
         unit_label = "mm" if is_metric else "in"
         target_attr = "start_dia" if which == "major" else "stop_dia"
+        commit = (self.controller.commit_standalone_start_dia if which == "major"
+                  else self.controller.commit_standalone_stop_dia)
         title_label = "Major ø" if which == "major" else "Minor ø"
         keypad = Keypad(title=f"Enter {title_label} ({unit_label})")
         keypad.integer = False
 
         def on_done(value):
             try:
-                setattr(self.controller, target_attr, float(value))
+                commit(float(value))
             except ValueError:
                 log.warning(f"Invalid {target_attr} value: {value}")
                 return

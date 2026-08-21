@@ -19,7 +19,7 @@ reversal in the cycle:
   cutting direction. The cut then begins with the gear train pre-loaded
   so the carriage starts moving on the first synchronized step. The
   takeup direction is derived automatically from
-  `sign(stopDirection × threadPitchSteps × zCountsPerPitch)`.
+  `sign(syncRatioNum × threadPitchSteps × zCountsPerPitch)`.
 - **At the start of each retract** (the first retract after a cut),
   the host adds the takeup in the retract direction before commanding
   the retract move. Without this, the carriage stops short of Start Z
@@ -28,7 +28,7 @@ reversal in the cycle:
   the nut is already on the retract-side wall.
 
 You only configure the magnitude. Direction is derived from the
-firmware's scaleDir/servoDir registers (cuts) or the sign of the
+spindle sync ratio and thread geometry (cuts) or the sign of the
 retract delta (retracts).
 
 ## Typical Values
@@ -53,6 +53,10 @@ retract delta (retracts).
 - Value is always entered in mm regardless of display mode.
 - A value of 0 disables takeup completely — the firmware skips the
   pre-cut takeup AND the host skips the pre-retract takeup.
+- The pre-cut takeup is **threading-only**. In turning mode the UI
+  sends zero thread geometry, which disables the firmware takeup
+  regardless of the value set here. The pre-retract takeup, being
+  host-side, still applies.
 - The same magnitude governs both the pre-cut and pre-retract takeups.
   If your machine has asymmetric backlash, set the value to the larger
   of the two and accept slight over-travel on the smaller side.

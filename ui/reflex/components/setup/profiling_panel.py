@@ -4,7 +4,7 @@ import pstats
 import time
 from collections import deque
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path  # _save_profile's return annotation, evaluated at import
 
 from kivy.clock import Clock
 from kivy.logger import Logger
@@ -12,12 +12,13 @@ from kivy.properties import StringProperty, BooleanProperty, NumericProperty
 from kivy.uix.boxlayout import BoxLayout
 
 from reflex.utils.kv_loader import load_kv
+from reflex.utils.paths import config_dir
 
 log = Logger.getChild(__name__)
 load_kv(__file__)
 
 FRAME_HISTORY_SIZE = 300  # ~10 seconds at 30fps
-PROFILE_DIR = Path.home() / ".config" / "reflex" / "profiles"
+PROFILE_DIR = config_dir() / "profiles"
 
 
 class ProfilingPanel(BoxLayout):

@@ -1,0 +1,43 @@
+# Full-stack system suite: the UI driving the compiled firmware emulator.
+#
+# NO continue-on-error. The split-era job carried it for runner flakiness,
+# and on 2026-08-17 it masked a real, deterministic regression (stale
+# firmware-path defaults) for three consecutive green runs. The suite is
+# 47/47 on runners since; if genuine flake reappears, quarantine the flaky
+# test explicitly rather than silencing the whole job.
+name: system
+
+on:
+  push:
+    paths:
+      - "fw/**"
+      - "ui/**"
+      - ".github/workflows/system.yml"
+  pull_request:
+    paths:
+      - "fw/**"
+      - "ui/**"
+      - ".github/workflows/system.yml"
+
+jobs:
+  system-tests:
+    runs-on: ubuntu-latest
+    # timeout + checkout@v7 + apt retries: see fw.yml's header comment
+    # (2026-08-18 wedge; the old repos had already moved off @v4 and the
+    # weld regressed it).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build deps
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true install -y cmake build-essential
+      - name: Install uv and sync deps
+        working-directory: ui
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv venv
+          uv sync
+      - name: Run system tests against the in-repo firmware
+        working-directory: ui
+        run: uv run --frozen pytest -m system tests/system -q

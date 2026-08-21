@@ -14,7 +14,9 @@
     font_style: "bold"
     background_color: app.theme.success if app.servo.servoMode else app.theme.surface
     on_press: app.beep()
-    on_release: app.servo.toggle_enable()
+    # Routed through the app so the ELS feed guard can confirm before enabling a
+    # feed with no armed ELS stop (advanced ELS mode only; basic feed unaffected).
+    on_release: app.on_servo_enable_pressed()
   BoxLayout:
     orientation: "vertical"
     size_hint_x: 0.2

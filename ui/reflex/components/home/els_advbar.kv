@@ -7,7 +7,90 @@
 <ElsAdvancedBar>:
   orientation: "vertical"
   size_hint_y: None
-  height: 128
+  # Grow by each notice strip's height only while it is showing, so the control
+  # row below is never squished.
+  #
+  # EVERY collapsible strip below MUST be represented here. A strip that takes
+  # height without the parent growing to match overflows this vertical
+  # BoxLayout's bounds and renders wherever the layout arithmetic lands it --
+  # observed on the machine 2026-08-16 as the take-up warning appearing over a
+  # DRO line in the middle of the screen. The strip itself was fine; it was
+  # this line that had not been updated when it was added.
+  natural_height: 128 + (dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (dp(30) if root.controller.takeup_warning else 0)
+
+  # ── Re-reference notice strip (audit H1 follow-up) ─────────────────────────
+  # Shown when a committed Stop/Start value was re-referenced by a DRO re-zero /
+  # coordinate change (the physical target is unchanged). 'warn' → message only;
+  # 'confirm' → Keep/Reset. Collapses to zero height when there's no notice.
+  # NOTE: needs an on-device look — colors/spacing are a first pass.
+  BoxLayout:
+    id: reframe_notice
+    orientation: 'horizontal'
+    size_hint_y: None
+    spacing: dp(8)
+    padding: dp(8), 0
+    height: dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0
+    opacity: 1 if self.height else 0
+    disabled: not self.height
+    canvas.before:
+      Color:
+        rgba: (1, 0.72, 0.16, 0.28)
+      Rectangle:
+        pos: self.pos
+        size: self.size
+    Label:
+      text: root.controller.reframe_message
+      text_size: self.size
+      halign: 'left'
+      valign: 'middle'
+      font_name: app.theme.font_bold
+      font_size: dp(13)
+      color: app.theme.text
+    StyledButton:
+      text: "Keep"
+      size_hint_x: None
+      width: dp(64) if root.controller.reframe_confirm_pending else 0
+      opacity: 1 if root.controller.reframe_confirm_pending else 0
+      disabled: not root.controller.reframe_confirm_pending
+      on_release: root.controller.clear_reframe_notice()
+    StyledButton:
+      text: "Reset"
+      size_hint_x: None
+      width: dp(64) if root.controller.reframe_confirm_pending else 0
+      opacity: 1 if root.controller.reframe_confirm_pending else 0
+      disabled: not root.controller.reframe_confirm_pending
+      on_release: root.controller.reset_reframed_targets()
+
+  # ── Take-up refusal notice ────────────────────────────────────────────────
+  #    Shown when the firmware refused to start a pass because it could not
+  #    confirm the backlash take-up actually moved the carriage. The pass is
+  #    aborted back to the stopped state with the thread phase reference
+  #    intact, so the operator just closes the half-nut and presses Cut again;
+  #    this strip is the ONLY thing that tells them why nothing happened.
+  #    Collapses to zero height when there is nothing to say.
+  BoxLayout:
+    id: takeup_notice
+    orientation: 'horizontal'
+    size_hint_y: None
+    spacing: dp(8)
+    padding: dp(8), 0
+    height: dp(30) if root.controller.takeup_warning else 0
+    opacity: 1 if self.height else 0
+    disabled: not self.height
+    canvas.before:
+      Color:
+        rgba: (0.85, 0.16, 0.16, 0.30)
+      Rectangle:
+        pos: self.pos
+        size: self.size
+    Label:
+      text: root.controller.takeup_warning
+      text_size: self.size
+      halign: 'left'
+      valign: 'middle'
+      font_name: app.theme.font_bold
+      font_size: dp(13)
+      color: app.theme.text
 
   # ── Wizard instruction bar ─────────────────────────────────────────────────
   # Full-width strip across the top of the bar (over every control column) so
@@ -73,7 +156,14 @@
       width: 96
       text: "Disengage" if root.controller.engaged else "Engage"
       font_size: dp(17)
-      disabled: root.is_running
+      # Also disabled while ENGAGED with sync motion armed AND the spindle
+      # actually turning: "disable the stop" is ambiguous there, and
+      # disengaging RELEASES the held carriage. Sync Enable stays live and is
+      # the unambiguous way to stop. With the spindle STOPPED nothing can
+      # move, so the button stays live even with sync armed (operator
+      # decision 2026-08-17). See ui_controller.toggle_engage, which refuses
+      # the same case defensively so a kv change cannot silently reopen it.
+      disabled: root.is_running or (root.controller.engaged and bool(app.servo.servoMode) and app.els.spindle_is_running)
       led_on: root.controller.engaged
       led_color: app.theme.led_off if not root.controller.engaged else (app.theme.danger if root.controller.els_stop_active else app.theme.success)
       status_text: "Disabled" if not root.controller.engaged else ("Stopped" if root.controller.els_stop_active else "Armed")
@@ -109,7 +199,9 @@
     TextHeaderButton:
       id: btn_stop_z
       text_header: "Stop Z"
-      text_button: app.formats.position_format.format(root.controller.stop_z)
+      # "--" until the operator actually sets a stop Z — a never-set (0.0) stop
+      # must not read like a real target (audit H1).
+      text_button: app.formats.position_format.format(root.controller.stop_z) if root.controller.stop_z_valid else "--"
       blink_enable: root.controller.active_input == "stop_z"
       width: self.height
       disabled: not root.controller.x_z_inputs_enabled
@@ -119,7 +211,8 @@
     TextHeaderButton:
       id: btn_start_z
       text_header: "Start Z"
-      text_button: app.formats.position_format.format(root.controller.retract_z)
+      # "--" until set (and after a confirm-bar Reset), like Stop Z.
+      text_button: app.formats.position_format.format(root.controller.retract_z) if root.controller.retract_z_valid else "--"
       blink_enable: root.controller.active_input == "start_z"
       width: self.height if (root.enable_retract or root.enable_wizard) else 0
       opacity: 1 if (root.enable_retract or root.enable_wizard) else 0

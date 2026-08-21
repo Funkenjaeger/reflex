@@ -29,6 +29,7 @@ import configparser
 from kivy.logger import Logger
 
 import reflex
+from reflex.utils.paths import config_dir
 
 log = Logger.getChild(__name__)
 
@@ -49,7 +50,7 @@ SEED_TOKENS = ["display_color", "color_on", "color_off"]
 DEFAULT = "dark"
 
 BUILTIN_DIR = os.path.join(os.path.dirname(reflex.__file__), "themes")
-USER_DIR = os.path.expanduser("~/.config/reflex/themes")
+USER_DIR = str(config_dir() / "themes")
 
 
 def _parse_color(text: str) -> list[float]:

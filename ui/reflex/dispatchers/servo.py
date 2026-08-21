@@ -28,6 +28,10 @@ class ServoDispatcher(SavingDispatcher):
     index = NumericProperty(0)
 
     servoMode = NumericProperty(0)
+    #: True only while servoMode is being assigned from a firmware
+    #: readback. Deliberately a plain attribute, not a Kivy property:
+    #: it must not itself generate change events.
+    servoMode_from_firmware = False
     unitsPerTurn = NumericProperty(360.0)
     oldOffset = NumericProperty(0.0)
 
@@ -97,6 +101,13 @@ class ServoDispatcher(SavingDispatcher):
         self.step_positions = dict()
         self.positions = dict()
         self.disableControls = True
+        # Watchdog state. None = nothing commanded yet this session, so there is
+        # nothing to compare the firmware against; set on the first UI-originated
+        # servoMode write. Deliberately NOT initialised to 0 -- that would make a
+        # firmware value retained across a UI restart look like a divergence on
+        # the first poll, before the app has asked for anything.
+        self._commanded_servo_mode = None
+        self._divergence_polls = 0
         self.servoMode = 0
 
     def configure_lead_screw_ratio(self, instance, value):
@@ -115,7 +126,23 @@ class ServoDispatcher(SavingDispatcher):
             if self.board.connected:
                 self.encoderPrevious = self.board.fast_data_values['servoCurrent']
                 self.encoderCurrent = self.board.fast_data_values['servoCurrent']
-                self.servoMode = self.board.fast_data_values['servoMode']
+                # ADOPTION IS AN OBSERVATION. The firmware retains servoMode
+                # across a UI restart, so at connect this mirrors whatever the
+                # machine already happens to be doing -- the operator has not
+                # asked for anything. Flagged exactly like the poll mirror in
+                # on_update_tick (see its comment): unflagged, on_servoMode
+                # would record the observed value into _commanded_servo_mode
+                # (if the UI commanded 0 earlier this session and a
+                # reconnected firmware reports nonzero, the watchdog SHOULD
+                # see that divergence, not have its baseline moved to match),
+                # and the servoMode->syncEnable binding in dispatchers/els.py
+                # would write sync to the spindle scale from a stale retained
+                # value.
+                self.servoMode_from_firmware = True
+                try:
+                    self.servoMode = self.board.fast_data_values['servoMode']
+                finally:
+                    self.servoMode_from_firmware = False
                 self.board.device['servo']['maxSpeed'] = self.maxSpeed
                 self.board.device['servo']['acceleration'] = self.acceleration
                 servo_dir = -1 if self.reverse else 1
@@ -150,7 +177,20 @@ class ServoDispatcher(SavingDispatcher):
             self.encoderCurrent = self.board.fast_data_values['servoCurrent']
             servoMode = self.board.fast_data_values['servoMode']
             if servoMode != self.servoMode:
-                self.servoMode = servoMode
+                # Flagged so listeners can tell an OBSERVED value from a
+                # COMMANDED one. This assignment mirrors what the firmware
+                # reports; it is not the operator asking for anything, and a
+                # listener that writes hardware in response turns a readback
+                # into a command. dispatchers/els.py checks this before
+                # driving syncEnable — see the note there for the disengage
+                # latch it closes.
+                self.servoMode_from_firmware = True
+                try:
+                    self.servoMode = servoMode
+                finally:
+                    self.servoMode_from_firmware = False
+
+            self._check_servo_mode_divergence(servoMode)
 
             steps_per_second = self.board.fast_data_values['servoSpeed']
             self.speed_history.append(steps_per_second)
@@ -170,6 +210,55 @@ class ServoDispatcher(SavingDispatcher):
                 self.disableControls = False
         except Exception as e:
             log.error(f"Unable to read servo: {str(e)}")
+
+    # Consecutive disagreeing polls before saying anything. Above 1 so a write
+    # still in flight -- commanded here, not yet acknowledged there -- is not
+    # reported as a divergence.
+    SERVO_MODE_DIVERGENCE_POLLS = 5
+
+    def _check_servo_mode_divergence(self, observed):
+        """LOG-ONLY watchdog: did the machine keep feeding after we said stop?
+
+        The invariant: nothing an operator can legitimately do makes the firmware
+        disagree with the last servoMode the UI wrote. Any persistent
+        disagreement is a defect somewhere -- a dropped write, a firmware task
+        re-asserting on its own (servoEnableTask does exactly this, Ramps.c
+        approx 1105), or a path that cleared elsStop.enable while sync was still
+        live. This does not care which; it reports the disagreement.
+
+        WHY IT ONLY LOGS, and why that is not timidity. Faulting to alarm would
+        call on_enter_alarm, which calls set_enable(False) -- and clearing enable
+        releases the carriage hold (Ramps.c:815/826). A false positive during a
+        live pass would therefore TRIGGER the very hazard this exists to detect.
+        Escalating to alarm is only safe once the disengage path is provably
+        safe, and it is not yet: see the branch notes and the Open Loops task.
+
+        Only the dangerous direction is reported. "We said run, it says stopped"
+        is a stalled feed -- annoying, visible, and not a runaway.
+        """
+        commanded = self._commanded_servo_mode
+        if commanded is None:
+            return          # nothing commanded yet this session; nothing to compare
+        if not (commanded == 0 and observed != 0):
+            if self._divergence_polls:
+                log.warning(
+                    f"servoMode divergence CLEARED after "
+                    f"{self._divergence_polls} polls (now {observed})"
+                )
+            self._divergence_polls = 0
+            return
+
+        self._divergence_polls += 1
+        if self._divergence_polls == self.SERVO_MODE_DIVERGENCE_POLLS:
+            # Once per episode, not once per poll -- a watchdog that floods the
+            # log is a watchdog nobody reads, and this needs to be findable
+            # afterwards rather than loud at the time.
+            log.warning(
+                f"servoMode DIVERGENCE: UI commanded 0, firmware reports "
+                f"{observed} for {self._divergence_polls} consecutive polls. "
+                f"The carriage may be driven without the UI asking. See ELS "
+                f"disengage/reconnect notes."
+            )
 
     def update_scaledPosition(self, instance, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)
@@ -257,6 +346,13 @@ class ServoDispatcher(SavingDispatcher):
 
     def on_servoMode(self, instance, value):
         self.board.device['fastData']['servoMode'] = self.servoMode
+        if not self.servoMode_from_firmware:
+            # Remember what WE asked for. Only UI-originated changes count as
+            # commands; a value mirrored back from the firmware is an
+            # observation, and recording it here would make the watchdog below
+            # compare the firmware against itself -- always agreeing, never able
+            # to fail. That is the whole distinction this watchdog rests on.
+            self._commanded_servo_mode = self.servoMode
         if self.servoMode != 0:
             log.info("Disable Controls False")
             self.disableControls = False
@@ -273,6 +369,13 @@ class ServoDispatcher(SavingDispatcher):
             self.servoMode = 0
         else:
             self.servoMode = 1
+
+    def stop_feed(self):
+        """Force the sync feed off (servoMode=0), idempotent. Used as a safety
+        stop when ELS disengages so a running spindle-synced feed doesn't keep
+        driving the carriage with no ELS stop to arrest it."""
+        if self.servoMode != 0:
+            self.servoMode = 0
 
     def set_current_position(self, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)

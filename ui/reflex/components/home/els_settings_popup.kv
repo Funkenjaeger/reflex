@@ -35,3 +35,30 @@
                 help_file: "els_backlash_takeup.md"
                 value: root.backlash_mm
                 on_value: root.backlash_mm = self.value
+
+            NumberItem:
+                name: "Cal sweep limit (mm)"
+                help_file: "els_backlash_cal.md"
+                value: root.cal_ceiling_mm
+                on_value: root.cal_ceiling_mm = self.value
+
+            NumberItem:
+                name: "Cal motion threshold (Z counts)"
+                help_file: "els_backlash_cal.md"
+                value: root.cal_motion_thresh_counts
+                on_value: root.cal_motion_thresh_counts = self.value
+
+            ButtonItem:
+                name: "Measure backlash"
+                value: "Calibrate"
+                help_file: "els_backlash_cal.md"
+                on_release: root.open_backlash_calibration()
+
+            DropDownItem:
+                id: reframe_notify_dropdown
+                height: 60
+                name: "Stop re-reference"
+                help_file: "els_stop_reref.md"
+                options: ["silent", "warn", "confirm"]
+                value: app.els.stop_z_reframe_notify
+                on_value: app.els.stop_z_reframe_notify = self.value

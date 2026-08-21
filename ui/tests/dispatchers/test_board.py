@@ -21,10 +21,7 @@ def offset_provider():
 
 @pytest.fixture
 def board(formats, offset_provider, tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "reflex.dispatchers.saving_dispatcher.Path.home",
-        lambda: tmp_path,
-    )
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
     with patch("reflex.dispatchers.board.ConnectionManager") as MockCM, \
          patch("reflex.dispatchers.board.Clock"):
         mock_cm = MagicMock()

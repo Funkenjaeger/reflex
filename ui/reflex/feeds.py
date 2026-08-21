@@ -102,3 +102,38 @@ table = {
     "Feed IN": FEED_IN,
     "Feed MM": FEED_MM,
 }
+
+# FeedConfiguration.mode semantics (the structured, rename-proof classification):
+#   1 = threading, metric pitch (mm/rev)
+#   2 = threading, imperial TPI (254/TPI → mm/rev)
+#   3 = feed, imperial (in/rev converted to mm)
+#   4 = feed, metric (mm/rev)
+THREADING_MODES = {1, 2}
+
+
+def is_threading_table(name: str) -> bool:
+    """True iff the named feeds table is a THREADING table.
+
+    Keyed off ``FeedConfiguration.mode`` — the structured field every entry
+    already carries — rather than the display name. The old check was
+    ``"Thread" in name``, which meant renaming a table (or adding e.g.
+    "Metric Pitch") silently flipped ELS into feed mode: no thread geometry
+    pushed, no X-clear-of-start-dia gate. Threading gates are safety gates, so
+    classification must not hang off UI text.
+
+    Strict: a mixed table is a configuration error and classifies as NOT
+    threading (with a warning), rather than half-applying thread behavior.
+    """
+    configs = table.get(name) or []
+    if not configs:
+        return False
+    modes = {c.mode for c in configs}
+    if modes <= THREADING_MODES:
+        return True
+    if modes & THREADING_MODES:
+        from kivy.logger import Logger
+        Logger.getChild(__name__).warning(
+            f"feeds table {name!r} mixes threading and feed modes {modes} — "
+            f"treating as NOT threading"
+        )
+    return False

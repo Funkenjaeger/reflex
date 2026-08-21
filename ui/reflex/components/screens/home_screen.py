@@ -72,6 +72,16 @@ class HomePage(Screen):
         # Reset enables
         jog_layout = self.mode_layouts[3]
         jog_layout.jog_bar.enable_jog = False
+        # SYNC OFF FIRST, explicitly. The servoMode write below also ends up
+        # clearing syncEnable, but only via the servoMode binding in
+        # dispatchers/els.py firing as a side effect -- teardown inherited
+        # from binding order in another module, the exact shape the FSM paths
+        # were purged of (see the SYNC OFF FIRST comments in fsms/els_fsm.py
+        # and els_stop_hal.stop_sync for the firmware re-assert race this
+        # guards against). A mode switch must kill every motion source even
+        # if that binding is gone or servoMode is already 0 (a same-value
+        # write fires no binding at all).
+        self.app.els_uic.hal.stop_sync()
         self.app.servo.servoMode = 0
 
         # Swap the entire mode layout

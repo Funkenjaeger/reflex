@@ -26,14 +26,23 @@ class JogBar(BoxLayout):
         if self.desired_speed < -self.app.servo.maxSpeed:
             self.desired_speed = -self.app.servo.maxSpeed
 
+        # The jog buttons mean PHYSICAL carriage direction. jogSpeed drives
+        # the commanded-step counter, and the firmware's servoDir only flips
+        # the DIR pin — sign(carriage) = sign(jogSpeed) × servoDir (pinned by
+        # tests/system/test_jog_mode.py). Without this term, a machine
+        # commissioned with reverse=True jogs backwards against its buttons —
+        # which elspi did for its entire life until 2026-08-17, unnoticed
+        # because jog was never used.
+        direction = -1 if self.app.servo.reverse else 1
+
         # Forward
         if self.enable_jog:
-            self.app.servo.jogSpeed = self.desired_speed
+            self.app.servo.jogSpeed = self.desired_speed * direction
             self.app.servo.servoMode = 2
 
         # Reverse
         if self.enable_jog_reverse:
-            self.app.servo.jogSpeed = -self.desired_speed
+            self.app.servo.jogSpeed = -self.desired_speed * direction
             self.app.servo.servoMode = 2
 
         # Idle
