@@ -457,6 +457,24 @@ int main() {
          * attribution has stopped discriminating and the pair is dead. */
         check(rig.data.elsSlip.attributedZCounts != 0,
               "...and it confirmed on ATTRIBUTED motion, not raw endpoint delta");
+
+#ifdef ELS_DIAG_PROBE
+        /* POSITIVE CONTROL for the takeup-settle diagnostic probe (DIAG.md,
+         * els_diag_takeup_settle.h:58-69): "the next capture session MUST
+         * include a condition known to move Z during the window before any
+         * zero is trusted." This is that condition, run at the desk. The
+         * 20-count nudge above landed inside BOTH the confirm gate's settle
+         * horizon AND the diag capture's own (much shorter) window, so the
+         * probe must show it exactly, not approximately. If this ever reads
+         * 0, the capture path is not live and every zero in a real JSONL is
+         * unexplained, not "carriage was still". */
+        checkEq(rig.data.shared.elsStop.diagNetCounts, 20,
+                "DIAG PROBE: known Z motion during the window is captured exactly (positive control)");
+        check(rig.data.shared.elsStop.diagSeq >= 1,
+              "DIAG PROBE: diagSeq advanced -- a reader watching the edge would have seen this capture");
+        checkEq(rig.data.shared.elsStop.diagEndReason, ELS_DIAG_END_PULSE,
+                "DIAG PROBE: capture ended because the servo drove again (pass resumed), not a truncation");
+#endif
     }
 
     /* The bounded window shrank the 2026-08-08 exposure from "forever" to
@@ -505,6 +523,27 @@ int main() {
          * this test for entirely the wrong reason. */
         checkEq((int32_t)rig.data.elsSlip.unattributedZCounts, 20,
                 "the carriage DID move 20 counts, and attribution logged it");
+
+#ifdef ELS_DIAG_PROBE
+        /* WINDOW-SIZE MISMATCH, empirically confirmed: the diag capture's own
+         * geometry (ELS_DIAG_TRACE_BUCKETS x ELS_DIAG_BUCKET_TICKS = 50x40 =
+         * 2000 ticks) is ~12.5x smaller than the confirm gate's own window
+         * (ELS_TAKEUP_CONFIRM_WINDOW_TICKS = 25000). A disturbance timed to
+         * land inside the CONFIRM gate's window (this test's whole point) can
+         * still arrive long after the DIAG capture has already ended -- so a
+         * positive control must be timed against the diag window, not the
+         * confirm window. This nudge, 5000+ ticks after commanded-complete,
+         * lands OUTSIDE the diag capture's lifetime: the capture already
+         * ended (diagSeq advanced) before the nudge happened, so the probe
+         * carries none of it. That is not a defect in this test or in the
+         * probe -- it is why the positive control (see the case above) must
+         * be timed close to takeup completion. */
+        check(rig.data.shared.elsStop.diagSeq >= 1,
+              "DIAG PROBE: the capture had already ended before this late nudge arrived");
+        checkEq(rig.data.shared.elsStop.diagNetCounts, 0,
+                "DIAG PROBE: ...so a nudge timed for the CONFIRM window is invisible to the (much shorter) diag window");
+#endif
+
         checkEq((int32_t)rig.data.elsSlip.attributedZCounts, 0,
                 "...but none of it arrived while the servo was driving");
 

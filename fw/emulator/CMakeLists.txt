@@ -137,6 +137,21 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
 target_link_libraries(els_takeup_confirm_test m pthread)
 add_test(NAME els_takeup_confirm_test COMMAND els_takeup_confirm_test)
 
+# Same ISR-level rig, but with the takeup-settle-v2 diagnostic probe compiled
+# in -- the untested combination. els_diag_scratch_test exercises the probe's
+# five entry points in isolation; this target is the only place a REAL
+# take-up (initiation -> confirm -> resume) runs with the probe live, which is
+# what proves the capture path sees genuine Z motion rather than merely
+# compiling. See the ELS_DIAG_PROBE-guarded checks in the test file for the
+# positive-control assertions this exists to run.
+add_executable(els_takeup_confirm_diag_test
+    ${CMAKE_SOURCE_DIR}/test/els_takeup_confirm_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_compile_definitions(els_takeup_confirm_diag_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2)
+target_link_libraries(els_takeup_confirm_diag_test m pthread)
+add_test(NAME els_takeup_confirm_diag_test COMMAND els_takeup_confirm_diag_test)
+
 add_executable(els_stop_resume_relatch_test
     ${CMAKE_SOURCE_DIR}/test/els_stop_resume_relatch_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)
