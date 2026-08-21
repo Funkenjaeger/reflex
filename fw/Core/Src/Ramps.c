@@ -393,7 +393,9 @@ static inline void applyPhaseCorrection(rampsSharedData_t *shared) {
       deltaSpindle, deltaZ,
       shared->scales[0].syncRatioNum, shared->scales[0].syncRatioDen,
       shared->elsStop.threadPitchSteps, shared->elsStop.zCountsPerPitch,
-      shared->elsStop.stopDirection);
+      shared->elsStop.stopDirection,
+      0 /* offsetSteps: no elsStop_t field yet -- see the PHASE OFFSET note in
+         * els_phase.h and todo.md. 0 is bit-for-bit the pre-feature path. */);
 
   shared->servo.stepsToGo += r.stepsToAdd;
 

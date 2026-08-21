@@ -189,6 +189,40 @@ Two unit traps, both live (full list in `els_slip.h`):
 
 ---
 
+## ELS thread-phase offset (2026-08-21)
+
+### Landed: the primitive
+- `elsComputePhaseCorrection()` takes `offsetSteps` (leadscrew steps), summed into
+  `phaseError` before the mod-pitch fold and the forward-bias; `els_phase_offset_test`
+  pins the boundaries (T1 exact regression at 0, T3 one pitch = no-op, T5 negative
+  forward-biases to pitch-|offset|). The only call site passes 0.
+- **Decided (Evan, 2026-08-21): cumulative entry, running total shown.**
+
+### Remaining: the register/command half, then the UI
+- **Fields** appended to `elsStop_t` in the 16-then-32 order the block already uses:
+  `phaseOffsetCommand` (host writes 1), `phaseOffsetSeq` (firmware ack, host
+  edge-detects), `phaseOffsetPending` (int32, candidate), `phaseOffsetSteps` (int32,
+  live total, read-only). Consume in the ISR exactly like `calCommand` (`elsCalUpdate`).
+- **Reset `phaseOffsetSteps` to 0 on the enable 0->1 edge that clears
+  `referenceLatched`**; leave it alone across per-pass stop/resume within a job.
+- **Register-map change => `protocolVersion` bump.** `feat/els-thread-resync` already
+  carries 2->3; land this AFTER that merge and bump to 4, or fold the two into one bump.
+  `ui/reflex/utils/devices.py` mirrors the block byte-for-byte (the contract test
+  enforces it) -- same commit, both halves.
+- **Host side (cumulative):** read `phaseOffsetSteps`, add the entered distance
+  (mm/in -> leadscrew steps via the exact-Fraction-then-round-once pattern already in
+  `els_fsm.py`), write `Pending`, fire `Command`, wait for `Seq`. Display the running
+  total, in distance units AND as a fraction of pitch. Expert-only control, hidden by
+  default ("an accidental phase offset silently ruins a thread").
+- **Guards the UI must carry, from the math:** refuse a running total >= 1 pitch (it
+  aliases to total mod pitch -- the groove would meet the next one anyway); do not
+  offer a symmetric +/- nudge without making the asymmetry explicit (a negative entry
+  jogs forward by pitch-|offset|, never back by |offset|).
+- **Still Evan's:** where the total is displayed; advance-only vs signed entry;
+  refuse vs clamp at the pitch boundary.
+- Second source: 6a77c598 (X-depth compound infeed) feeds the same `Pending` path from
+  `scaledPosition` * tan(theta); do not build a second offset path.
+
 ## Emulator
 
 ### Model manual carriage movement with the half-nut open (TEST-INFRASTRUCTURE GAP)

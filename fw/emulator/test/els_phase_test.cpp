@@ -78,7 +78,7 @@ static int cycleStopPhase(int rs, int sd, int ks, int backlash,
   int add;
   if (useFix) {
     elsCorrResult_t r = elsComputePhaseCorrection(
-        deltaSpindle, deltaZ, num, den, TPS, ZCPP, (int16_t)sd);
+        deltaSpindle, deltaZ, num, den, TPS, ZCPP, (int16_t)sd, 0 /* offsetSteps: unused here */);
     add = r.stepsToAdd;
   } else {
     add = oldCorrectionSteps(deltaSpindle, deltaZ, num, den);

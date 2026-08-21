@@ -17,6 +17,27 @@
  * (the cut feeds the carriage in stopDirection while the servo runs in
  * cuttingDir, so droSign is how a cutting-direction servo move changes the DRO).
  * phaseError = idealAdvance - droSign * actualAdvance handles BOTH polarities.
+ *
+ * PHASE OFFSET (primitive landed 2026-08-21; the register/UI half is in
+ * todo.md). offsetSteps is an additive term, in leadscrew steps, for a
+ * persistent phase offset applied ON TOP of the latched reference. The
+ * operator-entered groove-widening offset (6a77c5b2) and the X-depth-derived
+ * compound-infeed offset (6a77c598) are two sources of this ONE term. It is
+ * summed into phaseError BEFORE the mod-pitch fold and the forward-bias, so
+ * it inherits both: |offset| >= pitch aliases to (offset mod pitch), and a
+ * NEGATIVE offset is not a small backward jog but (pitch - |offset|) in the
+ * cutting direction (els_phase_offset_test.cpp T3-T5). The latch itself is
+ * never touched; only the per-resume correction moves.
+ *
+ * DECIDED 2026-08-21 (Evan): entry is CUMULATIVE, with the running total
+ * shown. Accumulation belongs to the host: the firmware will hold ONE
+ * absolute total (an elsStop_t field set through a command/ack pair in the
+ * calCommand idiom), and the UI adds each entered distance to the total it
+ * reads back. The total resets on the same enable edge that clears
+ * referenceLatched -- an offset is meaningless without the datum it offsets
+ * -- and survives per-pass stop/resume within a job. Until those fields
+ * exist the only call site passes 0, which is bit-for-bit the pre-feature
+ * behavior (T1).
  */
 #ifndef ELS_PHASE_H
 #define ELS_PHASE_H
@@ -38,7 +59,8 @@ static inline elsCorrResult_t elsComputePhaseCorrection(
     int32_t deltaSpindle, int32_t deltaZ,
     int32_t syncRatioNum, int32_t syncRatioDen,
     float threadPitchSteps, float zCountsPerPitch,
-    int16_t stopDirection)
+    int16_t stopDirection,
+    int32_t offsetSteps)   /* phase offset, leadscrew steps; 0 = none (exact pre-feature path) */
 {
   elsCorrResult_t r;
 
@@ -55,7 +77,7 @@ static inline elsCorrResult_t elsComputePhaseCorrection(
   int32_t droSign = (int32_t)stopDirection * cuttingDir;
   r.droSign = droSign;
 
-  r.phaseError = r.idealAdvance - (float)droSign * r.actualAdvance;
+  r.phaseError = r.idealAdvance - (float)droSign * r.actualAdvance + (float)offsetSteps;
 
   float pitch      = threadPitchSteps;
   float correction = fmodf(r.phaseError, pitch);

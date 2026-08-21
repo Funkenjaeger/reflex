@@ -78,6 +78,13 @@ add_executable(els_phase_test ${CMAKE_SOURCE_DIR}/test/els_phase_test.cpp)
 target_link_libraries(els_phase_test m)
 add_test(NAME els_phase_test COMMAND els_phase_test)
 
+# Phase-offset primitive: the offsetSteps term's inheritance of the fold and
+# the forward-bias, pinned at the boundaries (one pitch aliases to a no-op,
+# a negative offset forward-biases to pitch-|offset|). Header-only, like above.
+add_executable(els_phase_offset_test ${CMAKE_SOURCE_DIR}/test/els_phase_offset_test.cpp)
+target_link_libraries(els_phase_offset_test m)
+add_test(NAME els_phase_offset_test COMMAND els_phase_offset_test)
+
 # Backlash calibration / take-up confirmation: exercises the pure decision layer
 # in Core/Inc/els_backlash_cal.h against a simulated drivetrain with lash.
 # Header-only — no HAL, no firmware sources, no emulator physics.
