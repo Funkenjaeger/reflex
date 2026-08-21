@@ -113,12 +113,6 @@
 #define ELS_DIAG_SCRATCH 1
 #endif
 
-/* Why the capture stopped. The distinction matters: a capture that ran out of
- * buckets did not finish measuring, and its last bucket is a floor rather than
- * a result. */
-#define ELS_DIAG_END_PULSE  1   /* servo drove again -- settling is over */
-#define ELS_DIAG_END_WINDOW 2   /* ran out of buckets while still quiet-or-moving */
-
 /* Probe capture state, held in rampsHandler_t. Deliberately generic and shared
  * by every probe rather than per-probe: it is two words of ISR-owned scratch,
  * and a per-probe union here would change rampsHandler_t's size from build to

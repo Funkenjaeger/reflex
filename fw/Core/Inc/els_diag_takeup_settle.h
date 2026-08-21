@@ -19,6 +19,17 @@
 #ifndef ELS_DIAG_TAKEUP_SETTLE_H
 #define ELS_DIAG_TAKEUP_SETTLE_H
 
+/* Why the capture stopped. The distinction matters: a capture that ran out of
+ * buckets did not finish measuring, and its last bucket is a floor rather than
+ * a result. RELOCATED HERE from Ramps.h (2026-08-20): this probe (schema
+ * takeup_settle) is their only consumer -- the other two probes
+ * (els_diag_disengage_latch.h, els_diag_mode_watch.h) each independently
+ * #define ELS_DIAG_LATCH_SEEN 1 as their own workaround rather than use these.
+ * Pure relocation: values, meaning and the diagEndReason register they feed
+ * are all unchanged. */
+#define ELS_DIAG_END_PULSE  1   /* servo drove again -- settling is over */
+#define ELS_DIAG_END_WINDOW 2   /* ran out of buckets while still quiet-or-moving */
+
 #include <stdint.h>
 #include <stdbool.h>
 
