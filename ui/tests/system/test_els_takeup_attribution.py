@@ -162,39 +162,24 @@ assert _THREAD_IN_16.ratio == Fraction(254, 160), (
 )
 
 
-def _arm_and_run_first_pass(h):
-    """Set up, cut one full pass to the ELS stop, and retract.
+def _set_up_job(h, *, is_threading=True):
+    """Configure, commission, set stop/retract, engage and enable sync.
 
-    THE TAKE-UP DOES NOT RUN ON THE FIRST CUT, and that is firmware behaviour,
-    not a harness quirk: the resume path only initiates a take-up when
-    ``referenceLatched`` is set (reflex-fw Ramps.c), and the reference is
-    latched by the FIRMWARE at a real stop TRIGGER. Before that there is no
-    thread phase to correct to, so there is nothing to take up lash for.
+    Threading and turning share everything but ``is_threading``. Since
+    2026-08-21 the firmware take-up runs in BOTH modes and on the first pass,
+    so the backlash is configured regardless of mode (until then turning wrote
+    backlashSteps = 0 and every turning pass ran ungated).
 
-    So a take-up needs a completed pass in front of it — which is also exactly
-    the situation the 2026-08-08 defect happened in: the operator had finished
-    a pass, retracted, and pressed Cut for the next one with the half-nut still
-    open.
-
-    (The manual reference latch would shortcut this, but it lives on
-    reflex-fw's feat/els-thread-resync branch; this test targets `integration`
-    plus the attribution work and must not depend on it.)
-
-    Leaves the machine in ``in_cycle.waiting_to_cut`` with the reference
-    latched, ready for the pass under test.
+    Leaves the machine armed and idle (``active = 1``, ``enable = 1``), Cut not
+    yet pressed, ``referenceLatched == 0``. Returns stop_z.
     """
-    h.configure(is_threading=True, retract_enabled=True, wizard_enabled=False,
-                els_forward=True)
+    h.configure(is_threading=is_threading, retract_enabled=True,
+                wizard_enabled=False, els_forward=True)
     h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
     h.commission_geometry()          # reference machine defaults
     h.set_feed(_THREAD_IN_16.ratio)
     h.els.els_backlash_steps = _BACKLASH_STEPS
     h.pump()
-
-    # is_threading gates the backlashSteps write entirely (els_fsm.py:152-160):
-    # with it False the take-up is forced to 0 and this test would exercise
-    # nothing at all.
-    assert h.controller.is_threading is True
 
     z_start = h.z_scaled_position()
     margin = h.safety_margin()
@@ -205,6 +190,35 @@ def _arm_and_run_first_pass(h):
 
     h.engage()
     h.enable_sync()
+    assert h.register("elsStop", "referenceLatched") == 0
+    return stop_z
+
+
+def _arm_and_run_first_pass(h):
+    """Set up, cut one full pass to the ELS stop, and retract.
+
+    Since 2026-08-21 THE TAKE-UP RUNS ON THE FIRST CUT TOO: the resume path
+    initiates it on every pass, and only the phase correction waits for a
+    latched reference (reflex-fw Ramps.c). So pass 1 here is itself a gated,
+    confirmed take-up against a coupled drivetrain, and it is asserted as
+    such — a first pass that quietly skipped the gate is the pre-2026-08-21
+    behaviour this helper used to document.
+
+    The pass-2 scenarios in this module still need a completed pass in front
+    of them, because they are about a take-up against a LATCHED reference —
+    which is also exactly the situation the 2026-08-08 defect happened in: the
+    operator had finished a pass, retracted, and pressed Cut for the next one
+    with the half-nut still open.
+
+    (The manual reference latch would shortcut this, but it lives on
+    reflex-fw's feat/els-thread-resync branch; this test targets `integration`
+    plus the attribution work and must not depend on it.)
+
+    Leaves the machine in ``in_cycle.waiting_to_cut`` with the reference
+    latched, ready for the pass under test.
+    """
+    stop_z = _set_up_job(h, is_threading=True)
+    seq0 = h.register("elsStop", "takeupSeq")
 
     # ── Pass 1: cut to the stop. This is what latches the reference. ────────
     h.cut()
@@ -219,6 +233,14 @@ def _arm_and_run_first_pass(h):
     assert h.register("elsStop", "referenceLatched") == 1, (
         "the stop trigger did not latch a reference, so no take-up can be "
         "initiated on the next resume and this test would measure nothing"
+    )
+    # Pass 1 was itself gated (2026-08-21): one take-up outcome, CONFIRMED,
+    # before the cut was released against a coupled drivetrain.
+    assert h.register("elsStop", "takeupSeq") == seq0 + 1, (
+        "pass 1 ran without a take-up -- the first-pass gate is not gating"
+    )
+    assert h.register("elsStop", "takeupResult") == 0, (
+        "pass 1's take-up was refused on a COUPLED drivetrain"
     )
 
     # ── Retract, so the next Cut is a genuine resume from the shoulder ──────
@@ -414,4 +436,83 @@ def test_coupled_takeup_still_confirms(harness):
         f"the take-up confirmed but the carriage only moved {moved} counts "
         f"(expected ~{_EXPECTED_COUPLED_COUNTS:.0f}) -- the gate is not "
         "measuring what it claims to"
+    )
+
+
+@pytest.mark.parametrize("emulator_process", [_ENV], indirect=True)
+@pytest.mark.parametrize("is_threading", [True, False], ids=["threading", "turning"])
+def test_first_pass_with_half_nut_open_is_refused(harness, is_threading):
+    """THE DATUM PASS IS GATED (2026-08-21). Half-nut open, first Cut of a job:
+    the take-up must run, be refused, abort back to armed-idle, and latch
+    NOTHING -- before this change pass one ran ungated in both modes, so an
+    open nut gave a turning spindle and nothing happening with no message, and
+    a partially engaged nut latched a reference every later pass then
+    confirmed cleanly against. Turning never had the gate at all.
+    """
+    h = harness
+    _set_up_job(h, is_threading=is_threading)
+
+    h.emu_cmd("halfnut open")
+    h.pump()
+    seq0 = h.register("elsStop", "takeupSeq")
+
+    h.cut()
+    assert h.els_fsm.state == "cutting"
+    assert h.register("elsStop", "backlashSteps") == _BACKLASH_STEPS, (
+        "backlashSteps never reached the firmware -- no take-up would run at all "
+        "(in turning this is the 2026-08-21 UI change: it used to write 0)"
+    )
+    if not is_threading:
+        assert h.register("elsStop", "threadPitchSteps") == 0.0, (
+            "turning must not carry a pitch, or the firmware would phase-correct"
+        )
+        assert h.register("elsStop", "zCountsPerPitch") != 0.0, (
+            "turning must carry the SIGNED Z polarity for the take-up direction"
+        )
+
+    _await_takeup_verdict(h, seq0)
+    assert h.register("elsStop", "takeupResult") == ELS_TAKEUP_ERR_UNCONFIRMED, (
+        "an uncoupled FIRST pass was not refused -- the datum pass is ungated"
+    )
+
+    closed = h.wait_until(
+        lambda: h.register("elsStop", "takeupPending") == 0, timeout_s=6.0
+    )
+    assert closed, "the take-up never stopped holding the machine"
+    assert h.register("elsStop", "active") == 1, "not returned to armed-idle"
+    assert h.register("elsStop", "referenceLatched") == 0, (
+        "a reference was latched from a drivetrain that was never coupled -- "
+        "the exact failure that is invisible on every later pass"
+    )
+    # The registers above are read straight from the firmware; the domain FSM
+    # only learns active == 1 on its next poll tick. Wait for it, as every
+    # other FSM-state assertion in this module does (CI caught the turning
+    # variant asserting one tick too early).
+    assert h.wait_until(lambda: h.els_fsm.state == "stopped", timeout_s=5.0), (
+        f"the UI never returned to stopped after the refusal (state={h.els_fsm.state})"
+    )
+
+
+@pytest.mark.parametrize("emulator_process", [_ENV], indirect=True)
+def test_turning_first_pass_takes_up_and_confirms(harness):
+    """POSITIVE CONTROL for the turning half: nut closed, first turning Cut
+    takes up, confirms, releases the feed, and the pass reaches the stop with
+    no phase correction having run (there is no pitch to correct to)."""
+    h = harness
+    stop_z = _set_up_job(h, is_threading=False)
+    seq0 = h.register("elsStop", "takeupSeq")
+
+    h.cut()
+    assert h.els_fsm.state == "cutting"
+    _await_takeup_verdict(h, seq0)
+    assert h.register("elsStop", "takeupResult") == 0, (
+        "a coupled turning take-up was refused -- the gate refuses unconditionally"
+    )
+    stopped = h.wait_until(lambda: h.els_fsm.state == "stopped", timeout_s=30)
+    assert stopped, (
+        f"the turning pass never reached the stop (z={h.z_scaled_position():.3f}, "
+        f"stop_z={stop_z:.3f})"
+    )
+    assert h.register("elsStop", "lastIdealAdvance") == 0.0, (
+        "phase correction ran on a turning pass"
     )

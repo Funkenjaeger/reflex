@@ -63,10 +63,11 @@
  * accept a new probe's data under it. 0 means no probe. */
 #define ELS_DIAG_SCHEMA_NONE 0
 #define ELS_DIAG_SCHEMA_TAKEUP_SETTLE 1     /* RETIRED -- see v2 */
-#define ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 2
+#define ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 2  /* RETIRED -- see v3 */
 #define ELS_DIAG_SCHEMA_DISENGAGE_LATCH 3
 #define ELS_DIAG_SCHEMA_MODE_WATCH 4        /* RETIRED -- see v2 */
 #define ELS_DIAG_SCHEMA_MODE_WATCH_V2 5
+#define ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3 6
 
 /* WHICH probe is compiled in, selected by the build as
  * -DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_<NAME>. scripts/build.sh --diag=<name> is the
@@ -100,24 +101,20 @@
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE
 #error "ELS_DIAG_SCHEMA_TAKEUP_SETTLE is RETIRED; use takeup-settle-v2. See DIAG.md."
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
-/* recognised */
+#error "ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 is RETIRED (it could only capture ~50 ticks before the post-confirmation jog ended it, so a confirmed take-up was unmeasurable); use takeup-settle-v3. See DIAG.md."
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_DISENGAGE_LATCH
 /* recognised */
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH
 #error "ELS_DIAG_SCHEMA_MODE_WATCH is RETIRED (its diagNetCounts drowned the signal in no-op refusals); use mode-watch-v2. See DIAG.md."
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH_V2
 /* recognised */
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
+/* recognised */
 #else
 #error "unknown ELS_DIAG_PROBE. Register the schema id in Ramps.h and add it to this chain; see DIAG.md."
 #endif
 #define ELS_DIAG_SCRATCH 1
 #endif
-
-/* Why the capture stopped. The distinction matters: a capture that ran out of
- * buckets did not finish measuring, and its last bucket is a floor rather than
- * a result. */
-#define ELS_DIAG_END_PULSE  1   /* servo drove again -- settling is over */
-#define ELS_DIAG_END_WINDOW 2   /* ran out of buckets while still quiet-or-moving */
 
 /* Probe capture state, held in rampsHandler_t. Deliberately generic and shared
  * by every probe rather than per-probe: it is two words of ISR-owned scratch,
@@ -189,7 +186,7 @@ typedef struct {
   int32_t  latchedZ;          // READ-ONLY (firmware-owned): scales[scaleIndex].position at first trigger of the job
   int32_t  latchedSpindle;    // READ-ONLY (firmware-owned): scales[0].position at first trigger of the job
   uint16_t referenceLatched;  // READ-ONLY (firmware-owned): 0 until first trigger captures the reference, 1 thereafter; reset on enable 0→1
-  uint16_t takeupPending;     // READ-ONLY (firmware-owned): 1 while the post-resume backlash takeup move is executing
+  uint16_t takeupPending;     // READ-ONLY (firmware-owned): 1 while the backlash take-up that starts EVERY pass (first pass and turning included since 2026-08-21) is executing or awaiting Z confirmation; gates sync off meanwhile
   float    lastIdealAdvance;  // READ-ONLY (firmware-owned): last resume's deltaSpindle × syncRatioNum / syncRatioDen
   float    lastActualAdvance; // READ-ONLY (firmware-owned): last resume's deltaZ × threadPitchSteps / zCountsPerPitch
   float    lastPhaseError;    // READ-ONLY (firmware-owned): last resume's idealAdvance − actualAdvance (pre-modulo)
@@ -288,6 +285,7 @@ typedef struct {
   int32_t  elsStopTakeupZSign;        // +1/-1: sign the Z scale should move in for this takeup; sign(signedTakeup) x droSign. Only the magnitude gates completion — the sign turns lastTakeupZDelta into a wrong-way diagnostic
   int32_t  elsStopTakeupTicks;        // ISR ticks since takeup initiation; backstop against a takeup that never reaches target (see ELS_TAKEUP_TIMEOUT_TICKS)
   uint16_t elsStopTakeupLatched;      // 1 once the Z confirmation window has closed on an unconfirmed takeup; further Z motion can no longer release the gate (see ELS_TAKEUP_CONFIRM_WINDOW_TICKS)
+  uint16_t elsStopCorrectOnConfirm;  // 1 if the take-up in flight is to be followed by applyPhaseCorrection() once CONFIRMED, i.e. a reference was latched and thread geometry was set at initiation. 0 on a first pass (no reference yet) and in turning (no pitch): those take-ups exist to prove coupling only. Set at initiation, read at confirmation, cleared with the job (2026-08-21).
   elsCalCtx_t elsCal;                 // backlash calibration run state; non-Modbus, the ISR owns it entirely (els_backlash_cal.h)
   /* Motion attribution for the Z confirmation gate: which of the Z counts seen
    * during a take-up arrived while the servo was actually driving. Non-Modbus,

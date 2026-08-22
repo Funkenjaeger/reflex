@@ -231,6 +231,38 @@ struct Rig {
         SynchroRefreshTimerIsr(&data);
     }
 
+    /* Step until the servo has emitted no pulse for `quietTicks` consecutive
+     * ticks, i.e. the COMMANDED motion is finished -- not merely past the
+     * crossing test that ends it on paper.
+     *
+     * The distinction is the whole of the 2026-08-22 finding: takeupReached is
+     * a crossing test on currentSteps, and the decel ramp overshoots it and
+     * keeps emitting the residual with gaps that stretch as it slows (observed:
+     * 5 steps past target, the last pair 262 ticks apart). Anything that wants
+     * to inject motion "after the take-up" has to wait for quiet, not for the
+     * crossing and not for a gate verdict. Returns the tick it settled on, or
+     * -1 if the servo never went quiet. */
+    int runUntilServoQuiet(int quietTicks, int maxTicks = 60000) {
+        int quiet = 0;
+        int32_t prev = (int32_t)data.shared.servo.currentSteps;
+        for (int i = 0; i < maxTicks; i++) {
+            stepDriven();
+            int32_t now = (int32_t)data.shared.servo.currentSteps;
+            quiet = (now == prev) ? quiet + 1 : 0;
+            prev  = now;
+            /* Quiet ALONE is not proof the motion is over, and assuming it was
+             * cost a wrong test result: the decel ramp's inter-pulse gaps keep
+             * stretching as it slows, so any fixed quiet threshold eventually
+             * gets beaten by a later residual step. The drained queue is the
+             * real signal -- nothing left to command AND the generator caught
+             * up to what was already commanded. */
+            bool drained = data.shared.servo.stepsToGo == 0
+                        && data.shared.servo.desiredSteps == data.shared.servo.currentSteps;
+            if (drained && quiet >= quietTicks) return i;
+        }
+        return -1;
+    }
+
     /* Arm a job, trigger the stop, then resume — the point at which the
      * firmware initiates a backlash take-up. */
     void armAndTrigger() {
@@ -259,6 +291,27 @@ struct Rig {
 
         data.shared.elsStop.lastIdealAdvance = SENTINEL;
         data.shared.elsStop.active = 0;   /* SW resume */
+    }
+
+    /* Arm a FRESH job the way reflex-ui has since 2026-08-17 -- active first,
+     * then enable (els_arm_past_stop_test pins why that order matters) -- and
+     * press Cut. No stop has fired, so referenceLatched is 0: this is the
+     * first pass of the job, the one that will CREATE the datum every later
+     * pass is measured against. Until 2026-08-21 the resume path skipped the
+     * take-up entirely here, so the datum pass was the only pass an open or
+     * partially engaged half-nut could slip through unannounced. */
+    void armFirstPass() {
+        step(Z_CLEAR);
+        data.shared.elsStop.active = 1;
+        step(Z_CLEAR);                    /* Modbus gap between the writes */
+        data.shared.elsStop.enable = 1;
+        for (int i = 0; i < 3; i++) step(Z_CLEAR);
+        for (int i = 0; i < 20000
+             && data.shared.servo.currentSteps != data.shared.servo.desiredSteps; i++) {
+            step(Z_CLEAR);
+        }
+        data.shared.elsStop.lastIdealAdvance = SENTINEL;
+        data.shared.elsStop.active = 0;   /* SW Cut */
     }
 };
 
@@ -320,6 +373,198 @@ int main() {
         checkEq(rig.data.shared.elsStop.active, 1, "back to stopped-at-shoulder");
         checkEq(rig.data.shared.elsStop.referenceLatched, 1,
                 "phase reference preserved: retry is free");
+    }
+
+#ifdef ELS_DIAG_PROBE
+    /* ---------------- takeup-settle-v3: the capture survives a real take-up -- */
+    /* THE TARGET'S REASON TO EXIST. v2 could not measure a confirmed take-up at
+     * all: its capture started at the crossing and was ended either by the
+     * ramp's own residual pulses or by the post-confirmation jog ~51 ticks in,
+     * which is what every one of the 148 captures taken on the lathe under v2
+     * shows. v3 re-arms on a pulse while takeupPending (so t=0 is the LAST
+     * pulse) and holds the gate's dwell until the capture publishes (so the jog
+     * cannot cut it short). Both halves are asserted here; removing either one
+     * reddens this block. */
+    printf("\n-- v3 PROBE: full-window capture across a confirmed take-up --\n");
+    {
+        Rig rig;
+        rig.init(/*backlashSteps*/ 90, /*motionThresh*/ 2, /*coupled*/ true, /*lash*/ 60);
+        rig.armAndTrigger();
+        rig.step(Z_CLEAR);
+        rig.beginLashDriven();
+
+        /* Wait for the COMMANDED motion to finish, not for the crossing: the
+         * residual steps are hundreds of ticks apart at the tail of the ramp and
+         * each one re-arms the capture. 400 quiet ticks clears the widest gap
+         * observed (262) with margin, and still lands the nudge deep inside the
+         * 2000-tick window. */
+        int settledAt = rig.runUntilServoQuiet(400);
+        check(settledAt > 0, "v3: the servo went quiet after the take-up");
+        checkEq(rig.data.shared.elsStop.takeupPending, 1,
+                "v3: the gate is STILL HOLDING the machine while the capture runs "
+                "(without the hold it would have confirmed and driven away by now)");
+        checkEq(rig.data.shared.elsStop.diagSeq, 0,
+                "v3: nothing published yet -- the capture is still open");
+
+        /* The positive control DIAG.md demands: a condition known to move Z
+         * during the window, injected after the last pulse so it is settle and
+         * not ramp. */
+        rig.nudgeCarriage(20);
+
+        for (int i = 0; i < 60000 && rig.data.shared.elsStop.diagSeq == 0; i++)
+            rig.stepDriven();
+
+        checkEq(rig.data.shared.elsStop.diagSeq, 1, "v3: exactly one capture published");
+        checkEq(rig.data.shared.elsStop.diagNetCounts, 20,
+                "v3 POSITIVE CONTROL: known Z motion after the last pulse is captured exactly");
+        checkEq(rig.data.shared.elsStop.diagEndReason, ELS_DIAG_END_WINDOW,
+                "v3: the capture ran to the END OF ITS WINDOW -- under v2 this was END_PULSE at ~51 ticks");
+        checkEq(rig.data.shared.elsStop.diagCaptureTicks,
+                ELS_DIAG_TRACE_BUCKETS * ELS_DIAG_BUCKET_TICKS,
+                "v3: the full window was measured, not a truncated head of it");
+        check(rig.data.shared.elsStop.diagSettleTicks > 0,
+              "v3: settle_ticks names WHEN the last motion arrived -- the measurement itself");
+
+        /* And the hold RELEASES. A probe that measured beautifully and left the
+         * machine held would be worse than no probe. */
+        for (int i = 0; i < 60000 && rig.data.shared.elsStop.takeupPending; i++)
+            rig.stepDriven();
+        checkEq(rig.data.shared.elsStop.takeupPending, 0,
+                "v3: the gate evaluated as soon as the capture published");
+        checkEq(rig.data.shared.elsStop.takeupResult, ELS_CAL_OK,
+                "v3: ...and a coupled take-up still CONFIRMS through the hold");
+    }
+#endif
+
+    /* ---------------- FIRST PASS and TURNING are gated too (2026-08-21) -- */
+    /* MUTATIONS this block exists to catch: (A) put referenceLatched / the
+     * thread-geometry terms back in front of the take-up initiation -- every
+     * "take-up initiated" below goes red; (B) apply the phase correction
+     * unconditionally on confirmation again -- the "did NOT run" checks go
+     * red. Both shapes were the shipped code before 2026-08-21. */
+    printf("\n-- FIRST PASS, coupled: take-up confirms, NO correction, datum latched at the stop --\n");
+    {
+        Rig rig;
+        rig.init(/*backlashSteps*/ 90, /*motionThresh*/ 2, /*coupled*/ true, /*lash*/ 60);
+        rig.armFirstPass();
+        rig.step(Z_CLEAR);                       /* the Cut edge */
+        checkEq(rig.data.shared.elsStop.referenceLatched, 0, "first pass: no reference exists yet");
+        checkEq(rig.data.shared.elsStop.takeupPending, 1,
+                "first pass: take-up initiated (skipped entirely before 2026-08-21)");
+        rig.beginLashDriven();
+
+        for (int i = 0; i < 60000 && rig.data.shared.elsStop.takeupPending; i++)
+            rig.stepDriven();
+
+        checkEq(rig.data.shared.elsStop.takeupPending, 0, "first pass: take-up completed");
+        checkEq(rig.data.shared.elsStop.takeupResult, ELS_CAL_OK, "first pass: confirmed");
+        checkEq(rig.data.shared.elsStop.takeupSeq, 1, "first pass: one outcome reported");
+        check(rig.data.shared.elsStop.lastIdealAdvance == SENTINEL,
+              "first pass: applyPhaseCorrection did NOT run -- nothing to correct against");
+        checkEq(rig.data.shared.elsStop.referenceLatched, 0,
+                "first pass: confirmation latched nothing; only a stop trigger may");
+
+        int32_t before = (int32_t)rig.data.shared.servo.desiredSteps;
+        for (int i = 0; i < 5; i++) rig.stepDriven();
+        check((int32_t)rig.data.shared.servo.desiredSteps != before,
+              "first pass: sync released once confirmed");
+
+        rig.step(Z_PAST);
+        rig.step(Z_PAST);
+        checkEq(rig.data.shared.elsStop.active, 1, "first pass: the stop fires at the threshold");
+        checkEq(rig.data.shared.elsStop.referenceLatched, 1,
+                "first pass: ...and latches the datum from a drivetrain PROVEN coupled");
+    }
+
+    printf("\n-- FIRST PASS, open half-nut: refused before any datum can exist --\n");
+    {
+        Rig rig;
+        rig.init(90, 2, /*coupled*/ false, 60);
+        rig.armFirstPass();
+        rig.step(Z_CLEAR);
+        checkEq(rig.data.shared.elsStop.takeupPending, 1, "first pass, open nut: take-up initiated");
+        rig.beginLashDriven();
+
+        for (int i = 0; i < 60000; i++) rig.stepDriven();
+
+        checkEq(rig.data.shared.elsStop.takeupResult, ELS_TAKEUP_ERR_UNCONFIRMED,
+                "first pass, open nut: REFUSED -- the message every later pass already got");
+        checkEq(rig.data.shared.elsStop.takeupSeq, 1, "first pass, open nut: reported once");
+        check(rig.data.shared.elsStop.lastIdealAdvance == SENTINEL,
+              "first pass, open nut: no correction");
+        checkEq(rig.data.shared.elsStop.takeupPending, 0, "first pass, open nut: not holding the machine");
+        checkEq(rig.data.shared.elsStop.active, 1,
+                "first pass, open nut: aborted back to armed-idle, the state before Cut");
+        checkEq(rig.data.shared.elsStop.referenceLatched, 0,
+                "first pass, open nut: NO datum was latched from an uncoupled drivetrain");
+    }
+
+    /* Turning: the host writes threadPitchSteps = 0 (no thread phase to correct
+     * to) and, since 2026-08-21, keeps zCountsPerPitch SIGNED so the take-up
+     * direction still carries the Z polarity. The rig's zCountsPerPitch stays
+     * as initialised; only the pitch is cleared. */
+    printf("\n-- TURNING (pitch 0), coupled: take-up confirms, no correction --\n");
+    {
+        Rig rig;
+        rig.init(90, 2, true, 60);
+        rig.data.shared.elsStop.threadPitchSteps = 0.0f;
+        rig.armAndTrigger();                     /* a later pass: reference IS latched */
+        rig.step(Z_CLEAR);
+        checkEq(rig.data.shared.elsStop.takeupPending, 1,
+                "turning: take-up initiated (never ran in turning before 2026-08-21)");
+        rig.beginLashDriven();
+
+        for (int i = 0; i < 60000 && rig.data.shared.elsStop.takeupPending; i++)
+            rig.stepDriven();
+
+        checkEq(rig.data.shared.elsStop.takeupPending, 0, "turning: take-up completed");
+        checkEq(rig.data.shared.elsStop.takeupResult, ELS_CAL_OK, "turning: confirmed on the floor threshold");
+        check(rig.data.shared.elsStop.lastIdealAdvance == SENTINEL,
+              "turning: applyPhaseCorrection did NOT run -- no pitch to correct to");
+    }
+
+    printf("\n-- TURNING, open half-nut: refused --\n");
+    {
+        Rig rig;
+        rig.init(90, 2, /*coupled*/ false, 60);
+        rig.data.shared.elsStop.threadPitchSteps = 0.0f;
+        rig.armAndTrigger();
+        rig.step(Z_CLEAR);
+        checkEq(rig.data.shared.elsStop.takeupPending, 1, "turning, open nut: take-up initiated");
+        rig.beginLashDriven();
+        for (int i = 0; i < 60000; i++) rig.stepDriven();
+        checkEq(rig.data.shared.elsStop.takeupResult, ELS_TAKEUP_ERR_UNCONFIRMED,
+                "turning, open nut: REFUSED");
+        checkEq(rig.data.shared.elsStop.active, 1, "turning, open nut: aborted to stopped");
+        check(rig.data.shared.elsStop.lastIdealAdvance == SENTINEL, "turning, open nut: no correction");
+    }
+
+    printf("\n-- TURNING polarity: sign(zCountsPerPitch) steers the take-up with pitch == 0 --\n");
+    {
+        /* Same machine, two hosts: threading writes pitch > 0 and a signed
+         * zCountsPerPitch; turning writes pitch = 0 and the same signed
+         * zCountsPerPitch. The take-up must go the same way in both, and a
+         * flipped sign must flip it. Initiation only -- the direction is
+         * decided on the Cut edge. */
+        Rig thr; thr.init(90, 2, true, 60);
+        thr.data.shared.elsStop.zCountsPerPitch = -846.667f;
+        thr.armAndTrigger(); thr.step(Z_CLEAR);
+
+        Rig trn; trn.init(90, 2, true, 60);
+        trn.data.shared.elsStop.threadPitchSteps = 0.0f;
+        trn.data.shared.elsStop.zCountsPerPitch  = -846.667f;
+        trn.armAndTrigger(); trn.step(Z_CLEAR);
+
+        Rig pos; pos.init(90, 2, true, 60);
+        pos.data.shared.elsStop.threadPitchSteps = 0.0f;
+        pos.armAndTrigger(); pos.step(Z_CLEAR);
+
+        checkEq(thr.data.shared.elsStop.takeupPending, 1, "polarity: threading rig initiated");
+        checkEq(trn.data.shared.elsStop.takeupPending, 1, "polarity: turning rig initiated");
+        checkEq(trn.data.elsStopTakeupSign, thr.data.elsStopTakeupSign,
+                "polarity: turning (pitch 0) takes up the same way as threading on the same wiring");
+        checkEq(pos.data.elsStopTakeupSign, -trn.data.elsStopTakeupSign,
+                "polarity: flipping sign(zCountsPerPitch) flips the turning take-up direction");
     }
 
     /* ---------------- Partial engagement: moves, but not enough ------ */
@@ -446,6 +691,23 @@ int main() {
          * positions are refreshed further down, so it sees the previous tick's
          * Z. One tick is not enough for injected motion to become visible. */
         for (int i = 0; i < 5; i++) rig.stepDriven();
+
+#ifndef ELS_DIAG_PROBE
+        /* RELEASE TIMING, and deliberately not asserted in a probe build.
+         *
+         * The nudge is placed by GATE STATE -- the loop above runs until the
+         * gate has refused -- which in a release build is ELS_SETTLE_TICKS (50)
+         * after the last commanded pulse, comfortably inside
+         * elsSlipConfirmed's 1000-tick attribution horizon. That is the
+         * scenario's whole premise.
+         *
+         * takeup-settle-v3 holds the gate's first evaluation until its capture
+         * publishes (~2000 ticks), so the same code lands this nudge OUTSIDE
+         * the horizon and it is correctly not credited. Nothing about the gate
+         * changed: the recovery path this pair pins is a claim about release
+         * timing, and a build that deliberately moves the gate's clock cannot
+         * make it. The probe build gets its own settle positive control below,
+         * which places its nudge by time-since-last-pulse instead. */
         checkEq(rig.data.shared.elsStop.takeupPending, 0,
                 "motion arriving while the window is open CONFIRMS");
 
@@ -457,6 +719,7 @@ int main() {
          * attribution has stopped discriminating and the pair is dead. */
         check(rig.data.elsSlip.attributedZCounts != 0,
               "...and it confirmed on ATTRIBUTED motion, not raw endpoint delta");
+#endif
     }
 
     /* The bounded window shrank the 2026-08-08 exposure from "forever" to
@@ -505,6 +768,27 @@ int main() {
          * this test for entirely the wrong reason. */
         checkEq((int32_t)rig.data.elsSlip.unattributedZCounts, 20,
                 "the carriage DID move 20 counts, and attribution logged it");
+
+#ifdef ELS_DIAG_PROBE
+        /* WINDOW-SIZE MISMATCH, empirically confirmed: the diag capture's own
+         * geometry (ELS_DIAG_TRACE_BUCKETS x ELS_DIAG_BUCKET_TICKS = 50x40 =
+         * 2000 ticks) is ~12.5x smaller than the confirm gate's own window
+         * (ELS_TAKEUP_CONFIRM_WINDOW_TICKS = 25000). A disturbance timed to
+         * land inside the CONFIRM gate's window (this test's whole point) can
+         * still arrive long after the DIAG capture has already ended -- so a
+         * positive control must be timed against the diag window, not the
+         * confirm window. This nudge, 5000+ ticks after commanded-complete,
+         * lands OUTSIDE the diag capture's lifetime: the capture already
+         * ended (diagSeq advanced) before the nudge happened, so the probe
+         * carries none of it. That is not a defect in this test or in the
+         * probe -- it is why the positive control (see the case above) must
+         * be timed close to takeup completion. */
+        check(rig.data.shared.elsStop.diagSeq >= 1,
+              "DIAG PROBE: the capture had already ended before this late nudge arrived");
+        checkEq(rig.data.shared.elsStop.diagNetCounts, 0,
+                "DIAG PROBE: ...so a nudge timed for the CONFIRM window is invisible to the (much shorter) diag window");
+#endif
+
         checkEq((int32_t)rig.data.elsSlip.attributedZCounts, 0,
                 "...but none of it arrived while the servo was driving");
 

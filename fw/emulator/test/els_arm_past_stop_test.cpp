@@ -19,9 +19,13 @@
  *     pass between the two register writes, like two Modbus transactions):
  *     the machine holds (sync gated, nothing banked, nothing latched), a
  *     retract + resume then behaves exactly like a fresh job's first pass —
- *     no takeup, no phase correction (referenceLatched is 0: the enable
- *     rising edge reset it and no fire ever ran), sync feeds, and the stop
- *     fires properly at the real threshold with a fresh latch.
+ *     no phase correction (referenceLatched is 0: the enable rising edge
+ *     reset it and no fire ever ran), sync feeds, and the stop fires
+ *     properly at the real threshold with a fresh latch. A and B run with
+ *     backlashSteps = 0: since 2026-08-21 a first pass WITH a configured
+ *     backlash does take up and confirm before sync releases (pinned in
+ *     els_takeup_confirm_test, which has the lash model this rig lacks);
+ *     that is orthogonal to the write-order claim made here.
  *
  *  B. THE CONTROL. The identical flow armed from the CLEAR side. Every
  *     observable checkpointed in A must match — arming past the stop is
@@ -111,7 +115,8 @@ struct Rig {
     int32_t            spindleCnt;
     int32_t            zCnt;
 
-    void init(int32_t zStart, int32_t hysteresisCounts = 500) {
+    void init(int32_t zStart, int32_t hysteresisCounts = 500,
+              uint32_t backlash = BACKLASH) {
         std::memset(&data, 0, sizeof(data));
         std::memset(tim,  0, sizeof(tim));
         std::memset(htim, 0, sizeof(htim));
@@ -145,7 +150,7 @@ struct Rig {
         data.shared.elsStop.stopDirection    = Z_STOP_DIR;
         data.shared.elsStop.threadPitchSteps = 533.333f;
         data.shared.elsStop.zCountsPerPitch  = 846.667f;
-        data.shared.elsStop.backlashSteps    = BACKLASH;
+        data.shared.elsStop.backlashSteps    = backlash;
         data.shared.elsStop.hysteresis       = hysteresisCounts;
         data.shared.elsStop.enable           = 0;
 
@@ -203,7 +208,8 @@ struct Checkpoints {
 
 static Checkpoints runCycle(int32_t zAtArm) {
     Rig rig;
-    rig.init(zAtArm);
+    rig.init(zAtArm, 500, /*backlash*/ 0);   /* see the header: A/B are about
+                                               * write order, not the take-up */
     Checkpoints c{};
 
     /* Settle passes, disengaged. */
@@ -265,7 +271,7 @@ int main() {
           "held past stop with spindle turning: sync fully gated (desiredSteps still)");
     check(a.activeAfterResume == 0, "resume after retract: 1->0 edge survives");
     check(a.takeupAfterResume == 0,
-          "resume: NO takeup — referenceLatched was 0, first pass of a fresh job");
+          "resume: no takeup -- backlashSteps is 0 here; the first-pass take-up is els_takeup_confirm_test's");
     check(a.stepsToGoAfterResume == 0, "resume: nothing banked");
     check(!a.phaseCorrectionRan, "resume: no phase correction against a stale latch");
     check(a.desiredDriftCutting != 0, "cutting: sync alive again (desiredSteps moves)");

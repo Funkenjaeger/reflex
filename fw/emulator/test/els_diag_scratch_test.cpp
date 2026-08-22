@@ -128,11 +128,16 @@ int main(void)
      * The #else is not decoration: it makes "added a probe, wrote no assertions
      * for it" a BUILD failure rather than a target that runs and checks nothing.
      * A new probe must land its own arm here. */
-#if ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
-    check(data.shared.elsStop.diagSchema == 2,
-          "take-up settle v2 publishes wire schema 2");
+#if ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
+    check(data.shared.elsStop.diagSchema == 6,
+          "take-up settle v3 publishes wire schema 6");
     check(data.shared.elsStop.diagBucketCount == ELS_DIAG_TRACE_BUCKETS,
-          "take-up settle v2 publishes its bucket count");
+          "take-up settle v3 publishes its bucket count");
+    /* The hold is what makes v3 able to measure at all, and it must be
+     * ZERO before a take-up arms the probe -- otherwise a diagnostic build
+     * would lengthen the gate's dwell on a machine that is not taking up. */
+    check(elsDiagExtraDwell(&data.diag) == 0,
+          "no capture in flight at startup, so the gate's dwell is untouched");
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_DISENGAGE_LATCH
     check(data.shared.elsStop.diagSchema == 3,
           "disengage latch publishes wire schema 3");
@@ -204,7 +209,7 @@ int main(void)
 #endif
     check(data.shared.elsStop.diagEndReason == 0,
           "end reason starts cleared (no stale verdict beside a fresh trace)");
-#if ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
+#if ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
     check(data.shared.elsStop.diagBucketTicks > 0,
           "trace probe publishes bucket width (host must not assume the ISR rate)");
 #endif

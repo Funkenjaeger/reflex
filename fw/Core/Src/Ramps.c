@@ -393,7 +393,9 @@ static inline void applyPhaseCorrection(rampsSharedData_t *shared) {
       deltaSpindle, deltaZ,
       shared->scales[0].syncRatioNum, shared->scales[0].syncRatioDen,
       shared->elsStop.threadPitchSteps, shared->elsStop.zCountsPerPitch,
-      shared->elsStop.stopDirection);
+      shared->elsStop.stopDirection,
+      0 /* offsetSteps: no elsStop_t field yet -- see the PHASE OFFSET note in
+         * els_phase.h and todo.md. 0 is bit-for-bit the pre-feature path. */);
 
   shared->servo.stepsToGo += r.stepsToAdd;
 
@@ -588,6 +590,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
     data->elsStopSettleCount      = 0;
     data->elsStopTakeupTicks      = 0;
     data->elsStopTakeupLatched    = 0;
+    data->elsStopCorrectOnConfirm = 0;
   }
 
   data->elsStopPreviousEnable = shared->elsStop.enable;
@@ -612,7 +615,16 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
        * settle question. Fires BEFORE the ELS_SETTLE_TICKS dwell and before the
        * gate's first evaluation, so a trace covers the whole of both. */
       elsDiagCaptureStart(&data->diag);
-      if (data->elsStopSettleCount < ELS_SETTLE_TICKS) {
+      /* elsDiagExtraDwell() is ZERO in every release build and in every probe
+       * but takeup-settle-v3, so this comparison is bit-for-bit the old one
+       * unless that probe is compiled in. It exists because the settle this
+       * dwell precedes cannot be MEASURED in 50 ticks: the gate confirms, the
+       * phase-correction jog drives, and any capture ends. Holding the dwell
+       * open is the only way to watch the carriage stop. See
+       * els_diag_takeup_settle.h. The same term is added to the abort
+       * threshold below so the confirm window keeps its full length. */
+      if (data->elsStopSettleCount
+          < ELS_SETTLE_TICKS + elsDiagExtraDwell(&data->diag)) {
         data->elsStopSettleCount++;        // dwell after commanded-complete
       } else {
         /* ---- Z CONFIRMATION GATE -------------------------------------------
@@ -694,7 +706,15 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
           data->elsStopSettleCount      = 0;
           data->elsStopTakeupTicks      = 0;
           shared->elsStop.takeupPending = 0;
-          applyPhaseCorrection(shared);     // snapshot Z only once CONFIRMED
+          /* Snapshot Z only once CONFIRMED -- and only when there is a
+           * reference to correct against. A first pass has none (the stop at
+           * the end of THIS pass latches it) and turning has no pitch; both
+           * still needed the take-up above to prove the drivetrain is coupled,
+           * which is why this branch no longer corrects unconditionally
+           * (2026-08-21, see the initiation block). */
+          if (data->elsStopCorrectOnConfirm) {
+            applyPhaseCorrection(shared);
+          }
         } else if (shared->elsStop.takeupResult != ELS_TAKEUP_ERR_UNCONFIRMED) {
           /* Report once on the transition, not every tick, so takeupSeq stays a
            * count of OUTCOMES rather than a tick counter. */
@@ -722,7 +742,8 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
          * on retry. */
         if (!data->elsStopTakeupLatched) {
           if (data->elsStopSettleCount
-              < (ELS_SETTLE_TICKS + ELS_TAKEUP_CONFIRM_WINDOW_TICKS)) {
+              < (ELS_SETTLE_TICKS + elsDiagExtraDwell(&data->diag)
+                 + ELS_TAKEUP_CONFIRM_WINDOW_TICKS)) {
             data->elsStopSettleCount++;
           } else {
             data->elsStopTakeupLatched    = 1;
@@ -857,55 +878,86 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
     shared->fastData.scaleCurrent[i] = shared->scales[i].position;
   }
 
-  // Detect SW clearing elsStop.active (1→0): initiate backlash takeup, or apply correction inline
+  // Detect SW clearing elsStop.active (1→0): the operator's "go" for a pass.
   if (data->elsStopPreviousActive && !shared->elsStop.active) {
-    if (shared->elsStop.referenceLatched
-        && shared->elsStop.threadPitchSteps != 0.0f
-        && shared->elsStop.zCountsPerPitch  != 0.0f
-        && shared->scales[0].syncRatioDen   != 0) {
-      if (shared->elsStop.backlashSteps != 0u) {
-        shared->servo.stepsToGo    = 0;
-        shared->servo.currentSpeed = 0;
-        data->elsStopSettleCount   = 0;
-        int32_t cuttingDir = (shared->scales[0].syncRatioNum > 0) ? 1 : -1;
-        if (shared->elsStop.threadPitchSteps * shared->elsStop.zCountsPerPitch < 0.0f) {
-          cuttingDir = -cuttingDir;
-        }
-        int32_t signedTakeup = cuttingDir * (int32_t)shared->elsStop.backlashSteps;
-        shared->servo.stepsToGo       += signedTakeup;
-        data->elsStopTakeupTargetSteps = (int32_t)shared->servo.currentSteps + signedTakeup;
-        data->elsStopTakeupSign        = (signedTakeup >= 0) ? 1 : -1;
-        shared->elsStop.takeupPending  = 1;
-        /* Baseline for the Z confirmation gate. Captured at INITIATION, before
-         * any pulses are issued, so the gate measures the whole takeup. */
-        data->elsStopTakeupZStart      = shared->scales[shared->elsStop.scaleIndex].position;
-        /* Same instant, same reason, for the attribution accumulator: it must
-         * cover the whole take-up. It starts credited with nothing and stays
-         * that way until the first pulse fires (els_slip.h), so the Z motion of
-         * this initiation tick — which physically predates the take-up — cannot
-         * be counted as evidence for it. */
-        elsSlipReset(&data->elsSlip);
-        /* Arm any diagnostic probe, at INITIATION. A trace probe clears itself
-         * here rather than at capture start, because this tick already does a
-         * pile of one-off work whereas the capture-start tick is the one whose
-         * timing a settle probe exists to measure. Do not move this call. */
-        elsDiagArm(&data->diag, &shared->elsStop);
-        data->elsStopTakeupTicks       = 0;
-        data->elsStopTakeupLatched     = 0;
-        shared->elsStop.takeupResult   = ELS_CAL_OK;
-        /* Direction the Z scale should count in for this takeup. droSign is
-         * els_phase.h's quantity — how a cutting-direction servo move changes the
-         * DRO — and the takeup itself runs in cuttingDir, so this reduces
-         * algebraically to stopDirection. Kept as the explicit product because
-         * the reduction is a coincidence of this call site, not an invariant.
-         * Only the MAGNITUDE gates completion (see els_backlash_cal.h on why
-         * detection is polarity-free); this sign is what turns lastTakeupZDelta
-         * into a wrong-way diagnostic rather than just a distance. */
-        data->elsStopTakeupZSign       = data->elsStopTakeupSign
-                                       * ((int32_t)shared->elsStop.stopDirection * cuttingDir);
-      } else {
-        applyPhaseCorrection(shared);
+    /* TWO jobs ride this edge and, since 2026-08-21, they are gated SEPARATELY.
+     *
+     * The backlash take-up plus its Z confirmation proves the drivetrain is
+     * COUPLED before a pass starts. That needs only a configured backlash, so
+     * it runs on EVERY pass of EVERY job -- the first pass included, turning
+     * included. Until 2026-08-21 it sat inside the phase-correction condition
+     * below, so exactly those two cases ran ungated: an open half-nut on pass
+     * one gave a turning spindle and nothing happening with NO message (versus
+     * the explicit refusal on any later pass), and a partially engaged nut on
+     * pass one latched a reference from an uncoupled drivetrain that every
+     * later pass then take-up-confirmed cleanly against -- the one failure
+     * that is invisible afterwards. Emulator pins: els_takeup_confirm_test
+     * (first pass and turning, coupled and open).
+     *
+     * The phase correction needs a latched reference and thread geometry. Pass
+     * one has no reference (nothing to correct against; the stop at the end
+     * of this pass latches it) and turning has no pitch, so it is skipped
+     * there. That is what the old condition was right about, and
+     * elsStopCorrectOnConfirm carries it to the confirmation gate's success
+     * branch, which used to apply the correction unconditionally. */
+    bool canCorrect = shared->elsStop.referenceLatched
+                   && shared->elsStop.threadPitchSteps != 0.0f
+                   && shared->elsStop.zCountsPerPitch  != 0.0f
+                   && shared->scales[0].syncRatioDen   != 0;
+    if (shared->elsStop.backlashSteps != 0u) {
+      shared->servo.stepsToGo    = 0;
+      shared->servo.currentSpeed = 0;
+      data->elsStopSettleCount   = 0;
+      /* Take-up direction: the servo sign of a cut -- sign(syncRatioNum),
+       * flipped by the Z polarity the host encodes in the SIGN of
+       * zCountsPerPitch. Threading has always expressed that polarity as the
+       * sign of threadPitchSteps * zCountsPerPitch (the host writes pitch
+       * positive, so the product's sign is zCountsPerPitch's). Turning writes
+       * pitch = 0 and, since 2026-08-21, a signed zCountsPerPitch for exactly
+       * this read, so the same polarity applies; a zCountsPerPitch of 0 (an
+       * older host) falls back to bare sign(syncRatioNum). */
+      int32_t cuttingDir = (shared->scales[0].syncRatioNum > 0) ? 1 : -1;
+      float polarity = (shared->elsStop.threadPitchSteps != 0.0f)
+                       ? shared->elsStop.threadPitchSteps * shared->elsStop.zCountsPerPitch
+                       : shared->elsStop.zCountsPerPitch;
+      if (polarity < 0.0f) {
+        cuttingDir = -cuttingDir;
       }
+      int32_t signedTakeup = cuttingDir * (int32_t)shared->elsStop.backlashSteps;
+      shared->servo.stepsToGo       += signedTakeup;
+      data->elsStopTakeupTargetSteps = (int32_t)shared->servo.currentSteps + signedTakeup;
+      data->elsStopTakeupSign        = (signedTakeup >= 0) ? 1 : -1;
+      shared->elsStop.takeupPending  = 1;
+      /* Baseline for the Z confirmation gate. Captured at INITIATION, before
+       * any pulses are issued, so the gate measures the whole takeup. */
+      data->elsStopTakeupZStart      = shared->scales[shared->elsStop.scaleIndex].position;
+      /* Same instant, same reason, for the attribution accumulator: it must
+       * cover the whole take-up. It starts credited with nothing and stays
+       * that way until the first pulse fires (els_slip.h), so the Z motion of
+       * this initiation tick — which physically predates the take-up — cannot
+       * be counted as evidence for it. */
+      elsSlipReset(&data->elsSlip);
+      /* Arm any diagnostic probe, at INITIATION. A trace probe clears itself
+       * here rather than at capture start, because this tick already does a
+       * pile of one-off work whereas the capture-start tick is the one whose
+       * timing a settle probe exists to measure. Do not move this call. */
+      elsDiagArm(&data->diag, &shared->elsStop);
+      data->elsStopTakeupTicks       = 0;
+      data->elsStopTakeupLatched     = 0;
+      shared->elsStop.takeupResult   = ELS_CAL_OK;
+      /* Direction the Z scale should count in for this takeup. droSign is
+       * els_phase.h's quantity — how a cutting-direction servo move changes the
+       * DRO — and the takeup itself runs in cuttingDir, so this reduces
+       * algebraically to stopDirection. Kept as the explicit product because
+       * the reduction is a coincidence of this call site, not an invariant.
+       * Only the MAGNITUDE gates completion (see els_backlash_cal.h on why
+       * detection is polarity-free); this sign is what turns lastTakeupZDelta
+       * into a wrong-way diagnostic rather than just a distance. */
+      data->elsStopTakeupZSign       = data->elsStopTakeupSign
+                                     * ((int32_t)shared->elsStop.stopDirection * cuttingDir);
+      data->elsStopCorrectOnConfirm  = canCorrect ? 1u : 0u;
+    } else if (canCorrect) {
+      applyPhaseCorrection(shared);
     }
   }
   data->elsStopPreviousActive = shared->elsStop.active;

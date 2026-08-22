@@ -382,6 +382,33 @@ def test_on_enter_cutting_arms_and_writes_thread_geometry():
     assert hal.set_z_counts_per_pitch.called
 
 
+def test_on_enter_cutting_in_turning_keeps_backlash_and_signed_polarity():
+    """Turning (2026-08-21): the PITCH is cleared so the firmware never
+    phase-corrects a turning pass, but the pre-cut take-up now runs on every
+    pass, so backlashSteps is written unchanged and zCountsPerPitch carries the
+    Z polarity SIGN the firmware derives the take-up direction from. Until
+    2026-08-21 all three were zeroed here and every turning pass ran ungated.
+    """
+    z, z_inp = _make_z_axis()
+    z_inp.ratioNum = -1          # reversed Z scale wiring: mm-per-count < 0
+    hal = MagicMock()
+    controller = _make_controller(retract_enabled=True, is_threading=False)
+    fsm = _build_fsm(
+        z=z, hal=hal, controller=controller,
+        els_extra={"els_backlash_steps": 42},
+    )
+    z.scaledPosition = controller.retract_z
+    fsm.enable()
+    hal.reset_mock()
+    fsm.cut()
+    assert fsm.state == "cutting"
+    hal.set_thread_pitch_steps.assert_called_once_with(0.0)
+    (zcpp,), _ = hal.set_z_counts_per_pitch.call_args
+    assert zcpp < 0, "the Z polarity sign must reach the firmware in turning"
+    hal.set_backlash_steps.assert_called_once_with(42)
+    hal.set_active.assert_called_once_with(False)
+
+
 # stop_direction_value(els_forward) is -1 for forward, +1 for reverse
 # (reflex/dispatchers/els.py), so cut_dir = -1 when els_forward=True. With
 # stop_z=10 and zero safety margin, diff = (z_pos - stop_z) * cut_dir is
