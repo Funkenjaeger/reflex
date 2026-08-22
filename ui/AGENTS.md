@@ -322,6 +322,17 @@ Every UI component follows this structure:
   As of 2026-08-11 seven commits on the `integration` line carried it, including
   the whole backlash-calibration wizard; none of that work was ever seen by CI.
 
+- **DO NOT QUOTE THE MARKER IN A COMMIT MESSAGE — not even to explain it.**
+  GitHub scans the entire pushed commit message, body included, and any
+  occurrence of `[skip ci]` / `[ci skip]` / `[no ci]` suppresses every workflow
+  for that push. Discussing the marker in prose is indistinguishable from using
+  it. On 2026-08-22 the commit that RETIRED this habit quoted the marker in its
+  own body while explaining the trap, and so became the one commit in the
+  release-flow work that CI never ran — caught only because someone went
+  looking for a green tick that was never going to appear. Write it as "the CI
+  skip marker" in commit messages; quote it freely in files like this one,
+  which are never scanned.
+
 - **python-semantic-release was retired 2026-08-22.** Its config had accumulated
   v7 keys that PSR 10 silently ignores, so options read like live settings while
   doing nothing, and nobody could say from the file what a push would do.
