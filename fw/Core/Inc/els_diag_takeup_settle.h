@@ -96,16 +96,75 @@
  * (published per capture), unlike the v1->v2 gating change which altered what
  * the numbers MEANT.
  *
- * TWO WINDOWS, AND THIS CONSTANT IS SIZED AGAINST ONLY ONE. 40 x 50 = 2000
- * ticks ~= 19.4 ms at 103 kHz. That covers ELS_SLIP_SETTLE_TICKS (1000) with
- * 2x margin, which is what the 2026-08-18 change was for. It does NOT cover
- * ELS_TAKEUP_CONFIRM_WINDOW_TICKS (Ramps.c:73) = 25000 ~= 242.7 ms, inside
- * which this capture also sits and against which it is ~12.5x short. A
- * disturbance timed for the confirm gate is INVISIBLE here -- reproduced by
- * the "+5000 ticks" nudge case in els_takeup_confirm_test.cpp, where the
- * capture has already ended and diagNetCounts stays 0. Do not read a zero
- * from this probe as a statement about the confirm window. See DIAG.md. */
+ * 40 x 50 = 2000 ticks ~= 19.4 ms at the measured ~103 kHz, which covers
+ * ELS_SLIP_SETTLE_TICKS (1000) with 2x margin. Under v3 the gate is held open
+ * for exactly this span (see ELS_DIAG_SETTLE_HOLD_TICKS below), so the window
+ * is the measurement rather than a race against the next commanded move.
+ *
+ * The capture still sits inside ELS_TAKEUP_CONFIRM_WINDOW_TICKS (Ramps.c) =
+ * 25000 ~= 242.7 ms and is ~12.5x shorter than it, so a disturbance timed for
+ * the confirm gate is still invisible here -- the "+5000 ticks" nudge case in
+ * els_takeup_confirm_test.cpp shows exactly that. Do not read a zero from this
+ * probe as a statement about the confirm window. See DIAG.md. */
 #define ELS_DIAG_BUCKET_TICKS 40
+
+/* THE HOLD, AND WHY v2 HAD TO BE RETIRED TO GET IT.
+ *
+ * v2 measured nothing on a CONFIRMED take-up, and the reason is structural
+ * rather than a tuning miss. Observed by running the real ISR (2026-08-22):
+ * the capture starts one tick after the take-up's last pulse -- t=0 was
+ * always right -- and then the gate's dwell expires ELS_SETTLE_TICKS (50)
+ * ticks later, the gate confirms, applyPhaseCorrection() queues its jog, and
+ * that jog's first pulse ends the capture at ~51 ticks with END_PULSE. Every
+ * capture taken on the real lathe on 2026-08-21 reads 59-69 ticks for exactly
+ * this reason. The 2000-tick window could only ever fill on a REFUSED take-up
+ * -- where nothing is coupled and there is therefore nothing to measure.
+ *
+ * So this probe does two things v2 did not. It HOLDS the gate's dwell open
+ * until the capture publishes (elsDiagExtraDwell), so the post-confirmation jog
+ * can no longer cut the measurement short; and it treats a pulse arriving while
+ * takeupPending is still set as a RESTART rather than an end (elsDiagTick), so
+ * t=0 is the last pulse of the take-up rather than the crossing that precedes
+ * it. Both are needed: with only the hold, the ramp's own residual steps ended
+ * the capture at 134 ticks. The machine is standing still at the shoulder with
+ * the tool clear, about to begin a pass; the cost is ~19.4 ms of extra
+ * stillness before the cut starts, in a diagnostic build only, bounded by
+ * ELS_DIAG_SETTLE_HOLD_CEILING_TICKS.
+ *
+ * WHAT THIS DELIBERATELY CHANGES, AND IT MUST NOT BE READ PAST. The gate's
+ * verdict is computed LATER than in a release build, so more of the settle
+ * tail falls inside elsSlipConfirmed()'s attribution horizon
+ * (ELS_SLIP_SETTLE_TICKS = 1000) and is counted as evidence. A diagnostic
+ * build is therefore MORE PERMISSIVE than release on a marginal take-up --
+ * partial engagement is the case that can differ. An open half-nut still
+ * refuses either way (no motion is attributable at any dwell). NEVER read "the
+ * diagnostic build confirmed" as "release would have confirmed"; the emulator
+ * pins both the refusal and the partial-engagement outcomes under the hold.
+ *
+ * That divergence is itself the finding this probe exists to settle: the gate
+ * releases the cut 50 ticks after the last pulse while the attribution horizon
+ * in the same path claims 1000, a 20x disagreement that no measurement has
+ * ever adjudicated. */
+#define ELS_DIAG_SETTLE_WINDOW_TICKS \
+  ((int32_t)ELS_DIAG_TRACE_BUCKETS * (int32_t)ELS_DIAG_BUCKET_TICKS)
+
+/* CEILING, not the hold itself. The hold lasts until the capture PUBLISHES
+ * (below), which is the honest condition -- the gate should wait for the
+ * measurement, not for a guess at how long the measurement takes. But a
+ * capture that never publishes would hold takeupPending set forever, gating
+ * sync with no way out but the enable escape hatch, so the wait is bounded:
+ * once elsStopSettleCount passes this the dwell expires whatever the probe is
+ * doing. 4x the window leaves room for the ramp tail to restart the capture a
+ * few times (see elsDiagTick) and still complete one clean run. ~78 ms. */
+#define ELS_DIAG_SETTLE_HOLD_CEILING_TICKS (ELS_DIAG_SETTLE_WINDOW_TICKS * 4)
+
+/* Hold the take-up gate's dwell open while a capture is armed or running, and
+ * release it the instant one publishes (state 0). Ramps.c adds this to the
+ * dwell AND to the confirm-window abort threshold, so the window that follows
+ * the dwell keeps its full length either way. */
+static inline int32_t elsDiagExtraDwell(const elsDiagCtx_t *ctx) {
+  return (ctx->state != 0) ? ELS_DIAG_SETTLE_HOLD_CEILING_TICKS : 0;
+}
 
 /* Startup. Publishes which probe is compiled in and its trace geometry, then
  * clears the block.
@@ -148,7 +207,7 @@ static inline void elsDiagInit(elsDiagCtx_t *ctx, elsStop_t *stop) {
  * The outcome fields are cleared too, so a reader that catches the block
  * mid-flight can never see the PREVIOUS capture's verdict beside this one's
  * trace. */
-static inline void elsDiagArm(elsDiagCtx_t *ctx, elsStop_t *stop) {
+static inline void elsDiagRearm(elsDiagCtx_t *ctx, elsStop_t *stop) {
   ctx->state             = 1;
   ctx->captureTick       = 0;
   stop->diagSettleTicks  = 0;
@@ -158,6 +217,10 @@ static inline void elsDiagArm(elsDiagCtx_t *ctx, elsStop_t *stop) {
   for (int b = 0; b < ELS_DIAG_TRACE_BUCKETS; b++) {
     stop->diagTrace[b] = 0;
   }
+}
+
+static inline void elsDiagArm(elsDiagCtx_t *ctx, elsStop_t *stop) {
+  elsDiagRearm(ctx, stop);
 }
 
 /* CALL ON THE FIRST TICK AT WHICH THE COMMANDED MOTION IS COMPLETE -- the last
@@ -206,6 +269,32 @@ static inline void elsDiagTick(elsDiagCtx_t *ctx, elsStop_t *stop,
   }
 
   if (dServo != 0) {
+    if (stop->takeupPending != 0u) {
+      /* THE COMMANDED TAKE-UP IS NOT FINISHED, so this pulse is not the end of
+       * the measurement -- it is the new start of it.
+       *
+       * elsDiagCaptureStart() fires on takeupReached, which is a CROSSING test
+       * on servo.currentSteps. The decel ramp overshoots the target and keeps
+       * emitting the residual, so the crossing is reached with steps still to
+       * go: observed 2026-08-22 on the real ISR, 4 residual steps with the last
+       * pair 134 ticks apart, because the gaps stretch as the ramp decelerates.
+       * A capture started at the crossing is therefore timing the ramp's tail,
+       * not the carriage's settle. v2 never revealed this -- the
+       * post-confirmation jog ended every capture at ~51 ticks first.
+       *
+       * Re-arming here makes t=0 the LAST pulse by construction, with no need
+       * to know in advance which pulse that is: each residual pulse throws the
+       * partial capture away and the one that survives is the one nothing
+       * interrupted. The clear costs 50 int16 writes on a pulse tick, and only
+       * on pulses AFTER the crossing -- single digits per take-up, not the
+       * hundreds the take-up itself emits.
+       *
+       * Gated on takeupPending, so the moment the gate releases the machine a
+       * pulse ENDS the capture as it always did: the pass starting is a real
+       * end, the ramp finishing is not. */
+      elsDiagRearm(ctx, stop);
+      return;
+    }
     stop->diagCaptureTicks = (uint16_t)ctx->captureTick;
     stop->diagEndReason    = ELS_DIAG_END_PULSE;
     ctx->state = 0;
@@ -227,9 +316,18 @@ static inline void elsDiagTick(elsDiagCtx_t *ctx, elsStop_t *stop,
 
     ctx->captureTick++;
     if (ctx->captureTick >= (uint32_t)ELS_DIAG_TRACE_BUCKETS * ELS_DIAG_BUCKET_TICKS) {
-      /* Ran out of buckets before the servo moved again. The capture did NOT
-       * finish measuring: report that rather than letting a truncated trace
-       * pass for a complete one. */
+      /* Ran out of buckets before the servo moved again.
+       *
+       * UNDER v3 THIS IS THE SUCCESS CASE, which inverts v2's reading of the
+       * same code and is why the schema id had to change. The gate is held for
+       * exactly this window, so a healthy take-up reaches the end of it with
+       * the servo still quiet: the trace covers the whole settle horizon and
+       * settle_ticks is the measurement. Under v2, END_WINDOW meant "the servo
+       * stayed quiet longer than I could watch" -- a floor, not a result.
+       *
+       * A capture that still ends END_PULSE under v3 means something drove the
+       * servo during the hold, which the hold exists to prevent: read that as
+       * the trace being cut short, and look for what moved. */
       stop->diagCaptureTicks = (uint16_t)ctx->captureTick;
       stop->diagEndReason    = ELS_DIAG_END_WINDOW;
       ctx->state = 0;

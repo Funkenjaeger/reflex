@@ -615,7 +615,16 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
        * settle question. Fires BEFORE the ELS_SETTLE_TICKS dwell and before the
        * gate's first evaluation, so a trace covers the whole of both. */
       elsDiagCaptureStart(&data->diag);
-      if (data->elsStopSettleCount < ELS_SETTLE_TICKS) {
+      /* elsDiagExtraDwell() is ZERO in every release build and in every probe
+       * but takeup-settle-v3, so this comparison is bit-for-bit the old one
+       * unless that probe is compiled in. It exists because the settle this
+       * dwell precedes cannot be MEASURED in 50 ticks: the gate confirms, the
+       * phase-correction jog drives, and any capture ends. Holding the dwell
+       * open is the only way to watch the carriage stop. See
+       * els_diag_takeup_settle.h. The same term is added to the abort
+       * threshold below so the confirm window keeps its full length. */
+      if (data->elsStopSettleCount
+          < ELS_SETTLE_TICKS + elsDiagExtraDwell(&data->diag)) {
         data->elsStopSettleCount++;        // dwell after commanded-complete
       } else {
         /* ---- Z CONFIRMATION GATE -------------------------------------------
@@ -733,7 +742,8 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
          * on retry. */
         if (!data->elsStopTakeupLatched) {
           if (data->elsStopSettleCount
-              < (ELS_SETTLE_TICKS + ELS_TAKEUP_CONFIRM_WINDOW_TICKS)) {
+              < (ELS_SETTLE_TICKS + elsDiagExtraDwell(&data->diag)
+                 + ELS_TAKEUP_CONFIRM_WINDOW_TICKS)) {
             data->elsStopSettleCount++;
           } else {
             data->elsStopTakeupLatched    = 1;

@@ -159,6 +159,18 @@ instead of leaving bare `TODO:` comments in code.
   and deliberate, but confirm the real magnitude on metal before tuning the
   margin floor down.
 
+### The gate's dwell and the attribution horizon disagree by 20x (2026-08-22)
+- `ELS_SETTLE_TICKS` (50) is how long the gate waits after the take-up's last pulse
+  before deciding; `ELS_SLIP_SETTLE_TICKS` (1000) is how long motion after a pulse is
+  still credited to the servo. Same code path, same physical settle, 20x apart.
+- Nobody has measured which is right, and until 2026-08-22 nobody could: the
+  takeup-settle probe was structurally unable to watch a confirmed take-up (see DIAG.md).
+  `takeup-settle-v3` holds the gate open for its window and can.
+- **If the settle is long,** the gate releases the cut while the carriage is still
+  moving. **If it is short,** the attribution horizon is 20x too generous and the
+  hand-nudge window is far wider than it needs to be. Both are worth knowing.
+- Blocked on: one v3 capture session on a coupled take-up.
+
 ### Commission `ELS_SLIP_SETTLE_TICKS` on elspi (UNMEASURED PARAMETER)
 
 Motion attribution (`Core/Inc/els_slip.h`) replaced the 250 ms confirmation

@@ -158,19 +158,15 @@ carried by those captures, for three independent reasons:
    bucket width is now 40 (2000-tick window, 2× the gate). No schema bump —
    bucket width is self-describing via `diagBucketTicks`.
 
-   **This probe sits inside TWO windows and the 08-18 fix sized it against only
-   one of them.** `ELS_DIAG_BUCKET_TICKS (40) × ELS_DIAG_TRACE_BUCKETS (50)` =
-   **2000 ticks ≈ 19.4 ms** at the measured 103 kHz ISR rate. That is 2× the
-   1000-tick `ELS_SLIP_SETTLE_TICKS` gate, as intended — but the capture also
-   lives inside `ELS_TAKEUP_CONFIRM_WINDOW_TICKS` (`fw/Core/Src/Ramps.c:73`) =
-   **25000 ticks ≈ 242.7 ms**, against which it is still ~12.5× short.
-   Demonstrated, not computed: the existing "hand nudge long after the last
-   pulse" case in `els_takeup_confirm_test.cpp` injects at +5000 ticks —
-   deliberately inside the confirm window — and the capture has already ended
-   and published before the nudge arrives, so `diagNetCounts` stays 0. **A
-   disturbance timed correctly for the confirm gate is invisible to this
-   capture.** Do not read a zero as "nothing moved during the take-up
-   confirmation"; it only ever spoke about the first ~19 ms.
+   The capture also lives inside `ELS_TAKEUP_CONFIRM_WINDOW_TICKS`
+   (`fw/Core/Src/Ramps.c`) = **25000 ticks ≈ 242.7 ms**, against which it is
+   ~12.5× short. Demonstrated, not computed: the "hand nudge long after the
+   last pulse" case in `els_takeup_confirm_test.cpp` injects at +5000 ticks —
+   deliberately inside the confirm window — and the capture has already
+   published before the nudge arrives, so `diagNetCounts` stays 0. **A
+   disturbance timed for the confirm gate is invisible to this capture.** Do
+   not read a zero as "nothing moved during the take-up confirmation"; it
+   speaks only about the settle window.
 2. **The recorder of that era discarded `diagEndReason`**, so this section's
    own floor-not-a-result rule is unappliable to all 13 rows — none can be
    classified `END_PULSE` vs `END_WINDOW`. The export gap is closed (the
@@ -182,33 +178,88 @@ carried by those captures, for three independent reasons:
    v2's `takeupPending`-gated window. The next capture session must include a
    condition known to move Z during the window before any zero is trusted.
 
-   **TIMING — this is the part that decides whether the session succeeds.**
-   "During the window" means *this probe's* ~2000-tick capture, **not** the
-   242.7 ms take-up confirm window. Inject the known Z motion **within roughly
-   19 ms of the take-up completing.** A nudge timed for the confirm gate lands
-   after the capture has already ended and yields a fourteenth uninterpretable
-   zero — a wasted trip to the machine. If a 19 ms hand movement is not
-   practical, widen `ELS_DIAG_BUCKET_TICKS` for that session first (it is
-   self-describing via `diagBucketTicks`, so no schema bump and no host
-   change) rather than trying to hit the window by hand.
+   **The firmware read path is proven and does NOT need the lathe.** Building
+   `Ramps.c` together with `els_takeup_confirm_test.cpp` with the probe
+   compiled in and injecting a known 20-count nudge through the real
+   `SynchroRefreshTimerIsr()` reads back `diagNetCounts` = 20 exactly
+   (2026-08-20). So the ISR → `diagNetCounts` path is live, and the ambiguity
+   in the 13 zeros is **only** about whether elspi's encoder was delivering
+   counts — not about whether the firmware was looking.
 
-   **The firmware half of this is already settled and does NOT need the
-   lathe.** Building `Ramps.c` together with `els_takeup_confirm_test.cpp`
-   under `-DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2` and injecting a
-   known 20-count nudge through the real `SynchroRefreshTimerIsr()` reads back
-   `diagNetCounts` = 20 exactly, with `end_reason = ELS_DIAG_END_PULSE`
-   (2026-08-20). So the ISR → `diagNetCounts` path is proven live and the
-   remaining ambiguity in the 13 zeros is **only** about whether elspi's
-   encoder was delivering counts — not about whether the firmware was
-   looking.
+**RETIRED 2026-08-22, and the reason is the whole point of v3: v2 could not
+measure a confirmed take-up at all.** Not a tuning miss — a structural one,
+found by running the real ISR and printing every tick rather than reasoning
+about it:
 
-`ELS_SLIP_SETTLE_TICKS` therefore remains an **unmeasured parameter** —
-`fw/todo.md`'s commissioning entry is the open item, and only `END_PULSE`
-captures from the widened window count when it runs.
+* The capture starts **one tick after the take-up's last pulse**, so `t=0` was
+  never the problem. (A first diagnosis on 2026-08-22 said the capture started
+  early and the ramp's overshoot ended it. Half wrong, and worth recording
+  because it was about to be *fixed*: moving `t=0` would have changed nothing
+  on its own.)
+* `ELS_SETTLE_TICKS` (50) later the gate confirms, `applyPhaseCorrection()`
+  queues its jog, and that jog's first pulse ends the capture — at **51 ticks**,
+  observed with `stepsToGo = -398` and `lastCorrection = -392.76` on the ending
+  pulse. Every capture taken on the real lathe on 2026-08-21 reads 59–69 ticks
+  for exactly this reason.
+* Hold the gate open and a **second** end cause appears underneath: the decel
+  ramp overshoots the crossing test and keeps emitting the residual, gaps
+  stretching as it slows (observed: 5 steps past target, the last pair 262
+  ticks apart), ending the capture at **134 ticks**.
 
-It is kept rather than deleted because it is the reference implementation for
-writing another one, and because the geometry it publishes (`diagBucketTicks`,
-`diagBucketCount`) is the pattern every trace-shaped probe should copy.
+So the 2000-tick window could only ever fill on a **refused** take-up — where
+nothing is coupled and there is nothing to measure. That is why all 148
+captures read zero, and why no reflash of v2 would have changed it.
+
+### `takeup-settle-v3` — schema 6 — the same trace, with the machine actually held still
+
+Same registers, same geometry, same `settle_ticks` measurement. Two changes,
+and **both are needed** — the emulator mutation suite reddens if either is
+removed, reproducing exactly the two end causes above (51 ticks, 134 ticks):
+
+1. **A pulse arriving while `takeupPending` is set RE-ARMS the capture** rather
+   than ending it, so `t=0` is the take-up's last pulse by construction with no
+   need to know in advance which pulse that is. Once the gate releases the
+   machine, a pulse ends the capture as before: the pass starting is a real
+   end, the ramp finishing is not.
+2. **The gate's dwell is held open until the capture publishes**
+   (`elsDiagExtraDwell`, added to both the dwell and the confirm-window abort
+   threshold so the window after it keeps its length). Bounded by
+   `ELS_DIAG_SETTLE_HOLD_CEILING_TICKS` (~78 ms) so a capture that never
+   publishes cannot hold the machine.
+
+**`END_WINDOW` now means the opposite of what it meant under v2**, which is why
+the schema id changed rather than the constants. Under v2 it meant "the servo
+stayed quiet longer than I could watch" — a floor. Under v3 the gate is held
+for exactly this window, so a healthy take-up reaches the end of it with the
+servo still quiet: **`END_WINDOW` is the complete measurement and
+`settle_ticks` is the answer.** An `END_PULSE` under v3 means something drove
+the servo during the hold, which the hold exists to prevent — read that trace
+as cut short and look for what moved.
+
+**What the diagnostic build deliberately does differently, and must not be read
+past.** The gate's first verdict lands ~2000 ticks after the last pulse instead
+of 50. Attribution keeps accumulating throughout, so genuinely late motion
+inside `ELS_SLIP_SETTLE_TICKS` is still credited and the recovery path still
+works — but a refusal reaches the operator ~20 ms later, and a scenario that
+places a disturbance *by gate state* rather than by time-since-last-pulse will
+behave differently here than in a release build (the emulator's late-motion
+regression pair is asserted release-only for exactly this reason). **Never read
+"the diagnostic build confirmed" as "release would have confirmed."**
+
+The release image is unaffected: `elsDiagExtraDwell()` is a constant 0
+everywhere else, and the release `reflex-fw.bin` is **byte-identical** across
+this change (`b3cea4f2…`, 37428 bytes, verified 2026-08-22).
+
+**The finding this probe exists to settle.** The gate releases the cut 50 ticks
+after the last take-up pulse while `ELS_SLIP_SETTLE_TICKS = 1000` — same code
+path, same physical settle — says motion may still be attributable to that
+pulse for 1000 ticks. Two constants 20× apart, and no measurement has ever
+adjudicated them. `ELS_SLIP_SETTLE_TICKS` remains an **unmeasured parameter**
+(`fw/todo.md`); a v3 capture session on a coupled take-up is what settles it.
+
+v2 is kept in the registry (retired, id burned) rather than deleted: it is the
+reference implementation for writing another trace probe, and reflex-ui still
+recognises schema 2 so the 148 captures already recorded stay readable.
 
 ### `disengage-latch` — schema 3 — **INTERVENING probe, for catching a live defect**
 

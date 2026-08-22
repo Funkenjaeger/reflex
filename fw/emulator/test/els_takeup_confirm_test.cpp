@@ -231,6 +231,38 @@ struct Rig {
         SynchroRefreshTimerIsr(&data);
     }
 
+    /* Step until the servo has emitted no pulse for `quietTicks` consecutive
+     * ticks, i.e. the COMMANDED motion is finished -- not merely past the
+     * crossing test that ends it on paper.
+     *
+     * The distinction is the whole of the 2026-08-22 finding: takeupReached is
+     * a crossing test on currentSteps, and the decel ramp overshoots it and
+     * keeps emitting the residual with gaps that stretch as it slows (observed:
+     * 5 steps past target, the last pair 262 ticks apart). Anything that wants
+     * to inject motion "after the take-up" has to wait for quiet, not for the
+     * crossing and not for a gate verdict. Returns the tick it settled on, or
+     * -1 if the servo never went quiet. */
+    int runUntilServoQuiet(int quietTicks, int maxTicks = 60000) {
+        int quiet = 0;
+        int32_t prev = (int32_t)data.shared.servo.currentSteps;
+        for (int i = 0; i < maxTicks; i++) {
+            stepDriven();
+            int32_t now = (int32_t)data.shared.servo.currentSteps;
+            quiet = (now == prev) ? quiet + 1 : 0;
+            prev  = now;
+            /* Quiet ALONE is not proof the motion is over, and assuming it was
+             * cost a wrong test result: the decel ramp's inter-pulse gaps keep
+             * stretching as it slows, so any fixed quiet threshold eventually
+             * gets beaten by a later residual step. The drained queue is the
+             * real signal -- nothing left to command AND the generator caught
+             * up to what was already commanded. */
+            bool drained = data.shared.servo.stepsToGo == 0
+                        && data.shared.servo.desiredSteps == data.shared.servo.currentSteps;
+            if (drained && quiet >= quietTicks) return i;
+        }
+        return -1;
+    }
+
     /* Arm a job, trigger the stop, then resume — the point at which the
      * firmware initiates a backlash take-up. */
     void armAndTrigger() {
@@ -342,6 +374,67 @@ int main() {
         checkEq(rig.data.shared.elsStop.referenceLatched, 1,
                 "phase reference preserved: retry is free");
     }
+
+#ifdef ELS_DIAG_PROBE
+    /* ---------------- takeup-settle-v3: the capture survives a real take-up -- */
+    /* THE TARGET'S REASON TO EXIST. v2 could not measure a confirmed take-up at
+     * all: its capture started at the crossing and was ended either by the
+     * ramp's own residual pulses or by the post-confirmation jog ~51 ticks in,
+     * which is what every one of the 148 captures taken on the lathe under v2
+     * shows. v3 re-arms on a pulse while takeupPending (so t=0 is the LAST
+     * pulse) and holds the gate's dwell until the capture publishes (so the jog
+     * cannot cut it short). Both halves are asserted here; removing either one
+     * reddens this block. */
+    printf("\n-- v3 PROBE: full-window capture across a confirmed take-up --\n");
+    {
+        Rig rig;
+        rig.init(/*backlashSteps*/ 90, /*motionThresh*/ 2, /*coupled*/ true, /*lash*/ 60);
+        rig.armAndTrigger();
+        rig.step(Z_CLEAR);
+        rig.beginLashDriven();
+
+        /* Wait for the COMMANDED motion to finish, not for the crossing: the
+         * residual steps are hundreds of ticks apart at the tail of the ramp and
+         * each one re-arms the capture. 400 quiet ticks clears the widest gap
+         * observed (262) with margin, and still lands the nudge deep inside the
+         * 2000-tick window. */
+        int settledAt = rig.runUntilServoQuiet(400);
+        check(settledAt > 0, "v3: the servo went quiet after the take-up");
+        checkEq(rig.data.shared.elsStop.takeupPending, 1,
+                "v3: the gate is STILL HOLDING the machine while the capture runs "
+                "(without the hold it would have confirmed and driven away by now)");
+        checkEq(rig.data.shared.elsStop.diagSeq, 0,
+                "v3: nothing published yet -- the capture is still open");
+
+        /* The positive control DIAG.md demands: a condition known to move Z
+         * during the window, injected after the last pulse so it is settle and
+         * not ramp. */
+        rig.nudgeCarriage(20);
+
+        for (int i = 0; i < 60000 && rig.data.shared.elsStop.diagSeq == 0; i++)
+            rig.stepDriven();
+
+        checkEq(rig.data.shared.elsStop.diagSeq, 1, "v3: exactly one capture published");
+        checkEq(rig.data.shared.elsStop.diagNetCounts, 20,
+                "v3 POSITIVE CONTROL: known Z motion after the last pulse is captured exactly");
+        checkEq(rig.data.shared.elsStop.diagEndReason, ELS_DIAG_END_WINDOW,
+                "v3: the capture ran to the END OF ITS WINDOW -- under v2 this was END_PULSE at ~51 ticks");
+        checkEq(rig.data.shared.elsStop.diagCaptureTicks,
+                ELS_DIAG_TRACE_BUCKETS * ELS_DIAG_BUCKET_TICKS,
+                "v3: the full window was measured, not a truncated head of it");
+        check(rig.data.shared.elsStop.diagSettleTicks > 0,
+              "v3: settle_ticks names WHEN the last motion arrived -- the measurement itself");
+
+        /* And the hold RELEASES. A probe that measured beautifully and left the
+         * machine held would be worse than no probe. */
+        for (int i = 0; i < 60000 && rig.data.shared.elsStop.takeupPending; i++)
+            rig.stepDriven();
+        checkEq(rig.data.shared.elsStop.takeupPending, 0,
+                "v3: the gate evaluated as soon as the capture published");
+        checkEq(rig.data.shared.elsStop.takeupResult, ELS_CAL_OK,
+                "v3: ...and a coupled take-up still CONFIRMS through the hold");
+    }
+#endif
 
     /* ---------------- FIRST PASS and TURNING are gated too (2026-08-21) -- */
     /* MUTATIONS this block exists to catch: (A) put referenceLatched / the
@@ -598,6 +691,23 @@ int main() {
          * positions are refreshed further down, so it sees the previous tick's
          * Z. One tick is not enough for injected motion to become visible. */
         for (int i = 0; i < 5; i++) rig.stepDriven();
+
+#ifndef ELS_DIAG_PROBE
+        /* RELEASE TIMING, and deliberately not asserted in a probe build.
+         *
+         * The nudge is placed by GATE STATE -- the loop above runs until the
+         * gate has refused -- which in a release build is ELS_SETTLE_TICKS (50)
+         * after the last commanded pulse, comfortably inside
+         * elsSlipConfirmed's 1000-tick attribution horizon. That is the
+         * scenario's whole premise.
+         *
+         * takeup-settle-v3 holds the gate's first evaluation until its capture
+         * publishes (~2000 ticks), so the same code lands this nudge OUTSIDE
+         * the horizon and it is correctly not credited. Nothing about the gate
+         * changed: the recovery path this pair pins is a claim about release
+         * timing, and a build that deliberately moves the gate's clock cannot
+         * make it. The probe build gets its own settle positive control below,
+         * which places its nudge by time-since-last-pulse instead. */
         checkEq(rig.data.shared.elsStop.takeupPending, 0,
                 "motion arriving while the window is open CONFIRMS");
 
@@ -609,23 +719,6 @@ int main() {
          * attribution has stopped discriminating and the pair is dead. */
         check(rig.data.elsSlip.attributedZCounts != 0,
               "...and it confirmed on ATTRIBUTED motion, not raw endpoint delta");
-
-#ifdef ELS_DIAG_PROBE
-        /* POSITIVE CONTROL for the takeup-settle diagnostic probe (DIAG.md,
-         * els_diag_takeup_settle.h:58-69): "the next capture session MUST
-         * include a condition known to move Z during the window before any
-         * zero is trusted." This is that condition, run at the desk. The
-         * 20-count nudge above landed inside BOTH the confirm gate's settle
-         * horizon AND the diag capture's own (much shorter) window, so the
-         * probe must show it exactly, not approximately. If this ever reads
-         * 0, the capture path is not live and every zero in a real JSONL is
-         * unexplained, not "carriage was still". */
-        checkEq(rig.data.shared.elsStop.diagNetCounts, 20,
-                "DIAG PROBE: known Z motion during the window is captured exactly (positive control)");
-        check(rig.data.shared.elsStop.diagSeq >= 1,
-              "DIAG PROBE: diagSeq advanced -- a reader watching the edge would have seen this capture");
-        checkEq(rig.data.shared.elsStop.diagEndReason, ELS_DIAG_END_PULSE,
-                "DIAG PROBE: capture ended because the servo drove again (pass resumed), not a truncation");
 #endif
     }
 

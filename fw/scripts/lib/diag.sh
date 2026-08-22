@@ -15,7 +15,7 @@
 
 DIAG_HEADER_REL="Core/Inc/Ramps.h"
 
-# CLI name <-> macro name. `ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2` <-> `takeup-settle-v2`.
+# CLI name <-> macro name. `ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3` <-> `takeup-settle-v3`.
 # These print WITHOUT a trailing newline because callers use them in command
 # substitution; diag_probe_list adds the newline itself. Getting that backwards
 # ran the names together ("takeup-settle-v2disengage-latch") -- invisible while

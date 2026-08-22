@@ -52,6 +52,7 @@ from reflex.utils.devices import (
     ELS_DIAG_SCHEMA_DISENGAGE_LATCH,
     ELS_DIAG_SCHEMA_MODE_WATCH,
     ELS_DIAG_SCHEMA_MODE_WATCH_V2,
+    ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3,
 )
 from reflex.utils.paths import diag_dir
 
@@ -84,6 +85,10 @@ KNOWN_SCHEMAS = frozenset({
     # refusal") is never confused with v2's ("effective refusals only").
     ELS_DIAG_SCHEMA_MODE_WATCH,
     ELS_DIAG_SCHEMA_MODE_WATCH_V2,
+    # v3 retires v2 in firmware but both stay readable here: a .jsonl line
+    # carries its own schema, and the 148 captures taken under v2 on
+    # 2026-08-21 are still evidence -- of what the probe could not see.
+    ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3,
 })
 
 # Schemas that publish diagEndReason. Only these can be checked for "did a
@@ -94,7 +99,10 @@ KNOWN_SCHEMAS = frozenset({
 # means "a latch suppression has been seen", and 0 is the healthy steady state
 # -- gating on it would silently drop every mode-transition record on a
 # machine where nothing is wrong, which is all of them if the fixes hold.
-SCHEMAS_WITH_END_REASON = frozenset({ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2})
+SCHEMAS_WITH_END_REASON = frozenset({
+    ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2,
+    ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3,
+})
 
 # Consecutive failures tolerated before the recorder gives up for this
 # connection. Small on purpose -- if reads are failing, the useful behaviour is

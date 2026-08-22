@@ -202,10 +202,11 @@ ELS_PROTOCOL_VERSION = 2        # elsStop.protocolVersion this UI is built again
 # probe's data under it.
 ELS_DIAG_SCHEMA_NONE = 0
 ELS_DIAG_SCHEMA_TAKEUP_SETTLE = 1      # RETIRED: ran past the gate's decision into the pass
-ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 = 2   # same, but the capture ends at the servo's next pulse
+ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 = 2   # RETIRED: the capture ended at the servo's next pulse, which on a CONFIRMED take-up is the phase-correction jog ~50 ticks in -- so it could never see a settle
 ELS_DIAG_SCHEMA_DISENGAGE_LATCH = 3    # counts servoEnableTask re-asserting the feed after disengage
 ELS_DIAG_SCHEMA_MODE_WATCH = 4         # RETIRED: counted every latch refusal, incl. the per-tick no-ops of a power feed
 ELS_DIAG_SCHEMA_MODE_WATCH_V2 = 5      # same, but net_counts ticks only when the refusal would have STARTED the feed
+ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3 = 6   # same capture, but the firmware HOLDS the take-up gate open for the whole window, so END_WINDOW is now the complete measurement rather than a floor
 
 # elsStop.diagEndReason. A window-full capture did not finish measuring: its
 # last bucket is a floor, not a result, and it must not be read as one.

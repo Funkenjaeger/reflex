@@ -63,10 +63,11 @@
  * accept a new probe's data under it. 0 means no probe. */
 #define ELS_DIAG_SCHEMA_NONE 0
 #define ELS_DIAG_SCHEMA_TAKEUP_SETTLE 1     /* RETIRED -- see v2 */
-#define ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 2
+#define ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 2  /* RETIRED -- see v3 */
 #define ELS_DIAG_SCHEMA_DISENGAGE_LATCH 3
 #define ELS_DIAG_SCHEMA_MODE_WATCH 4        /* RETIRED -- see v2 */
 #define ELS_DIAG_SCHEMA_MODE_WATCH_V2 5
+#define ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3 6
 
 /* WHICH probe is compiled in, selected by the build as
  * -DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_<NAME>. scripts/build.sh --diag=<name> is the
@@ -100,12 +101,14 @@
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE
 #error "ELS_DIAG_SCHEMA_TAKEUP_SETTLE is RETIRED; use takeup-settle-v2. See DIAG.md."
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
-/* recognised */
+#error "ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2 is RETIRED (it could only capture ~50 ticks before the post-confirmation jog ended it, so a confirmed take-up was unmeasurable); use takeup-settle-v3. See DIAG.md."
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_DISENGAGE_LATCH
 /* recognised */
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH
 #error "ELS_DIAG_SCHEMA_MODE_WATCH is RETIRED (its diagNetCounts drowned the signal in no-op refusals); use mode-watch-v2. See DIAG.md."
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH_V2
+/* recognised */
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
 /* recognised */
 #else
 #error "unknown ELS_DIAG_PROBE. Register the schema id in Ramps.h and add it to this chain; see DIAG.md."

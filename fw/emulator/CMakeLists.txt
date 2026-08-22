@@ -155,7 +155,7 @@ add_executable(els_takeup_confirm_diag_test
     ${CMAKE_SOURCE_DIR}/test/els_takeup_confirm_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)
 target_compile_definitions(els_takeup_confirm_diag_test
-    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2)
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3)
 target_link_libraries(els_takeup_confirm_diag_test m pthread)
 add_test(NAME els_takeup_confirm_diag_test COMMAND els_takeup_confirm_diag_test)
 
@@ -250,14 +250,14 @@ add_test(NAME els_diag_scratch_test COMMAND els_diag_scratch_test)
 # scripts/build.sh sets it, so this target exercises the real selection
 # mechanism rather than a test-only shortcut -- including the #error chain in
 # Ramps.h, which fails the BUILD if the probe is unregistered or misspelled.
-add_executable(els_diag_scratch_takeup_settle_v2_test
+add_executable(els_diag_scratch_takeup_settle_v3_test
     ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)
-target_compile_definitions(els_diag_scratch_takeup_settle_v2_test
-    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2)
-target_link_libraries(els_diag_scratch_takeup_settle_v2_test m pthread)
-add_test(NAME els_diag_scratch_takeup_settle_v2_test
-    COMMAND els_diag_scratch_takeup_settle_v2_test)
+target_compile_definitions(els_diag_scratch_takeup_settle_v3_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3)
+target_link_libraries(els_diag_scratch_takeup_settle_v3_test m pthread)
+add_test(NAME els_diag_scratch_takeup_settle_v3_test
+    COMMAND els_diag_scratch_takeup_settle_v3_test)
 
 add_executable(els_diag_scratch_disengage_latch_test
     ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
