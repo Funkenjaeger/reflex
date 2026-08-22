@@ -7,349 +7,377 @@
 <ElsAdvancedBar>:
   orientation: "vertical"
   size_hint_y: None
-  # Grow by each notice strip's height only while it is showing, so the control
-  # row below is never squished.
-  #
-  # EVERY collapsible strip below MUST be represented here. A strip that takes
-  # height without the parent growing to match overflows this vertical
-  # BoxLayout's bounds and renders wherever the layout arithmetic lands it --
-  # observed on the machine 2026-08-16 as the take-up warning appearing over a
-  # DRO line in the middle of the screen. The strip itself was fine; it was
-  # this line that had not been updated when it was added.
-  natural_height: 128 + (dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (dp(30) if root.controller.takeup_warning else 0)
-
-  # ── Re-reference notice strip (audit H1 follow-up) ─────────────────────────
-  # Shown when a committed Stop/Start value was re-referenced by a DRO re-zero /
-  # coordinate change (the physical target is unchanged). 'warn' → message only;
-  # 'confirm' → Keep/Reset. Collapses to zero height when there's no notice.
-  # NOTE: needs an on-device look — colors/spacing are a first pass.
-  BoxLayout:
-    id: reframe_notice
-    orientation: 'horizontal'
-    size_hint_y: None
-    spacing: dp(8)
-    padding: dp(8), 0
-    height: dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0
-    opacity: 1 if self.height else 0
-    disabled: not self.height
-    canvas.before:
-      Color:
-        rgba: (1, 0.72, 0.16, 0.28)
-      Rectangle:
-        pos: self.pos
-        size: self.size
-    Label:
-      text: root.controller.reframe_message
-      text_size: self.size
-      halign: 'left'
-      valign: 'middle'
-      font_name: app.theme.font_bold
-      font_size: dp(13)
-      color: app.theme.text
-    StyledButton:
-      text: "Keep"
-      size_hint_x: None
-      width: dp(64) if root.controller.reframe_confirm_pending else 0
-      opacity: 1 if root.controller.reframe_confirm_pending else 0
-      disabled: not root.controller.reframe_confirm_pending
-      on_release: root.controller.clear_reframe_notice()
-    StyledButton:
-      text: "Reset"
-      size_hint_x: None
-      width: dp(64) if root.controller.reframe_confirm_pending else 0
-      opacity: 1 if root.controller.reframe_confirm_pending else 0
-      disabled: not root.controller.reframe_confirm_pending
-      on_release: root.controller.reset_reframed_targets()
-
-  # ── Take-up refusal notice ────────────────────────────────────────────────
-  #    Shown when the firmware refused to start a pass because it could not
-  #    confirm the backlash take-up actually moved the carriage. The pass is
-  #    aborted back to the stopped state with the thread phase reference
-  #    intact, so the operator just closes the half-nut and presses Cut again;
-  #    this strip is the ONLY thing that tells them why nothing happened.
-  #    Collapses to zero height when there is nothing to say.
-  BoxLayout:
-    id: takeup_notice
-    orientation: 'horizontal'
-    size_hint_y: None
-    spacing: dp(8)
-    padding: dp(8), 0
-    height: dp(30) if root.controller.takeup_warning else 0
-    opacity: 1 if self.height else 0
-    disabled: not self.height
-    canvas.before:
-      Color:
-        rgba: (0.85, 0.16, 0.16, 0.30)
-      Rectangle:
-        pos: self.pos
-        size: self.size
-    Label:
-      text: root.controller.takeup_warning
-      text_size: self.size
-      halign: 'left'
-      valign: 'middle'
-      font_name: app.theme.font_bold
-      font_size: dp(13)
-      color: app.theme.text
-
-  # ── Wizard instruction bar ─────────────────────────────────────────────────
-  # Full-width strip across the top of the bar (over every control column) so
-  # the control row below — Engage, Start, the value fields and the mode
-  # selector — all share one aligned top edge. Wizard-only: hidden in stop-only
-  # and stop+retract modes (those rely on action-button labels + validity gating
-  # for operator guidance instead).
+  # CONSTANT, and that is the point (2026-08-22). The notice strips used to
+  # add their height here so the bar grew to fit them -- which meant the three
+  # DRO rows above shrank 99 -> 89 px every time a warning appeared, and back
+  # again when it cleared. Evan: "having things resize around a temporary
+  # warning is distracting." The strips now OVERLAY the control row instead
+  # (see notice_overlay below), so nothing on this screen changes size when
+  # one shows up. A new strip belongs in that overlay's height expression,
+  # NOT here.
+  natural_height: 128
+  # Everything below hangs off ONE FloatLayout so the notice strips can be
+  # pinned over the controls rather than stacked above them. A FloatLayout
+  # draws later children on top, so the overlay MUST stay last.
   FloatLayout:
-    # HEIGHT, NOT A HINT OF ZERO, and this is load-bearing (2026-08-22).
-    #
-    # `size_hint_y: 0` does NOT set a widget's height to 0. It removes the
-    # child from the box's proportional distribution while the widget keeps
-    # whatever height it last had -- so in stop-only mode this strip held 26 px
-    # it was no longer allocated, the control row below took the full remainder
-    # (size_hint_y 1.0), and the children summed to 184 px inside a 158 px bar.
-    # The 26 px of overflow pushed the notice strips clean out of the top of the
-    # advanced bar and onto the spindle DRO row -- which is exactly where Evan
-    # had been seeing the take-up warning, and why it looked fine in wizard
-    # mode (0.2 + 0.8 leaves nothing stale) and wrong in the mode he actually
-    # runs. Measured, and a forced do_layout() did NOT clear it:
-    # previews/preview_takeup_banner.py.
-    #
-    # An explicit height keeps the box's arithmetic exact in both modes: every
-    # fixed child is subtracted, and the control row's hint takes precisely
-    # what is left. dp(26) matches what 0.2 of the 128 px base bar rendered as.
-    size_hint_y: None
-    height: dp(26) if root.enable_wizard else 0
-    opacity: 1 if root.enable_wizard else 0
-    disabled: not root.enable_wizard
-    canvas.before:
-      # Recessed instruction strip with a hairline divider below; inset at the
-      # bottom so a small margin separates it from the controls underneath.
-      Color:
-        rgba: app.theme.recess
-      Rectangle:
-        pos: self.x, self.y + dp(5)
-        size: self.width, self.height - dp(5)
-      Color:
-        rgba: app.theme.border_dim
-      Line:
-        points: (self.x, self.y + dp(5) + 0.5, self.right, self.y + dp(5) + 0.5)
-        width: 1.0
+    size_hint: 1, 1
 
-    Label:
-      id: label_instruction
-      text: root.controller.instruction_text
-      text_size: self.size
+    # ── Content: what the bar actually is, always at full height ──────────
+    BoxLayout:
+      orientation: 'vertical'
       size_hint: 1, 1
       pos_hint: {'x': 0, 'y': 0}
-      font_name: app.theme.font_bold
-      font_size: dp(15)
-      color: app.theme.accent_text
-      padding: dp(12), 0
-      halign: 'center'
-      valign: 'middle'
 
-    Label:
-      id: label_depth_reached
-      text: "Stop ø reached" if root.controller.depth_reached else ""
-      text_size: self.size
-      size_hint: None, 1
-      width: 200
-      pos_hint: {'x': 0, 'y': 0}
-      font_name: app.theme.font_bold
-      font_size: dp(14)
-      halign: 'left'
-      valign: 'middle'
-      padding: dp(12), 0
-      color: app.theme.success_text
 
-  # ── Control row: Engage + Start/values/action + mode selector, all sharing
-  #    one top/bottom edge ─────────────────────────────────────────────────
-  BoxLayout:
-    orientation: 'horizontal'
-    # The ONLY proportional child of the bar, so it takes exactly what the
-    # fixed-height siblings above it leave -- in either operator mode, with or
-    # without a notice strip showing. It was 0.8/1.0 while the wizard strip
-    # above was a hint; now that the strip is a real height, one hint of 1
-    # keeps the arithmetic exact and removes the mixed fixed/proportional
-    # sizing this bar has been laid out wrong by since 2026-08-16.
-    size_hint_y: 1
-
-    # ── Engage/Disengage: shared LED card with the tri-state ELS-stop indicator
-    #    (grey Disabled / red Stopped / green Armed) integrated as the LED+text ──
-    LedCardButton:
-      size_hint_x: None
-      width: 96
-      text: "Disengage" if root.controller.engaged else "Engage"
-      font_size: dp(17)
-      # Also disabled while ENGAGED with sync motion armed AND the spindle
-      # actually turning: "disable the stop" is ambiguous there, and
-      # disengaging RELEASES the held carriage. Sync Enable stays live and is
-      # the unambiguous way to stop. With the spindle STOPPED nothing can
-      # move, so the button stays live even with sync armed (operator
-      # decision 2026-08-17). See ui_controller.toggle_engage, which refuses
-      # the same case defensively so a kv change cannot silently reopen it.
-      disabled: root.is_running or (root.controller.engaged and bool(app.servo.servoMode) and app.els.spindle_is_running)
-      led_on: root.controller.engaged
-      led_color: app.theme.led_off if not root.controller.engaged else (app.theme.danger if root.controller.els_stop_active else app.theme.success)
-      status_text: "Disabled" if not root.controller.engaged else ("Stopped" if root.controller.els_stop_active else "Armed")
-      status_color: app.theme.text_dim if not root.controller.engaged else (app.theme.danger_text if root.controller.els_stop_active else app.theme.success_text)
-      # beep handled by BeepMixin.on_press
-      on_release: root.toggle_engage()
-
-    # ── Start / Stop (wizard only) — facelift StyledButton: cyan for Start,
-    #    red for the running Stop state ──
-    StyledButton:
-      id: btn_start_stop
-      width: 96 if root.enable_wizard else 0
-      size_hint_x: None
-      margin_x: dp(4)
-      margin_y: dp(6)
-      # Collapse to nothing in non-wizard modes. Use `hidden` (not `opacity`) so
-      # we don't add a second opacity binding that fights the class rule's
-      # disabled-dim -- that conflict left a faint zero-width "Stop" ghost.
-      hidden: not root.enable_wizard
-      disabled: not ( root.controller.start_stop_enabled and root.enable_wizard )
-      text: "Start" if root.controller.start_not_stop else "Stop"
-      font_size: self.height / 4
-      # Only light up (fill/border/glow) when actually enabled.
-      is_highlighted: not self.disabled
-      highlight_bg_color: app.theme.accent_soft if root.controller.start_not_stop else app.theme.danger_bg
-      highlight_border_color: app.theme.accent if root.controller.start_not_stop else app.theme.danger
-      highlight_text_color: app.theme.accent_text if root.controller.start_not_stop else app.theme.danger_text
-      glow_color: app.theme.glow if root.controller.start_not_stop else app.theme.danger_glow
-      on_release: root.controller.on_start_stop_button_clicked()
-
-    Widget: # spacer
-
-    TextHeaderButton:
-      id: btn_stop_z
-      text_header: "Stop Z"
-      # "--" until the operator actually sets a stop Z — a never-set (0.0) stop
-      # must not read like a real target (audit H1).
-      text_button: app.formats.position_format.format(root.controller.stop_z) if root.controller.stop_z_valid else "--"
-      blink_enable: root.controller.active_input == "stop_z"
-      width: self.height
-      disabled: not root.controller.x_z_inputs_enabled
-      on_short_press: root.on_value_button_released("stop_z")
-      on_long_press: root.on_value_long_press("stop_z")
-
-    TextHeaderButton:
-      id: btn_start_z
-      text_header: "Start Z"
-      # "--" until set (and after a confirm-bar Reset), like Stop Z.
-      text_button: app.formats.position_format.format(root.controller.retract_z) if root.controller.retract_z_valid else "--"
-      blink_enable: root.controller.active_input == "start_z"
-      width: self.height if (root.enable_retract or root.enable_wizard) else 0
-      opacity: 1 if (root.enable_retract or root.enable_wizard) else 0
-      disabled:  not (root.controller.x_z_inputs_enabled and (root.enable_retract or root.enable_wizard) )
-      on_short_press: root.on_value_button_released("start_z")
-      on_long_press: root.on_value_long_press("start_z")
-
-    Widget: # spacer
-
-    TextHeaderButton:
-      id: btn_major_dia
-      text_header: "Major ø"
-      text_button: app.formats.position_format.format(root.controller.start_dia)
-      blink_enable: root.controller.active_input == "major_dia"
-      width: self.height if root.enable_wizard else 0
-      opacity: 1 if root.enable_wizard else 0
-      disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
-      on_short_press: root.on_value_button_released("major_dia")
-      on_long_press: root.on_value_long_press("major_dia")
-
-    TextHeaderButton:
-      id: btn_minor_dia
-      text_header: "Minor ø"
-      text_button: app.formats.position_format.format(root.controller.stop_dia)
-      blink_enable: root.controller.active_input == "minor_dia"
-      width: self.height if root.enable_wizard else 0
-      opacity: 1 if root.enable_wizard else 0
-      disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
-      on_short_press: root.on_value_button_released("minor_dia")
-      on_long_press: root.on_value_long_press("minor_dia")
-
-    Widget: # spacer
-
-    # ── Action button (Set / Cut / Retract / Confirm). Visible in all
-    # modes; non-wizard modes use it for Cut/Retract within in_cycle.
-    StyledButton:
-      id: btn_action
-      width: self.height
-      size_hint_x: None
-      margin_x: dp(4)
-      margin_y: dp(6)
-      # When blank this reads as a recessed well (not a raised slate), per the
-      # styling brief; it lights up (accent_soft fill + border) only when
-      # there's an action to take.
-      slate_fill: app.theme.recess
-      standard_border_color: app.theme.border_dim
-      is_highlighted: bool(root.controller.action_button_text) and root.controller.action_allowed
-      disabled: not root.controller.action_button_text or not root.controller.action_allowed
-      text: root.controller.action_button_text
-      font_size: self.height / 4
-      on_release: root.controller.on_action_button_clicked()
-
-    # ── Mode selector + settings ───────────────────────────────────────────
-    BoxLayout:
-      orientation: "vertical"
-      size_hint_x: None
-      # Fixed width (independent of the wizard-collapsed row height) so the mode
-      # tabs stay a consistent size; left padding keeps a margin from the action
-      # button to their left. The tri-state tab takes the larger share; the
-      # settings cog sits below it.
-      width: dp(100)
-      padding: dp(12), dp(6), 0, dp(6)
-      spacing: 4
-
-      # One-hot tri-state operating-mode tab: shows all three states with
-      # the active one highlighted, like the sidebar tabs but horizontal
-      # (matching this button's aspect). Tap anywhere cycles wizard →
-      # stop+retract → stop. Wizard is the wand glyph; the stop modes use
-      # the stop-sign / U-arrow SVG icons (stacked when both are shown).
-      TabSelector:
-        id: btn_mode
-        size_hint_y: 0.62
-        orientation: "horizontal"
-        shape: "standalone"
-        # Sit the one-hot in a recessed well (inset by padding so the carved
-        # frame shows around the segments).
-        padding: dp(3)
+      # ── Wizard instruction bar ─────────────────────────────────────────────────
+      # Full-width strip across the top of the bar (over every control column) so
+      # the control row below — Engage, Start, the value fields and the mode
+      # selector — all share one aligned top edge. Wizard-only: hidden in stop-only
+      # and stop+retract modes (those rely on action-button labels + validity gating
+      # for operator guidance instead).
+      FloatLayout:
+        # HEIGHT, NOT A HINT OF ZERO, and this is load-bearing (2026-08-22).
+        #
+        # `size_hint_y: 0` does NOT set a widget's height to 0. It removes the
+        # child from the box's proportional distribution while the widget keeps
+        # whatever height it last had -- so in stop-only mode this strip held 26 px
+        # it was no longer allocated, the control row below took the full remainder
+        # (size_hint_y 1.0), and the children summed to 184 px inside a 158 px bar.
+        # The 26 px of overflow pushed the notice strips clean out of the top of the
+        # advanced bar and onto the spindle DRO row -- which is exactly where Evan
+        # had been seeing the take-up warning, and why it looked fine in wizard
+        # mode (0.2 + 0.8 leaves nothing stale) and wrong in the mode he actually
+        # runs. Measured, and a forced do_layout() did NOT clear it:
+        # previews/preview_takeup_banner.py.
+        #
+        # An explicit height keeps the box's arithmetic exact in both modes: every
+        # fixed child is subtracted, and the control row's hint takes precisely
+        # what is left. dp(26) matches what 0.2 of the 128 px base bar rendered as.
+        size_hint_y: None
+        height: dp(26) if root.enable_wizard else 0
+        opacity: 1 if root.enable_wizard else 0
+        disabled: not root.enable_wizard
         canvas.before:
+          # Recessed instruction strip with a hairline divider below; inset at the
+          # bottom so a small margin separates it from the controls underneath.
           Color:
             rgba: app.theme.recess
-          RoundedRectangle:
-            pos: self.pos
-            size: self.size
-            radius: [dp(7)]
-          Color:
-            rgba: 1, 1, 1, 1
           Rectangle:
-            texture: app.theme.recess_shadow
-            pos: self.x + dp(4), self.top - 1 - dp(6)
-            size: max(self.width - dp(8), 0), dp(6)
+            pos: self.x, self.y + dp(5)
+            size: self.width, self.height - dp(5)
           Color:
             rgba: app.theme.border_dim
           Line:
-            rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
+            points: (self.x, self.y + dp(5) + 0.5, self.right, self.y + dp(5) + 0.5)
             width: 1.0
-        disabled: root.is_running
-        selected: root.mode
-        on_select: root.apply_mode(args[1])
-        TabSegment:
-          value: "wizard"
-          text: ""
-          font_name: app.theme.font_icon
-          font_size: min(self.height * 0.6, self.width * 0.52)
-        TabSegment:
-          value: "stop_retract"
-          icons: ["pictures/stop_retract.png"]
-        TabSegment:
-          value: "stop"
-          icons: ["pictures/stop_sign.png"]
 
-      IconButton:
-        id: btn_settings
-        size_hint_y: 0.38
-        icon: ""
-        disabled: root.is_running
-        on_release: root.open_settings()
+        Label:
+          id: label_instruction
+          text: root.controller.instruction_text
+          text_size: self.size
+          size_hint: 1, 1
+          pos_hint: {'x': 0, 'y': 0}
+          font_name: app.theme.font_bold
+          font_size: dp(15)
+          color: app.theme.accent_text
+          padding: dp(12), 0
+          halign: 'center'
+          valign: 'middle'
+
+        Label:
+          id: label_depth_reached
+          text: "Stop ø reached" if root.controller.depth_reached else ""
+          text_size: self.size
+          size_hint: None, 1
+          width: 200
+          pos_hint: {'x': 0, 'y': 0}
+          font_name: app.theme.font_bold
+          font_size: dp(14)
+          halign: 'left'
+          valign: 'middle'
+          padding: dp(12), 0
+          color: app.theme.success_text
+
+      # ── Control row: Engage + Start/values/action + mode selector, all sharing
+      #    one top/bottom edge ─────────────────────────────────────────────────
+      BoxLayout:
+        orientation: 'horizontal'
+        # The ONLY proportional child of the bar, so it takes exactly what the
+        # fixed-height siblings above it leave -- in either operator mode, with or
+        # without a notice strip showing. It was 0.8/1.0 while the wizard strip
+        # above was a hint; now that the strip is a real height, one hint of 1
+        # keeps the arithmetic exact and removes the mixed fixed/proportional
+        # sizing this bar has been laid out wrong by since 2026-08-16.
+        size_hint_y: 1
+
+        # ── Engage/Disengage: shared LED card with the tri-state ELS-stop indicator
+        #    (grey Disabled / red Stopped / green Armed) integrated as the LED+text ──
+        LedCardButton:
+          size_hint_x: None
+          width: 96
+          text: "Disengage" if root.controller.engaged else "Engage"
+          font_size: dp(17)
+          # Also disabled while ENGAGED with sync motion armed AND the spindle
+          # actually turning: "disable the stop" is ambiguous there, and
+          # disengaging RELEASES the held carriage. Sync Enable stays live and is
+          # the unambiguous way to stop. With the spindle STOPPED nothing can
+          # move, so the button stays live even with sync armed (operator
+          # decision 2026-08-17). See ui_controller.toggle_engage, which refuses
+          # the same case defensively so a kv change cannot silently reopen it.
+          disabled: root.is_running or (root.controller.engaged and bool(app.servo.servoMode) and app.els.spindle_is_running)
+          led_on: root.controller.engaged
+          led_color: app.theme.led_off if not root.controller.engaged else (app.theme.danger if root.controller.els_stop_active else app.theme.success)
+          status_text: "Disabled" if not root.controller.engaged else ("Stopped" if root.controller.els_stop_active else "Armed")
+          status_color: app.theme.text_dim if not root.controller.engaged else (app.theme.danger_text if root.controller.els_stop_active else app.theme.success_text)
+          # beep handled by BeepMixin.on_press
+          on_release: root.toggle_engage()
+
+        # ── Start / Stop (wizard only) — facelift StyledButton: cyan for Start,
+        #    red for the running Stop state ──
+        StyledButton:
+          id: btn_start_stop
+          width: 96 if root.enable_wizard else 0
+          size_hint_x: None
+          margin_x: dp(4)
+          margin_y: dp(6)
+          # Collapse to nothing in non-wizard modes. Use `hidden` (not `opacity`) so
+          # we don't add a second opacity binding that fights the class rule's
+          # disabled-dim -- that conflict left a faint zero-width "Stop" ghost.
+          hidden: not root.enable_wizard
+          disabled: not ( root.controller.start_stop_enabled and root.enable_wizard )
+          text: "Start" if root.controller.start_not_stop else "Stop"
+          font_size: self.height / 4
+          # Only light up (fill/border/glow) when actually enabled.
+          is_highlighted: not self.disabled
+          highlight_bg_color: app.theme.accent_soft if root.controller.start_not_stop else app.theme.danger_bg
+          highlight_border_color: app.theme.accent if root.controller.start_not_stop else app.theme.danger
+          highlight_text_color: app.theme.accent_text if root.controller.start_not_stop else app.theme.danger_text
+          glow_color: app.theme.glow if root.controller.start_not_stop else app.theme.danger_glow
+          on_release: root.controller.on_start_stop_button_clicked()
+
+        Widget: # spacer
+
+        TextHeaderButton:
+          id: btn_stop_z
+          text_header: "Stop Z"
+          # "--" until the operator actually sets a stop Z — a never-set (0.0) stop
+          # must not read like a real target (audit H1).
+          text_button: app.formats.position_format.format(root.controller.stop_z) if root.controller.stop_z_valid else "--"
+          blink_enable: root.controller.active_input == "stop_z"
+          width: self.height
+          disabled: not root.controller.x_z_inputs_enabled
+          on_short_press: root.on_value_button_released("stop_z")
+          on_long_press: root.on_value_long_press("stop_z")
+
+        TextHeaderButton:
+          id: btn_start_z
+          text_header: "Start Z"
+          # "--" until set (and after a confirm-bar Reset), like Stop Z.
+          text_button: app.formats.position_format.format(root.controller.retract_z) if root.controller.retract_z_valid else "--"
+          blink_enable: root.controller.active_input == "start_z"
+          width: self.height if (root.enable_retract or root.enable_wizard) else 0
+          opacity: 1 if (root.enable_retract or root.enable_wizard) else 0
+          disabled:  not (root.controller.x_z_inputs_enabled and (root.enable_retract or root.enable_wizard) )
+          on_short_press: root.on_value_button_released("start_z")
+          on_long_press: root.on_value_long_press("start_z")
+
+        Widget: # spacer
+
+        TextHeaderButton:
+          id: btn_major_dia
+          text_header: "Major ø"
+          text_button: app.formats.position_format.format(root.controller.start_dia)
+          blink_enable: root.controller.active_input == "major_dia"
+          width: self.height if root.enable_wizard else 0
+          opacity: 1 if root.enable_wizard else 0
+          disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
+          on_short_press: root.on_value_button_released("major_dia")
+          on_long_press: root.on_value_long_press("major_dia")
+
+        TextHeaderButton:
+          id: btn_minor_dia
+          text_header: "Minor ø"
+          text_button: app.formats.position_format.format(root.controller.stop_dia)
+          blink_enable: root.controller.active_input == "minor_dia"
+          width: self.height if root.enable_wizard else 0
+          opacity: 1 if root.enable_wizard else 0
+          disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
+          on_short_press: root.on_value_button_released("minor_dia")
+          on_long_press: root.on_value_long_press("minor_dia")
+
+        Widget: # spacer
+
+        # ── Action button (Set / Cut / Retract / Confirm). Visible in all
+        # modes; non-wizard modes use it for Cut/Retract within in_cycle.
+        StyledButton:
+          id: btn_action
+          width: self.height
+          size_hint_x: None
+          margin_x: dp(4)
+          margin_y: dp(6)
+          # When blank this reads as a recessed well (not a raised slate), per the
+          # styling brief; it lights up (accent_soft fill + border) only when
+          # there's an action to take.
+          slate_fill: app.theme.recess
+          standard_border_color: app.theme.border_dim
+          is_highlighted: bool(root.controller.action_button_text) and root.controller.action_allowed
+          disabled: not root.controller.action_button_text or not root.controller.action_allowed
+          text: root.controller.action_button_text
+          font_size: self.height / 4
+          on_release: root.controller.on_action_button_clicked()
+
+        # ── Mode selector + settings ───────────────────────────────────────────
+        BoxLayout:
+          orientation: "vertical"
+          size_hint_x: None
+          # Fixed width (independent of the wizard-collapsed row height) so the mode
+          # tabs stay a consistent size; left padding keeps a margin from the action
+          # button to their left. The tri-state tab takes the larger share; the
+          # settings cog sits below it.
+          width: dp(100)
+          padding: dp(12), dp(6), 0, dp(6)
+          spacing: 4
+
+          # One-hot tri-state operating-mode tab: shows all three states with
+          # the active one highlighted, like the sidebar tabs but horizontal
+          # (matching this button's aspect). Tap anywhere cycles wizard →
+          # stop+retract → stop. Wizard is the wand glyph; the stop modes use
+          # the stop-sign / U-arrow SVG icons (stacked when both are shown).
+          TabSelector:
+            id: btn_mode
+            size_hint_y: 0.62
+            orientation: "horizontal"
+            shape: "standalone"
+            # Sit the one-hot in a recessed well (inset by padding so the carved
+            # frame shows around the segments).
+            padding: dp(3)
+            canvas.before:
+              Color:
+                rgba: app.theme.recess
+              RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [dp(7)]
+              Color:
+                rgba: 1, 1, 1, 1
+              Rectangle:
+                texture: app.theme.recess_shadow
+                pos: self.x + dp(4), self.top - 1 - dp(6)
+                size: max(self.width - dp(8), 0), dp(6)
+              Color:
+                rgba: app.theme.border_dim
+              Line:
+                rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
+                width: 1.0
+            disabled: root.is_running
+            selected: root.mode
+            on_select: root.apply_mode(args[1])
+            TabSegment:
+              value: "wizard"
+              text: ""
+              font_name: app.theme.font_icon
+              font_size: min(self.height * 0.6, self.width * 0.52)
+            TabSegment:
+              value: "stop_retract"
+              icons: ["pictures/stop_retract.png"]
+            TabSegment:
+              value: "stop"
+              icons: ["pictures/stop_sign.png"]
+
+          IconButton:
+            id: btn_settings
+            size_hint_y: 0.38
+            icon: ""
+            disabled: root.is_running
+            on_release: root.open_settings()
+
+
+    # ── Notice overlay: pinned to the bar's TOP edge, hovering over the
+    #    controls. Its strips already draw a translucent tint, so the control
+    #    row stays visible underneath -- and, more importantly, stays exactly
+    #    where it was. Height is the sum of whatever strips are showing; a
+    #    strip missing from this expression will render outside the overlay,
+    #    which is the 2026-08-16 defect one level down. LAST child on purpose:
+    #    FloatLayout paints in declaration order.
+    BoxLayout:
+      id: notice_overlay
+      orientation: 'vertical'
+      size_hint_x: 1
+      size_hint_y: None
+      height: (dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (dp(30) if root.controller.takeup_warning else 0)
+      pos_hint: {'x': 0, 'top': 1}
+
+
+      # ── Re-reference notice strip (audit H1 follow-up) ─────────────────────────
+      # Shown when a committed Stop/Start value was re-referenced by a DRO re-zero /
+      # coordinate change (the physical target is unchanged). 'warn' → message only;
+      # 'confirm' → Keep/Reset. Collapses to zero height when there's no notice.
+      # NOTE: needs an on-device look — colors/spacing are a first pass.
+      BoxLayout:
+        id: reframe_notice
+        orientation: 'horizontal'
+        size_hint_y: None
+        spacing: dp(8)
+        padding: dp(8), 0
+        height: dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0
+        opacity: 1 if self.height else 0
+        disabled: not self.height
+        canvas.before:
+          Color:
+            rgba: (1, 0.72, 0.16, 0.28)
+          Rectangle:
+            pos: self.pos
+            size: self.size
+        Label:
+          text: root.controller.reframe_message
+          text_size: self.size
+          halign: 'left'
+          valign: 'middle'
+          font_name: app.theme.font_bold
+          font_size: dp(13)
+          color: app.theme.text
+        StyledButton:
+          text: "Keep"
+          size_hint_x: None
+          width: dp(64) if root.controller.reframe_confirm_pending else 0
+          opacity: 1 if root.controller.reframe_confirm_pending else 0
+          disabled: not root.controller.reframe_confirm_pending
+          on_release: root.controller.clear_reframe_notice()
+        StyledButton:
+          text: "Reset"
+          size_hint_x: None
+          width: dp(64) if root.controller.reframe_confirm_pending else 0
+          opacity: 1 if root.controller.reframe_confirm_pending else 0
+          disabled: not root.controller.reframe_confirm_pending
+          on_release: root.controller.reset_reframed_targets()
+
+      # ── Take-up refusal notice ────────────────────────────────────────────────
+      #    Shown when the firmware refused to start a pass because it could not
+      #    confirm the backlash take-up actually moved the carriage. The pass is
+      #    aborted back to the stopped state with the thread phase reference
+      #    intact, so the operator just closes the half-nut and presses Cut again;
+      #    this strip is the ONLY thing that tells them why nothing happened.
+      #    Collapses to zero height when there is nothing to say.
+      BoxLayout:
+        id: takeup_notice
+        orientation: 'horizontal'
+        size_hint_y: None
+        spacing: dp(8)
+        padding: dp(8), 0
+        height: dp(30) if root.controller.takeup_warning else 0
+        opacity: 1 if self.height else 0
+        disabled: not self.height
+        canvas.before:
+          Color:
+            rgba: (0.85, 0.16, 0.16, 0.30)
+          Rectangle:
+            pos: self.pos
+            size: self.size
+        Label:
+          text: root.controller.takeup_warning
+          text_size: self.size
+          halign: 'center'
+          valign: 'middle'
+          font_name: app.theme.font_bold
+          font_size: dp(13)
+          color: app.theme.text
