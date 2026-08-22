@@ -292,29 +292,50 @@ Every UI component follows this structure:
   (or `integration`) for work. See "Branching and Hardware Verification" at the
   top — `dev-staging` is gated on Evan's hardware verification and agents do not
   commit to it except for the clerical exception.
-- **Commit messages:** Follow conventional commits (`fix:`, `feat:`, `chore:`, etc.)
-- **Versioning:** Automated via `python-semantic-release` from commit messages
-- **CI/CD — two workflows that never overlap:**
-  - `release.yml` runs **only** on pushes to `main`/`dev`, and cuts the semantic release.
-  - `ci.yml` — the test suite — lives **only** on `integration`, `dev-staging` and
-    feature branches. It is not present on `main` or `dev` at all.
+- **Commit messages:** Follow conventional commits (`fix:`, `feat:`, `chore:`, etc.).
+  The release notes are generated from them, so the log is what describes a release.
+- **Versioning:** ONE version for the whole monorepo — the repo-root `VERSION`
+  file, mirrored into `ui/pyproject.toml`'s `version` by the release workflow.
+  Both halves carry the same version even when only one changed: `v1.4.0` names
+  a known-good FIRMWARE + UI PAIR, which is the point of the monorepo
+  (`docs/decisions/repo-structure-monorepo.md`). Do not bump either by hand.
 
-  So on any given branch exactly one of the two exists.
+- **CI/CD — CORRECTED 2026-08-22 for the monorepo. The split-era rule that
+  "on any given branch exactly one of the two exists" is no longer true, and
+  reasoning from it will mislead you:**
+  - `fw.yml` / `ui.yml` / `system.yml` — the test suites — run on **every**
+    branch, path-filtered by subtree. That is how `dev-staging` and `dev` were
+    verified green before the 2026-08-22 promotions, which the old model could
+    not have done.
+  - `release.yml` runs **only when dispatched by hand**, and only from `main`
+    or `dev`. It refuses a pre-release version on `main` and a final version on
+    `dev`, refuses a tag that already exists, and refuses to publish a firmware
+    image carrying diagnostic probe symbols.
 
-- **Never write `[skip ci]` in a commit message outside `main`/`dev`.** GitHub's
-  `[skip ci]` marker suppresses *every* workflow for that push, not just the
-  release. On `main`/`dev` the only workflow is `release.yml`, so it does what
-  you would expect. On `integration`, `dev-staging` or a feature branch the only
-  workflow is `ci.yml` — so the marker's sole effect there is to **delete the
-  test run**, and it buys nothing in exchange, because a release was never going
-  to fire on those branches anyway. As of 2026-08-11 seven commits on the
-  `integration` line carried it, including the whole backlash-calibration
-  wizard; none of that work was ever seen by CI.
+- **`[skip ci]` is still not for you.** It suppresses *every* workflow for that
+  push, and since the test suites now run on every branch, the marker's only
+  effect anywhere is to delete the test run. It no longer buys anything even on
+  `main`/`dev`, because a release is never triggered by a push — it is
+  dispatched. The single legitimate use is the release workflow's own version-bump
+  commit, which it writes itself.
 
-  You almost certainly do not need it on `main`/`dev` either:
-  `python-semantic-release` only cuts a release when the conventional-commit
-  types since the last tag warrant one, so a docs-only or `chore:` push already
-  produces no release and needs no marker.
+  As of 2026-08-11 seven commits on the `integration` line carried it, including
+  the whole backlash-calibration wizard; none of that work was ever seen by CI.
+
+- **DO NOT QUOTE THE MARKER IN A COMMIT MESSAGE — not even to explain it.**
+  GitHub scans the entire pushed commit message, body included, and any
+  occurrence of `[skip ci]` / `[ci skip]` / `[no ci]` suppresses every workflow
+  for that push. Discussing the marker in prose is indistinguishable from using
+  it. On 2026-08-22 the commit that RETIRED this habit quoted the marker in its
+  own body while explaining the trap, and so became the one commit in the
+  release-flow work that CI never ran — caught only because someone went
+  looking for a green tick that was never going to appear. Write it as "the CI
+  skip marker" in commit messages; quote it freely in files like this one,
+  which are never scanned.
+
+- **python-semantic-release was retired 2026-08-22.** Its config had accumulated
+  v7 keys that PSR 10 silently ignores, so options read like live settings while
+  doing nothing, and nobody could say from the file what a push would do.
 
 ## Key Dependencies
 
