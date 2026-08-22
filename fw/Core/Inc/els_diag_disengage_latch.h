@@ -122,4 +122,12 @@ static inline void elsDiagTaskTick(elsDiagCtx_t *ctx, rampsSharedData_t *shared,
   (void)ctx; (void)shared; (void)calRunning;
 }
 
+/* This probe does not need the take-up gate held open, so the dwell is the
+ * firmware's own. Present because the entry-point contract is fixed: Ramps.c
+ * calls the same set whichever probe is selected. */
+static inline int32_t elsDiagExtraDwell(const elsDiagCtx_t *ctx) {
+  (void)ctx;
+  return 0;
+}
+
 #endif /* ELS_DIAG_DISENGAGE_LATCH_H */

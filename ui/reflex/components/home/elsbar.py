@@ -68,7 +68,16 @@ class ElsBar(BoxLayout, SavingDispatcher):
         table_instance = feeds.table[table_name]
         self.mode_name = table_name
         self.current_feeds_table = table_instance
+        # Apply EXPLICITLY. update_feeds_ratio is bound to current_feeds_index,
+        # and a Kivy property does not dispatch when assigned its current
+        # value -- so switching tables to an entry at the SAME list index
+        # (Thread IN "12" tpi and Feed IN "0.020" are both index 12) left the
+        # old ratio on the spindle axis and the old name on the display.
+        # Observed on elspi 2026-08-21: "0.020" picked, "12 in" shown, the
+        # carriage fed at 2.117 mm/rev instead of 0.508. The binding still
+        # covers next_feed/previous_feed; this covers the popup.
         self.current_feeds_index = index
+        self.update_feeds_ratio(self, None)
 
     def update_feeds_ratio(self, instance, value):
         ratio = self.current_feeds_table[self.current_feeds_index].ratio

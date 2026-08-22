@@ -117,6 +117,17 @@ instead of leaving bare `TODO:` comments in code.
   issue". Fails closed: no motion means `takeupPending` stays set, sync stays
   gated, and `applyPhaseCorrection()` does not run on an uncoupled drivetrain.
   Recovery is the `elsStop.enable` 1->0 escape hatch.
+- **(2026-08-21) The take-up and its confirmation run on EVERY pass -- the first
+  pass of a job and turning included.** Until then both hid behind the
+  phase-correction condition (`referenceLatched && pitch != 0`), so the datum
+  pass and every turning pass were the only ungated passes in the system. The
+  two jobs on the resume edge are now gated separately: take-up needs only a
+  configured backlash; `applyPhaseCorrection()` additionally needs a latched
+  reference and pitch, carried to the confirmation's success branch by
+  `elsStopCorrectOnConfirm`. The take-up direction in turning comes from the
+  SIGN of `zCountsPerPitch`, which reflex-ui now writes signed with pitch = 0
+  (`push_turning_geometry`). Pins: `els_takeup_confirm_test` first-pass /
+  turning / polarity scenarios. Decided by Evan 2026-08-21 (task 6a81fa2f).
 - `calCommand`-driven calibration measures the lash directly (three reversals,
   counting servo steps until Z moves). Host judges consistency and writes
   `backlashSteps = measured + max(20%, floor)`.
@@ -147,6 +158,18 @@ instead of leaving bare `TODO:` comments in code.
   distance (~2 Z counts ~= 5 servo steps on elspi). That bias is conservative
   and deliberate, but confirm the real magnitude on metal before tuning the
   margin floor down.
+
+### The gate's dwell and the attribution horizon disagree by 20x (2026-08-22)
+- `ELS_SETTLE_TICKS` (50) is how long the gate waits after the take-up's last pulse
+  before deciding; `ELS_SLIP_SETTLE_TICKS` (1000) is how long motion after a pulse is
+  still credited to the servo. Same code path, same physical settle, 20x apart.
+- Nobody has measured which is right, and until 2026-08-22 nobody could: the
+  takeup-settle probe was structurally unable to watch a confirmed take-up (see DIAG.md).
+  `takeup-settle-v3` holds the gate open for its window and can.
+- **If the settle is long,** the gate releases the cut while the carriage is still
+  moving. **If it is short,** the attribution horizon is 20x too generous and the
+  hand-nudge window is far wider than it needs to be. Both are worth knowing.
+- Blocked on: one v3 capture session on a coupled take-up.
 
 ### Commission `ELS_SLIP_SETTLE_TICKS` on elspi (UNMEASURED PARAMETER)
 
@@ -188,6 +211,40 @@ Two unit traps, both live (full list in `els_slip.h`):
   output is 2x wrong on elspi.
 
 ---
+
+## ELS thread-phase offset (2026-08-21)
+
+### Landed: the primitive
+- `elsComputePhaseCorrection()` takes `offsetSteps` (leadscrew steps), summed into
+  `phaseError` before the mod-pitch fold and the forward-bias; `els_phase_offset_test`
+  pins the boundaries (T1 exact regression at 0, T3 one pitch = no-op, T5 negative
+  forward-biases to pitch-|offset|). The only call site passes 0.
+- **Decided (Evan, 2026-08-21): cumulative entry, running total shown.**
+
+### Remaining: the register/command half, then the UI
+- **Fields** appended to `elsStop_t` in the 16-then-32 order the block already uses:
+  `phaseOffsetCommand` (host writes 1), `phaseOffsetSeq` (firmware ack, host
+  edge-detects), `phaseOffsetPending` (int32, candidate), `phaseOffsetSteps` (int32,
+  live total, read-only). Consume in the ISR exactly like `calCommand` (`elsCalUpdate`).
+- **Reset `phaseOffsetSteps` to 0 on the enable 0->1 edge that clears
+  `referenceLatched`**; leave it alone across per-pass stop/resume within a job.
+- **Register-map change => `protocolVersion` bump.** `feat/els-thread-resync` already
+  carries 2->3; land this AFTER that merge and bump to 4, or fold the two into one bump.
+  `ui/reflex/utils/devices.py` mirrors the block byte-for-byte (the contract test
+  enforces it) -- same commit, both halves.
+- **Host side (cumulative):** read `phaseOffsetSteps`, add the entered distance
+  (mm/in -> leadscrew steps via the exact-Fraction-then-round-once pattern already in
+  `els_fsm.py`), write `Pending`, fire `Command`, wait for `Seq`. Display the running
+  total, in distance units AND as a fraction of pitch. Expert-only control, hidden by
+  default ("an accidental phase offset silently ruins a thread").
+- **Guards the UI must carry, from the math:** refuse a running total >= 1 pitch (it
+  aliases to total mod pitch -- the groove would meet the next one anyway); do not
+  offer a symmetric +/- nudge without making the asymmetry explicit (a negative entry
+  jogs forward by pitch-|offset|, never back by |offset|).
+- **Still Evan's:** where the total is displayed; advance-only vs signed entry;
+  refuse vs clamp at the pitch boundary.
+- Second source: 6a77c598 (X-depth compound infeed) feeds the same `Pending` path from
+  `scaledPosition` * tan(theta); do not build a second offset path.
 
 ## Emulator
 

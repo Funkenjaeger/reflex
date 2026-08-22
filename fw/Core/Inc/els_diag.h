@@ -48,7 +48,7 @@
 
 #ifdef ELS_DIAG_PROBE
 
-#if ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2
+#if ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
 #include "els_diag_takeup_settle.h"
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_DISENGAGE_LATCH
 #include "els_diag_disengage_latch.h"
@@ -94,6 +94,19 @@ static inline void elsDiagCaptureStart(elsDiagCtx_t *ctx) {
 static inline void elsDiagTick(elsDiagCtx_t *ctx, elsStop_t *stop,
                                int32_t dZ, int32_t dServo) {
   (void)ctx; (void)stop; (void)dZ; (void)dServo;
+}
+
+/* Extra ISR ticks a probe wants added to the take-up gate's dwell before it
+ * evaluates -- and, in the same breath, to the confirm-window abort threshold,
+ * so holding the dwell open does not eat into the window that follows it.
+ *
+ * Zero here, and zero in every probe but takeup-settle-v3, so the gate's timing
+ * is bit-for-bit unchanged in a release build. See els_diag_takeup_settle.h for
+ * why one probe needs it: the machine is only quiet for ELS_SETTLE_TICKS after
+ * a take-up completes, which is far too short to watch a settle tail. */
+static inline int32_t elsDiagExtraDwell(const elsDiagCtx_t *ctx) {
+  (void)ctx;
+  return 0;
 }
 
 /* Constant false = never suppress, so servoEnableTask behaves exactly as it

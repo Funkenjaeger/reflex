@@ -158,13 +158,15 @@ class ElsFsm:
         armed_ok = armed_ok and bool(cm.connected)
         if self.controller.is_threading:
             self.push_thread_geometry()
-            self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
         else:
-            # Clear thread geometry so firmware skips takeup/phase-correction
-            # on the active→inactive transition below.
-            self.hal.set_thread_pitch_steps(0.0)
-            self.hal.set_z_counts_per_pitch(0.0)
-            self.hal.set_backlash_steps(0)
+            # Turning: no thread phase to correct, but the pre-cut take-up and
+            # its Z confirmation run at the start of EVERY pass since
+            # 2026-08-21 -- the feed goes through the same half-nut. What
+            # turning clears is the pitch only; see push_turning_geometry.
+            self.push_turning_geometry()
+        # Mode-independent since 2026-08-21. Until then turning wrote 0 here
+        # "so firmware skips takeup", which left every turning pass ungated.
+        self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
         # Arm `enable` here (not just post-release) and verify it — this is the
         # first arming on the engage-past-stop path, and the one thing that
         # actually stops the feed. (stopDirection/hysteresis are re-asserted
@@ -592,32 +594,50 @@ class ElsFsm:
         self.hal.set_stop_position(enc)
         self.set_scale_index()
 
+    def _spindle_pitch_mm(self) -> Fraction:
+        # spindle.syncRatioNum/Den is mm-per-rev (= mm-per-thread-pitch when
+        # threading, feed-per-rev when turning), populated from feeds.table by
+        # els_advbar.update_feeds_ratio.
+        spindle = self.els.get_spindle_axis()
+        return Fraction(abs(spindle.syncRatioNum), abs(spindle.syncRatioDen))
+
+    def _z_counts_per_pitch(self, spindle_pitch_mm: Fraction) -> float:
+        # saddle.ratioNum/Den is mm-per-count (the raw input ratio, before
+        # formats.factor display conversion), SIGNED by the scale's wiring.
+        # z_counts_per_pitch is then mm-per-pitch / mm-per-count =
+        # counts-per-pitch, and it inherits that sign -- which is how the Z
+        # polarity reaches the firmware (the take-up direction flips on it).
+        saddle = self._saddle_input
+        if saddle is not None and saddle.ratioDen != 0 and saddle.ratioNum != 0:
+            z_scale_mm_per_count = Fraction(saddle.ratioNum, saddle.ratioDen)
+            return float(spindle_pitch_mm / z_scale_mm_per_count)
+        return 0.0
+
+    def push_turning_geometry(self) -> None:
+        """Turning: threadPitchSteps = 0 tells the firmware there is no thread
+        phase to correct to, and that is still the whole of what turning
+        disables. The backlash take-up and its Z confirmation run at the start
+        of every turning pass exactly as in threading (firmware, 2026-08-21),
+        and the take-up's DIRECTION needs the Z polarity, which the firmware
+        reads from the SIGN of zCountsPerPitch. So that register is written
+        signed from the feed per rev, not zeroed as it was until 2026-08-21.
+        Its magnitude is unused while threadPitchSteps is 0: the confirmation
+        threshold falls back to the motion floor (els_backlash_cal.h)."""
+        self.hal.set_thread_pitch_steps(0.0)
+        self.hal.set_z_counts_per_pitch(self._z_counts_per_pitch(self._spindle_pitch_mm()))
+
     def push_thread_geometry(self) -> None:
         # Writes both threadPitchSteps and zCountsPerPitch. The firmware uses
         # both to perform Z-scale-based phase re-sync after a retract/resume,
         # and combines sign(threadPitchSteps × zCountsPerPitch) with
         # stopDirection to derive the backlash takeup direction.
-        spindle = self.els.get_spindle_axis()
-        saddle = self._saddle_input
-
-        # spindle.syncRatioNum/Den is mm-per-rev (= mm-per-thread-pitch),
-        # populated from feeds.table by els_advbar.update_feeds_ratio.
-        spindle_pitch_mm = Fraction(abs(spindle.syncRatioNum),
-                                    abs(spindle.syncRatioDen))
+        spindle_pitch_mm = self._spindle_pitch_mm()
         # servo.ratioNum/Den is mm-per-step (linear leadscrew).
         servo_ratio = Fraction(abs(self.servo.ratioNum),
                                abs(self.servo.ratioDen))
 
         thread_pitch_steps = float(spindle_pitch_mm / servo_ratio)
-
-        # saddle.ratioNum/Den is mm-per-count (the raw input ratio, before
-        # formats.factor display conversion). z_counts_per_pitch is then
-        # mm-per-pitch / mm-per-count = counts-per-pitch.
-        if saddle is not None and saddle.ratioDen != 0 and saddle.ratioNum != 0:
-            z_scale_mm_per_count = Fraction(saddle.ratioNum, saddle.ratioDen)
-            z_counts_per_pitch = float(spindle_pitch_mm / z_scale_mm_per_count)
-        else:
-            z_counts_per_pitch = 0.0
+        z_counts_per_pitch = self._z_counts_per_pitch(spindle_pitch_mm)
 
         log.info(
             f"*** push_thread_geometry: pitch_mm={float(spindle_pitch_mm)} "

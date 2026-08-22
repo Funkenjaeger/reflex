@@ -15,7 +15,7 @@
 
 DIAG_HEADER_REL="Core/Inc/Ramps.h"
 
-# CLI name <-> macro name. `ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2` <-> `takeup-settle-v2`.
+# CLI name <-> macro name. `ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3` <-> `takeup-settle-v3`.
 # These print WITHOUT a trailing newline because callers use them in command
 # substitution; diag_probe_list adds the newline itself. Getting that backwards
 # ran the names together ("takeup-settle-v2disengage-latch") -- invisible while
@@ -45,11 +45,17 @@ diag_probe_list() {
 # is what makes a typo a hard error here rather than an undefined identifier that
 # the C preprocessor would quietly evaluate to 0.
 diag_resolve() {
-    local repo="$1" name="$2" macro
+    local repo="$1" name="$2" macro list
     macro="$(_diag_name_to_macro "$name")"
-    if ! diag_probe_list "$repo" | grep -qx "$name"; then
-        return 1
-    fi
+    # Capture, then test. Piping diag_probe_list straight into `grep -q` was a
+    # SIGPIPE race under `set -o pipefail` (both callers set it): grep exits at
+    # the first match, the producer's next printf gets EPIPE, and the pipeline
+    # reports failure -- so every probe except the LAST one in Ramps.h was
+    # refused as "unknown" (2026-08-21: takeup-settle-v2 and disengage-latch
+    # refused, mode-watch-v2 accepted, deterministically). A here-string has
+    # no producer process, so there is nothing to kill. See diag-test.sh.
+    list="$(diag_probe_list "$repo")" || return 1
+    grep -qx "$name" <<<"$list" || return 1
     printf '%s' "$macro"
 }
 

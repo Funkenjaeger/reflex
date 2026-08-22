@@ -78,6 +78,13 @@ add_executable(els_phase_test ${CMAKE_SOURCE_DIR}/test/els_phase_test.cpp)
 target_link_libraries(els_phase_test m)
 add_test(NAME els_phase_test COMMAND els_phase_test)
 
+# Phase-offset primitive: the offsetSteps term's inheritance of the fold and
+# the forward-bias, pinned at the boundaries (one pitch aliases to a no-op,
+# a negative offset forward-biases to pitch-|offset|). Header-only, like above.
+add_executable(els_phase_offset_test ${CMAKE_SOURCE_DIR}/test/els_phase_offset_test.cpp)
+target_link_libraries(els_phase_offset_test m)
+add_test(NAME els_phase_offset_test COMMAND els_phase_offset_test)
+
 # Backlash calibration / take-up confirmation: exercises the pure decision layer
 # in Core/Inc/els_backlash_cal.h against a simulated drivetrain with lash.
 # Header-only — no HAL, no firmware sources, no emulator physics.
@@ -136,6 +143,21 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
 target_link_libraries(els_takeup_confirm_test m pthread)
 add_test(NAME els_takeup_confirm_test COMMAND els_takeup_confirm_test)
+
+# Same ISR-level rig, but with the takeup-settle-v2 diagnostic probe compiled
+# in -- the untested combination. els_diag_scratch_test exercises the probe's
+# five entry points in isolation; this target is the only place a REAL
+# take-up (initiation -> confirm -> resume) runs with the probe live, which is
+# what proves the capture path sees genuine Z motion rather than merely
+# compiling. See the ELS_DIAG_PROBE-guarded checks in the test file for the
+# positive-control assertions this exists to run.
+add_executable(els_takeup_confirm_diag_test
+    ${CMAKE_SOURCE_DIR}/test/els_takeup_confirm_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_compile_definitions(els_takeup_confirm_diag_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3)
+target_link_libraries(els_takeup_confirm_diag_test m pthread)
+add_test(NAME els_takeup_confirm_diag_test COMMAND els_takeup_confirm_diag_test)
 
 add_executable(els_stop_resume_relatch_test
     ${CMAKE_SOURCE_DIR}/test/els_stop_resume_relatch_test.cpp
@@ -228,14 +250,14 @@ add_test(NAME els_diag_scratch_test COMMAND els_diag_scratch_test)
 # scripts/build.sh sets it, so this target exercises the real selection
 # mechanism rather than a test-only shortcut -- including the #error chain in
 # Ramps.h, which fails the BUILD if the probe is unregistered or misspelled.
-add_executable(els_diag_scratch_takeup_settle_v2_test
+add_executable(els_diag_scratch_takeup_settle_v3_test
     ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)
-target_compile_definitions(els_diag_scratch_takeup_settle_v2_test
-    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2)
-target_link_libraries(els_diag_scratch_takeup_settle_v2_test m pthread)
-add_test(NAME els_diag_scratch_takeup_settle_v2_test
-    COMMAND els_diag_scratch_takeup_settle_v2_test)
+target_compile_definitions(els_diag_scratch_takeup_settle_v3_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3)
+target_link_libraries(els_diag_scratch_takeup_settle_v3_test m pthread)
+add_test(NAME els_diag_scratch_takeup_settle_v3_test
+    COMMAND els_diag_scratch_takeup_settle_v3_test)
 
 add_executable(els_diag_scratch_disengage_latch_test
     ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
