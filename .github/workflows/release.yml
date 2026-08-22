@@ -107,15 +107,30 @@ jobs:
           test -f build/reflex-fw.bin && test -f build/reflex-fw.elf
 
       # A diagnostic probe must never ship. It is compile-time selected, so a
-      # release build cannot contain one -- but "cannot" is worth proving on the
-      # artifact that actually ships rather than asserting in a comment.
+      # release build cannot contain one -- but "cannot" is worth checking on
+      # the thing that actually shipped rather than asserting in a comment.
+      #
+      # THE OBVIOUS CHECK CANNOT FAIL, and this step shipped it once before
+      # anyone noticed (v1.1.0-rc.1). Grepping the ELF for `elsDiagCaptureStart`
+      # / `elsDiagTick` finds nothing in a DIAGNOSTIC image either: the probe
+      # entry points are `static inline`, so neither build emits a symbol for
+      # them. Proven 2026-08-22 by building a real takeup-settle-v3 image and
+      # running that exact grep against it -- zero hits, identical to a release
+      # build. A guard that returns the same answer for both cases is not a
+      # guard.
+      #
+      # The build CONFIGURATION is where the probe is genuinely selected, and it
+      # does distinguish: 1 occurrence for a probe build, 0 for a release build,
+      # both measured.
       - name: Refuse to ship a diagnostic build
         working-directory: fw
         run: |
-          if arm-none-eabi-nm build/reflex-fw.elf | grep -qi 'elsDiagCaptureStart\|elsDiagTick'; then
-            echo "::error::the release image carries diagnostic probe symbols."; exit 1
+          if grep -q 'ELS_DIAG_PROBE' build/CMakeCache.txt; then
+            echo "::error::the shipped firmware was configured with a diagnostic probe."
+            grep 'ELS_DIAG_PROBE' build/CMakeCache.txt
+            exit 1
           fi
-          echo "release image is probe-free"
+          echo "build configuration carries no ELS_DIAG_PROBE"
 
       - name: Install uv and sync the UI
         working-directory: ui
