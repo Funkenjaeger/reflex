@@ -484,7 +484,13 @@ def test_first_pass_with_half_nut_open_is_refused(harness, is_threading):
         "a reference was latched from a drivetrain that was never coupled -- "
         "the exact failure that is invisible on every later pass"
     )
-    assert h.els_fsm.state == "stopped"
+    # The registers above are read straight from the firmware; the domain FSM
+    # only learns active == 1 on its next poll tick. Wait for it, as every
+    # other FSM-state assertion in this module does (CI caught the turning
+    # variant asserting one tick too early).
+    assert h.wait_until(lambda: h.els_fsm.state == "stopped", timeout_s=5.0), (
+        f"the UI never returned to stopped after the refusal (state={h.els_fsm.state})"
+    )
 
 
 @pytest.mark.parametrize("emulator_process", [_ENV], indirect=True)
