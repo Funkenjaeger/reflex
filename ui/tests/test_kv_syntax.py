@@ -66,6 +66,13 @@ def test_advbar_height_accounts_for_every_collapsible_strip():
     assert root_height, "could not find the ElsAdvancedBar natural_height expression"
     root_expr = root_height.group(1)
 
+    # Only `root.controller.*` conditions are checked, and that is deliberate:
+    # those gate strips that APPEAR on top of the bar's base height. The wizard
+    # instruction strip is gated on `root.enable_wizard` and is carved OUT of
+    # the 128 px base instead (the control row shrinks by exactly its height),
+    # so it must not appear in natural_height. If a future strip is gated on a
+    # non-controller property AND adds height, this loop will not catch it --
+    # add it to the expression and to this note.
     for cond in strip_conditions:
         for prop in sorted(set(re.findall(r"root\.controller\.(\w+)", cond))):
             assert prop in root_expr, (
@@ -75,3 +82,31 @@ def test_advbar_height_accounts_for_every_collapsible_strip():
                 f"outside the bar -- over whatever happens to be there.\n"
                 f"  height: {root_expr}"
             )
+
+
+def test_advbar_has_no_size_hint_y_of_zero():
+    """`size_hint_y: 0` must not appear in the advanced bar. It is a trap.
+
+    Regression, 2026-08-22, found on the machine and then reproduced headlessly
+    (previews/preview_takeup_banner.py). Kivy's `size_hint_y: 0` does NOT set a
+    widget's height to 0 -- it removes the child from the box's proportional
+    distribution while the widget KEEPS whatever height it last had. The wizard
+    instruction strip used `0.2 if wizard else 0`, so in stop-only mode it held
+    26 px it was no longer allocated while the control row below took the full
+    remainder, the children summed to 184 px inside a 158 px bar, and the
+    overflow pushed the take-up warning out of the top of the bar and onto the
+    spindle DRO row. A forced do_layout() did not clear it.
+
+    It only bit in stop-only: in wizard mode the hints sum to 1.0 with nothing
+    stale, which is why six attempts and a screenshot in the wrong mode all
+    looked fine. Collapse with `size_hint_y: None` + `height: ... else 0`.
+    """
+    text = open(ADVBAR_KV).read()
+    offenders = re.findall(r"^(\s+size_hint_y:\s*0\s*$|\s+size_hint_y:.*\belse\s+0\s*$)",
+                           text, re.M)
+    assert not offenders, (
+        "size_hint_y collapsing to 0 in els_advbar.kv. A hint of 0 leaves the "
+        "widget's height untouched, so the bar over-allocates and its notice "
+        "strips render outside it. Use size_hint_y: None with an explicit "
+        "height instead.\n  " + "\n  ".join(o.strip() for o in offenders)
+    )

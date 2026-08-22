@@ -114,16 +114,63 @@ def _shot(name):
 
 
 def _capture(_dt):
-    try:
-        _dump("WARNING OFF")
-        _shot("off")
+    """Both operator modes, warning off and on.
 
-        app.els_uic.takeup_warning = WARNING
-        for _ in range(IDLE_TICKS):
+    THE MODE MATTERS AND ASSUMING IT DID NOT COST A WRONG DIAGNOSIS. The
+    advanced bar's control row is `size_hint_y: 1.0` in stop-only and `0.8`
+    (with a 0.2 wizard strip) in wizard mode, so the two modes divide the bar's
+    height by different arithmetic. A fresh config comes up in WIZARD mode; the
+    machine is run in STOP-ONLY, which is where the banner was reported landing
+    on top of the spindle DRO row. Render both or measure the wrong screen.
+    """
+    bar = _find(lambda w: type(w).__name__ == "ElsAdvancedBar")
+
+    def settle(n=IDLE_TICKS):
+        for _ in range(n):
             EventLoop.idle()
 
-        _dump("WARNING ON")
-        _shot("on")
+    def show(tag):
+        app.els_uic.takeup_warning = ""
+        settle()
+        _dump(f"{tag} / WARNING OFF")
+        _shot(f"{tag}_off")
+        app.els_uic.takeup_warning = WARNING
+        settle()
+        _dump(f"{tag} / WARNING ON")
+        _shot(f"{tag}_on")
+
+    try:
+        # _arm already set stop-only BEFORE the first layout, so this is the
+        # boot state of a machine whose saved config is stop-only.
+        show("stoponly-fresh")
+
+        # Into wizard and back out. This is the path an operator takes with the
+        # wizard toggle, and it is the difference between "stop-only is broken"
+        # and "leaving wizard mode is broken" -- which are different fixes.
+        if bar is not None:
+            bar.enable_wizard = True
+        settle()
+        show("wizard")
+
+        if bar is not None:
+            bar.enable_wizard = False
+        settle()
+        show("stoponly-toggled")
+
+        # DISCRIMINATOR. Is the wizard strip's stale 26px simply a layout that
+        # never re-ran, or does size_hint_y == 0 genuinely leave the height
+        # alone? Force the layout and look again: if the strip drops to 0 the
+        # bug is a missed relayout on mode change; if it stays 26 the mixed
+        # fixed/proportional children are the cause and no relayout can save
+        # them. Different fixes, so this is worth one more render.
+        if bar is not None:
+            bar.do_layout()
+            settle()
+            fl = [c for c in bar.children if type(c).__name__ == "FloatLayout"]
+            print(f"\n>>> AFTER FORCED do_layout(): wizard strip shy="
+                  f"{fl[0].size_hint_y if fl else '?'} height="
+                  f"{round(fl[0].height) if fl else '?'}")
+        show("stoponly-relaid")
     except Exception:
         import traceback
         traceback.print_exc()
@@ -140,7 +187,15 @@ def _arm(_dt):
     app.els.spindle_axis_index = 2
     app.manager.goto("home")
     app.set_mode(MODE_ELS)
-    app.manager.get_screen("home").els_bar.enable_advanced = True
+    home = app.manager.get_screen("home")
+    home.els_bar.enable_advanced = True
+    # Stop-only BEFORE the first layout pass: a fresh config defaults to wizard,
+    # and the machine is run in stop-only. Setting it later would measure a
+    # toggled bar, which is a different state (see _capture).
+    adv = _find(lambda w: type(w).__name__ == "ElsAdvancedBar")
+    if adv is not None:
+        adv.enable_wizard = False
+        adv.enable_retract = False
     Clock.schedule_once(_capture, 1.5)
 
 

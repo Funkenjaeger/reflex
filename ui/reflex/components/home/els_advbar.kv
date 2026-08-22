@@ -99,7 +99,25 @@
   # and stop+retract modes (those rely on action-button labels + validity gating
   # for operator guidance instead).
   FloatLayout:
-    size_hint_y: 0.2 if root.enable_wizard else 0
+    # HEIGHT, NOT A HINT OF ZERO, and this is load-bearing (2026-08-22).
+    #
+    # `size_hint_y: 0` does NOT set a widget's height to 0. It removes the
+    # child from the box's proportional distribution while the widget keeps
+    # whatever height it last had -- so in stop-only mode this strip held 26 px
+    # it was no longer allocated, the control row below took the full remainder
+    # (size_hint_y 1.0), and the children summed to 184 px inside a 158 px bar.
+    # The 26 px of overflow pushed the notice strips clean out of the top of the
+    # advanced bar and onto the spindle DRO row -- which is exactly where Evan
+    # had been seeing the take-up warning, and why it looked fine in wizard
+    # mode (0.2 + 0.8 leaves nothing stale) and wrong in the mode he actually
+    # runs. Measured, and a forced do_layout() did NOT clear it:
+    # previews/preview_takeup_banner.py.
+    #
+    # An explicit height keeps the box's arithmetic exact in both modes: every
+    # fixed child is subtracted, and the control row's hint takes precisely
+    # what is left. dp(26) matches what 0.2 of the 128 px base bar rendered as.
+    size_hint_y: None
+    height: dp(26) if root.enable_wizard else 0
     opacity: 1 if root.enable_wizard else 0
     disabled: not root.enable_wizard
     canvas.before:
@@ -147,7 +165,13 @@
   #    one top/bottom edge ─────────────────────────────────────────────────
   BoxLayout:
     orientation: 'horizontal'
-    size_hint_y: 0.8 if root.enable_wizard else 1.0
+    # The ONLY proportional child of the bar, so it takes exactly what the
+    # fixed-height siblings above it leave -- in either operator mode, with or
+    # without a notice strip showing. It was 0.8/1.0 while the wizard strip
+    # above was a hint; now that the strip is a real height, one hint of 1
+    # keeps the arithmetic exact and removes the mixed fixed/proportional
+    # sizing this bar has been laid out wrong by since 2026-08-16.
+    size_hint_y: 1
 
     # ── Engage/Disengage: shared LED card with the tri-state ELS-stop indicator
     #    (grey Disabled / red Stopped / green Armed) integrated as the LED+text ──
