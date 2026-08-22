@@ -202,7 +202,7 @@ void RampsStart(rampsHandler_t *rampsData) {
   /* Register-layout version. Bump this whenever elsStop_t / rampsSharedData_t
    * changes shape; reflex-ui reads it at connect so a firmware/UI map mismatch
    * reports itself by name instead of surfacing as garbled register reads. */
-  rampsData->shared.elsStop.protocolVersion = 2;
+  rampsData->shared.elsStop.protocolVersion = 3;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
    * explicitly zeroed when no probe is compiled in, rather than left to whatever
@@ -1215,6 +1215,18 @@ _Noreturn void servoEnableTask(void *argument) {
 
     rampsData->shared.fastData.servoSpeed = (float)(int32_t)(rampsData->shared.servo.currentSteps - previousPosition) * 10;
     previousPosition = rampsData->shared.servo.currentSteps;
+
+    /* THE MACHINE MODE, published unconditionally -- release builds included.
+     *
+     * Derived here rather than in the ISR because it is a ~100 ms question
+     * about what the machine is doing, and the ISR has no business spending
+     * cycles on it. Written before the probe hook below so a mode-watch probe
+     * and this register can never disagree about the same tick.
+     *
+     * This used to happen ONLY inside that probe. See the machineMode comment
+     * in Ramps.h for why that made the rung-2 census uncollectable in any
+     * build the operator would actually cut with. */
+    elsPublishMachineMode(shared, (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
 
     /* Probe hook: a mode-watch probe derives and publishes the machine mode
      * once per task tick. No code in a release build or any other probe.

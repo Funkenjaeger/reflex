@@ -71,4 +71,14 @@ static inline uint16_t elsDeriveMachineMode(const rampsSharedData_t *shared,
   return ELS_MMODE_IDLE;
 }
 
+/* Derive and PUBLISH, in one place, so the register and the derivation cannot
+ * drift apart. Called ~100 ms from servoEnableTask on hardware, and mirrored by
+ * the emulator's ISR thread at the same cadence (emulator/src/main.cpp) --
+ * because the emulator does not run the FreeRTOS tasks at all, so without that
+ * mirror machineMode would read 0 forever in every emulator-backed test and the
+ * rung-2 census would look dead in exactly the environment used to test it. */
+static inline void elsPublishMachineMode(rampsSharedData_t *shared, uint16_t calRunning) {
+  shared->elsStop.machineMode = elsDeriveMachineMode(shared, calRunning);
+}
+
 #endif /* ELS_MACHINE_MODE_H */

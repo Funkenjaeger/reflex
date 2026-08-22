@@ -968,49 +968,64 @@ def test_depth_latch_ignores_uncommitted_stop_dia():
 # ─── Rung-2 mode-watch sampler ─────────────────────────────────────────────
 
 class TestModeWatchSampler:
-    """_poll_mode_watch: dormant without a mode-watch probe, decimated when
-    present, and structurally incapable of raising into the update loop."""
+    """_poll_mode_watch: samples against EVERY build, decimated, and
+    structurally incapable of raising into the update loop.
 
-    def test_dormant_without_the_mode_watch_probe(self, ctrl):
+    The dormancy this class used to pin was the defect. Until 2026-08-22 the
+    sampler returned immediately unless a mode-watch probe (schema 4/5) was
+    flashed, because the firmware only published its machine mode from inside
+    that probe. Probes are one-at-a-time by construction, so flashing any other
+    probe silently chose to collect no rung-2 census -- and rungs 3 and 4 are
+    blocked on that census. It cost two consecutive lathe sessions on
+    2026-08-21/22, both spent cutting real passes under a takeup-settle probe,
+    both recording nothing, with no signal to the operator that the data was
+    not accruing.
+
+    machineMode is now a permanent register published by every build, so the
+    gate is gone. Do not reintroduce one.
+    """
+
+    def test_samples_against_release_firmware_with_no_probe(self, ctrl):
+        """THE REGRESSION TEST. Release firmware, no probe, no schema -- the
+        census must still accrue, because that is the build the machine
+        actually runs."""
         ctrl._diag_recorder = MagicMock()
         ctrl._diag_recorder.schema = None          # release firmware
         ctrl._hal = MagicMock()
-        for _ in range(20):
-            ctrl._poll_mode_watch()
-        ctrl._hal.read_current_mode.assert_not_called()
-
-    def test_samples_every_nth_tick_and_feeds_the_watch(self, ctrl):
-        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
-        ctrl._diag_recorder = MagicMock()
-        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH
-        ctrl._hal = MagicMock()
         ctrl._hal.read_current_mode.return_value = 5      # HELD
         ctrl._mode_watch = MagicMock()
-        for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY * 2):
+        for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY * 3):
             ctrl._poll_mode_watch()
-        assert ctrl._hal.read_current_mode.call_count == 2
+        assert ctrl._hal.read_current_mode.call_count == 3
         ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 5)
 
-    def test_samples_under_the_v2_probe_too(self, ctrl):
-        """The schema-4 -> 5 bump (2026-08-17, effective counting only) must
-        not send the rung-2 census dormant at the flash — that would be the
-        exact silent-dormancy failure the KNOWN_SCHEMAS refusal exists to
-        make loud, produced instead by a gate nobody re-checked."""
-        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH_V2
+    def test_samples_under_an_unrelated_probe(self, ctrl):
+        """The case that actually lost the data: a takeup-settle probe flashed
+        for a different agenda. The census must not care which probe, or
+        whether there is one."""
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
         ctrl._diag_recorder = MagicMock()
-        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH_V2
+        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
         ctrl._hal = MagicMock()
-        ctrl._hal.read_current_mode.return_value = 4      # JOG
+        ctrl._hal.read_current_mode.return_value = 6      # TAKEUP
         ctrl._mode_watch = MagicMock()
         for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY):
             ctrl._poll_mode_watch()
         assert ctrl._hal.read_current_mode.call_count == 1
+        ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 6)
+
+    def test_samples_every_nth_tick_and_feeds_the_watch(self, ctrl):
+        ctrl._diag_recorder = MagicMock()
+        ctrl._hal = MagicMock()
+        ctrl._hal.read_current_mode.return_value = 4      # JOG
+        ctrl._mode_watch = MagicMock()
+        for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY * 2):
+            ctrl._poll_mode_watch()
+        assert ctrl._hal.read_current_mode.call_count == 2
         ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 4)
 
     def test_a_failing_read_never_reaches_the_update_loop(self, ctrl):
-        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
         ctrl._diag_recorder = MagicMock()
-        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH
         ctrl._mode_watch_tick = ctrl.MODE_WATCH_SAMPLE_EVERY - 1
         ctrl._hal = MagicMock()
         ctrl._hal.read_current_mode.side_effect = RuntimeError("link glitch")

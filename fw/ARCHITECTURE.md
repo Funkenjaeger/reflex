@@ -242,7 +242,9 @@ Configuration (SW write): `enable`, `scaleIndex`, `stopPosition`, `stopDirection
 
 Command (bidirectional, firmware clears on consume): `calCommand`.
 
-State (firmware-owned, except `active` which is bidirectional): `active`, `latchedZ`, `latchedSpindle`, `referenceLatched`, `takeupPending`, `protocolVersion`.
+State (firmware-owned, except `active` which is bidirectional): `active`, `latchedZ`, `latchedSpindle`, `referenceLatched`, `takeupPending`, `protocolVersion`, `machineMode`.
+
+`machineMode` is the firmware's own answer to "what is this machine doing right now" (`ELS_MMODE_*`, `Core/Inc/els_machine_mode.h`), republished every `servoEnableTask` iteration (~100 ms) in **every build, release included**. It is deliberately a first-class register rather than diagnostic scratchpad: until 2026-08-22 the mode was published only by a mode-watch probe, and since the firmware allows one probe at a time, flashing any other probe silently stopped the host's rung-2 census from collecting anything at all.
 
 Per-resume diagnostics: `lastIdealAdvance`, `lastActualAdvance`, `lastPhaseError`, `lastCorrection`.
 

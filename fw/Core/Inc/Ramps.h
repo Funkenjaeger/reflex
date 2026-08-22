@@ -248,6 +248,37 @@ typedef struct {
   uint16_t diagCaptureTicks;   // READ-ONLY (firmware-owned): ticks the capture actually ran, i.e. how long the servo stayed silent after the take-up. Distinct from diagSettleTicks, which is when Z last MOVED
   uint16_t diagEndReason;      // READ-ONLY (firmware-owned): ELS_DIAG_END_*. A window-full capture did not finish measuring; treat its tail as a floor, not a result
   uint16_t diagReserved[4];    // pads the block to a fixed 128 bytes so its size never depends on which probe is in it
+
+  /* --- MACHINE MODE. PERMANENT, and deliberately NOT in the scratchpad above.
+   *
+   * The firmware's own answer to "what is this machine doing right now",
+   * derived once per servoEnableTask iteration (~100 ms) by
+   * elsDeriveMachineMode() and published here in EVERY build, release
+   * included. Values are ELS_MMODE_* in els_machine_mode.h; reflex-ui mirrors
+   * them and the register-map contract test pins both.
+   *
+   * WHY IT MOVED HERE (2026-08-22). It used to exist only while a mode-watch
+   * probe was flashed, which republished it into diagCaptureTicks. Probes are
+   * one-at-a-time by construction, so flashing any other probe silently chose
+   * to collect no rung-2 census -- and the census is what rungs 3 and 4 are
+   * blocked on. Two consecutive lathe sessions on 2026-08-21/22 ran
+   * takeup-settle probes and recorded zero mode data, while the operator was
+   * cutting real passes and had no way to know. A machine property that only
+   * exists in a diagnostic build is a property nobody can rely on.
+   *
+   * APPENDED AFTER the diagnostic block on purpose: the block's whole value is
+   * a stable offset, so nothing is inserted ahead of it. This is a real
+   * register-map change and it bumps protocolVersion. */
+  uint16_t machineMode;        // READ-ONLY (firmware-owned): ELS_MMODE_* (els_machine_mode.h), republished every servoEnableTask tick in every build
+  /* EXPLICIT pad, not decoration. elsStop_t is 4-aligned (it holds int32/float),
+   * so a lone trailing uint16 makes the compiler add two bytes of IMPLICIT
+   * padding -- and this struct is cast wholesale into uint16 Modbus holding
+   * registers (RampsModbusData.u16regsize = sizeof(shared)/sizeof(uint16_t)),
+   * which turns invisible padding into a phantom register nobody declared and
+   * reflex-ui cannot mirror. Naming it keeps both sides computing the same
+   * size, which is exactly what the contract test caught here: firmware 436,
+   * mirror 434. Same reason diagReserved[4] exists. */
+  uint16_t machineModeReserved;
 } elsStop_t;
 
 typedef struct {

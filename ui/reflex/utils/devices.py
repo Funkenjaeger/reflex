@@ -185,6 +185,8 @@ typedef struct {
   uint16_t diagCaptureTicks;
   uint16_t diagEndReason;
   uint16_t diagReserved[4];
+  uint16_t machineMode;
+  uint16_t machineModeReserved;
 } elsStop_t;
 """
 
@@ -193,7 +195,7 @@ typedef struct {
 # Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
 # Modbus contract; never renumber, only append.
 
-ELS_PROTOCOL_VERSION = 2        # elsStop.protocolVersion this UI is built against
+ELS_PROTOCOL_VERSION = 3        # elsStop.protocolVersion this UI is built against
 
 # Diagnostic scratchpad schema ids (elsStop.diagSchema). 0 means no probe is
 # compiled into the firmware and the block must not be interpreted at all.

@@ -127,10 +127,10 @@ class ElsUiController(EventDispatcher):
         self._diag_recorder = ElsDiagRecorder(self._hal, board)
 
         # Rung-2 sampler (log-only): compares the domain FSM's state against
-        # the firmware-published machine mode when a mode-watch probe
-        # (schema 4 or 5) is flashed. Dormant against any other firmware — the
-        # schema gate in _poll_mode_watch is the recorder's, so this issues
-        # no reads of its own until a recognised mode-watch probe is present.
+        # the firmware-published machine mode. Runs against every build now
+        # that machineMode is a permanent register (2026-08-22); it used to be
+        # gated on a mode-watch probe being flashed, which made the census
+        # uncollectable during any session that needed a different probe.
         self._mode_watch = ElsModeWatch()
         self._mode_watch_tick = 0
 
@@ -355,15 +355,16 @@ class ElsUiController(EventDispatcher):
         """Rung-2 sampler: (domain FSM state, published machine mode) into the
         mode watch. Log-only by design — see els_mode_watch.py.
 
-        Keys on the recorder's learned schema rather than reading diagSchema
-        itself, so against release firmware (or any other probe) this method
-        is a compare-and-return with zero serial cost. Never raises into the
-        update loop.
+        Runs against EVERY build, because the mode is now a permanent register
+        rather than something a probe republishes into the scratchpad. It used
+        to return immediately unless a mode-watch probe was flashed, and since
+        the firmware allows one probe at a time, choosing any other probe
+        silently chose to collect nothing — which is what happened across both
+        lathe sessions on 2026-08-21/22. Do not reintroduce a schema gate here.
+
+        Never raises into the update loop.
         """
         try:
-            if self._diag_recorder.schema not in (ELS_DIAG_SCHEMA_MODE_WATCH,
-                                                  ELS_DIAG_SCHEMA_MODE_WATCH_V2):
-                return
             self._mode_watch_tick += 1
             if self._mode_watch_tick % self.MODE_WATCH_SAMPLE_EVERY:
                 return

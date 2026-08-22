@@ -321,14 +321,19 @@ class ElsStopHal:
     def read_current_mode(self) -> int:
         """Firmware-derived machine mode (ELS_MMODE_*), live.
 
-        MEANINGFUL ONLY under a mode-watch schema (4 or 5), where the firmware
-        republishes its derived mode into diagCaptureTicks every ~100 ms.
-        Under any other schema this register means something else entirely —
-        callers gate on the recorder's learned schema, never call this bare.
+        Reads the PERMANENT `machineMode` register, which every build
+        publishes every ~100 ms — release firmware included. No schema gate,
+        and callers must not add one.
+
+        Until 2026-08-22 this read `diagCaptureTicks`, where a mode-watch
+        probe republished the mode; it was meaningful only while such a probe
+        was flashed, and probes are one-at-a-time. That made the rung-2 census
+        silently uncollectable during any session using a different probe —
+        which was both lathe sessions on 2026-08-21/22.
         """
         if not self._board.connected:
             return 0
-        return int(self._board.device['elsStop']['diagCaptureTicks'])
+        return int(self._board.device['elsStop']['machineMode'])
 
     def read_diag_seq(self) -> int:
         """Increments once per COMPLETED capture. Edge-detect this.

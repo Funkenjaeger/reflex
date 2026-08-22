@@ -212,6 +212,15 @@ Two unit traps, both live (full list in `els_slip.h`):
 
 ---
 
+## protocolVersion is 3 -- re-sync must renumber to 4 (2026-08-22)
+
+- `machineMode` landed as a permanent register and took the 2 -> 3 bump.
+- `feat/els-thread-resync` also bumps to 3, written before this landed. Whichever
+  merges second renumbers; that is now re-sync, and it must become **4**. The
+  branch is 5 ahead / 80 behind, so this is one line to change at merge time.
+- The house rule that made this cheap: reflex-ui checks `protocolVersion` at
+  connect, so a mismatch names itself instead of surfacing as plausible garbage.
+
 ## ELS thread-phase offset (2026-08-21)
 
 ### Landed: the primitive
@@ -245,6 +254,19 @@ Two unit traps, both live (full list in `els_slip.h`):
   refuse vs clamp at the pitch boundary.
 - Second source: 6a77c598 (X-depth compound infeed) feeds the same `Pending` path from
   `scaledPosition` * tan(theta); do not build a second offset path.
+
+## Machine mode: the call site nobody can test (2026-08-22)
+
+`elsPublishMachineMode()` is unit-tested (`els_machine_mode_test`) and its
+mutation is caught. What is NOT covered by any automated test is whether the
+CALL SITE in `servoEnableTask` actually runs: the emulator does not execute the
+FreeRTOS tasks at all -- it reimplements the parts it needs in
+`emulator/src/main.cpp`, which is why that file now mirrors this publication on
+its own ~100 ms divider. Removing the firmware call site breaks nothing in CI.
+
+Declared rather than papered over. It is verified by reading
+`elsStop.machineMode` off the real machine after a flash, and any task-side
+firmware logic added later has the same gap.
 
 ## Emulator
 
