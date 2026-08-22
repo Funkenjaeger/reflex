@@ -147,6 +147,7 @@ class ElsUiController(EventDispatcher):
         # silently corrupting it (the old scaled-storage bug). `*_valid` gates a
         # never-set target; only never-set and an ELS Z-axis remap invalidate.
         self._prev_takeup_seq = 0         # edge-detect baseline for takeup outcomes
+        self._pending_takeup_seq = None   # a seq edge seen once; acted on when seen twice
         self._stop_z_encoder = None       # int leadscrew encoder count, or None
         self._retract_z_encoder = None
         self._stop_z_committed = False
@@ -297,7 +298,23 @@ class ElsUiController(EventDispatcher):
         """
         seq = self._hal.read_takeup_seq()
         if seq == self._prev_takeup_seq:
+            self._pending_takeup_seq = None
             return
+        # A seq edge. Do NOT act on THIS poll's result. The firmware writes
+        # takeupResult and takeupSeq in one ISR pass, but the Modbus task copies
+        # the register block one 16-bit register at a time (Modbus.c
+        # process_FC3) and the 100 kHz ISR can land between the two. Result
+        # sits at the lower address, so a torn snapshot reads as (stale
+        # result, new seq). Observed on elspi 2026-08-21: a REFUSED first pass
+        # logged as "CONFIRMED: moved 0 counts, needed 2 (headroom -2)" -- a
+        # confirmation with less motion than required, which cannot happen --
+        # and the warning the operator was waiting for was cleared instead of
+        # shown. Acting on the NEXT poll at which seq is unchanged costs one
+        # poll (~100 ms) and reads one consistent snapshot.
+        if self._pending_takeup_seq != seq:
+            self._pending_takeup_seq = seq
+            return
+        self._pending_takeup_seq = None
         self._prev_takeup_seq = seq
 
         result = self._hal.read_takeup_result()
