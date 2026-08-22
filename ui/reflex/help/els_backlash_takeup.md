@@ -53,10 +53,13 @@ retract delta (retracts).
 - Value is always entered in mm regardless of display mode.
 - A value of 0 disables takeup completely — the firmware skips the
   pre-cut takeup AND the host skips the pre-retract takeup.
-- The pre-cut takeup is **threading-only**. In turning mode the UI
-  sends zero thread geometry, which disables the firmware takeup
-  regardless of the value set here. The pre-retract takeup, being
-  host-side, still applies.
+- The pre-cut takeup runs at the start of **every** pass, in turning
+  as well as threading, and on the first pass of a job as well as on
+  every resume (since 2026-08-21). In every case the firmware confirms
+  that the carriage actually moved before it releases the cut; an open
+  or partly engaged half-nut is refused with "Carriage not moving -- is
+  the half-nut engaged?" instead of silently cutting. Turning differs
+  only in that no thread-phase correction follows the takeup.
 - The same magnitude governs both the pre-cut and pre-retract takeups.
   If your machine has asymmetric backlash, set the value to the larger
   of the two and accept slight over-travel on the smaller side.

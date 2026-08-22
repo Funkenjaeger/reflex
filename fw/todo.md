@@ -117,6 +117,17 @@ instead of leaving bare `TODO:` comments in code.
   issue". Fails closed: no motion means `takeupPending` stays set, sync stays
   gated, and `applyPhaseCorrection()` does not run on an uncoupled drivetrain.
   Recovery is the `elsStop.enable` 1->0 escape hatch.
+- **(2026-08-21) The take-up and its confirmation run on EVERY pass -- the first
+  pass of a job and turning included.** Until then both hid behind the
+  phase-correction condition (`referenceLatched && pitch != 0`), so the datum
+  pass and every turning pass were the only ungated passes in the system. The
+  two jobs on the resume edge are now gated separately: take-up needs only a
+  configured backlash; `applyPhaseCorrection()` additionally needs a latched
+  reference and pitch, carried to the confirmation's success branch by
+  `elsStopCorrectOnConfirm`. The take-up direction in turning comes from the
+  SIGN of `zCountsPerPitch`, which reflex-ui now writes signed with pitch = 0
+  (`push_turning_geometry`). Pins: `els_takeup_confirm_test` first-pass /
+  turning / polarity scenarios. Decided by Evan 2026-08-21 (task 6a81fa2f).
 - `calCommand`-driven calibration measures the lash directly (three reversals,
   counting servo steps until Z moves). Host judges consistency and writes
   `backlashSteps = measured + max(20%, floor)`.

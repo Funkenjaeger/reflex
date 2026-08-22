@@ -260,6 +260,27 @@ struct Rig {
         data.shared.elsStop.lastIdealAdvance = SENTINEL;
         data.shared.elsStop.active = 0;   /* SW resume */
     }
+
+    /* Arm a FRESH job the way reflex-ui has since 2026-08-17 -- active first,
+     * then enable (els_arm_past_stop_test pins why that order matters) -- and
+     * press Cut. No stop has fired, so referenceLatched is 0: this is the
+     * first pass of the job, the one that will CREATE the datum every later
+     * pass is measured against. Until 2026-08-21 the resume path skipped the
+     * take-up entirely here, so the datum pass was the only pass an open or
+     * partially engaged half-nut could slip through unannounced. */
+    void armFirstPass() {
+        step(Z_CLEAR);
+        data.shared.elsStop.active = 1;
+        step(Z_CLEAR);                    /* Modbus gap between the writes */
+        data.shared.elsStop.enable = 1;
+        for (int i = 0; i < 3; i++) step(Z_CLEAR);
+        for (int i = 0; i < 20000
+             && data.shared.servo.currentSteps != data.shared.servo.desiredSteps; i++) {
+            step(Z_CLEAR);
+        }
+        data.shared.elsStop.lastIdealAdvance = SENTINEL;
+        data.shared.elsStop.active = 0;   /* SW Cut */
+    }
 };
 
 /* ------------------------------------------------------------------ */
@@ -320,6 +341,137 @@ int main() {
         checkEq(rig.data.shared.elsStop.active, 1, "back to stopped-at-shoulder");
         checkEq(rig.data.shared.elsStop.referenceLatched, 1,
                 "phase reference preserved: retry is free");
+    }
+
+    /* ---------------- FIRST PASS and TURNING are gated too (2026-08-21) -- */
+    /* MUTATIONS this block exists to catch: (A) put referenceLatched / the
+     * thread-geometry terms back in front of the take-up initiation -- every
+     * "take-up initiated" below goes red; (B) apply the phase correction
+     * unconditionally on confirmation again -- the "did NOT run" checks go
+     * red. Both shapes were the shipped code before 2026-08-21. */
+    printf("\n-- FIRST PASS, coupled: take-up confirms, NO correction, datum latched at the stop --\n");
+    {
+        Rig rig;
+        rig.init(/*backlashSteps*/ 90, /*motionThresh*/ 2, /*coupled*/ true, /*lash*/ 60);
+        rig.armFirstPass();
+        rig.step(Z_CLEAR);                       /* the Cut edge */
+        checkEq(rig.data.shared.elsStop.referenceLatched, 0, "first pass: no reference exists yet");
+        checkEq(rig.data.shared.elsStop.takeupPending, 1,
+                "first pass: take-up initiated (skipped entirely before 2026-08-21)");
+        rig.beginLashDriven();
+
+        for (int i = 0; i < 60000 && rig.data.shared.elsStop.takeupPending; i++)
+            rig.stepDriven();
+
+        checkEq(rig.data.shared.elsStop.takeupPending, 0, "first pass: take-up completed");
+        checkEq(rig.data.shared.elsStop.takeupResult, ELS_CAL_OK, "first pass: confirmed");
+        checkEq(rig.data.shared.elsStop.takeupSeq, 1, "first pass: one outcome reported");
+        check(rig.data.shared.elsStop.lastIdealAdvance == SENTINEL,
+              "first pass: applyPhaseCorrection did NOT run -- nothing to correct against");
+        checkEq(rig.data.shared.elsStop.referenceLatched, 0,
+                "first pass: confirmation latched nothing; only a stop trigger may");
+
+        int32_t before = (int32_t)rig.data.shared.servo.desiredSteps;
+        for (int i = 0; i < 5; i++) rig.stepDriven();
+        check((int32_t)rig.data.shared.servo.desiredSteps != before,
+              "first pass: sync released once confirmed");
+
+        rig.step(Z_PAST);
+        rig.step(Z_PAST);
+        checkEq(rig.data.shared.elsStop.active, 1, "first pass: the stop fires at the threshold");
+        checkEq(rig.data.shared.elsStop.referenceLatched, 1,
+                "first pass: ...and latches the datum from a drivetrain PROVEN coupled");
+    }
+
+    printf("\n-- FIRST PASS, open half-nut: refused before any datum can exist --\n");
+    {
+        Rig rig;
+        rig.init(90, 2, /*coupled*/ false, 60);
+        rig.armFirstPass();
+        rig.step(Z_CLEAR);
+        checkEq(rig.data.shared.elsStop.takeupPending, 1, "first pass, open nut: take-up initiated");
+        rig.beginLashDriven();
+
+        for (int i = 0; i < 60000; i++) rig.stepDriven();
+
+        checkEq(rig.data.shared.elsStop.takeupResult, ELS_TAKEUP_ERR_UNCONFIRMED,
+                "first pass, open nut: REFUSED -- the message every later pass already got");
+        checkEq(rig.data.shared.elsStop.takeupSeq, 1, "first pass, open nut: reported once");
+        check(rig.data.shared.elsStop.lastIdealAdvance == SENTINEL,
+              "first pass, open nut: no correction");
+        checkEq(rig.data.shared.elsStop.takeupPending, 0, "first pass, open nut: not holding the machine");
+        checkEq(rig.data.shared.elsStop.active, 1,
+                "first pass, open nut: aborted back to armed-idle, the state before Cut");
+        checkEq(rig.data.shared.elsStop.referenceLatched, 0,
+                "first pass, open nut: NO datum was latched from an uncoupled drivetrain");
+    }
+
+    /* Turning: the host writes threadPitchSteps = 0 (no thread phase to correct
+     * to) and, since 2026-08-21, keeps zCountsPerPitch SIGNED so the take-up
+     * direction still carries the Z polarity. The rig's zCountsPerPitch stays
+     * as initialised; only the pitch is cleared. */
+    printf("\n-- TURNING (pitch 0), coupled: take-up confirms, no correction --\n");
+    {
+        Rig rig;
+        rig.init(90, 2, true, 60);
+        rig.data.shared.elsStop.threadPitchSteps = 0.0f;
+        rig.armAndTrigger();                     /* a later pass: reference IS latched */
+        rig.step(Z_CLEAR);
+        checkEq(rig.data.shared.elsStop.takeupPending, 1,
+                "turning: take-up initiated (never ran in turning before 2026-08-21)");
+        rig.beginLashDriven();
+
+        for (int i = 0; i < 60000 && rig.data.shared.elsStop.takeupPending; i++)
+            rig.stepDriven();
+
+        checkEq(rig.data.shared.elsStop.takeupPending, 0, "turning: take-up completed");
+        checkEq(rig.data.shared.elsStop.takeupResult, ELS_CAL_OK, "turning: confirmed on the floor threshold");
+        check(rig.data.shared.elsStop.lastIdealAdvance == SENTINEL,
+              "turning: applyPhaseCorrection did NOT run -- no pitch to correct to");
+    }
+
+    printf("\n-- TURNING, open half-nut: refused --\n");
+    {
+        Rig rig;
+        rig.init(90, 2, /*coupled*/ false, 60);
+        rig.data.shared.elsStop.threadPitchSteps = 0.0f;
+        rig.armAndTrigger();
+        rig.step(Z_CLEAR);
+        checkEq(rig.data.shared.elsStop.takeupPending, 1, "turning, open nut: take-up initiated");
+        rig.beginLashDriven();
+        for (int i = 0; i < 60000; i++) rig.stepDriven();
+        checkEq(rig.data.shared.elsStop.takeupResult, ELS_TAKEUP_ERR_UNCONFIRMED,
+                "turning, open nut: REFUSED");
+        checkEq(rig.data.shared.elsStop.active, 1, "turning, open nut: aborted to stopped");
+        check(rig.data.shared.elsStop.lastIdealAdvance == SENTINEL, "turning, open nut: no correction");
+    }
+
+    printf("\n-- TURNING polarity: sign(zCountsPerPitch) steers the take-up with pitch == 0 --\n");
+    {
+        /* Same machine, two hosts: threading writes pitch > 0 and a signed
+         * zCountsPerPitch; turning writes pitch = 0 and the same signed
+         * zCountsPerPitch. The take-up must go the same way in both, and a
+         * flipped sign must flip it. Initiation only -- the direction is
+         * decided on the Cut edge. */
+        Rig thr; thr.init(90, 2, true, 60);
+        thr.data.shared.elsStop.zCountsPerPitch = -846.667f;
+        thr.armAndTrigger(); thr.step(Z_CLEAR);
+
+        Rig trn; trn.init(90, 2, true, 60);
+        trn.data.shared.elsStop.threadPitchSteps = 0.0f;
+        trn.data.shared.elsStop.zCountsPerPitch  = -846.667f;
+        trn.armAndTrigger(); trn.step(Z_CLEAR);
+
+        Rig pos; pos.init(90, 2, true, 60);
+        pos.data.shared.elsStop.threadPitchSteps = 0.0f;
+        pos.armAndTrigger(); pos.step(Z_CLEAR);
+
+        checkEq(thr.data.shared.elsStop.takeupPending, 1, "polarity: threading rig initiated");
+        checkEq(trn.data.shared.elsStop.takeupPending, 1, "polarity: turning rig initiated");
+        checkEq(trn.data.elsStopTakeupSign, thr.data.elsStopTakeupSign,
+                "polarity: turning (pitch 0) takes up the same way as threading on the same wiring");
+        checkEq(pos.data.elsStopTakeupSign, -trn.data.elsStopTakeupSign,
+                "polarity: flipping sign(zCountsPerPitch) flips the turning take-up direction");
     }
 
     /* ---------------- Partial engagement: moves, but not enough ------ */

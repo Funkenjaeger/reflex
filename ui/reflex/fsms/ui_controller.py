@@ -409,12 +409,13 @@ class ElsUiController(EventDispatcher):
         # without forcing an FSM transition.
         if self._els_fsm.state != "stopped":
             return
-        # Clear thread geometry when switching to feed mode so stale values
-        # don't trigger firmware takeup/phase-correction on future transitions.
+        # Switching to feed mode clears the thread PITCH so a stale value
+        # cannot phase-correct a turning pass; the signed Z polarity and the
+        # backlash stay live, because since 2026-08-21 the pre-cut take-up and
+        # its confirmation run in turning too (els_fsm.push_turning_geometry).
         if not self.is_threading:
-            self._hal.set_thread_pitch_steps(0.0)
-            self._hal.set_z_counts_per_pitch(0.0)
-            self._hal.set_backlash_steps(0)
+            self._els_fsm.push_turning_geometry()
+            self._hal.set_backlash_steps(int(self._els.els_backlash_steps))
         self._hal.set_stop_direction(self._els.stop_direction_value(self.els_forward))
         if self.retract_enabled or self.wizard_enabled:
             self._hal.set_hysteresis_tight()

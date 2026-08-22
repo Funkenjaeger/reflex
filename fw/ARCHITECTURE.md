@@ -119,7 +119,7 @@ A pass has three logical phases:
 
 - **Cut.** Sync is active. Each spindle encoder tick produces a fractional-step contribution to the leadscrew's target position, with integer truncation and remainder tracking so that average tracking error stays near zero. The carriage advances toward the configured stop position.
 - **Trigger.** When the Z scale crosses the stop position in the configured direction, the firmware atomically sets `active = 1` (gating sync off) and, on the *first* such trigger of the job, latches a reference pair: the spindle position and the Z position at that instant. Subsequent triggers in the same job set `active = 1` but do not re-latch — the original reference is what defines this job's thread.
-- **Resume.** Software clears `active` when the operator is ready to start the next pass. This 1→0 transition is where the re-sync math runs.
+- **Resume.** Software clears `active` when the operator is ready to start a pass — the first pass of the job included, since reflex-ui arms with `active = 1` before `enable = 1` (2026-08-17). This 1→0 transition is where the backlash take-up and its Z confirmation run on every pass (2026-08-21: first pass and turning included) and, once a reference has been latched, where the re-sync math runs.
 
 #### Re-sync mechanism
 
@@ -132,7 +132,7 @@ The re-sync computes two quantities, both expressed in *leadscrew step equivalen
 
 Their difference is a signed phase error in step-equivalents. Modulo the thread pitch and folded to the shortest signed magnitude, it yields a correction the firmware queues as an indexing move *before* sync resumes. That move physically shifts the carriage by a sub-thread-pitch amount in whichever direction lands it on an integer multiple of thread pitch above the stop position. From that adjusted starting position, the subsequent sync return necessarily covers an integer number of thread pitches — meaning the spindle rotates an integer number of revolutions — meaning the spindle phase at the next trigger matches the latched phase, regardless of how the carriage got there.
 
-A backlash takeup move, if configured, executes first (in the direction derived from cut direction and thread geometry); the phase correction runs once the takeup completes, so the takeup itself can't introduce additional phase error.
+A backlash takeup move, if configured, executes first, in the direction derived from the cut direction and the Z polarity — the sign of `zCountsPerPitch` (threading also carries `threadPitchSteps`; turning writes it as 0 and keeps `zCountsPerPitch` signed). Its completion is confirmed against the Z scale before anything else happens (next section). The phase correction runs once the takeup is confirmed, and only when a reference exists and a pitch is set: a first pass has no reference to correct against (the stop at its end latches one) and turning has no pitch, but both still take up — so the datum is latched from a drivetrain proven coupled, and a turning pass cannot start against an open half-nut. Before 2026-08-21 both of those passes ran ungated, because the take-up sat inside the phase-correction condition.
 
 #### Why it works across workflows
 
