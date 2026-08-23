@@ -292,11 +292,16 @@ typedef struct {
   uint16_t latchCommand;          // bidirectional: SW writes 1 to request a manual reference latch; FIRMWARE CLEARS IT on consume. Consumed ONLY while enable == 1 (a reference is meaningless outside a job and would be wiped by the next enable 0->1 anyway); when enable == 0 it is cleared with NO latchSeq increment, so an absent ack IS the refusal. SW must edge-detect latchSeq, never poll this
   uint16_t latchSeq;              // READ-ONLY (firmware-owned): increments once per ACCEPTED manual latch. Monotonic; the ack for latchCommand
 
-  /* --- THREAD-PHASE OFFSET. Deliberately shifts the thread start by a chosen
-   * distance, which is what cuts a multi-start thread: cut every start from the
-   * same datum, moving the phase by pitch/N between them, instead of re-indexing
-   * the workpiece. Appended at the tail per the reserved order above; the uint16s
-   * come first and the int32s after, so the block packs with zero padding.
+  /* --- THREAD-PHASE OFFSET. Deliberately displaces where the tool re-enters
+   * the thread by a chosen distance. The operator-facing job it was built for
+   * is WIDENING A GROOVE PAST THE WIDTH OF THE CUTTER: cut the groove, step the
+   * phase over by less than the cutter width, cut again, repeat until the
+   * groove is the width wanted -- no re-indexing, and the datum is never
+   * re-established. The register itself knows nothing about that; it is a
+   * distance, and els_phase.h names a second source (the X-depth-derived
+   * compound infeed) that will feed this same term. Appended at the tail per
+   * the reserved order above; the uint16s come first and the int32s after, so
+   * the block packs with zero padding.
    *
    * THE HAND-OFF is the calCommand idiom exactly: the host writes Pending FIRST,
    * then writes Command. The ISR reads Pending only under a nonzero Command, and
@@ -319,13 +324,27 @@ typedef struct {
    * SIGN LIVES IN THE MACHINE FRAME, NOT THE CUTTING FRAME. phaseOffsetSteps is
    * summed straight into phaseError (els_phase.h) in leadscrew steps, ahead of
    * the mod-pitch fold and the forward bias. On a machine whose cuttingDir is -1
-   * a given entry therefore selects the COMPLEMENTARY start of an N-start thread
-   * -- 2/3 pitch where the operator pictured 1/3. It is not a safety issue and
-   * not a wrong cut, since every start of a thread is a legitimate start, but it
-   * is UNVERIFIED on real hardware; els_phase_offset_command_test pins today's
+   * a given entry therefore displaces the tool the OTHER WAY along the helix --
+   * an effective pitch-X where the operator pictured X. Both land in the SAME
+   * groove, a whole pitch being one turn of the same helix, and the groove ends
+   * up wider by the amount entered either way. What changes is WHICH FLANK
+   * opens up.
+   *
+   * THE OLD ARGUMENT FOR WHY THIS IS HARMLESS DOES NOT SURVIVE THE RESTATEMENT,
+   * and that is worth being explicit about. This note used to say the -1 machine
+   * merely picks the COMPLEMENTARY start of an N-start thread, that every start
+   * of a thread is a legitimate start so it cannot be a wrong cut, and that
+   * cumulative entry self-corrects -- enter pitch/3 again and you are on the
+   * start you wanted. None of the three transfer to widening. There is no
+   * equally-good alternative result: the groove opens up on the flank opposite
+   * the one intended. And entering more does NOT walk it back; it widens
+   * further on the same wrong flank. Still not a safety issue -- the tool stays
+   * in the groove and removes what was asked for -- but it is a wrong part, and
+   * the only cheap defense is an air pass on the first step-over of a job.
+   *
+   * UNVERIFIED on real hardware; els_phase_offset_command_test pins today's
    * behavior for both polarities so that a future correction has to be
-   * deliberate. Cumulative entry makes it self-correcting in practice: enter
-   * pitch/3 again and you are on the start you wanted.
+   * deliberate.
    *
    * NOT FOLDED HERE. The total is stored exactly as the host wrote it; the fold
    * to mod-pitch happens at use, inside the primitive. Folding on write would

@@ -5,9 +5,9 @@ bar's notice strips are pinned overlays whose only honest test is a picture at
 the target 1024x600, and tests/components/test_els_advbar.py patches
 apply_class_lang_rules out (the mock GL backend segfaults on real textures) so
 no unit test can assert on a rendered layout. The phase-offset strip raises the
-stakes: it is PERSISTENT — up for a whole multi-start job, not a few seconds —
-so whatever it covers, it covers for the length of the job. That is a judgment
-that has to be made against a rendering, not a memory of one.
+stakes: it is PERSISTENT — up for a whole groove-widening job, not a few
+seconds — so whatever it covers, it covers for the length of the job. That is a
+judgment that has to be made against a rendering, not a memory of one.
 
 THE TEXT IS PRODUCED BY PRODUCTION CODE, not typed in here. The HAL's step
 read is stubbed (the preview has no board), and everything downstream of it is
@@ -15,8 +15,10 @@ the real thing: ElsFsm.phase_offset_display does the unit conversion off the
 live servo ratio, spindle pitch and display factor, and
 ui_controller.phase_offset_readout formats it. So the string in the picture is
 the string the operator gets, including the fraction naming. The step count fed
-in is derived from the live thread pitch — a third of a pitch, i.e. start 2 of
-a 3-start thread, which is what the feature is for.
+in is derived from the live thread pitch, and deliberately sits on an exact
+1/N of it: this preview's job is the WIDEST string the strip can be asked to
+hold, and the named-fraction branch is the one that has to be seen rendered.
+A real groove-widening total is a small decimal and a shorter string.
 
 Run (WSL):
     cd ui && xvfb-run -a -s "-screen 0 1024x600x24" uv run \\
@@ -53,7 +55,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 MODE_ELS = 2
 AXIS_NAMES = ("Z", "X", "S")
 IDLE_TICKS = 8
-STARTS = 3          # a 3-start thread: the offset is one third of a pitch
+FRACTION_DENOM = 3  # render the strip at an exact 1/3, to exercise the naming
 FALLBACK_STEPS = 500
 
 WARNING = ELS_TAKEUP_MESSAGES[ELS_TAKEUP_ERR_UNCONFIRMED]
@@ -217,7 +219,7 @@ def _capture(_dt):
         shot(f"{tag}_off")
         before = _sizes()
 
-        set_offset(1.0 / STARTS)
+        set_offset(1.0 / FRACTION_DENOM)
         settle()
         dump(f"{tag} / offset 1-3 pitch")
         assert_nothing_moved(before, _sizes(), f"{tag} offset on", exempt)
@@ -275,7 +277,7 @@ def _arm(_dt):
     app.servo.leadScrewPitch = 5
     app.servo.leadScrewPitchSteps = 2000
     # 1.50 mm pitch from the real THREAD_MM table: 600 leadscrew steps to the
-    # pitch, so a 3-start's 1/3 is exactly 200 steps / 0.500 mm and the strip
+    # pitch, so the exact 1/3 rendered here is 200 steps / 0.500 mm and the strip
     # is showing a job that could be run.
     els_bar.set_feed_ratio("Thread MM", 8)
 

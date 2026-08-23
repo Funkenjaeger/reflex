@@ -3,13 +3,17 @@
  *
  * WHAT THE FEATURE IS
  * -------------------
- * A multi-start thread is N threads cut from one datum, each one pitch/N out of
- * phase with the last. Rather than re-index the workpiece between starts, the
- * operator shifts the CONTROLLER's idea of phase: elsStop.phaseOffsetSteps is
- * summed into phaseError at every phase correction, so the carriage returns to
- * the thread displaced by that amount. els_phase_offset_test already pins the
- * arithmetic (els_phase.h); THIS file pins the register plumbing around it --
- * the half that decides whether the number ever reaches the math.
+ * A way to cut a thread groove WIDER than the tool that cuts it. The operator
+ * cuts the groove, shifts the CONTROLLER's idea of phase by a step-over smaller
+ * than the cutter, and cuts again, until the groove reaches the width he wants
+ * -- no re-indexing, and the datum is never re-established.
+ * elsStop.phaseOffsetSteps is summed into phaseError at every phase correction,
+ * so the carriage returns to the thread displaced by that amount.
+ * els_phase_offset_test already pins the arithmetic (els_phase.h); THIS file
+ * pins the register plumbing around it -- the half that decides whether the
+ * number ever reaches the math. Nothing below depends on the use case: the
+ * register is a distance, and the same plumbing carries the X-depth-derived
+ * compound-infeed offset els_phase.h names as its second source.
  *
  * CONTRACT UNDER TEST (Ramps.c: the phaseOffsetCommand block, the enable-edge
  * reset, and the applyPhaseCorrection() call site)
@@ -27,8 +31,9 @@
  *     is what lets the UI show a running total it can also clear.
  *  5. CLEARED BY A NEW JOB, SURVIVES A PASS: the enable 0->1 edge zeroes it
  *     alongside referenceLatched, because an offset is meaningless without the
- *     datum it offsets. Per-pass stop/resume must NOT disturb it -- a
- *     multi-start thread is cut over many passes at one offset.
+ *     datum it offsets. Per-pass stop/resume must NOT disturb it -- a groove is
+ *     widened over many passes, several of them at each offset as the tool is
+ *     fed to depth.
  *  6. REACHES THE MATH: the correction computed at the next resume differs from
  *     the zero-offset correction by exactly the offset. Without this case every
  *     other assertion here could pass against a call site still passing 0.
@@ -311,8 +316,8 @@ int main() {
      * the new-job assertion fails, and the machine would carry a half-pitch
      * shift into the first pass of the NEXT thread with nothing on screen to
      * explain it. Conversely, clearing it on the ACTIVE edge instead -> the
-     * survives-a-pass assertion fails, and a multi-start thread could not be
-     * cut over more than one pass. */
+     * survives-a-pass assertion fails, and a groove could not be widened over
+     * more than one pass -- i.e. not at all, since it takes several. */
     printf("\n-- 5. dies with the job, survives the pass --\n");
     {
         Rig rig;
@@ -393,15 +398,17 @@ int main() {
 
     /* ---------------- 7. THE FRAME IS THE MACHINE, NOT THE CUT --------- */
     /* Pins the property documented on the register: the offset is summed into
-     * phaseError raw, so it displaces phase in the MACHINE frame and a
-     * cuttingDir == -1 machine lands on the complementary start of an N-start
-     * thread. Asserted for both polarities so that changing to a cutting-frame
-     * convention (multiplying by cuttingDir) has to break a test on purpose
-     * rather than pass unnoticed.
+     * phaseError raw, so it displaces phase in the MACHINE frame, and on a
+     * cuttingDir == -1 machine an entry of X acts as pitch-X -- the same groove
+     * (one turn along the same helix), widened on the OTHER flank. Asserted for
+     * both polarities so that changing to a cutting-frame convention
+     * (multiplying by cuttingDir) has to break a test on purpose rather than
+     * pass unnoticed.
      *
      * The printed corrections are for the bench: they are what the carriage
-     * actually does, and comparing them against a real multi-start cut is the
-     * only thing that can settle whether this frame is the right one.
+     * actually does, and comparing them against a real widening cut -- which
+     * flank of the groove actually opened up -- is the only thing that can
+     * settle whether this frame is the right one.
      * MUTATION: multiply the offset by cuttingDir at the call site -> the
      * cuttingDir == -1 assertion fails and the +1 one passes, naming the
      * polarity that changed. */

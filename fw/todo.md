@@ -298,21 +298,37 @@ Two unit traps, both live (full list in `els_slip.h`):
 ### Decided 2026-08-22 (Evan)
 - Running total displayed in the **advanced bar** when nonzero, as distance AND
   fraction of pitch.
-- **Advance-only** entry plus a Clear. A signed control would misrepresent the math:
-  a negative offset jogs forward by pitch-|offset|, never back by |offset|.
-- **Refuse** at one pitch with a stated reason, never clamp -- a clamp hands back a
-  different thread start than the one asked for, in metal, before anything looks wrong.
+- **Advance-only** entry plus a Clear. Confirmed 2026-08-23 as a MATCH TO THE WORK
+  rather than a restriction: widening runs one way, opening a single side of the
+  groove, so there is no signed workflow to support. The math being asymmetric (a
+  negative offset jogs forward by pitch-|offset|, never back by |offset|) is why the
+  refusal names the slip instead of silently absoluting it.
+- **Refuse** at one pitch with a stated reason, never clamp -- the bound is the
+  ALIASING bound, and a clamp puts the cut somewhere other than where it was asked
+  for, in metal, before anything looks wrong.
+
+### Reframed 2026-08-23 (Evan)
+The feature was built and documented as MULTI-START THREADING. That was wrong. Per its
+own task (6a77c5b2) and the design note in `Core/Inc/els_phase.h`, its purpose is
+**widening a thread groove past the width of the cutter**: cut the groove, step the
+phase over by less than the cutter width, cut again, repeat. Multi-start is a separate
+feature to be built semantically (pitch + number of starts), not on hand-entered
+fractions of a pitch. The primitive, the register block, the ISR path and the refusal
+conditions were all correct and general and did not change; the wording, the help page,
+the modal title and the 1/2-1/3-1/4-pitch fill buttons did.
 
 ### Remaining
 - **THE POLARITY QUESTION, for the bench.** The offset is summed into `phaseError`
-  raw, so it displaces phase in the MACHINE frame; on a `cuttingDir == -1` machine a
-  given entry selects the COMPLEMENTARY start of an N-start thread (2/3 pitch where
-  the operator pictured 1/3). The lathe's own fixture geometry says elspi is
-  `cuttingDir == -1`. Not a safety issue -- every start is a legitimate start, and
-  cumulative entry self-corrects -- but it decides whether the UI's wording is honest.
-  Settle it by cutting a 2-start (where it is symmetric and therefore safe) and then a
-  3-start. `els_phase_offset_command_test` case 7 prints the corrections for both
-  polarities to compare against.
+  raw, so it displaces phase in the MACHINE frame; on a `cuttingDir == -1` machine an
+  entry of X acts as pitch-X. That lands in the SAME groove (one turn along the same
+  helix) and widens it by the amount entered, but on the OTHER FLANK. The lathe's own
+  fixture geometry says elspi is `cuttingDir == -1`. Still not a safety issue -- the
+  tool stays in the groove -- but the old "every start is a legitimate start, and
+  cumulative entry self-corrects" argument does NOT transfer: a groove opened on the
+  wrong flank is a wrong part, and entering more widens further the same wrong way.
+  Settle it by widening one groove a few thou and looking at which side moved.
+  `els_phase_offset_command_test` case 7 prints the corrections for both polarities to
+  compare against.
 - Hardware verification of the whole feature: nothing here has been near a lathe.
 - Second source: 6a77c598 (X-depth compound infeed) feeds the same `Pending` path from
   `scaledPosition` * tan(theta); do not build a second offset path.

@@ -18,8 +18,11 @@ the three ways a status readout can lie:
      mm<->in, but the number on screen has to.
 
 GEOMETRY, once: servo 1/1000 mm per step (1000 steps/mm), spindle 3/2 mm per
-rev, so one pitch is 1500 steps and a 3-start's 1/3 is 500 steps / 0.500 mm.
-The same rig as test_els_phase_offset.py, deliberately.
+rev, so one pitch is 1500 steps. The offset used throughout is 500 steps /
+0.500 mm -- an exact third of a pitch, chosen so the strip's named-fraction
+branch is the one under test. A real groove-widening total is a few hundredths
+of a millimeter and renders as a decimal. The same rig as
+test_els_phase_offset.py, deliberately.
 """
 import os
 
@@ -38,7 +41,7 @@ from tests.fsms.test_ui_controller import (_make_collaborators, _make_x_axis,
                                            _make_z_axis, _pump)
 
 PITCH_STEPS = 1500
-THIRD = 500          # 1/3 of a pitch, i.e. start 2 of a 3-start thread
+THIRD = 500          # an exact 1/3 of a pitch: the named-fraction branch
 
 
 @pytest.fixture
@@ -72,8 +75,9 @@ def _polls(ctrl, *step_totals):
 def test_a_settled_offset_names_the_distance_and_the_fraction(ctrl):
     _polls(ctrl, THIRD, THIRD)
     assert ctrl.phase_offset_active is True
-    # BOTH numbers: the distance is checkable against a dial, the fraction is
-    # what says "start 2 of 3". Either alone leaves the operator guessing.
+    # BOTH numbers, distance first: it is how far the groove has been widened
+    # and is checkable against a dial. The fraction is the aliasing bound --
+    # how much of the one pitch an offset may accumulate has been spent.
     assert "+0.500 mm" in ctrl.phase_offset_text
     assert "1/3 of a pitch" in ctrl.phase_offset_text
 
@@ -103,8 +107,8 @@ def test_a_torn_read_never_reaches_the_screen(ctrl):
     """Half-old/half-new: the high word of 500 with the low word of nothing.
 
     One poll of garbage, then the consistent value twice. The garbage must
-    never have been on screen -- a wrong distance on this strip is a wrong
-    thread start, and it would be gone again before it could be questioned.
+    never have been on screen -- a wrong distance on this strip is a cut in the
+    wrong place, and it would be gone again before it could be questioned.
     """
     torn = 0x01F4_0000        # a plausibly-torn composition of 500
     _polls(ctrl, torn)

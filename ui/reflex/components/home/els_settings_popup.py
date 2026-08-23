@@ -119,7 +119,7 @@ class ElsSettingsPopup(Popup):
         ThreadResyncPopup().open()
 
     def open_phase_offset(self):
-        """Open the thread-phase offset (multi-start) entry surface.
+        """Open the thread-phase offset (groove-widening) entry surface.
 
         Lazily imported like the wizards above. It needs no gating here either:
         the FSM refuses an offset with a stated reason when there is no job, no

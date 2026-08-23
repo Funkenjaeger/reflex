@@ -225,8 +225,8 @@ ELS_PROTOCOL_VERSION = 5        # elsStop.protocolVersion this UI is built again
                                 # 4 (2026-08-22): latchCommand/latchSeq for the manual
                                 # reference latch, appended after the diagnostic block so
                                 # every offset exercised on the lathe keeps its address.
-                                # 5 (2026-08-22): the thread-phase offset block for
-                                # multi-start threading, appended the same way.
+                                # 5 (2026-08-22): the thread-phase offset block
+                                # (groove widening), appended the same way.
 
 # Diagnostic scratchpad schema ids (elsStop.diagSchema). 0 means no probe is
 # compiled into the firmware and the block must not be interpreted at all.

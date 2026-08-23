@@ -117,7 +117,7 @@ int main(void)
      * and appended latchCommand/latchSeq -- that branch had ALSO written 3, and
      * this assertion is what forced the renumber rather than letting two
      * distinct layouts quietly share a version number. 4 -> 5 when the
-     * thread-phase offset block was appended for multi-start threading. */
+     * thread-phase offset block was appended for the groove-widening offset. */
     check(data.shared.elsStop.protocolVersion == 5,
           "protocolVersion is 5 (machineMode + manual latch + phase offset map)");
 

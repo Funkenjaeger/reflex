@@ -79,7 +79,7 @@ class ElsStopHal:
         the operator' -- both have sync on, only one is moving.
         """
         if not self._board.connected:
-            return {'moving': False, 'reason': 'not connected'}
+            return self._no_link({'moving': False, 'reason': 'not connected'})
         try:
             stop = self._board.device['elsStop'].refresh()
             sync = any(
@@ -102,12 +102,12 @@ class ElsStopHal:
 
     def read_enable(self) -> bool:
         if not self._board.connected:
-            return False
+            return self._no_link(False)
         return bool(self._board.device['elsStop']['enable'])
 
     def read_active(self) -> bool:
         if not self._board.connected:
-            return False
+            return self._no_link(False)
         return bool(self._board.device['elsStop']['active'])
 
     # ── direction / hysteresis ────────────────────────────────────────
@@ -168,42 +168,42 @@ class ElsStopHal:
     # ── diagnostics / latch readbacks (low frequency) ─────────────────
     def read_reference_latched(self) -> bool:
         if not self._board.connected:
-            return False
+            return self._no_link(False)
         return bool(self._board.device['elsStop']['referenceLatched'])
 
     def read_takeup_pending(self) -> bool:
         if not self._board.connected:
-            return False
+            return self._no_link(False)
         return bool(self._board.device['elsStop']['takeupPending'])
 
     def read_latched_z(self) -> int:
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['latchedZ'])
 
     def read_latched_spindle(self) -> int:
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['latchedSpindle'])
 
     def read_last_ideal_advance(self) -> float:
         if not self._board.connected:
-            return 0.0
+            return self._no_link(0.0)
         return float(self._board.device['elsStop']['lastIdealAdvance'])
 
     def read_last_actual_advance(self) -> float:
         if not self._board.connected:
-            return 0.0
+            return self._no_link(0.0)
         return float(self._board.device['elsStop']['lastActualAdvance'])
 
     def read_last_phase_error(self) -> float:
         if not self._board.connected:
-            return 0.0
+            return self._no_link(0.0)
         return float(self._board.device['elsStop']['lastPhaseError'])
 
     def read_last_correction(self) -> float:
         if not self._board.connected:
-            return 0.0
+            return self._no_link(0.0)
         return float(self._board.device['elsStop']['lastCorrection'])
 
     # ── protocol version ──────────────────────────────────────────────
@@ -215,7 +215,7 @@ class ElsStopHal:
         "too old / unknown" rather than as a version number.
         """
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['protocolVersion'])
 
     # ── backlash calibration ──────────────────────────────────────────
@@ -240,7 +240,7 @@ class ElsStopHal:
     def read_servo_motion_params(self):
         """(maxSpeed, acceleration) as the firmware currently holds them."""
         if not self._board.connected:
-            return (0.0, 0.0)
+            return self._no_link((0.0, 0.0))
         return (float(self._board.device['servo']['maxSpeed']),
                 float(self._board.device['servo']['acceleration']))
 
@@ -272,12 +272,12 @@ class ElsStopHal:
         """Monotonic counter, incremented once per finished run (success OR
         refusal). This is the ack — edge-detect it to know a run completed."""
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['calSeq'])
 
     def read_cal_result(self) -> int:
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['calResult'])
 
     def read_cal_measured(self) -> list:
@@ -288,8 +288,38 @@ class ElsStopHal:
         only trust these when read_cal_result() is ELS_CAL_OK.
         """
         if not self._board.connected:
-            return [0, 0, 0]
+            return self._no_link([0, 0, 0])
         return [int(v) for v in self._board.device['elsStop']['calMeasured']]
+
+    def reads_baseline(self) -> int:
+        """Snapshot to detect fabricated reads across a group of reads.
+
+        Pair with :meth:`reads_fabricated_since`. Callers whose DECISION
+        depends on a value need both; callers that merely display one do not.
+        """
+        return self._board.connection_manager.read_failures
+
+    def reads_fabricated_since(self, baseline: int) -> bool:
+        """Did any read since `baseline` return a value the controller never
+        sent -- a failed frame, or a read attempted with no link?"""
+        return self._board.connection_manager.reads_failed_since(baseline)
+
+    def _no_link(self, fallback):
+        """Record a read that could not happen, and hand back the fallback.
+
+        Every read below short-circuits through here when the link is down.
+        The fallback is usually 0, and in this register map 0 is never neutral
+        -- it reads as "no offset", "not enabled", "sequence reset". Counting
+        it is what lets a caller whose decision depends on the value tell a
+        real zero from a fabricated one; callers that merely display something
+        ignore the counter and are unaffected.
+
+        Shares ConnectionManager.read_failures with genuine frame failures on
+        purpose: to a consumer the two are the same event, and giving them
+        separate counters would mean every guard had to remember to check both.
+        """
+        self._board.connection_manager.read_failures += 1
+        return fallback
 
     # ── manual reference latch (interactive re-sync) ──────────────────
     # Same command/ack split as calibration: request_latch() sets latchCommand,
@@ -306,10 +336,10 @@ class ElsStopHal:
     def read_latch_seq(self) -> int:
         """Monotonic counter, incremented once per ACCEPTED manual latch."""
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['latchSeq'])
 
-    # ── thread-phase offset (multi-start) ─────────────────────────────
+    # ── thread-phase offset (widening a groove past the cutter) ───────
     # The command/ack split once more, with one addition that matters: the
     # 32-bit Pending MUST be written before the command, never after. The ISR
     # reads Pending only under a nonzero command, and that ordering is the only
@@ -344,26 +374,26 @@ class ElsStopHal:
         job change the firmware just discarded.
         """
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['phaseOffsetSteps'])
 
     def read_phase_offset_seq(self) -> int:
         """Monotonic counter, incremented once per ACCEPTED apply."""
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['phaseOffsetSeq'])
 
     # ── take-up outcome ───────────────────────────────────────────────
     def read_takeup_result(self) -> int:
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['takeupResult'])
 
     def read_takeup_seq(self) -> int:
         """Increments once per take-up OUTCOME. takeupPending alone cannot
         distinguish completed-normally from host-cleared; this can."""
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['takeupSeq'])
 
     def read_diag_schema(self) -> int:
@@ -377,7 +407,7 @@ class ElsStopHal:
         not recognise; never guess.
         """
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['diagSchema'])
 
     def read_current_mode(self) -> int:
@@ -394,7 +424,7 @@ class ElsStopHal:
         which was both lathe sessions on 2026-08-21/22.
         """
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['machineMode'])
 
     def read_diag_seq(self) -> int:
@@ -405,7 +435,7 @@ class ElsStopHal:
         ISR and could read a half-written trace.
         """
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['diagSeq'])
 
     def read_diag_capture(self) -> dict:
@@ -422,7 +452,7 @@ class ElsStopHal:
         so the time base is derivable from the same capture that needs it.
         """
         if not self._board.connected:
-            return {}
+            return self._no_link({})
         els = self._board.device['elsStop'].refresh()
         return {
             "schema": int(els['diagSchema']),
@@ -449,7 +479,7 @@ class ElsStopHal:
         what was wanted versus what happened.
         """
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['takeupThreshCounts'])
 
     def read_last_takeup_z_delta(self) -> int:
@@ -457,7 +487,7 @@ class ElsStopHal:
         take-up direction. NEGATIVE means the carriage moved the WRONG way —
         a distinct fault from "didn't move" and worth surfacing as such."""
         if not self._board.connected:
-            return 0
+            return self._no_link(0)
         return int(self._board.device['elsStop']['lastTakeupZDelta'])
 
     def is_move_done(self) -> bool:
@@ -477,7 +507,7 @@ class ElsStopHal:
         `currentSteps == desiredSteps`.
         """
         if not self._board.connected:
-            return False
+            return self._no_link(False)
         if self._board.device['servo']['stepsToGo'] != 0:
             return False
         return (self._board.device['servo']['currentSteps']

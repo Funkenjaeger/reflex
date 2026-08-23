@@ -22,10 +22,21 @@ class ConnectionManager:
         self.device: minimalmodbus.Instrument | None = None
         self._connected = False
 
-        # Monotonic count of reads that FAILED (checksum, timeout, short
-        # frame). The read helpers below return 0 on failure -- they always
-        # have, and every caller is written against that -- so the zero itself
-        # is indistinguishable from a real zero at the call site. This counter
+        # Monotonic count of reads that returned a FABRICATED value rather
+        # than data from the controller. Two things produce one, and from the
+        # caller's side they are identical:
+        #
+        #   * a read that raised -- checksum, timeout, short frame (below);
+        #   * a read attempted with no link at all, which the HAL
+        #     short-circuits to a zero (els_stop_hal.py).
+        #
+        # The second door is why this counter exists in its current form: it
+        # was originally incremented only on the first, so a DISCONNECT
+        # fabricated exactly the same zeros while leaving the counter still --
+        # and every guard built on the counter passed. The read helpers return
+        # 0 either way (they always have, and every caller is written against
+        # that), so the zero itself is indistinguishable from a real zero at
+        # the call site. This counter
         # is what makes it distinguishable: snapshot it before a group of
         # related reads and compare after (see `reads_failed_since`).
         #

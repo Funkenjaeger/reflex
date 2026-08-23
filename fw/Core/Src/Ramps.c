@@ -256,8 +256,8 @@ void RampsStart(rampsHandler_t *rampsData) {
    * registers move.
    *
    * 5 (2026-08-22): the thread-phase offset block (phaseOffsetCommand/Seq/
-   * Pending/Steps) appended for multi-start threading, same append-at-the-tail
-   * discipline. */
+   * Pending/Steps) appended for the groove-widening offset, same
+   * append-at-the-tail discipline. */
   rampsData->shared.elsStop.protocolVersion = 5;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —

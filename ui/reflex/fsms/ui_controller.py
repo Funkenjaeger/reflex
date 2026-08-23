@@ -55,18 +55,28 @@ NOTICE_SWEEP_SECONDS = 0.1
 # and decimal places — and devices.py is the register-map module, deliberately
 # free of any dependency on the running app's formatting state.
 
-# Largest start count the fraction is allowed to be NAMED as. Multi-start
-# threads in the wild are 2- to 6-start; 8 covers the tail without inviting
-# Fraction to "explain" an arbitrary offset as, say, 7/9 of a pitch.
-PHASE_OFFSET_MAX_STARTS = 8
+# Largest denominator the fraction is allowed to be NAMED with. A round
+# fraction is quick to read against the one-pitch bound ("half the budget
+# gone"); past about an eighth the name stops being easier to read than the
+# decimal, and a wider limit just invites Fraction to "explain" an arbitrary
+# groove-widening offset as, say, 7/9 of a pitch.
+#
+# THE OLD JUSTIFICATION FOR THIS NUMBER DOES NOT TRANSFER. It was "multi-start
+# threads in the wild are 2- to 6-start", i.e. the denominator WAS the start
+# count and naming it told the operator which start he was on. Widening offsets
+# are set by cutter width, so they land on no particular fraction and will
+# usually render as the decimal. The naming is kept because it costs nothing
+# and reads well when a total does happen to sit on a half or a quarter of the
+# bound -- not because 8 means anything about the work any more.
+PHASE_OFFSET_MAX_DENOMINATOR = 8
 
 # How close to an exact 1/N the fraction must be before it is named as one.
 # 0.2% of a pitch is far below anything that shows in cut metal, and comfortably
 # above both the once-at-the-end step rounding in apply_phase_offset and the
 # keypad's own precision (an operator dividing a 1.25 mm pitch three ways types
 # 0.417, not 0.4166666). Tighter than this and a genuine 1/3 renders as a
-# decimal, which is the failure that matters: the fraction is the number that
-# says "this is start 2 of 3".
+# decimal; the tolerance exists so that a name, when it is given, is not a
+# rounding accident.
 PHASE_OFFSET_FRACTION_TOL = 0.002
 
 
@@ -79,10 +89,10 @@ def phase_offset_fraction_text(fraction: float) -> str:
     the honest answer is the raw number), and it has to be within
     PHASE_OFFSET_FRACTION_TOL of the real one. A wrong name is not dangerous on
     its own — the firmware indexes off the step count, not this string — but it
-    would make an off-nominal offset look like a clean division and rob the
-    operator of the one clue that says otherwise.
+    would make an arbitrary offset look like a deliberate clean division and
+    rob the operator of the one clue that says otherwise.
     """
-    approx = Fraction(fraction).limit_denominator(PHASE_OFFSET_MAX_STARTS)
+    approx = Fraction(fraction).limit_denominator(PHASE_OFFSET_MAX_DENOMINATOR)
     if (0 < approx < 1 and approx.denominator > 1
             and abs(float(approx) - fraction) <= PHASE_OFFSET_FRACTION_TOL):
         return f"{approx.numerator}/{approx.denominator}"
@@ -92,10 +102,13 @@ def phase_offset_fraction_text(fraction: float) -> str:
 def phase_offset_readout(steps, distance, fraction, formats) -> str:
     """Operator-facing text for a live thread-phase offset.
 
-    BOTH NUMBERS, for the reason ElsFsm.phase_offset_display gives: the
-    distance is what the operator typed and can check against a dial, the
-    fraction is what says "this is start 2 of 3". Either alone leaves them
-    doing modular arithmetic at the machine or unable to verify the entry.
+    BOTH NUMBERS, for the reason ElsFsm.phase_offset_display gives, with the
+    distance first. Step-overs all go one way, so the total IS the widening:
+    how far the groove has grown past the width of the cutter, measurable on
+    the part. The fraction trails it as the aliasing bound — the share of the
+    one pitch an offset may accumulate before it is refused. On this strip the
+    distance already leads by position; the modal, which had them as co-equal
+    halves of one line, separates them by size and weight instead.
     """
     try:
         pos_fmt = formats.position_format or "{:+0.3f}"
@@ -160,7 +173,7 @@ class ElsUiController(EventDispatcher):
     notice_text         = StringProperty("")
     notice_severity     = StringProperty("")
 
-    # ── Thread-phase offset (multi-start threading) ────────────────────
+    # ── Thread-phase offset (widening a groove past the cutter) ────────
     # True whenever elsStop.phaseOffsetSteps is nonzero, i.e. the machine is
     # cutting at a DELIBERATE phase shift. Persistent job state, not an event:
     # it survives every pass until the operator clears it or the firmware wipes

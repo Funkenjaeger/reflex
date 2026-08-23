@@ -647,13 +647,21 @@ class ElsFsm:
         self.hal.set_thread_pitch_steps(thread_pitch_steps)
         self.hal.set_z_counts_per_pitch(z_counts_per_pitch)
 
-    # ——— Thread-phase offset (multi-start threading) ———
-    # A multi-start thread is N threads cut from ONE datum, each one pitch/N out
-    # of phase with the last. Rather than re-index the workpiece between starts,
-    # the operator shifts the controller's idea of phase and cuts the next start
-    # from the same reference. elsStop.phaseOffsetSteps holds the live
-    # cumulative total; the register comment in fw/Core/Inc/Ramps.h is the
-    # authority on what the firmware does with it.
+    # ——— Thread-phase offset (widening a groove past the cutter's width) ———
+    # The operator has a tool narrower than the thread form he wants. He cuts
+    # the groove, shifts the controller's idea of phase by a small step-over,
+    # and cuts again, until the groove reaches the width he is after. Nothing
+    # is re-indexed and the datum is never re-established.
+    # elsStop.phaseOffsetSteps holds the live cumulative total; the register
+    # comment in fw/Core/Inc/Ramps.h is the authority on what the firmware does
+    # with it.
+    #
+    # THE PRIMITIVE IS GENERAL AND THE REFUSALS ARE ABOUT THE MATH, not about
+    # widening: everything below is "an offset larger than a pitch aliases",
+    # "the frame has no thread phase", "the firmware would eat this silently".
+    # els_phase.h names a second source that will feed the same term (the
+    # X-depth-derived compound infeed, 6a77c598); it will reuse this path
+    # unchanged.
     #
     # ACCUMULATION LIVES HERE, NOT IN FIRMWARE. The firmware holds ONE absolute
     # total and replaces it on every apply, which is exactly what makes Clear an
@@ -663,6 +671,7 @@ class ElsFsm:
     # would happily survive a job change the machine already discarded.
 
     PHASE_OFFSET_OK         = 'ok'
+    PHASE_OFFSET_READ_FAILED = 'read_failed'
     PHASE_OFFSET_OFFLINE    = 'offline'
     PHASE_OFFSET_NO_JOB     = 'no_job'
     PHASE_OFFSET_NO_PITCH   = 'no_pitch'
@@ -713,6 +722,14 @@ class ElsFsm:
         """The live total the FIRMWARE is applying, in leadscrew steps."""
         return self.hal.read_phase_offset_steps()
 
+    def reads_baseline(self) -> int:
+        """Snapshot for detecting fabricated reads; see ElsStopHal."""
+        return self.hal.reads_baseline()
+
+    def reads_fabricated_since(self, baseline: int) -> bool:
+        """True if any read since `baseline` was fabricated rather than read."""
+        return self.hal.reads_fabricated_since(baseline)
+
     def phase_offset_seq(self) -> int:
         """Ack counter. Capture before an apply, edge-detect after."""
         return self.hal.read_phase_offset_seq()
@@ -737,19 +754,28 @@ class ElsFsm:
     def pitch_display(self) -> float:
         """One thread pitch as a distance in display units.
 
-        The number a "1/2 pitch" or "1/3 pitch" entry is computed from, so it
-        comes from the same place the refusal bound does.
+        The at-one-pitch refusal bound, expressed in the units the operator's
+        entries are in, and derived from the same thread_pitch_steps() the
+        refusal itself uses so the two cannot disagree.
+
+        NO PRODUCTION CALLER since the fill-from-a-fraction buttons came out
+        (2026-08-23) — those were the only thing that needed a pitch as a
+        distance. Kept because the bound is a real quantity a surface may yet
+        want to name, and because its agreement with the refusal is worth a
+        test either way.
         """
         return self.steps_to_display(int(round(self.thread_pitch_steps())))
 
     def phase_offset_display(self):
         """(distance in display units, fraction of one pitch) for the total.
 
-        Both numbers, because they answer different questions: the distance is
-        the thing the operator typed and can check against a dial, and the
-        fraction is the thing that says "this is start 2 of 3". A readout with
-        only the distance makes the operator do modular arithmetic at the
-        machine; only the fraction makes the entry unverifiable.
+        Both numbers, because they answer different questions. The DISTANCE is
+        how far the groove has been widened so far — and since every step-over
+        goes the same way, that is not a proxy for the widening, it IS the
+        widening, measurable on the part. The FRACTION is the aliasing bound: how
+        much of the one pitch an offset may accumulate has been spent. A
+        readout with only the distance hides how close the total is to the
+        refusal; only the fraction makes the entry unverifiable.
         """
         steps = self.phase_offset_steps()
         distance = self.steps_to_display(steps)
@@ -782,15 +808,20 @@ class ElsFsm:
 
         REFUSES RATHER THAN CLAMPS AT ONE PITCH (decided 2026-08-22). A total of
         exactly one pitch is a no-op and 1.5 pitches is indistinguishable from
-        0.5, so clamping would silently hand back a different thread start than
-        the one asked for — on a 3-start thread, the wrong start, cut in metal
-        before anything looks wrong. Refusing states the reason instead.
+        0.5, so clamping would silently put the cut somewhere other than where
+        the operator asked — in metal, before anything looks wrong. The bound
+        is the ALIASING bound and has nothing to do with what the offset is
+        being used for; it holds for any source of the term.
 
-        ADVANCE-ONLY. A negative entry is refused, not applied. The math is
-        asymmetric: a negative offset does not step the phase back by |offset|,
-        the forward bias turns it into a forward jog of pitch-|offset|
-        (els_phase.h, T5). A symmetric +/- control would therefore misrepresent
-        what it does, and 'subtract' is available anyway — enter the complement.
+        ADVANCE-ONLY, BECAUSE THE WORK IS. Widening runs one way: the operator
+        opens one side of the groove and keeps stepping over until it is wide
+        enough. There is no signed workflow to support, so a negative entry is
+        a slip, and it is refused BY NAME rather than quietly absoluted — the
+        math is asymmetric (a negative offset does not step the phase back by
+        |offset|; the forward bias turns it into a forward jog of pitch-|offset|,
+        els_phase.h T5, which cuts the flank the operator was not opening), so
+        silently 'fixing' the sign would either move the tool somewhere unasked
+        or hide the slip.
         """
         blocked = self._phase_offset_blockers()
         if blocked != self.PHASE_OFFSET_OK:
@@ -806,7 +837,23 @@ class ElsFsm:
         per_unit = self._leadscrew_steps_per_display_unit()
         # ROUND ONCE, at the end: the entry is exact up to here.
         added = int(round(entry * per_unit))
-        new_total = self.phase_offset_steps() + added
+
+        # THE TOTAL IS READ, NOT REMEMBERED, so a fabricated read poisons the
+        # sum. A failed frame returns 0, making new_total = 0 + added: the
+        # firmware's running total silently collapses to just this one
+        # step-over, every earlier one is discarded, and the operator is told
+        # "Applied". The groove then gets widened by one step where they had
+        # asked for five.
+        #
+        # The blockers above already refuse a DISCONNECTED controller, but
+        # board.connected is a Kivy property that cannot change during this
+        # synchronous call, so a frame failing midway through the apply would
+        # not move it. The counter is the only thing that sees that.
+        baseline = self.reads_baseline()
+        total_now = self.phase_offset_steps()
+        if self.reads_fabricated_since(baseline):
+            return self.PHASE_OFFSET_READ_FAILED
+        new_total = total_now + added
 
         pitch = self.thread_pitch_steps()
         if new_total >= pitch:

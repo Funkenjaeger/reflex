@@ -95,24 +95,26 @@ like `calSeq` — never poll `latchCommand`. Operator doc:
 [`reflex/help/els_thread_resync.md`](reflex/help/els_thread_resync.md);
 emulator proof: `tests/system/test_els_thread_resync.py`.
 
-## Multi-start threads (thread-phase offset)
+## Widening a groove past the cutter (thread-phase offset)
 
-Cutting a 2- or 3-start thread without re-indexing the workpiece: cut every start from the same reference, moving the controller's idea of thread phase by pitch/N between them. The firmware side is `elsStop.phaseOffsetSteps` (see `fw/ARCHITECTURE.md` → *Thread-phase offset*); Python owns three things it deliberately does not.
+Cutting a thread groove wider than the tool that cuts it: cut the groove, advance the controller's idea of thread phase by a step-over smaller than the cutter, cut again, repeat until the groove is the width you want. The workpiece is never re-indexed and the datum is never re-established. The firmware side is `elsStop.phaseOffsetSteps` (see `fw/ARCHITECTURE.md` → *Thread-phase offset*); Python owns three things it deliberately does not.
+
+The primitive is general — it displaces thread phase by a distance, and says nothing about why. Multi-start threading is a *different* feature that will be built semantically (pitch plus a number of starts) rather than on raw fractions of a pitch, and the operator-entered offset here is only the first of two sources named in `fw/Core/Inc/els_phase.h`; the second is the X-depth-derived compound infeed (6a77c598), which will feed the same `Pending` path.
 
 **Unit conversion.** The operator enters a distance in display units; the register wants leadscrew steps. `ElsFsm._leadscrew_steps_per_display_unit()` composes `servo.ratioNum/Den` (mm per step) with `formats.factor` (display units per mm), both exact `Fraction`s, and rounds **once** at the end.
 
-**Accumulation.** The firmware holds one absolute total and replaces it on every apply, so the running total is built here — read `phaseOffsetSteps`, add the entry, write the sum back. It is read from the firmware and never from a UI-side copy, because the firmware clears the total on the `enable` 0→1 edge and a local copy would happily carry a half-pitch shift into the next job.
+**Accumulation.** The firmware holds one absolute total and replaces it on every apply, so the running total is built here — read `phaseOffsetSteps`, add the entry, write the sum back. It is read from the firmware and never from a UI-side copy, because the firmware clears the total on the `enable` 0→1 edge and a local copy would happily carry a shift into the next job. Since every step-over goes the same way, that total *is* the widening: how far the groove has grown past the width of the cutter, measurable on the part. It is the headline of both readouts for that reason, with fraction-of-a-pitch demoted beside it to the aliasing bound.
 
 **The refusals**, all in `ElsFsm.apply_phase_offset()`, each returning its own `PHASE_OFFSET_*` code so the UI can state a reason rather than fail silently:
 
-- **At one pitch — refused, not clamped.** One pitch of offset is a no-op and 1.5 pitches is indistinguishable from 0.5. Clamping would hand back a different thread start than the one asked for, in metal, before anything looks wrong.
-- **Negative entries — refused.** Entry is advance-only. A negative offset does not step the phase back by `|offset|`; the forward bias turns it into a forward jog of `pitch − |offset|` (`els_phase.h`, T5), so a symmetric ± control would misrepresent what it does.
+- **At one pitch — refused, not clamped.** This is the ALIASING bound, independent of what the offset is for: one pitch of offset is a no-op and 1.5 pitches is indistinguishable from 0.5. Clamping would put the cut somewhere other than where the operator asked, in metal, before anything looks wrong.
+- **Negative entries — refused.** Entry is advance-only because the work is: widening runs one way, opening a single side of the groove until it is wide enough, so there is no signed workflow to support and a negative entry is a slip. Refused by name rather than absoluted, because the math is asymmetric — the forward bias turns `−X` into a forward jog of `pitch − X` (`els_phase.h`, T5), a real cut in the same groove taking the flank the operator was *not* opening.
 - **Turning, or a zero pitch** — there is no thread phase to shift, and the firmware is sent `threadPitchSteps = 0`.
 - **Outside a job** — the firmware consumes the command *without* acking when `enable == 0`, and an absent ack is indistinguishable from a dropped frame. Refusing here is what turns that silence into a sentence on screen.
 
 Proof: `tests/fsms/test_els_phase_offset.py` (25 cases, nine mutations applied and killed) and `fw/emulator/test/els_phase_offset_command_test.cpp` (eight killed).
 
-**Not yet verified on hardware,** including the frame caveat in the firmware doc — on a `cuttingDir == −1` machine a given entry selects the complementary start.
+**Not yet verified on hardware,** including the frame caveat in the firmware doc — on a `cuttingDir == −1` machine a given entry opens up the *opposite flank* of the groove from the one the operator pictured.
 
 ## Protocol version
 

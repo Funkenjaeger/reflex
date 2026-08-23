@@ -60,10 +60,42 @@ class FakeHal:
         self._latch_z_skew = latch_z_skew
         self._ack_reference_latched = ack_reference_latched
 
+        # Fabricated-read accounting, modelled rather than mocked: a stub that
+        # answered reads_fabricated_since() with a truthy Mock would make every
+        # guarded poll discard itself, and these tests would pass for the wrong
+        # reason.
+        self.read_failures = 0
+        # When set, every read below answers 0 AND counts itself -- exactly
+        # what production does behind a failed frame or a dropped link
+        # (communication.py returns 0 and increments; ElsStopHal._no_link does
+        # the same when there is no link at all). Modelled at the moment of the
+        # read rather than as a counter bumped beforehand, because the guard
+        # samples its baseline at the top of the poll: a fake that incremented
+        # early would leave the counter still DURING the reads and the guard
+        # would never trip -- which is exactly how the first version of these
+        # tests passed against an unguarded poller.
+        self.link_broken = False
+
         self.latch_command = 0
         self.latch_seq = 4      # non-zero baseline: a machine that has latched before
         self.latched_z = 0
         self.latched_spindle = 0
+
+    def reads_baseline(self):
+        return self.read_failures
+
+    def reads_fabricated_since(self, baseline):
+        return self.read_failures != baseline
+
+    def break_link(self):
+        """From here every read fabricates a zero and counts itself."""
+        self.link_broken = True
+
+    def _fabricate(self, real):
+        if self.link_broken:
+            self.read_failures += 1
+            return 0
+        return real
 
     def read_protocol_version(self):
         return self._protocol_version
@@ -85,13 +117,13 @@ class FakeHal:
             self.latch_seq += 1
 
     def read_latch_seq(self):
-        return self.latch_seq
+        return self._fabricate(self.latch_seq)
 
     def read_latched_z(self):
-        return self.latched_z
+        return self._fabricate(self.latched_z)
 
     def read_latched_spindle(self):
-        return self.latched_spindle
+        return self._fabricate(self.latched_spindle)
 
 
 def _els(tol=3):
@@ -315,3 +347,56 @@ def test_ack_without_reference_is_refused():
     assert rc.request_latch()
     rc.poll()
     assert rc.state == ResyncState.REFUSED
+
+
+# ─── a fabricated seq is not an ack ───────────────────────────────────────
+# The command/ack contract rests on "the absent ack IS the refusal", which only
+# holds if a seq the controller never sent cannot impersonate one. A failed
+# frame or a dropped link returns 0 for latchSeq, and 0 differs from any
+# nonzero baseline -- so without the guard the wizard announces "Thread
+# reference latched" for a latch the firmware refused.
+
+def test_a_fabricated_seq_is_not_taken_for_a_latch_ack():
+    rc, machine, hal = _controller()
+    rc.begin_alignment()
+    _dwell(rc)
+    rc.request_latch()
+    assert rc.state == ResyncState.LATCH_REQUESTED
+
+    hal.break_link()              # every read from here answers with fiction
+    rc.poll()
+
+    assert rc.state == ResyncState.LATCH_REQUESTED, (
+        "a fabricated seq was taken for the controller's acknowledgement")
+    assert "latched" not in rc.message.lower()
+
+
+def test_a_fabricated_seq_does_not_raise_a_false_red_flag():
+    """The other way it lands: the cross-check reads latchedZ through the same
+    door, so fabricated zeros compared against the watched baseline accuse a
+    healthy Z scale of losing custody. Sending the operator to inspect wiring
+    because of one dropped frame is its own kind of damage."""
+    rc, machine, hal = _controller()
+    rc.begin_alignment()
+    _dwell(rc)
+    rc.request_latch()
+
+    hal.break_link()
+    rc.poll()
+
+    assert rc.state != ResyncState.RED_FLAG
+
+
+def test_a_link_that_never_recovers_still_times_out():
+    """Discarding polls must not become an infinite wait."""
+    rc, machine, hal = _controller()
+    rc.begin_alignment()
+    _dwell(rc)
+    rc.request_latch()
+
+    for _ in range(ThreadResync.LATCH_TIMEOUT_POLLS + 2):
+        hal.break_link()
+        rc.poll()
+
+    assert rc.state == ResyncState.REFUSED
+    assert "nothing was latched" in rc.message.lower()

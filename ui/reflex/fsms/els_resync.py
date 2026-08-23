@@ -273,7 +273,30 @@ class ThreadResync:
         self._last_spindle = current
 
     def _poll_latch_ack(self) -> None:
-        if self._hal.read_latch_seq() == self._baseline_seq:
+        # A FABRICATED SEQ IS NOT AN ACK -- and here the consequence is the
+        # worst in either feature. A failed frame or a dropped link returns 0
+        # for latchSeq, which differs from any nonzero baseline, so the wizard
+        # would announce "Thread reference latched" for a latch the firmware
+        # refused. The cross-check below reads latchedZ/latchedSpindle through
+        # the same door, so on a dead link it compares fabricated zeros against
+        # the watched baseline and reports either a false success or a false
+        # RED FLAG telling the operator their Z scale has lost custody.
+        #
+        # Treated as "no ack yet" rather than as a failure: the timeout below
+        # is already the honest way to give up, and it keeps one exit path.
+        baseline = self._hal.reads_baseline()
+        latch_seq = self._hal.read_latch_seq()
+        if self._hal.reads_fabricated_since(baseline):
+            self._latch_polls += 1
+            if self._latch_polls >= self.LATCH_TIMEOUT_POLLS:
+                self._refuse(
+                    "Lost contact with the controller while waiting for the "
+                    "latch. Nothing was latched. Check the connection and "
+                    "retry."
+                )
+            return
+
+        if latch_seq == self._baseline_seq:
             self._latch_polls += 1
             if self._latch_polls >= self.LATCH_TIMEOUT_POLLS:
                 self._refuse(

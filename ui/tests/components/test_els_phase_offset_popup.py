@@ -56,6 +56,10 @@ def fsm():
     # the wrong distance back, instead of the right one by construction.
     f.steps_to_display.side_effect = lambda steps: float(steps) / STEPS_PER_MM
     f.pitch_display.side_effect = lambda: float(f.thread_pitch_steps()) / STEPS_PER_MM
+    # Healthy reads by default. Left to MagicMock, reads_fabricated_since()
+    # answers with a truthy Mock and every ack poll discards itself.
+    f.reads_baseline.return_value = 0
+    f.reads_fabricated_since.return_value = False
     f.apply_phase_offset.return_value = ElsFsm.PHASE_OFFSET_OK
     f.clear_phase_offset.return_value = ElsFsm.PHASE_OFFSET_OK
     return f
@@ -73,14 +77,32 @@ def popup(running_app, fsm):
 
 # ── the running total ────────────────────────────────────────────────
 def test_total_shows_both_the_distance_and_the_fraction(popup, fsm):
-    """Distance alone leaves modular arithmetic to be done at the machine;
-    fraction alone leaves the entry unverifiable against a dial."""
+    """Both numbers, in two properties. The distance is total widening so far —
+    the answer to "is the groove wide enough yet" and the thing checkable
+    against a dial. The fraction is the aliasing bound, kept because dropping
+    it removes the only warning that the total is nearing a full pitch."""
     fsm.phase_offset_display.return_value = (0.75, 0.5)
     popup._refresh_total()
     assert "0.750" in popup.total_text
     assert "mm" in popup.total_text
-    assert "1/2" in popup.total_text
-    assert "pitch" in popup.total_text
+    assert "1/2" in popup.fraction_text
+    assert "pitch" in popup.fraction_text
+
+
+def test_the_distance_leads_and_the_fraction_is_subordinate(popup, fsm):
+    """The fraction is NOT a width, and the screen must not present it as a
+    peer of the one that is. It lives in its own property so the kv can render
+    it smaller and dimmer; a single combined line — which is what this was
+    until the multi-start framing was corrected — puts a limit gauge at the
+    same weight as the measurement and invites the operator to work to it."""
+    fsm.phase_offset_display.return_value = (0.100, 1.0 / 15.0)
+    popup._refresh_total()
+    assert "0.100" in popup.total_text
+    # The headline carries the distance and NOTHING about pitch fractions.
+    assert "pitch" not in popup.total_text
+    assert "0.100" not in popup.fraction_text
+    # And the bound is named where the fraction is, so the number has a scale.
+    assert "pitch" in popup.fraction_text
 
 
 def test_the_fraction_is_named_by_the_SAME_rule_the_status_strip_uses(popup, fsm):
@@ -94,16 +116,16 @@ def test_the_fraction_is_named_by_the_SAME_rule_the_status_strip_uses(popup, fsm
     for fraction in (0.5, 1.0 / 3.0, 0.25, 0.2755):
         fsm.phase_offset_display.return_value = (0.1, fraction)
         popup._refresh_total()
-        assert phase_offset_fraction_text(fraction) in popup.total_text
+        assert phase_offset_fraction_text(fraction) in popup.fraction_text
 
     # And concretely, so the shared rule cannot quietly become a no-op:
     fsm.phase_offset_display.return_value = (0.1, 1.0 / 3.0)
     popup._refresh_total()
-    assert "1/3" in popup.total_text
+    assert "1/3" in popup.fraction_text
 
     fsm.phase_offset_display.return_value = (0.1, 0.2755)
     popup._refresh_total()
-    assert "0.276" in popup.total_text  # not a clean division: say so
+    assert "0.276" in popup.fraction_text  # not a clean division: say so
 
 
 def test_total_is_reread_from_the_controller_not_accumulated(popup, fsm):
@@ -123,6 +145,9 @@ def test_total_survives_an_unreadable_controller(popup, fsm):
     fsm.phase_offset_display.side_effect = AttributeError("no spindle axis")
     popup._refresh_total()
     assert "unavailable" in popup.total_text
+    # And the bound line is BLANKED rather than left showing the last fraction
+    # it managed to read, which would qualify a total that is not on screen.
+    assert popup.fraction_text == ""
 
 
 # ── refusals ─────────────────────────────────────────────────────────
@@ -344,73 +369,42 @@ def test_a_second_command_cannot_start_while_one_is_in_flight(popup, fsm):
     assert fsm.apply_phase_offset.call_count == 1
 
 
-# ── fraction fill ────────────────────────────────────────────────────
-def test_fraction_fill_uses_the_fsm_pitch_and_converter(popup, fsm):
-    """1/2 of a 1.5 mm pitch is 0.75 mm, and both halves of that sum have to
-    come from the FSM — the popup owning either one is how a fill button and
-    the running total end up disagreeing."""
-    popup.fill_fraction(2)
-    fsm.thread_pitch_steps.assert_called()
-    assert popup.entry == pytest.approx(0.75)
+# ── the entry ──────────────────────────────────────────
+# THE FILL-FROM-A-FRACTION BUTTONS ARE GONE, and with them the seven tests that
+# covered them. They offered 1/2, 1/3 and 1/4 of a pitch — multi-start
+# step-overs, from the framing this feature was built under and which was
+# corrected 2026-08-23 to what it is actually for: widening a groove past the
+# width of the cutter. There is no equivalent number the software can compute,
+# because nothing on this machine knows how wide the cutter is, so the row was
+# removed rather than refilled with invented presets.
+#
+# What those tests really guarded is kept below in the form that still applies:
+# that what the screen SHOWS is what the FSM is SENT. The rest — "a fill does
+# not apply", "a fill without a pitch says so" — protected a control that no
+# longer exists, and the refusal paths they reached are covered for every code
+# by test_a_refusal_never_renders_as_success_or_as_a_bare_code.
 
-
-@pytest.mark.parametrize("denominator,expected", [(2, 0.75), (3, 0.5), (4, 0.375)])
-def test_fraction_fill_covers_the_common_multi_starts(popup, denominator, expected):
-    popup.fill_fraction(denominator)
-    assert popup.entry == pytest.approx(expected)
-
-
-def test_fraction_fill_does_not_apply(popup, fsm):
-    """A button that both computed and committed would make a mis-tap a phase
-    change on a job in progress."""
-    popup.fill_fraction(2)
-    fsm.apply_phase_offset.assert_not_called()
-    assert popup.state == "entry"
-
-
-def test_the_filled_number_is_the_number_that_gets_applied(popup, fsm):
+def test_the_displayed_number_is_the_number_that_gets_applied(popup, fsm):
     """The entry field's job is to be checkable against a dial before it is
-    committed, so what is displayed and what is sent must not diverge."""
-    popup.fill_fraction(3)
+    committed, so what is on the button and what goes to the FSM must not
+    diverge. Asserted at a value the display format carries exactly, so the
+    only way this fails is the popup altering the entry on its way out."""
+    popup.entry = 0.075
     displayed = popup.entry_text
     popup.apply()
     sent = fsm.apply_phase_offset.call_args[0][0]
     assert float(displayed) == pytest.approx(sent)
 
 
-def test_fraction_fill_without_a_pitch_says_so(popup, fsm):
-    fsm.thread_pitch_steps.return_value = 0.0
-    popup.fill_fraction(2)
-    assert popup.state == "refused"
-    assert popup.message == REFUSAL_TEXT[ElsFsm.PHASE_OFFSET_NO_PITCH]
-    assert popup.entry == 0.0
-
-
-def test_fraction_fill_without_geometry_says_so(popup, fsm):
-    # The FSM reports missing geometry as a 0.0 conversion rather than by
-    # raising -- it is read from a clock callback, where an exception would
-    # stop the update loop instead of showing anything.
-    fsm.steps_to_display.side_effect = None
-    fsm.steps_to_display.return_value = 0.0
-    popup.fill_fraction(2)
-    assert popup.state == "refused"
-    assert popup.message == REFUSAL_TEXT[ElsFsm.PHASE_OFFSET_NO_GEOMETRY]
-
-
-def test_an_unmapped_spindle_axis_reports_missing_geometry(popup, fsm):
-    """thread_pitch_steps() reaches through els.get_spindle_axis(), which is
-    None until an axis is mapped.
-
-    It USED to raise AttributeError there, which this popup caught. Since
-    2026-08-22 the FSM catches it and returns 0.0 instead — the readout is
-    polled from a Kivy clock callback, so a raise would stop the update loop
-    rather than surface as a message. This pins the popup against the current
-    contract: no pitch, stated as no pitch.
-    """
-    fsm.thread_pitch_steps.return_value = 0.0
-    popup.fill_fraction(2)
-    assert popup.state == "refused"
-    assert popup.message == REFUSAL_TEXT[ElsFsm.PHASE_OFFSET_NO_PITCH]
+def test_the_entry_is_not_rounded_behind_the_operators_back(popup, fsm):
+    """A keypad value finer than the display format still reaches the FSM
+    whole: it converts to leadscrew steps with exact Fractions and rounds ONCE
+    at the end, so pre-rounding here would spend that precision twice. The
+    BUTTON is allowed to render the format's three digits; the write is not."""
+    popup.entry = 0.0625
+    assert popup.entry_text == "0.062" or popup.entry_text == "0.063"
+    popup.apply()
+    assert fsm.apply_phase_offset.call_args[0][0] == pytest.approx(0.0625)
 
 
 def test_the_keypad_writes_back_into_the_entry_property(popup):

@@ -35,7 +35,9 @@ WHERE THE HARDWARE BOUNDARY IS STUBBED, AND ONLY THERE.
 IT IS ALSO THE REGRESSION CHECK FOR SIX LAYOUT/SEVERITY DEFECTS fixed
 2026-08-23, found by rendering these same two modals side by side:
     D1  the wizard's body overflowed its fixed box and drew over its own title
-    D2  "Fill entry:" was clipped to a half-cut "Fill" over "entr"
+    D2  "Fill entry:" was clipped to a half-cut "Fill" over "entr" -- RETIRED
+        2026-08-23: that caption belonged to the fill-from-a-fraction row, which
+        came out with the multi-start framing. Nothing left to measure.
     D3  four of the eight phase-offset messages hid their last, actionable
         sentence below the fold of a 92 px scroller
     D4  the wizard rendered a "Do not cut" custody fault in the same neutral
@@ -87,7 +89,14 @@ SCRATCH = os.path.join(OUT_DIR, "_wt_scratch.png")
 
 MODE_ELS = 2
 AXIS_NAMES = ("Z", "X", "S")
-STARTS = 3                 # a 3-start thread: the offset is one third of a pitch
+# A realistic groove-widening job: a cutter about 0.05 mm narrower than the
+# groove wanted, so each step-over is 0.05 mm -- 20 leadscrew steps against this
+# rig's 400 steps/mm, a thirtieth of the 1.5 mm pitch. Deliberately NOT the
+# 1/2-1/3-1/4 pitch these shots used to render: those are multi-start amounts,
+# most of the way round to the next groove, and the framing they came from was
+# corrected 2026-08-23.
+STEP_OVER_MM = 0.05
+PITCH_MM = 1.5             # the rig's own thread pitch, set in main() below
 Z_BASELINE = 12000         # arbitrary but realistic raw encoder counts
 SPINDLE_BASELINE = 8192
 
@@ -250,7 +259,7 @@ def section_strip():
     settle()
     shot("wt_strip_off", "no offset set")
 
-    set_strip_offset(1.0 / STARTS)
+    set_strip_offset(2 * STEP_OVER_MM / PITCH_MM)
     settle()
     record("advanced-bar status strip",
            phase_offset_text=app.els_uic.phase_offset_text,
@@ -258,7 +267,7 @@ def section_strip():
     strip = bar.ids.status_overlay.__self__
     print(f"  strip rect: x={round(strip.x)} w={round(strip.width)} "
           f"y={round(strip.y)} h={round(strip.height)}")
-    shot("wt_strip_on", "offset 1/3 of a pitch")
+    shot("wt_strip_on", "groove widened by two 0.05 mm step-overs")
 
     # ── The REJECTED full-width variant, rebuilt for the comparison figure.
     # els_advbar.kv keeps the strip inset between the Engage card and the mode
@@ -525,64 +534,42 @@ def section_phase_offset():
             "the link dropped again before apply() read it")
 
     pitch = fsm.thread_pitch_steps()
-    third = int(round(pitch / STARTS))
+    mm_per_step = fsm.steps_to_display(1)
+    step = int(round(STEP_OVER_MM / mm_per_step)) if mm_per_step else 1
     print(f"  is_threading={app.els_uic.is_threading}  "
-          f"thread pitch={pitch:.1f} steps  1/3 = {third} steps")
+          f"thread pitch={pitch:.1f} steps  {STEP_OVER_MM} mm step-over = "
+          f"{step} steps")
 
     pop = PhaseOffsetPopup()
     pop.open()
     settle(20)
     msg_sv = pop.ids["sv_message"]
 
+    # ── THE FILL-ROW MEASUREMENT (D2) IS GONE, AND ON PURPOSE. It measured the
+    # "Fill entry:" caption beside the 1/2, 1/3 and 1/4 pitch buttons; that row
+    # was removed 2026-08-23 when the feature's framing was corrected from
+    # multi-start threading to groove widening (those fractions are multi-start
+    # step-overs, and nothing in this machine knows the cutter width a widening
+    # preset would need). A check whose subject no longer exists cannot fail
+    # honestly, so it is deleted rather than left to report a missing widget.
+
     # ── 8. entry, total zero.
-    fill_label = None
-    for w in walk(pop):
-        if getattr(w, "text", "") == "Fill entry:":
-            fill_label = w
-    if fill_label is not None:
-        # Compared against the label's TEXT area, not its widget width: the
-        # caption carries padding: dp(16), 0, so 32 px of the allotted width
-        # was never available to the string. The original measurement here
-        # compared against the widget width and still called it a clip -- it
-        # was UNDERSTATING the shortfall by a full 32 px.
-        #
-        # The width comparison holds BY CONSTRUCTION while the fix is in place
-        # (width is bound to texture_size, which is text + padding), so the
-        # load-bearing half of this check is the one-line test: a caption that
-        # goes back to a fraction of the row wraps, and a wrapped texture is
-        # two line-heights tall in a row that has room for one.
-        pad = fill_label.padding
-        pad = (pad[0] + pad[2]) if len(pad) >= 4 else 2 * pad[0]
-        nat = fill_label._label.get_extents(fill_label.text)[0]
-        room = fill_label.width - pad
-        one_line = round(fill_label.texture_size[1]) <= round(line_height(fill_label) + 2)
-        fits = "fits on one line" if nat <= room and one_line else "WRAPS AND CLIPS"
-        detail = (f'"Fill entry:" natural width {round(nat)} px vs '
-                  f'{round(room)} px of text area ({round(fill_label.width)} px '
-                  f'wide less {round(pad)} px padding); texture '
-                  f'{round(fill_label.texture_size[1])} px vs one line at '
-                  f'{round(line_height(fill_label))} px -> {fits}')
-        MEASUREMENTS.append(("offset/fill-label", detail))
-        print(f"  FIT [offset/fill-label] {detail}")
-        check("D2", "offset/fill-label", nat <= room and one_line, detail)
-    else:
-        check("D2", "offset/fill-label", False,
-              'no widget with text "Fill entry:" -- has the row changed shape?')
     record("offset / entry, total zero", state=pop.state,
-           total=pop.total_text, entry_text=pop.entry_text,
-           message=pop.message)
+           total=pop.total_text, fraction=pop.fraction_text,
+           entry_text=pop.entry_text, message=pop.message)
     measure_fit("offset/entry", pop, "lbl_message", "sv_message", "D3")
     shot("wt_offset_entry_zero")
 
-    # ── 9. entry, nonzero total. The total is the firmware's; the entry is
-    # filled by the production 1/3-pitch button.
-    ctl["steps"] = third
+    # ── 9. entry, nonzero total. The total is the firmware's -- one step-over
+    # already applied -- and the entry is the next one, typed rather than
+    # filled from a button, because there are no fill buttons any more.
+    ctl["steps"] = step
     pop._refresh_total()
-    pop.fill_fraction(STARTS)
+    pop.entry = float(fsm.steps_to_display(step))
     settle(6)
-    record("offset / entry, total 1/3 of a pitch", state=pop.state,
-           total=pop.total_text, entry_text=pop.entry_text,
-           message=pop.message)
+    record(f"offset / entry, groove widened by {STEP_OVER_MM} mm",
+           state=pop.state, total=pop.total_text, fraction=pop.fraction_text,
+           entry_text=pop.entry_text, message=pop.message)
     shot("wt_offset_entry_total")
 
     # ── 10. waiting for the ack. The modal's own tick would time this out
@@ -605,28 +592,34 @@ def section_phase_offset():
     pop._tick(0.0)
     settle(6)
     record("offset / applied", state=pop.state, total=pop.total_text,
-           message=pop.message, busy=pop.busy)
+           fraction=pop.fraction_text, message=pop.message, busy=pop.busy)
     measure_fit("offset/applied", pop, "lbl_message", "sv_message", "D3")
     shot("wt_offset_applied")
 
-    # ── 12. AT_PITCH: another third on top of two thirds. Refused by
-    # ElsFsm.apply_phase_offset for real, not selected from the table.
-    pop.entry = float(fsm.steps_to_display(third))
+    # ── 12. AT_PITCH. A widening job never gets near this bound in normal use,
+    # which is exactly why it has to be rendered: the operator meets it only
+    # when the arithmetic has already gone wrong. The total is walked to within
+    # half a step-over of a full pitch and one more step-over is applied.
+    # Refused by ElsFsm.apply_phase_offset for real, not selected from the
+    # table.
+    ctl["steps"] = int(round(pitch)) - step // 2
+    pop._refresh_total()
+    pop.entry = float(fsm.steps_to_display(step))
     apply_linked(pop)
     settle(6)
     print(f"  apply {pop.entry} on a total of {ctl['steps']}/{pitch:.0f} "
           f"steps -> {pop.state}")
     record("offset / refused AT_PITCH", state=pop.state,
-           total=pop.total_text, entry_text=pop.entry_text,
-           message=pop.message)
+           total=pop.total_text, fraction=pop.fraction_text,
+           entry_text=pop.entry_text, message=pop.message)
     measure_fit("offset/AT_PITCH", pop, "lbl_message", "sv_message", "D3")
     shot("wt_offset_refused_at_pitch")
 
     # ── 13. NEGATIVE. The keypad has a sign key (keypad.py sign_key), so a
     # minus really can be typed into this field.
-    ctl["steps"] = third
+    ctl["steps"] = step
     pop._refresh_total()
-    pop.entry = -float(fsm.steps_to_display(third))
+    pop.entry = -float(fsm.steps_to_display(step))
     apply_linked(pop)
     settle(6)
     record("offset / refused NEGATIVE", state=pop.state,
@@ -641,7 +634,7 @@ def section_phase_offset():
     ctl["enable"] = False
     ctl["steps"] = 0
     pop._refresh_total()
-    pop.entry = float(fsm.steps_to_display(third))
+    pop.entry = float(fsm.steps_to_display(step))
     apply_linked(pop)
     settle(6)
     record("offset / refused NO_JOB", state=pop.state,
@@ -929,7 +922,7 @@ def _arm(_dt):
     app.servo.leadScrewPitch = 5
     app.servo.leadScrewPitchSteps = 2000
     # 1.50 mm pitch from the real THREAD_MM table: 600 leadscrew steps to the
-    # pitch, so a 3-start's 1/3 is exactly 200 steps / 0.500 mm.
+    # pitch, so a 0.05 mm step-over is exactly 20 steps.
     els_bar.set_feed_ratio("Thread MM", 8)
 
     def _stoponly(_d):

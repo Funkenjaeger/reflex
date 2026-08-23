@@ -1,9 +1,10 @@
 """Thread-phase offset: unit conversion, accumulation, and the refusals.
 
-The feature exists to cut MULTI-START threads — N threads from one datum, each
-one pitch/N out of phase with the last — by shifting the controller's idea of
-phase instead of re-indexing the workpiece. The firmware half is pinned by
-fw/emulator/test/els_phase_offset_command_test.cpp; this file pins the host
+The feature exists to WIDEN A THREAD GROOVE PAST THE WIDTH OF THE CUTTER — cut
+the groove, shift the controller's idea of phase by a step-over smaller than
+the cutter, cut again, until the groove is the width wanted. Nothing is
+re-indexed and the datum is never re-established. The firmware half is pinned
+by fw/emulator/test/els_phase_offset_command_test.cpp; this file pins the host
 half, which owns three things the firmware deliberately does not:
 
   1. UNIT CONVERSION. The operator types a distance; the register wants
@@ -40,7 +41,7 @@ All nine were killed.
     F9 HAL writes Command before Pending           -> 1 failure
 
 F2 and F9 are the two worth keeping: both leave a UI that looks like it worked.
-F2 hands back a different thread start than the one asked for, and F9 opens the
+F2 puts the cut somewhere other than where it was asked for, and F9 opens the
 window where the ISR applies half of one number and half of another.
 """
 from fractions import Fraction
@@ -79,6 +80,11 @@ def _fsm(*, ratio_num=1, ratio_den=1000, factor=Fraction(1, 1),
     hal = MagicMock()
     hal.read_enable.return_value = enabled
     hal.read_phase_offset_steps.return_value = total_steps
+    # Healthy reads by default, stated rather than left to MagicMock -- an
+    # unstubbed reads_fabricated_since() answers with a truthy Mock, which
+    # would make every apply refuse and every test here pass vacuously.
+    hal.reads_baseline.return_value = 0
+    hal.reads_fabricated_since.return_value = False
     fsm = ElsFsm(els=els, board=board, hal=hal,
                  controller=_make_controller(is_threading=is_threading))
     return fsm, hal
@@ -162,9 +168,10 @@ def test_a_zero_entry_is_accepted_and_changes_nothing():
 # does it anyway.
 
 def test_refuses_at_exactly_one_pitch():
-    """One pitch of offset is a no-op — the groove lands on the next groove.
-    Refused rather than clamped, so the operator is never handed a different
-    thread start than the one they asked for (decision 2026-08-22)."""
+    """One pitch of offset is a no-op — the tool re-enters the same groove one
+    turn along. Refused rather than clamped, so the cut is never quietly put
+    somewhere other than where it was asked for (decision 2026-08-22). This is
+    the ALIASING bound and holds whatever the offset is being used for."""
     fsm, hal = _fsm(total_steps=PITCH_STEPS - 500)
     assert fsm.apply_phase_offset(0.5) == ElsFsm.PHASE_OFFSET_AT_PITCH
     hal.request_phase_offset.assert_not_called()
@@ -299,8 +306,14 @@ def test_steps_to_display_inverts_the_entry_conversion():
 
 
 def test_pitch_display_matches_the_refusal_bound():
-    """The '1/2 pitch' button and the at-one-pitch refusal must agree about
-    what a pitch is, or a suggested entry could be refused on arrival."""
+    """The pitch as a DISTANCE and the at-one-pitch refusal must agree about
+    what a pitch is.
+
+    It had a production caller until 2026-08-23 — the fill-from-a-fraction
+    buttons, removed with the multi-start framing — and this test named it.
+    Kept because the agreement is the property, not the caller: anything that
+    ever names the bound on screen has to name the same one the FSM enforces,
+    and a half-pitch entry has to be accepted by that enforcement."""
     fsm, _ = _fsm()
     assert fsm.pitch_display() == pytest.approx(1.5)
     half = fsm.pitch_display() / 2
@@ -357,3 +370,47 @@ def test_request_writes_nothing_while_disconnected():
     hal._board.connected = False
     hal.request_phase_offset(1234)
     assert writes == []
+
+
+# ─── fabricated reads: the total is READ, not remembered ───────────────────
+# The 2026-08-23 read-failure guard covered the pollers that DISPLAY state and
+# missed this, the one path that steers the machine. A failed frame returns 0,
+# so new_total = 0 + added: the firmware's running total silently collapses to
+# a single step-over, every earlier one is discarded, and the screen says
+# "Applied". Reproduced by Fable's adversarial review before it was fixed.
+
+def test_a_fabricated_total_read_refuses_instead_of_resetting_the_total():
+    fsm, hal = _fsm(total_steps=500)          # four step-overs already made
+    hal.reads_fabricated_since.return_value = True
+
+    assert fsm.apply_phase_offset(0.1) == ElsFsm.PHASE_OFFSET_READ_FAILED
+    hal.request_phase_offset.assert_not_called()
+
+
+def test_the_refusal_is_not_the_offline_one():
+    """A frame that failed mid-apply is NOT a disconnected controller, and the
+    two send the operator to different checks. board.connected cannot even
+    change during the synchronous apply, which is why the counter exists."""
+    fsm, hal = _fsm(total_steps=500)
+    hal.reads_fabricated_since.return_value = True
+
+    assert fsm.apply_phase_offset(0.1) != ElsFsm.PHASE_OFFSET_OFFLINE
+
+
+def test_the_baseline_is_taken_before_the_total_is_read():
+    """Sampled after, a failure DURING that read is invisible -- which is the
+    whole failure being guarded against."""
+    fsm, hal = _fsm(total_steps=500)
+    order = []
+    hal.reads_baseline.side_effect = lambda: (order.append("baseline"), 0)[1]
+    hal.read_phase_offset_steps.side_effect = lambda: (order.append("read"), 500)[1]
+
+    fsm.apply_phase_offset(0.1)
+    assert order.index("baseline") < order.index("read")
+
+
+def test_a_healthy_apply_still_goes_through():
+    """The failure mode of a too-eager guard is a machine that never applies."""
+    fsm, hal = _fsm(total_steps=500)
+    assert fsm.apply_phase_offset(0.1) == ElsFsm.PHASE_OFFSET_OK
+    hal.request_phase_offset.assert_called_once_with(600)

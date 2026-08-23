@@ -1,26 +1,53 @@
-"""Thread-phase offset entry (multi-start threading).
+"""Thread-phase offset entry (widening a groove past the cutter's width).
 
-An expert-only surface for one job: cut an N-start thread from a single datum
-by shifting the controller's idea of thread phase between starts, instead of
-re-indexing the workpiece in the chuck. The semantics belong to
-``ElsFsm.apply_phase_offset`` and the ``phaseOffset*`` register block
-(fw/Core/Inc/Ramps.h); this modal only renders them.
+An expert-only surface for one job: cut a thread groove WIDER than the tool
+that cuts it. Cut the groove, shift the controller's idea of thread phase by a
+small distance, cut again, and repeat until the groove reaches the width you
+want. The workpiece is never touched and the datum is never re-established.
+The semantics belong to ``ElsFsm.apply_phase_offset`` and the ``phaseOffset*``
+register block (fw/Core/Inc/Ramps.h); this modal only renders them.
+
+THE RUNNING TOTAL IS THE WIDENING, WHICH IS WHY THE DISTANCE LEADS
+------------------------------------------------------------------
+Step-overs all go the SAME WAY — the operator opens one side of the groove and
+keeps going until it is wide enough. So the cumulative total is not an abstract
+controller state that happens to be displayed: it is exactly how far the groove
+has grown past the width of the cutter, a distance that can be measured on the
+part. That makes it the headline, and everything else on this screen a
+qualifier of it.
+
+The fraction of a pitch is kept alongside it, subordinated: it is not a width,
+it is the SAFETY BOUND. Offsets alias at one pitch, so the fraction says how
+much of that budget the total has eaten. On a widening job it stays small; a
+fraction climbing toward one means the entries are not what the operator thinks
+they are, not that the groove is nearly finished.
+
+The software cannot compute a widening step for you, and deliberately offers no
+preset that pretends otherwise: the step-over that is correct depends on the
+width of the cutter in the toolpost, which nothing here knows.
 
 WHY THERE IS NO +/- CONTROL
 ---------------------------
-Entry is an unsigned ADVANCE. A negative offset does not step the phase back by
+Because the job does not have one. Widening runs in a single direction away
+from the groove cut first; there is no working outward from a centerline and
+no second pass "the other way". An unsigned ADVANCE is the control that matches
+that work, not a crippled half of a signed one, and the refusal below is
+catching a slip rather than fencing off a workflow.
+
+What a stray minus sign would DO is worth stating once, because the keypad has
+a sign key and the answer is not "nothing". It does not step the phase back by
 |offset|: the firmware's forward bias turns it into a forward jog of
-pitch-|offset| (els_phase.h, T5), so a symmetric control would put a label on a
-button that does not describe what the button does. Going "the other way" is
-entering the complement, and the running total on screen is what makes that
-arithmetic checkable instead of hidden.
+pitch-|offset| (els_phase.h, T5) — a real cut, in the same groove (a whole
+pitch is one turn of the same helix), taking material off the flank the
+operator was not opening. That is a mistake worth naming, which is what the
+NEGATIVE refusal does.
 
 WHY THE TOTAL IS READ BACK FROM THE CONTROLLER RATHER THAN COUNTED HERE
 -----------------------------------------------------------------------
 The firmware owns the cumulative total and clears it on the enable 0->1 edge. A
 UI-side running count would happily survive a job change the machine already
-discarded, and would then be a confident lie about which start the next pass
-lands on. So every number on this screen comes from
+discarded, and would then be a confident lie about how much the groove has
+already been widened. So every number on this screen comes from
 ``ElsFsm.phase_offset_display()`` and every entry goes to
 ``ElsFsm.apply_phase_offset()`` — no distance, pitch, fraction or refusal
 condition is worked out locally.
@@ -50,12 +77,14 @@ load_kv(__file__)
 
 
 INTRO_TEXT = (
-    "Advance the thread phase to cut the next start of a multi-start thread. "
-    "Entries add up; applying one MOVES NOTHING — it takes effect where the "
-    "tool next re-enters the thread."
+    "Advance the thread phase to widen the groove past the width of your "
+    "cutter. Entries add up; applying one MOVES NOTHING — it takes effect "
+    "where the tool next re-enters the thread."
 )
 
-ENTRY_HINT = "Enter an amount, or fill it from a fraction of the pitch."
+ENTRY_HINT = (
+    "Enter how far to step over. Only you know how wide the cutter is."
+)
 
 APPLIED_TEXT = (
     "Applied. The new total is shown above; it takes effect where the tool "
@@ -63,7 +92,7 @@ APPLIED_TEXT = (
 )
 
 CLEARED_TEXT = (
-    "Offset cleared. The controller is back on the start it began the job on."
+    "Offset cleared. The controller is back on the groove it began the job on."
 )
 
 WAITING_TEXT = "Waiting for the controller to acknowledge…"
@@ -83,7 +112,9 @@ NO_ACK_TEXT = (
 # went below the fold was in every case the LAST sentence — the one that says
 # what to do. AT_PITCH ended on "…so rather than"; NEGATIVE hid "enter the
 # rest of the pitch"; NO_ACK — which exists precisely because a dropped write
-# is otherwise silent — hid "check the ELS stop is still engaged".
+# is otherwise silent — hid "check the ELS stop is still engaged". (Those are
+# the strings of that day. The catalogue was re-cut later the same day for the
+# groove-widening framing; the budget it blew through is unchanged.)
 #
 # The layout fix is in the kv (the popup sizes to its content and the scroller
 # has a real affordance). This budget is the other half: a modal that grows to
@@ -101,6 +132,11 @@ MESSAGE_CHAR_BUDGET = MESSAGE_WRAP_CHARS * MESSAGE_LINE_BUDGET
 # cutting a thread" are different actions, and a merged message would send the
 # operator to the wrong one.
 REFUSAL_TEXT = {
+    ElsFsm.PHASE_OFFSET_READ_FAILED: (
+        "The controller did not answer cleanly while reading the total so far, "
+        "so nothing was changed. Adding to a number it never sent would throw "
+        "away the step-overs already made. Check the connection and try again."
+    ),
     ElsFsm.PHASE_OFFSET_OFFLINE: (
         "Not connected to the controller. The phase offset lives in the "
         "controller, so there is nothing here to apply it to — reconnect and "
@@ -112,9 +148,9 @@ REFUSAL_TEXT = {
         "now would be thrown away without a word."
     ),
     ElsFsm.PHASE_OFFSET_NO_PITCH: (
-        "No thread pitch is set. A phase offset shifts where a thread starts, "
-        "and turning has no thread phase to shift — choose a threading mode "
-        "and a pitch first."
+        "No thread pitch is set. A phase offset shifts where the tool "
+        "re-enters the thread, and turning has no thread phase to shift — "
+        "choose a threading mode and a pitch first."
     ),
     ElsFsm.PHASE_OFFSET_NO_GEOMETRY: (
         "The machine geometry needed to turn a distance into leadscrew steps "
@@ -122,16 +158,16 @@ REFUSAL_TEXT = {
         "right, nothing on this screen can be converted into a real distance."
     ),
     ElsFsm.PHASE_OFFSET_NEGATIVE: (
-        "Enter a plain positive distance to ADVANCE by. A minus sign does not "
-        "back the phase up — the forward bias turns it into a forward move of "
-        "one pitch minus what you typed. To reach a start behind this one, "
-        "enter the rest of the pitch, or press Clear."
+        "Step-overs only go one way. A minus sign does not back the phase up — "
+        "the forward bias turns it into a forward move of one pitch minus what "
+        "you typed, which opens the wrong side of the groove. Enter the "
+        "distance without the sign, or press Clear."
     ),
     ElsFsm.PHASE_OFFSET_AT_PITCH: (
         "That would put the total at a full pitch or more. One whole pitch is "
-        "the same start you began on, and anything past it cannot be told "
-        "apart from the leftover. Enter a smaller amount, or press Clear and "
-        "build the total again."
+        "the same place in the groove you started at, and anything past it "
+        "cannot be told apart from the leftover. Enter a smaller amount, or "
+        "press Clear and build the total again."
     ),
 }
 
@@ -141,7 +177,11 @@ class PhaseOffsetPopup(Popup):
     # "entry" | "waiting" | "applied" | "refused"
     state = StringProperty("entry")
     body_intro = StringProperty(INTRO_TEXT)
+    # TWO PROPERTIES, NOT ONE STRING. The distance is the answer to the job's
+    # question and the fraction is the safety bound; they are rendered at
+    # different sizes and weights, so they cannot share a label.
     total_text = StringProperty("")
+    fraction_text = StringProperty("")
     entry = NumericProperty(0.0)
     entry_text = StringProperty("0")
     unit_label = StringProperty("mm")
@@ -174,31 +214,13 @@ class PhaseOffsetPopup(Popup):
         self._refresh_total()
 
     # ── actions ──────────────────────────────────────────────────────
-    def fill_fraction(self, denominator: int):
-        """Put one pitch / ``denominator`` into the entry field.
-
-        Fills only — it never applies. A button that both computed and applied
-        would make a mis-tap a phase change on a job in progress.
-        """
-        if self.busy:
-            return
-        pitch_steps = self._pitch_steps()
-        if pitch_steps <= 0.0:
-            self._show(self._refusal_text(ElsFsm.PHASE_OFFSET_NO_PITCH),
-                       state="refused")
-            return
-        distance = self._steps_to_display(pitch_steps / float(denominator))
-        if distance is None:
-            self._show(self._refusal_text(ElsFsm.PHASE_OFFSET_NO_GEOMETRY),
-                       state="refused")
-            return
-        # Snapped to the readout's own precision so the number shown IS the
-        # number applied — the entry field's whole job is to let the operator
-        # check the value against a dial before committing it. The rounding
-        # error a thirded pitch carries (well under a micron) is orders below
-        # the phase error of any thread this feature is used on.
-        self.entry = self._round_to_display(distance)
-        self._show(ENTRY_HINT, state="entry")
+    # THERE IS NO FILL-FROM-A-FRACTION ROW, and its absence is deliberate
+    # rather than unfinished. It held 1/2, 1/3 and 1/4 pitch buttons, which are
+    # multi-start step-overs: a third of a pitch is most of the way round to
+    # the next groove, not a widening pass. The equivalent quantity for
+    # widening is "a bit less than the width of the cutter", and no register on
+    # this machine knows how wide the cutter is — so the entry is typed, and
+    # the only arithmetic help on screen is the running total.
 
     def edit_entry(self):
         """Open the numeric keypad on the entry field.
@@ -292,12 +314,28 @@ class PhaseOffsetPopup(Popup):
         if self.state != "waiting":
             return
 
+        # A FABRICATED SEQ IS NOT AN ACK. The whole command/ack contract rests
+        # on "the absent ack IS the refusal" -- which only holds if a seq the
+        # controller never sent cannot impersonate one. A failed frame or a
+        # dropped link both hand back 0, and 0 differs from any nonzero
+        # baseline, so without this the modal reports "Applied" for a write the
+        # firmware refused. Discarding the poll costs a tick; the timeout below
+        # still bounds the wait.
+        baseline = self._fsm.reads_baseline()
         try:
             seq = self._fsm.phase_offset_seq()
         except Exception:
             log.exception("phase offset: ack read failed")
             self.busy = False
             self._show(NO_ACK_TEXT, state="refused")
+            return
+        if self._fsm.reads_fabricated_since(baseline):
+            self._ack_polls += 1
+            if self._ack_polls >= self.ACK_TIMEOUT_POLLS:
+                log.error("phase offset: no readable ack after %d polls",
+                          self._ack_polls)
+                self.busy = False
+                self._show(NO_ACK_TEXT, state="refused")
             return
 
         if seq == self._baseline_seq:
@@ -323,11 +361,15 @@ class PhaseOffsetPopup(Popup):
     def _refresh_total(self):
         """Re-read the running total from the controller and render it.
 
-        Both halves of ``phase_offset_display()`` are shown, because they
-        answer different questions: the distance is what the operator typed and
-        can check against a dial, the fraction is what says "this is start 2 of
-        3". Either one alone leaves modular arithmetic to be done at the
-        machine or leaves the entry unverifiable.
+        BOTH halves of ``phase_offset_display()`` are shown, but not as peers.
+        The DISTANCE leads: step-overs all go one way, so the total IS the
+        widening — how far the groove has grown past the cutter, a number that
+        can be checked against a dial or measured on the part. The FRACTION
+        follows, smaller and dimmer,
+        because it is not a width — it is the aliasing bound, the share of the
+        one pitch this feature is allowed to accumulate. Dropping it would take
+        away the only warning that a total is drifting toward the point where
+        the next pass cuts the neighboring groove instead of this one.
 
         The fraction is NAMED through the same helper the advanced-bar status
         strip uses -- "1/3" when it really is a third, the raw decimal when it
@@ -339,11 +381,16 @@ class PhaseOffsetPopup(Popup):
             distance, fraction = self._fsm.phase_offset_display()
         except Exception:
             log.exception("phase offset: total unavailable")
-            self.total_text = "Offset now:  unavailable"
+            self.total_text = "Widened so far:  unavailable"
+            self.fraction_text = ""
             return
         self.total_text = (
-            f"Offset now:  {self._format_distance(distance)} {self.unit_label}"
-            f"     {phase_offset_fraction_text(fraction)} of a pitch"
+            f"Widened so far:  {self._format_distance(distance)} "
+            f"{self.unit_label}"
+        )
+        self.fraction_text = (
+            f"{phase_offset_fraction_text(fraction)} of a pitch — "
+            f"the offset is refused at a full one"
         )
 
     def _refusal_text(self, code) -> str:
@@ -363,8 +410,9 @@ class PhaseOffsetPopup(Popup):
         self.message = message
 
     # ── unit plumbing ────────────────────────────────────────────────
-    # Nothing here converts between units. `_steps_to_display` routes through
-    # the FSM's own converter and the rest is formatting: the app's configured
+    # Nothing here converts between units, and nothing here computes a
+    # distance: every number on this screen arrives from the FSM already in
+    # display units, and all that is left is formatting. The app's configured
     # position format decides how many digits a distance gets, so this modal
     # and the DRO can never disagree about what a displayed number means.
     def _sync_units(self):
@@ -376,33 +424,3 @@ class PhaseOffsetPopup(Popup):
         # an unsigned magnitude, so the sign is stripped rather than a second
         # precision rule invented here.
         return self.app.formats.position_format.format(float(value)).lstrip("+")
-
-    def _round_to_display(self, value: float) -> float:
-        return float(self._format_distance(value))
-
-    def _pitch_steps(self) -> float:
-        """One pitch in leadscrew steps; 0.0 when the machine cannot say.
-
-        Returned raw rather than folded to None, because the caller
-        distinguishes "no pitch" from "no geometry" and those are different
-        sentences to an operator: one means pick a threading mode, the other
-        means the servo gearing is wrong. ``thread_pitch_steps()`` returns 0.0
-        rather than raising for either — including the unmapped-spindle case,
-        which it did raise on until 2026-08-22.
-        """
-        return float(self._fsm.thread_pitch_steps())
-
-    def _steps_to_display(self, steps: float):
-        """Leadscrew steps -> display units, THROUGH the FSM's own converter.
-
-        Deliberately not recomputed from servo gearing and the format factor
-        here: two implementations of that conversion is precisely how a fill
-        button and the running total end up disagreeing about what half a pitch
-        is, on a screen whose only value is that the two agree.
-
-        ``steps_to_display`` is public for exactly this reason and returns 0.0
-        when the geometry is missing or degenerate, which the FSM separately
-        reports as NO_GEOMETRY on any actual apply.
-        """
-        distance = self._fsm.steps_to_display(steps)
-        return distance if distance else None

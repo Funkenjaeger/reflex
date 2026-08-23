@@ -90,6 +90,11 @@ def _make_servo(ratio_num=1, ratio_den=1, lead_screw_pitch=0.0,
 def _make_board(servo=None):
     board = MagicMock()
     board.connected = True
+    # Real read-failure accounting, deliberately not a Mock: a MagicMock makes
+    # reads_failed_since() answer with a truthy Mock, so every guarded read
+    # would discard itself and the tests would pass for the wrong reason.
+    from tests.fsms.test_ui_controller import FakeConnectionManager
+    board.connection_manager = FakeConnectionManager()
     board.servo = servo if servo is not None else _make_servo()
     # _safety_margin_display reads board.formats.factor (display-unit scale).
     board.formats = SimpleNamespace(factor=1)

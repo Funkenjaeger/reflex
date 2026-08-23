@@ -1,5 +1,5 @@
 <PhaseOffsetPopup>:
-    title: "Thread phase offset (multi-start)"
+    title: "Thread phase offset (widen a groove)"
     size_hint_x: 0.8
     size_hint_y: None
     # Not auto-dismiss: a stray tap outside the modal must not drop an apply
@@ -24,7 +24,13 @@
     # and deliberately not to `kivy.core.window.Window`, since a `#:import` of
     # that constructs a real window at kv-load time, i.e. during test
     # collection.
-    height: min((self.parent.height if self.parent else 600) - dp(16), dp(70) + dp(24) + dp(40) + lbl_intro.height + dp(38) + dp(52) + dp(56) + lbl_message.height + dp(56))
+    #
+    # The row list changed 2026-08-23 when the fill-from-a-fraction row came
+    # out (those were multi-start step-overs; see the module docstring). The
+    # gap count is unchanged — the dp(22) fraction line took the row it left —
+    # so the modal is dp(30) SHORTER than it was, and every message the
+    # scroller has to hold gained that much room.
+    height: min((self.parent.height if self.parent else 600) - dp(16), dp(70) + dp(24) + dp(40) + lbl_intro.height + dp(38) + dp(22) + dp(56) + lbl_message.height + dp(56))
 
     BoxLayout:
         orientation: "vertical"
@@ -42,10 +48,12 @@
             color: app.theme.text
             font_size: app.formats.font_size
 
-        # The running total, in the readout font. Mono because the operator
-        # reads this against a dial and a proportional font makes a changed
-        # digit hard to spot; accent because it is the one number on this
-        # screen that says which start the next pass will land on.
+        # THE HEADLINE: total widening so far, as a distance. Every step-over
+        # goes the same way, so this total IS the widening — how far the groove
+        # has grown past the cutter, measurable on the part — not a controller
+        # number standing in for it. Mono because the operator reads it against
+        # a dial and a proportional font makes a changed digit hard to spot;
+        # accent and full size because it is what the job is about.
         Label:
             id: lbl_total
             text: root.total_text
@@ -58,69 +66,37 @@
             font_name: app.theme.font_mono
             font_size: app.formats.font_size
 
-        # Fill-from-fraction row. "Half a pitch for a 2-start" is the actual
-        # use case, and pitch/N is exactly the arithmetic this feature exists
-        # to stop the operator doing at the machine. These FILL the entry only
-        # — nothing here applies, so a mis-tap cannot shift a live job.
-        BoxLayout:
-            orientation: "horizontal"
+        # The same total as a fraction of one pitch, DELIBERATELY SUBORDINATE:
+        # smaller, dim, and hung directly under the distance it qualifies. It
+        # is not a width, it is the aliasing bound — the share of the one pitch
+        # the offset may accumulate before the next pass starts cutting the
+        # neighboring groove. It was a co-equal half of lbl_total until
+        # 2026-08-23, from the multi-start framing where "1/3 of a pitch" WAS
+        # the operator's number; on a widening job it is a limit gauge, and a
+        # limit gauge that reads as loud as the measurement invites the
+        # operator to work to it.
+        Label:
+            id: lbl_fraction
+            text: root.fraction_text
+            halign: "left"
+            valign: "middle"
+            text_size: self.width, None
             size_hint_y: None
-            height: dp(52)
-            spacing: dp(8)
+            height: dp(22)
+            color: app.theme.text_dim
+            font_name: app.theme.font_mono
+            font_size: app.formats.font_size * 0.75
 
-            # Sized to its own text, not to a fraction of the row. At
-            # size_hint_x 0.4 against three sibling buttons at the default 1
-            # this caption got ~87 px of row — 55 px of it once FormLabel's
-            # dp(16) padding is taken off — for a 132 px string, so it wrapped
-            # inside a dp(52) row and rendered as a half-cut "Fill" over
-            # "entr" in every phase-offset shot. texture_size is the width the
-            # font actually needs, so this cannot come apart again when the
-            # operator changes the UI font size, which app.formats.font_size
-            # lets them do.
-            #
-            # NOT a FormLabel, and that is the whole trick: that dynamic class
-            # binds `text_size: self.size`, and a kv class-rule binding is not
-            # replaced by an instance-level one — both stay live, so the
-            # override loses every time the widget is resized. Width bound to
-            # texture_size against a live `text_size: self.size` binding is a
-            # LOOP, and it converges: measured 2026-08-23, the label settled at
-            # 44 px wide and two lines tall. So the styling is repeated here
-            # instead (it is four lines of it) and text_size is simply never
-            # set, which is what lets the texture be its natural size.
-            # font_name is deliberately NOT set: home_screen.kv's global
-            # <Label> rule wins over <FormLabel@Label>'s font_name (the race
-            # facelift_chrome.py documents for the help glyph), so the sibling
-            # caption below renders in iosevka whatever FormLabel asks for.
-            # Naming a face here would leave the two captions in one modal in
-            # two different fonts.
-            Label:
-                text: "Fill entry:"
-                size_hint_x: None
-                width: self.texture_size[0]
-                color: app.theme.text
-                font_size: app.formats.font_size
-                padding: dp(16), 0
-
-            FormValueButton:
-                text: "1/2 pitch"
-                disabled: root.busy
-                on_press: app.beep()
-                on_release: root.fill_fraction(2)
-
-            FormValueButton:
-                text: "1/3 pitch"
-                disabled: root.busy
-                on_press: app.beep()
-                on_release: root.fill_fraction(3)
-
-            FormValueButton:
-                text: "1/4 pitch"
-                disabled: root.busy
-                on_press: app.beep()
-                on_release: root.fill_fraction(4)
-
-        # Entry row. Unsigned magnitude by design — see the module docstring
-        # for why a +/- control would misdescribe what a negative entry does.
+        # Entry row. Typed, with NO preset-fraction buttons beside it: the
+        # right step-over for widening is set by the width of the cutter in
+        # the toolpost, which nothing in this machine knows, so there is no
+        # honest number for a button to fill in. (The row that used to be here
+        # offered 1/2, 1/3 and 1/4 pitch — multi-start amounts, removed
+        # 2026-08-23 with the rest of that framing.)
+        #
+        # Unsigned by design, and not a limitation: widening runs one way, so
+        # an unsigned advance IS the shape of the job. See the module docstring
+        # for that, and for what a stray minus sign would actually do.
         BoxLayout:
             orientation: "horizontal"
             size_hint_y: None
@@ -128,7 +104,7 @@
             spacing: dp(8)
 
             FormLabel:
-                text: "Advance by (" + root.unit_label + ")"
+                text: "Step over by (" + root.unit_label + ")"
                 size_hint_x: 0.6
 
             FormValueButton:
