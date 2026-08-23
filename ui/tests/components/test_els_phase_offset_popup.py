@@ -63,7 +63,7 @@ def fsm():
 @pytest.fixture
 def popup(running_app, fsm):
     """A real PhaseOffsetPopup wired to `fsm`, built without its kv rules."""
-    running_app.els_uic = SimpleNamespace(_els_fsm=fsm)
+    running_app.els_uic = SimpleNamespace(els_fsm=fsm)
     running_app.formats = SimpleNamespace(
         current_format="MM", position_format="{:+0.3f}")
     with patch.object(PhaseOffsetPopup, "apply_class_lang_rules"):
@@ -78,8 +78,31 @@ def test_total_shows_both_the_distance_and_the_fraction(popup, fsm):
     popup._refresh_total()
     assert "0.750" in popup.total_text
     assert "mm" in popup.total_text
-    assert "0.500" in popup.total_text
+    assert "1/2" in popup.total_text
     assert "pitch" in popup.total_text
+
+
+def test_the_fraction_is_named_by_the_SAME_rule_the_status_strip_uses(popup, fsm):
+    """The modal and the advanced-bar strip show the same number, so they must
+    describe it the same way — an exact division by name, anything else as the
+    raw decimal. Two naming rules on one screen is how they come to disagree,
+    and the operator has no way to tell which one is lying.
+    """
+    from reflex.fsms.ui_controller import phase_offset_fraction_text
+
+    for fraction in (0.5, 1.0 / 3.0, 0.25, 0.2755):
+        fsm.phase_offset_display.return_value = (0.1, fraction)
+        popup._refresh_total()
+        assert phase_offset_fraction_text(fraction) in popup.total_text
+
+    # And concretely, so the shared rule cannot quietly become a no-op:
+    fsm.phase_offset_display.return_value = (0.1, 1.0 / 3.0)
+    popup._refresh_total()
+    assert "1/3" in popup.total_text
+
+    fsm.phase_offset_display.return_value = (0.1, 0.2755)
+    popup._refresh_total()
+    assert "0.276" in popup.total_text  # not a clean division: say so
 
 
 def test_total_is_reread_from_the_controller_not_accumulated(popup, fsm):
@@ -323,7 +346,7 @@ def test_the_keypad_writes_back_into_the_entry_property(popup):
 
 # ── units ────────────────────────────────────────────────────────────
 def test_the_entry_is_labelled_in_the_active_display_unit(running_app, fsm):
-    running_app.els_uic = SimpleNamespace(_els_fsm=fsm)
+    running_app.els_uic = SimpleNamespace(els_fsm=fsm)
     running_app.formats = SimpleNamespace(
         current_format="IN", position_format="{:+0.4f}")
     with patch.object(PhaseOffsetPopup, "apply_class_lang_rules"):

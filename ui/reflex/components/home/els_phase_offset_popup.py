@@ -41,6 +41,7 @@ from kivy.properties import BooleanProperty, NumericProperty, StringProperty
 from kivy.uix.popup import Popup
 
 from reflex.fsms.els_fsm import ElsFsm
+from reflex.fsms.ui_controller import phase_offset_fraction_text
 from reflex.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
@@ -144,12 +145,10 @@ class PhaseOffsetPopup(Popup):
         from reflex.app import MainApp
         self.app = MainApp.get_running_app()
         # The ELS domain FSM owns every rule this screen obeys, so it is the
-        # only thing this modal talks to. Reached through the controller's
-        # private attribute because ElsUiController publishes `hal` and nothing
-        # else, and adding an accessor there is out of scope for this change.
-        # The alternative -- driving the HAL directly -- would mean
-        # re-implementing every refusal here, which is the worse trade.
-        self._fsm = self.app.els_uic._els_fsm
+        # only thing this modal talks to. Driving the HAL directly instead would
+        # mean re-implementing every refusal here, where it would drift from the
+        # one the machine actually applies.
+        self._fsm = self.app.els_uic.els_fsm
         self._poll_ev = None
         self._baseline_seq = 0
         self._ack_polls = 0
@@ -313,12 +312,11 @@ class PhaseOffsetPopup(Popup):
         3". Either one alone leaves modular arithmetic to be done at the
         machine or leaves the entry unverifiable.
 
-        The fraction is rendered as a decimal here. The advanced-bar status
-        strip being built alongside this screen carries a helper that NAMES an
-        exact division ("1/3" rather than "0.333") with a tolerance guard; when
-        that lands, this readout should call it rather than grow a second
-        naming rule, or the two surfaces will describe the same number
-        differently.
+        The fraction is NAMED through the same helper the advanced-bar status
+        strip uses -- "1/3" when it really is a third, the raw decimal when it
+        is not. Sharing it is the point: two naming rules for one number on one
+        screen is how the modal and the bar come to describe the same offset
+        differently, and the operator has no way to tell which is lying.
         """
         try:
             distance, fraction = self._fsm.phase_offset_display()
@@ -328,7 +326,7 @@ class PhaseOffsetPopup(Popup):
             return
         self.total_text = (
             f"Offset now:  {self._format_distance(distance)} {self.unit_label}"
-            f"     {fraction:.3f} of a pitch"
+            f"     {phase_offset_fraction_text(fraction)} of a pitch"
         )
 
     def _refusal_text(self, code) -> str:

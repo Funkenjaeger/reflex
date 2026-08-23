@@ -1,3 +1,5 @@
+from fractions import Fraction
+
 from kivy.properties import StringProperty, BooleanProperty, NumericProperty
 from kivy.event import EventDispatcher
 from kivy.clock import Clock
@@ -39,6 +41,76 @@ BLINK_TARGET = {
     "set_stop_dia":  "minor_dia",
 }
 
+# ── Thread-phase offset readout ──────────────────────────────────────────────
+# The operator-facing text lives HERE rather than in utils/devices.py (where
+# takeup_failure_text lives) because it needs the live display format — units
+# and decimal places — and devices.py is the register-map module, deliberately
+# free of any dependency on the running app's formatting state.
+
+# Largest start count the fraction is allowed to be NAMED as. Multi-start
+# threads in the wild are 2- to 6-start; 8 covers the tail without inviting
+# Fraction to "explain" an arbitrary offset as, say, 7/9 of a pitch.
+PHASE_OFFSET_MAX_STARTS = 8
+
+# How close to an exact 1/N the fraction must be before it is named as one.
+# 0.2% of a pitch is far below anything that shows in cut metal, and comfortably
+# above both the once-at-the-end step rounding in apply_phase_offset and the
+# keypad's own precision (an operator dividing a 1.25 mm pitch three ways types
+# 0.417, not 0.4166666). Tighter than this and a genuine 1/3 renders as a
+# decimal, which is the failure that matters: the fraction is the number that
+# says "this is start 2 of 3".
+PHASE_OFFSET_FRACTION_TOL = 0.002
+
+
+def phase_offset_fraction_text(fraction: float) -> str:
+    """"1/3" when the offset really is a third of a pitch, "0.275" otherwise.
+
+    NAMING IS A CLAIM, so it is guarded on both sides: the snapped value has to
+    be a proper fraction (an offset at or past one pitch is refused on entry,
+    so anything >= 1 here means the pitch changed underneath a live offset and
+    the honest answer is the raw number), and it has to be within
+    PHASE_OFFSET_FRACTION_TOL of the real one. A wrong name is not dangerous on
+    its own — the firmware indexes off the step count, not this string — but it
+    would make an off-nominal offset look like a clean division and rob the
+    operator of the one clue that says otherwise.
+    """
+    approx = Fraction(fraction).limit_denominator(PHASE_OFFSET_MAX_STARTS)
+    if (0 < approx < 1 and approx.denominator > 1
+            and abs(float(approx) - fraction) <= PHASE_OFFSET_FRACTION_TOL):
+        return f"{approx.numerator}/{approx.denominator}"
+    return f"{fraction:0.3f}"
+
+
+def phase_offset_readout(steps, distance, fraction, formats) -> str:
+    """Operator-facing text for a live thread-phase offset.
+
+    BOTH NUMBERS, for the reason ElsFsm.phase_offset_display gives: the
+    distance is what the operator typed and can check against a dial, the
+    fraction is what says "this is start 2 of 3". Either alone leaves them
+    doing modular arithmetic at the machine or unable to verify the entry.
+    """
+    try:
+        pos_fmt = formats.position_format or "{:+0.3f}"
+        unit = "mm" if formats.current_format == "MM" else "in"
+    except AttributeError:
+        pos_fmt, unit = "{:+0.3f}", "mm"
+
+    if not distance:
+        # A nonzero step total that converts to nothing: no spindle pitch, no
+        # servo ratio, or a zero display factor. Say the raw register value
+        # rather than rendering "+0.000 mm", which reads as "no offset" — the
+        # single thing this strip exists to contradict.
+        return (f"THREAD PHASE OFFSET SET  •  {int(steps):+d} leadscrew steps  "
+                f"•  thread geometry unavailable")
+
+    try:
+        distance_text = pos_fmt.format(distance)
+    except (ValueError, IndexError, KeyError, AttributeError):
+        distance_text = f"{distance:+0.3f}"
+    return (f"THREAD PHASE OFFSET  •  {distance_text} {unit}  "
+            f"•  {phase_offset_fraction_text(fraction)} of a pitch")
+
+
 class ElsUiController(EventDispatcher):
     # ── Operator-mode flags (read by FSM conditions / on_enter_stopped) ─
     retract_enabled     = BooleanProperty(False)
@@ -59,6 +131,18 @@ class ElsUiController(EventDispatcher):
     # Without it a refusal and a hung machine are indistinguishable, which is
     # exactly how it presented on hardware 2026-08-08.
     takeup_warning      = StringProperty("")
+
+    # ── Thread-phase offset (multi-start threading) ────────────────────
+    # True whenever elsStop.phaseOffsetSteps is nonzero, i.e. the machine is
+    # cutting at a DELIBERATE phase shift. Persistent job state, not an event:
+    # it survives every pass until the operator clears it or the firmware wipes
+    # it on the next enable 0->1 edge, and an operator who forgets it is set
+    # ruins the next thread. That is why visibility hangs off this flag and not
+    # off the text being non-empty, the way takeup_warning does — a readout
+    # that could not be formatted (missing thread geometry) must still SHOW,
+    # saying so, rather than silently reading as "no offset".
+    phase_offset_active = BooleanProperty(False)
+    phase_offset_text   = StringProperty("")
 
     # ── Operator-job descriptors (mirrored from the widget) ────────────
     # is_threading toggles the X-clear-of-start-dia gate in waiting_to_retract.
@@ -119,6 +203,22 @@ class ElsUiController(EventDispatcher):
         """
         return self._hal
 
+    @property
+    def els_fsm(self):
+        """Read-only access to the ELS domain FSM.
+
+        Exposed for the same reason `hal` is, one level up: auxiliary flows need
+        the RULES, not the registers. The thread-phase offset modal is the case
+        that forced it — every refusal it renders, and every unit conversion it
+        shows, belongs to the FSM, and the alternative to reaching it was
+        re-implementing those refusals in a popup where they would drift.
+
+        Read-only in the sense that matters: callers may ask this object
+        questions and invoke its documented operations, but the threading cycle
+        is still driven from here, and a caller that fights that will lose.
+        """
+        return self._els_fsm
+
     def __init__(self, els: els, board: board, **kw):
         super().__init__(**kw)
         self._els = els
@@ -148,6 +248,9 @@ class ElsUiController(EventDispatcher):
         # never-set target; only never-set and an ELS Z-axis remap invalidate.
         self._prev_takeup_seq = 0         # edge-detect baseline for takeup outcomes
         self._pending_takeup_seq = None   # a seq edge seen once; acted on when seen twice
+        self._prev_phase_offset_steps = 0   # last raw total seen; renders on the 2nd sighting
+        self._logged_phase_offset_steps = 0 # last total written to the log, so a units
+                                            # switch re-renders without re-logging
         self._stop_z_encoder = None       # int leadscrew encoder count, or None
         self._retract_z_encoder = None
         self._stop_z_committed = False
@@ -209,6 +312,7 @@ class ElsUiController(EventDispatcher):
         self._board.bind(update_tick=self._poll_apply_policy)
         self._board.bind(update_tick=self._poll_reframe_targets)
         self._board.bind(update_tick=self._poll_takeup_outcome)
+        self._board.bind(update_tick=self._poll_phase_offset)
         # Firmware diagnostic scratchpad. Dormant against any release build --
         # it reads diagSchema once per connection and, finding 0, issues no
         # further reads at all. See reflex/fsms/els_diag.py.
@@ -331,6 +435,69 @@ class ElsUiController(EventDispatcher):
             log.warning(
                 "ELS takeup #%s REFUSED (result=%s): moved %s counts, needed %s",
                 seq, result, moved, needed)
+
+    def _poll_phase_offset(self, *args):
+        """Republish the firmware's live thread-phase offset as screen state.
+
+        THE FIRMWARE OWNS THE TOTAL, so this reads it every tick rather than
+        mirroring what the UI last applied. elsStop.phaseOffsetSteps is cleared
+        on the enable 0->1 edge and replaced (not accumulated) by every apply,
+        so a UI-side copy would happily survive a job change the machine
+        already discarded — and would then be showing a phase shift that is not
+        being cut, which is worse than showing nothing.
+
+        SEEN TWICE BEFORE IT IS BELIEVED, for the reason spelled out in
+        _poll_takeup_outcome: the Modbus task copies the register block one
+        16-bit register at a time, so a 32-bit value can be read half-old and
+        half-new. Here that would flash an arbitrary distance onto the most
+        load-bearing readout on the screen. A genuine change costs one extra
+        poll (~100 ms) to appear; a torn one never appears at all.
+
+        Once the total is stable the text is recomputed each poll and assigned
+        only when it differs, so a mm<->in switch or a feed-table change
+        re-renders the readout without the step count having moved.
+
+        Never raises into the update loop: phase_offset_display reaches through
+        the spindle axis, which is None until ELS is configured.
+        """
+        try:
+            steps = self._els_fsm.phase_offset_steps()
+        except Exception:
+            return
+
+        if steps != self._prev_phase_offset_steps:
+            self._prev_phase_offset_steps = steps
+            return
+
+        if steps == 0:
+            if self.phase_offset_active:
+                log.info("ELS thread-phase offset CLEARED (was %s steps)",
+                         self._logged_phase_offset_steps)
+                self.phase_offset_active = False
+                self.phase_offset_text = ""
+            self._logged_phase_offset_steps = 0
+            return
+
+        try:
+            distance, fraction = self._els_fsm.phase_offset_display()
+        except Exception:
+            # Same meaning as a zero distance below: nothing here can convert
+            # the total, but the total is real and must still be announced.
+            distance, fraction = 0.0, 0.0
+
+        text = phase_offset_readout(steps, distance, fraction,
+                                    getattr(self._board, "formats", None))
+        if text != self.phase_offset_text:
+            self.phase_offset_text = text
+        if not self.phase_offset_active:
+            self.phase_offset_active = True
+        if steps != self._logged_phase_offset_steps:
+            self._logged_phase_offset_steps = steps
+            # No colon in this message. Kivy's logger reads the text up to the
+            # first ":" as a log CATEGORY and reformats around it, which turned
+            # a readable line into "[ELS thread-phase offset now N steps] ..."
+            # in the captured output.
+            log.info("ELS thread-phase offset now %s steps -> %s", steps, text)
 
     def _poll_diag_capture(self, *args):
         """Drain any completed firmware settle capture to disk.

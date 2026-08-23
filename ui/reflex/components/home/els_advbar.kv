@@ -15,11 +15,20 @@
   # (see notice_overlay below), so nothing on this screen changes size when
   # one shows up. A new strip belongs in that overlay's height expression,
   # NOT here.
+  #
+  # THERE ARE TWO OVERLAYS, and which one a strip belongs in is decided by how
+  # long it stays up, not by what it says. `notice_overlay` carries TRANSIENT
+  # notices (seconds: a take-up refusal, a re-reference confirm) and is pinned
+  # to the bar's top edge. `status_overlay` carries PERSISTENT job state (the
+  # thread-phase offset, up for a whole multi-start job) and hangs BELOW both
+  # the wizard instruction strip and whatever transient strips are showing --
+  # see its own note. Neither changes any height; both cover.
   natural_height: 128
   # Everything below hangs off ONE FloatLayout so the notice strips can be
   # pinned over the controls rather than stacked above them. A FloatLayout
-  # draws later children on top, so the overlay MUST stay last.
+  # draws later children on top, so the overlays MUST stay last.
   FloatLayout:
+    id: bar_float
     size_hint: 1, 1
 
     # ── Content: what the bar actually is, always at full height ──────────
@@ -36,6 +45,7 @@
       # and stop+retract modes (those rely on action-button labels + validity gating
       # for operator guidance instead).
       FloatLayout:
+        id: wizard_strip
         # HEIGHT, NOT A HINT OF ZERO, and this is load-bearing (2026-08-22).
         #
         # `size_hint_y: 0` does NOT set a widget's height to 0. It removes the
@@ -113,6 +123,7 @@
         # ── Engage/Disengage: shared LED card with the tri-state ELS-stop indicator
         #    (grey Disabled / red Stopped / green Armed) integrated as the LED+text ──
         LedCardButton:
+          id: card_engage
           size_hint_x: None
           width: 96
           text: "Disengage" if root.controller.engaged else "Engage"
@@ -228,6 +239,7 @@
 
         # ── Mode selector + settings ───────────────────────────────────────────
         BoxLayout:
+          id: mode_column
           orientation: "vertical"
           size_hint_x: None
           # Fixed width (independent of the wizard-collapsed row height) so the mode
@@ -381,3 +393,91 @@
           font_name: app.theme.font_bold
           font_size: dp(13)
           color: app.theme.text
+
+    # ── Status overlay: thread-phase offset (multi-start threading) ───────────
+    #    A SECOND overlay, not a third strip in notice_overlay, because this one
+    #    is PERSISTENT. A nonzero elsStop.phaseOffsetSteps means the machine is
+    #    cutting at a deliberate phase shift, and it stays that way for the whole
+    #    job -- so whatever this covers, it covers for the length of the job,
+    #    which is a different trade from a strip that is up for three seconds.
+    #
+    #    WHY IT IS NOT PINNED TO THE TOP LIKE THE NOTICES. The bar's top 26 px is
+    #    the wizard instruction strip, and a transient warning may sit over that
+    #    for a moment; parking a permanent band there would delete the wizard's
+    #    only channel of operator guidance for the entire job. Hanging below the
+    #    lower of {wizard strip, transient notices} instead costs only the field
+    #    HEADER labels ("Stop Z", "Major ø") -- text that names controls whose
+    #    values stay fully readable underneath -- and costs them only while an
+    #    offset is actually set. See the inset note below for the rest.
+    #
+    #    WHY NOT THE BOTTOM EDGE, which was the obvious answer for persistent
+    #    state: measured (previews/preview_phase_offset.py), the bar's bottom
+    #    30 px is the settings cog and the lower third of the value readouts. The
+    #    cog is the only route back into ELS settings -- i.e. the only way to
+    #    CLEAR this offset -- so a permanent band there would cover the control
+    #    that dismisses it.
+    #
+    #    Height tracks the notices rather than duplicating their arithmetic, so a
+    #    fourth strip added to notice_overlay pushes this one down for free.
+    #    NOTHING HERE CHANGES A HEIGHT: this strip only ever relocates.
+    BoxLayout:
+      id: status_overlay
+      orientation: 'horizontal'
+      padding: dp(8), 0
+      size_hint: None, None
+      height: dp(30) if root.controller.phase_offset_active else 0
+      opacity: 1 if self.height else 0
+      disabled: not self.height
+      # INSET BETWEEN THE ENGAGE CARD AND THE MODE COLUMN rather than spanning
+      # the bar, which is what a full-width version was rendered as first
+      # (previews/out/alt_fullwidth_*.png). Full width covered two things this
+      # must not cover FOR A WHOLE JOB: the Engage card's tri-state ELS-stop
+      # indicator -- the Armed/Stopped lamp an operator watches to see a pass
+      # arrive at the shoulder -- and the top of the mode tabs. Ending short of
+      # the mode column also keeps the settings cog clear, and the cog is the
+      # only route back to the control that CLEARS this offset. What it covers
+      # instead is the four field HEADER labels ("Stop Z", "Major ø") and a
+      # sliver of the action button: text naming controls whose values stay
+      # fully readable underneath.
+      #
+      # Bound to the two widgets' real edges, not to their literal widths, so
+      # the inset cannot drift out of step with them.
+      x: card_engage.right
+      width: max(mode_column.x - card_engage.right, 0)
+      # `y`, NOT `top`. Assigning `top` sets y ONCE (y = top - height), so when
+      # the strip's own height goes 0 -> 30 the stale y is kept and the strip
+      # grows UPWARD out of the bar, over the DRO rows -- the 2026-08-16 defect
+      # arriving by a new route. Measured, then fixed:
+      # previews/preview_phase_offset.py reported
+      # "OUTSIDE THE BAR: y=256 top=286 (bar 128..256)".
+      y: bar_float.top - max(notice_overlay.height, wizard_strip.height) - self.height
+      canvas.before:
+        # OPAQUE, unlike the notice strips' translucent tints. Those wash over
+        # the controls for a few seconds; this one sits over the field headers
+        # for a whole job, and a header ghosting through the readout the whole
+        # time is both unreadable and a permanent visual artifact. Accent-tinted
+        # rather than red/amber so it reads as STATE, not as a fault.
+        Color:
+          rgba: app.theme.background
+        Rectangle:
+          pos: self.pos
+          size: self.size
+        Color:
+          rgba: app.theme.accent_soft
+        Rectangle:
+          pos: self.pos
+          size: self.size
+        Color:
+          rgba: app.theme.accent
+        Line:
+          points: (self.x, self.y + 0.5, self.right, self.y + 0.5)
+          width: 1.0
+      Label:
+        id: label_phase_offset
+        text: root.controller.phase_offset_text
+        text_size: self.size
+        halign: 'center'
+        valign: 'middle'
+        font_name: app.theme.font_bold
+        font_size: dp(13)
+        color: app.theme.accent_text
