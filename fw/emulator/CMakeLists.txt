@@ -310,6 +310,37 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
 target_link_libraries(els_manual_latch_test m pthread)
 add_test(NAME els_manual_latch_test COMMAND els_manual_latch_test)
 
+# Carriage settle model (physics.cpp). Proves the settle tail added 2026-08-22
+# is OBSERVABLE -- that a test can tell it from the instantaneous behaviour it
+# replaced -- and that its time constant is a real knob. Same link shape as
+# els_halfnut_test: physics.cpp + config.cpp with the shim externals stubbed in
+# the test file, no HAL and no firmware sources. A settle model no test could
+# detect would be worse than none, because it would look like the ELS_SLIP_
+# SETTLE_TICKS todo item was done.
+add_executable(els_carriage_settle_test
+    ${CMAKE_SOURCE_DIR}/test/els_carriage_settle_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/physics.cpp
+    ${CMAKE_SOURCE_DIR}/src/config.cpp)
+target_link_libraries(els_carriage_settle_test m)
+add_test(NAME els_carriage_settle_test COMMAND els_carriage_settle_test)
+
+# CHARACTERIZATION of a KNOWN DEFECT: the take-up confirmation gate asks "did
+# the carriage move far enough?" and never "has it stopped?", so a settle tail
+# longer than ELS_SETTLE_TICKS (50) sees the cut released while the carriage is
+# still moving. Assertions pin TODAY's behaviour on purpose -- fixing the gate
+# must turn this target red. Only emulator target that links the real Ramps.c
+# ISR AND the production physics.cpp together, which is what lets the firmware
+# gate see the real settle model rather than a second copy of it in a fixture.
+add_executable(els_takeup_settle_gate_test
+    ${CMAKE_SOURCE_DIR}/test/els_takeup_settle_gate_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/physics.cpp
+    ${CMAKE_SOURCE_DIR}/src/config.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_takeup_settle_gate_test m pthread)
+add_test(NAME els_takeup_settle_gate_test COMMAND els_takeup_settle_gate_test)
+
 add_executable(els_phase_offset_command_test
     ${CMAKE_SOURCE_DIR}/test/els_phase_offset_command_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)

@@ -166,10 +166,20 @@ instead of leaving bare `TODO:` comments in code.
 - Nobody has measured which is right, and until 2026-08-22 nobody could: the
   takeup-settle probe was structurally unable to watch a confirmed take-up (see DIAG.md).
   `takeup-settle-v3` holds the gate open for its window and can.
-- **If the settle is long,** the gate releases the cut while the carriage is still
-  moving. **If it is short,** the attribution horizon is 20x too generous and the
-  hand-nudge window is far wider than it needs to be. Both are worth knowing.
-- Blocked on: one v3 capture session on a coupled take-up.
+- **If the settle is long, the gate releases the cut while the carriage is still
+  moving.** No longer a hypothesis: `els_takeup_settle_gate_test` demonstrates it
+  against the real ISR. With a 100-tick tail the gate waits its full 50-tick
+  dwell, confirms, and releases sync with **1.36 Z counts of take-up motion still
+  undelivered** -- counts that take 360 more ticks to arrive, 7.2x the dwell.
+- **The sharpest part is the control.** Run the same fixture with a short tail and
+  the firmware behaves BIT-IDENTICALLY: same release tick, same last pulse, same
+  verdict. The gate has no channel through which the settle time could reach it,
+  so it is not mis-tuned -- it is not measuring this at all. A quiescence
+  condition is a new input, not a new constant.
+- **If the settle is short,** the attribution horizon is 20x too generous and the
+  hand-nudge window is wider than it needs to be. Still worth knowing.
+- Blocked on: one v3 capture session on a coupled take-up, for the real number.
+  The SHAPE of the defect no longer waits on it.
 
 ### Take-up in the wrong servo mode (PARTIALLY RESOLVED 2026-08-22)
 
@@ -205,10 +215,23 @@ Motion attribution (`Core/Inc/els_slip.h`) replaced the 250 ms confirmation
 window as the thing that actually bounds the 2026-08-08 exposure. The number
 that bound is now made of — `ELS_SLIP_SETTLE_TICKS` in `Ramps.c`, currently
 **1000 ticks (~10 ms at the 100 kHz ISR rate)** — has never been measured on the
-machine, and **cannot be measured in the emulator**: its lash model moves the
-carriage instantaneously with the pulse, so it has no settle behaviour at all.
-The value there satisfies the structural constraints (above `ELS_SETTLE_TICKS`,
-above pulse pacing) and nothing more.
+machine.
+
+**The emulator can now exercise it (2026-08-22).** The old claim here — that it
+*cannot* be measured in the emulator, because the lash model moved the carriage
+instantaneously with the pulse — was true until the carriage settle model
+landed. `LathePhysics` now relaxes commanded displacement into `carriage_mm`
+with a configurable first-order lag, so Z counts genuinely keep arriving after
+the last commanded pulse (measured: 6 counts over 26 ticks at the default tau).
+
+**That does NOT make the emulator an answer to this entry.** The time constant
+there is a structural placeholder, not a measurement — chosen nonzero so the
+model is never dead by default, and short enough that its tail lands inside
+`ELS_SETTLE_TICKS` so a config default cannot quietly assert an answer to this
+very question. A test wanting the long-settle regime calls `setSettleTauS()` and
+thereby says so out loud. What the emulator gives is the ability to make a
+quiescence gate FAIL, which is what was actually missing; the real number still
+comes off the machine.
 
 To commission it: run a real take-up at the take-up speed actually in use and
 watch how long Z counts keep arriving after the last commanded pulse. Set the
