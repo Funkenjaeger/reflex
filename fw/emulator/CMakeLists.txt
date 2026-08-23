@@ -317,3 +317,11 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
 target_link_libraries(els_phase_offset_command_test m pthread)
 add_test(NAME els_phase_offset_command_test COMMAND els_phase_offset_command_test)
+
+add_executable(els_takeup_jog_guard_test
+    ${CMAKE_SOURCE_DIR}/test/els_takeup_jog_guard_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_takeup_jog_guard_test m pthread)
+add_test(NAME els_takeup_jog_guard_test COMMAND els_takeup_jog_guard_test)

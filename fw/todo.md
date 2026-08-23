@@ -171,6 +171,34 @@ instead of leaving bare `TODO:` comments in code.
   hand-nudge window is far wider than it needs to be. Both are worth knowing.
 - Blocked on: one v3 capture session on a coupled take-up.
 
+### Take-up in the wrong servo mode (PARTIALLY RESOLVED 2026-08-22)
+
+The old framing -- "a take-up commanded while servoMode is 0 or 2 hangs sync
+indefinitely with no abort path" -- was already half-answered by the
+`ELS_TAKEUP_TIMEOUT_TICKS` backstop, which names the failure after ~5 s and
+leaves the enable 1->0 escape hatch. What was missing was failing FAST, with a
+cause, in the case that never resolves on its own.
+
+**Landed:** the ISR refuses a take-up commanded in servoMode 2 outright,
+returning the machine to stopped-at-the-shoulder with the reference intact and
+reporting `ELS_CAL_ERR_SERVOMODE` on `takeupResult` (same code as calibration --
+same physical cause, same sentence). `els_takeup_jog_guard_test` pins it; six
+mutations killed.
+
+**Deliberately NOT a blanket `servoMode != 1` refusal.** `servoEnableTask`
+auto-promotes mode 0 to 1 whenever sync motion is enabled and the stop is not
+active, and that promotion explicitly skips mode 2. So jog is the mode nothing
+can rescue, while mode 0 on a resume tick is ordinary -- the task runs at
+~100 ms against a ~100 kHz ISR, so a resume can legitimately land before the
+promotion. The blanket version would refuse normal cuts; it is mutation J2 in
+that test, and it passes every assertion except the negative bound.
+
+**Still open:** mode 0 with NO sync motion enabled is never promoted either, so
+it still falls through to the ~5 s timeout. Closing that needs the ISR to know
+`anySyncMotionEnabled`, which today is computed only in the task -- a second
+copy would be free to drift from the first. Left alone deliberately; the
+timeout does name it.
+
 ### Commission `ELS_SLIP_SETTLE_TICKS` on elspi (UNMEASURED PARAMETER)
 
 Motion attribution (`Core/Inc/els_slip.h`) replaced the 250 ms confirmation

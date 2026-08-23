@@ -270,6 +270,13 @@ ELS_CAL_MESSAGES = {
 }
 
 ELS_TAKEUP_MESSAGES = {
+    # Shares the calibration code: same physical cause, same remedy. The
+    # firmware refuses a take-up commanded in JOG mode outright, because the
+    # mode promotion that would rescue it deliberately skips jog.
+    ELS_CAL_ERR_SERVOMODE: (
+        "Take-up refused — the servo is in jog mode. Leave jog and press "
+        "Cut again."
+    ),
     ELS_TAKEUP_ERR_UNCONFIRMED: (
         "Carriage not moving — is the half-nut engaged? "
         "The cut will not start until the backlash take-up is confirmed."

@@ -970,7 +970,42 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
                    && shared->elsStop.threadPitchSteps != 0.0f
                    && shared->elsStop.zCountsPerPitch  != 0.0f
                    && shared->scales[0].syncRatioDen   != 0;
-    if (shared->elsStop.backlashSteps != 0u) {
+    /* REFUSE A TAKE-UP IN JOG MODE, where nothing can ever rescue it.
+     *
+     * stepsToGo is consumed only by updateIndexingPosition, which runs in
+     * servoMode 1. Commanding a take-up in another mode banks the move and
+     * leaves takeupPending set, which gates sync -- the machine sits there
+     * with the spindle turning and nothing happening.
+     *
+     * WHY MODE 2 ONLY, and not the blanket `servoMode != 1` this was first
+     * written as. servoEnableTask auto-promotes the mode to 1 whenever sync
+     * motion is enabled and the stop is not active -- but that promotion
+     * explicitly skips mode 2 (see the anySyncMotionEnabled block). So:
+     *
+     *   mode 2 (JOG): unrescuable. The one thing that would fix it is the one
+     *     thing that refuses to. Fail fast, here.
+     *   mode 0: transient and legitimate. The task runs at ~100 ms while this
+     *     ISR runs at ~100 kHz, so a resume can genuinely land on a tick where
+     *     the mode has not been promoted YET. Refusing here would break normal
+     *     cuts to guard a case that fixes itself within one task tick; the
+     *     ~5 s ELS_TAKEUP_TIMEOUT_TICKS backstop covers the residue where it
+     *     never does.
+     *
+     * The refusal returns the machine to exactly where it was before the
+     * operator pressed Cut -- stopped at the shoulder, reference intact --
+     * which is the same recovery shape the confirmation-failure abort already
+     * uses, and requires nothing of the operator but leaving jog mode.
+     * takeupResult reuses ELS_CAL_ERR_SERVOMODE rather than minting a code:
+     * same physical cause, same sentence, the way ELS_TAKEUP_ERR_UNCONFIRMED
+     * already shares NO_MOTION. */
+    if (shared->elsStop.backlashSteps != 0u
+        && shared->fastData.servoMode == 2u) {
+      shared->elsStop.takeupResult = ELS_CAL_ERR_SERVOMODE;
+      shared->elsStop.takeupSeq++;
+      shared->elsStop.active       = 1;   /* back to stopped-at-shoulder */
+      shared->servo.stepsToGo      = 0;
+      shared->servo.currentSpeed   = 0;
+    } else if (shared->elsStop.backlashSteps != 0u) {
       shared->servo.stepsToGo    = 0;
       shared->servo.currentSpeed = 0;
       data->elsStopSettleCount   = 0;
