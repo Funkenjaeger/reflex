@@ -291,6 +291,49 @@ typedef struct {
    * is 4 bytes so no padding. Next append is the auto-start block. */
   uint16_t latchCommand;          // bidirectional: SW writes 1 to request a manual reference latch; FIRMWARE CLEARS IT on consume. Consumed ONLY while enable == 1 (a reference is meaningless outside a job and would be wiped by the next enable 0->1 anyway); when enable == 0 it is cleared with NO latchSeq increment, so an absent ack IS the refusal. SW must edge-detect latchSeq, never poll this
   uint16_t latchSeq;              // READ-ONLY (firmware-owned): increments once per ACCEPTED manual latch. Monotonic; the ack for latchCommand
+
+  /* --- THREAD-PHASE OFFSET. Deliberately shifts the thread start by a chosen
+   * distance, which is what cuts a multi-start thread: cut every start from the
+   * same datum, moving the phase by pitch/N between them, instead of re-indexing
+   * the workpiece. Appended at the tail per the reserved order above; the uint16s
+   * come first and the int32s after, so the block packs with zero padding.
+   *
+   * THE HAND-OFF is the calCommand idiom exactly: the host writes Pending FIRST,
+   * then writes Command. The ISR reads Pending only under a nonzero Command, and
+   * that ordering is the whole reason a 32-bit value crosses a 16-bit register
+   * bus without a lock -- there is no window in which the ISR can see a half-
+   * written Pending. Command is cleared by the FIRMWARE on consume, so the host
+   * must NOT poll it for completion; edge-detect phaseOffsetSeq.
+   *
+   * CONSUMED ONLY WHILE enable == 1, same as latchCommand and for the same
+   * reason: the total is cleared by the next enable 0->1 edge, so an offset
+   * applied outside a job is a value that silently evaporates. When enable == 0
+   * the command is cleared with NO seq increment -- the absent ack IS the
+   * refusal.
+   *
+   * WHAT IT DOES NOT DO: applying an offset moves nothing. It changes the
+   * correction computed at the NEXT resume's phase correction, so it is safe to
+   * apply at any point in a job, mid-pass included, and its effect appears when
+   * the carriage next returns to the thread.
+   *
+   * SIGN LIVES IN THE MACHINE FRAME, NOT THE CUTTING FRAME. phaseOffsetSteps is
+   * summed straight into phaseError (els_phase.h) in leadscrew steps, ahead of
+   * the mod-pitch fold and the forward bias. On a machine whose cuttingDir is -1
+   * a given entry therefore selects the COMPLEMENTARY start of an N-start thread
+   * -- 2/3 pitch where the operator pictured 1/3. It is not a safety issue and
+   * not a wrong cut, since every start of a thread is a legitimate start, but it
+   * is UNVERIFIED on real hardware; els_phase_offset_command_test pins today's
+   * behavior for both polarities so that a future correction has to be
+   * deliberate. Cumulative entry makes it self-correcting in practice: enter
+   * pitch/3 again and you are on the start you wanted.
+   *
+   * NOT FOLDED HERE. The total is stored exactly as the host wrote it; the fold
+   * to mod-pitch happens at use, inside the primitive. Folding on write would
+   * make the register silently disagree with the number the host displays. */
+  uint16_t phaseOffsetCommand;    // bidirectional: SW writes 1 to apply phaseOffsetPending as the new total; FIRMWARE CLEARS IT on consume. Not a completion flag -- edge-detect phaseOffsetSeq
+  uint16_t phaseOffsetSeq;        // READ-ONLY (firmware-owned): increments once per ACCEPTED apply. Monotonic; the ack for phaseOffsetCommand
+  int32_t  phaseOffsetPending;    // host-written candidate total, leadscrew steps. Read by the ISR ONLY under a nonzero phaseOffsetCommand; write it BEFORE the command, never after
+  int32_t  phaseOffsetSteps;      // READ-ONLY (firmware-owned): the live cumulative total in leadscrew steps, applied at every phase correction. Cleared on the enable 0->1 edge that clears referenceLatched -- an offset is meaningless without the datum it offsets -- and survives per-pass stop/resume within a job
 } elsStop_t;
 
 typedef struct {

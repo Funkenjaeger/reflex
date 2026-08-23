@@ -62,10 +62,11 @@ ROOT_STRUCT = "rampsSharedData_t"
 # ever miscomputes padding, these fixed numbers diverge and fail loudly.
 KNOWN_SERVO_DIR_OFFSET = 32      # servo_t.servoDir sits after 8x 4-byte fields
 KNOWN_SERVO_T_SIZE = 36          # 34 bytes of fields + 2 trailing pad -> 4-align
-KNOWN_ROOT_SIZE = 440            # sizeof(rampsSharedData_t); see module test
+KNOWN_ROOT_SIZE = 452            # sizeof(rampsSharedData_t); see module test
                                  # 432 -> 436 (2026-08-22): permanent machineMode
                                  # + explicit pad; then -> 440 with the manual
-                                 # latch's latchCommand/latchSeq.
+                                 # latch's latchCommand/latchSeq; then -> 452
+                                 # with the thread-phase offset block.
                                  # 264 -> 304 on 2026-08-08: the closed-loop
                                  # backlash calibration block appended 40 bytes
                                  # to elsStop_t (56 -> 96), packed uint16s-first

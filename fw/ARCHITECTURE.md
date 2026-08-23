@@ -159,6 +159,18 @@ The mechanism does not care whether the carriage was driven electronically or ma
 
 The re-sync assumes the Z scale reading at resume reflects a carriage that is *mechanically coupled* to the leadscrew at that moment (i.e., the half-nut is engaged when the operator presses Cut). Pressing Cut with the half-nut open will produce a physically meaningless leadscrew offset — there is no sensor to warn against this. The thread geometry parameters (sync ratio, thread-pitch-in-steps, Z-counts-per-pitch) must be configured consistently with each other; the correction folds error within `pitch/2`, so a systematic mismatch larger than half a pitch will alias and the cutter will drift to a different groove. Crucially, the firmware's `threadPitchSteps / zCountsPerPitch` ratio (leadscrew steps per Z-encoder count, the firmware's *model* of the carriage drivetrain) must equal the physical drivetrain's actual leadscrew-steps-per-Z-count ratio, or the algorithm's geometry is decoupled from reality and phase will drift in proportion to cut distance.
 
+#### Thread-phase offset (multi-start threading)
+
+A multi-start thread is N separate threads cut into one workpiece, each one pitch/N out of phase with the last. The traditional way to cut one is to re-index the workpiece between starts — rotate it in the chuck by 360/N degrees, or use an indexing feature on the spindle — which requires the machine to have that capability and re-establishes the datum every time. Since the ELS already computes thread phase from a latched reference, there is a cheaper route: leave the workpiece alone and shift the *controller's* idea of phase.
+
+`elsStop.phaseOffsetSteps` holds a cumulative offset in leadscrew steps, summed into `phaseError` inside `elsComputePhaseCorrection()` ahead of the mod-pitch fold and the forward bias. Every pass after that lands displaced by the offset, so the tool cuts a new groove between the existing ones. Applying an offset moves nothing by itself; it changes the correction computed at the *next* resume.
+
+The host writes it through the same command/ack pair as calibration and the manual latch — `phaseOffsetPending` first, then `phaseOffsetCommand`, with `phaseOffsetSeq` as the ack — and that write ORDER is what carries a 32-bit value across a 16-bit register bus without a lock: the ISR reads `Pending` only under a nonzero `Command`. The firmware holds one absolute total and replaces it on each apply, so accumulation and the running-total display are the host's job, and a Clear is simply an apply of zero.
+
+The offset is cleared on the `enable` 0→1 edge that clears `referenceLatched`, because an offset is meaningless without the datum it offsets, and it deliberately survives per-pass stop/resume within a job — a multi-start thread is cut over many passes at one offset.
+
+**Frame caveat.** The offset is summed into `phaseError` raw, so it displaces phase in the *machine* frame rather than the cutting frame. On a machine whose `cuttingDir` is −1, a given entry therefore selects the complementary start of an N-start thread — 2/3 pitch where the operator pictured 1/3. Every start of a thread is a legitimate start, so this is not a wrong cut, but it decides whether the operator-facing wording is honest and it has not been checked against real hardware. `els_phase_offset_command_test` case 7 pins the behavior for both polarities and prints the resulting corrections for comparison at the bench.
+
 ### Closed-loop backlash calibration and take-up confirmation
 
 #### The hole this closes

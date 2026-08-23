@@ -111,14 +111,15 @@ int main(void)
     /* Guards the bump. Anything appended to elsStop_t after this must move it
      * again, and reflex-ui's ELS_PROTOCOL_VERSION with it.
      *
-     * It has now done that job twice for real. 2 -> 3 on 2026-08-22, when
-     * machineMode was promoted out of the diagnostic scratchpad into a
-     * permanent register. 3 -> 4 on the same day, when the manual reference
-     * latch merged and appended latchCommand/latchSeq -- that branch had also
-     * written 3, and this assertion is what forced the renumber rather than
-     * letting two distinct layouts quietly share a version number. */
-    check(data.shared.elsStop.protocolVersion == 4,
-          "protocolVersion is 4 (machineMode + manual latch map)");
+     * It has now done that job three times for real, all on 2026-08-22.
+     * 2 -> 3 when machineMode was promoted out of the diagnostic scratchpad
+     * into a permanent register. 3 -> 4 when the manual reference latch merged
+     * and appended latchCommand/latchSeq -- that branch had ALSO written 3, and
+     * this assertion is what forced the renumber rather than letting two
+     * distinct layouts quietly share a version number. 4 -> 5 when the
+     * thread-phase offset block was appended for multi-start threading. */
+    check(data.shared.elsStop.protocolVersion == 5,
+          "protocolVersion is 5 (machineMode + manual latch + phase offset map)");
 
 #ifdef ELS_DIAG_SCRATCH
     /* Pinned to a SPECIFIC schema, not "any nonzero". A probe revision changes

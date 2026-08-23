@@ -309,6 +309,50 @@ class ElsStopHal:
             return 0
         return int(self._board.device['elsStop']['latchSeq'])
 
+    # ── thread-phase offset (multi-start) ─────────────────────────────
+    # The command/ack split once more, with one addition that matters: the
+    # 32-bit Pending MUST be written before the command, never after. The ISR
+    # reads Pending only under a nonzero command, and that ordering is the only
+    # thing standing between a two-register write and a torn read of a value
+    # that displaces the thread.
+    #
+    # The firmware holds ONE absolute total and does not accumulate. Running
+    # totals are built HERE: read the total, add the entry, write the sum. That
+    # is also what makes Clear trivial -- it is an apply of zero, and the
+    # firmware acks it like any other.
+    #
+    # Applied only while enable == 1; an offset outside a job would be wiped by
+    # the next enable edge, so the absent ack IS the refusal.
+
+    def request_phase_offset(self, total_steps: int) -> None:
+        """Apply an ABSOLUTE total, in leadscrew steps. Not a delta.
+
+        Pending is written first and the command second, in that order, for
+        the torn-read reason above. Callers wanting a cumulative shift pass
+        read_phase_offset_steps() + entry.
+        """
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['phaseOffsetPending'] = int(total_steps)
+        self._board.device['elsStop']['phaseOffsetCommand'] = 1
+
+    def read_phase_offset_steps(self) -> int:
+        """The live cumulative total the firmware is applying, leadscrew steps.
+
+        Firmware-owned and cleared on the enable 0->1 edge, so this is the only
+        honest source for the running total -- a UI-side copy would survive a
+        job change the firmware just discarded.
+        """
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['phaseOffsetSteps'])
+
+    def read_phase_offset_seq(self) -> int:
+        """Monotonic counter, incremented once per ACCEPTED apply."""
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['phaseOffsetSeq'])
+
     # ── take-up outcome ───────────────────────────────────────────────
     def read_takeup_result(self) -> int:
         if not self._board.connected:

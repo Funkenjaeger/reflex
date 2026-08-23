@@ -647,6 +647,161 @@ class ElsFsm:
         self.hal.set_thread_pitch_steps(thread_pitch_steps)
         self.hal.set_z_counts_per_pitch(z_counts_per_pitch)
 
+    # ——— Thread-phase offset (multi-start threading) ———
+    # A multi-start thread is N threads cut from ONE datum, each one pitch/N out
+    # of phase with the last. Rather than re-index the workpiece between starts,
+    # the operator shifts the controller's idea of phase and cuts the next start
+    # from the same reference. elsStop.phaseOffsetSteps holds the live
+    # cumulative total; the register comment in fw/Core/Inc/Ramps.h is the
+    # authority on what the firmware does with it.
+    #
+    # ACCUMULATION LIVES HERE, NOT IN FIRMWARE. The firmware holds ONE absolute
+    # total and replaces it on every apply, which is exactly what makes Clear an
+    # ordinary apply of zero rather than a second command. Every entry is
+    # read-add-write against the firmware's number, never against a UI-side copy
+    # — the firmware clears the total on the enable 0->1 edge, and a local copy
+    # would happily survive a job change the machine already discarded.
+
+    PHASE_OFFSET_OK         = 'ok'
+    PHASE_OFFSET_OFFLINE    = 'offline'
+    PHASE_OFFSET_NO_JOB     = 'no_job'
+    PHASE_OFFSET_NO_PITCH   = 'no_pitch'
+    PHASE_OFFSET_NO_GEOMETRY = 'no_geometry'
+    PHASE_OFFSET_NEGATIVE   = 'negative'
+    PHASE_OFFSET_AT_PITCH   = 'at_pitch'
+
+    def _leadscrew_steps_per_display_unit(self):
+        """Fraction: leadscrew steps in ONE display unit (mm or inch).
+
+        servo.ratioNum/Den is mm-per-step and formats.factor is display-units-
+        per-mm, both exact Fractions, so this stays exact and the single
+        rounding happens where the step count is finally needed. None when the
+        geometry to answer is missing or degenerate.
+        """
+        try:
+            servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
+            factor = Fraction(self.board.formats.factor)
+        except (ValueError, ZeroDivisionError, TypeError):
+            return None
+        if servo_ratio == 0 or factor == 0:
+            return None
+        return 1 / (servo_ratio * factor)
+
+    def thread_pitch_steps(self) -> float:
+        """One thread pitch in leadscrew steps.
+
+        The modulus the offset wraps at, so it is both the bound an entry is
+        refused against and the denominator of the "fraction of a pitch"
+        readout. Computed from the SAME inputs push_thread_geometry sends the
+        firmware, so the two cannot disagree about what a pitch is.
+        """
+        try:
+            servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
+        except (ValueError, ZeroDivisionError):
+            return 0.0
+        if servo_ratio == 0:
+            return 0.0
+        return float(self._spindle_pitch_mm() / servo_ratio)
+
+    def phase_offset_steps(self) -> int:
+        """The live total the FIRMWARE is applying, in leadscrew steps."""
+        return self.hal.read_phase_offset_steps()
+
+    def phase_offset_seq(self) -> int:
+        """Ack counter. Capture before an apply, edge-detect after."""
+        return self.hal.read_phase_offset_seq()
+
+    def phase_offset_display(self):
+        """(distance in display units, fraction of one pitch) for the total.
+
+        Both numbers, because they answer different questions: the distance is
+        the thing the operator typed and can check against a dial, and the
+        fraction is the thing that says "this is start 2 of 3". A readout with
+        only the distance makes the operator do modular arithmetic at the
+        machine; only the fraction makes the entry unverifiable.
+        """
+        steps = self.phase_offset_steps()
+        per_unit = self._leadscrew_steps_per_display_unit()
+        distance = float(Fraction(steps) / per_unit) if per_unit else 0.0
+        pitch = self.thread_pitch_steps()
+        fraction = (steps / pitch) if pitch else 0.0
+        return distance, fraction
+
+    def _phase_offset_blockers(self) -> str:
+        """Everything that makes an offset meaningless, independent of value."""
+        if not self.board.connected:
+            return self.PHASE_OFFSET_OFFLINE
+        if not self.controller.is_threading:
+            # Turning has no thread phase to shift. The firmware agrees — it is
+            # sent threadPitchSteps = 0 — so an offset would sit in a register
+            # nothing reads.
+            return self.PHASE_OFFSET_NO_PITCH
+        if self.thread_pitch_steps() <= 0.0:
+            return self.PHASE_OFFSET_NO_PITCH
+        if self._leadscrew_steps_per_display_unit() is None:
+            return self.PHASE_OFFSET_NO_GEOMETRY
+        if not self.hal.read_enable():
+            # The firmware would consume the command WITHOUT acking it, and an
+            # absent ack is indistinguishable from a dropped frame. Say why
+            # here instead of letting the operator watch a total not change.
+            return self.PHASE_OFFSET_NO_JOB
+        return self.PHASE_OFFSET_OK
+
+    def apply_phase_offset(self, distance_display: float) -> str:
+        """Add a distance to the running total. Returns a PHASE_OFFSET_* code.
+
+        REFUSES RATHER THAN CLAMPS AT ONE PITCH (decided 2026-08-22). A total of
+        exactly one pitch is a no-op and 1.5 pitches is indistinguishable from
+        0.5, so clamping would silently hand back a different thread start than
+        the one asked for — on a 3-start thread, the wrong start, cut in metal
+        before anything looks wrong. Refusing states the reason instead.
+
+        ADVANCE-ONLY. A negative entry is refused, not applied. The math is
+        asymmetric: a negative offset does not step the phase back by |offset|,
+        the forward bias turns it into a forward jog of pitch-|offset|
+        (els_phase.h, T5). A symmetric +/- control would therefore misrepresent
+        what it does, and 'subtract' is available anyway — enter the complement.
+        """
+        blocked = self._phase_offset_blockers()
+        if blocked != self.PHASE_OFFSET_OK:
+            return blocked
+
+        try:
+            entry = Fraction(float(distance_display))
+        except (ValueError, TypeError, OverflowError):
+            return self.PHASE_OFFSET_NEGATIVE
+        if entry < 0:
+            return self.PHASE_OFFSET_NEGATIVE
+
+        per_unit = self._leadscrew_steps_per_display_unit()
+        # ROUND ONCE, at the end: the entry is exact up to here.
+        added = int(round(entry * per_unit))
+        new_total = self.phase_offset_steps() + added
+
+        pitch = self.thread_pitch_steps()
+        if new_total >= pitch:
+            return self.PHASE_OFFSET_AT_PITCH
+
+        log.info(f"*** apply_phase_offset: entry={float(distance_display)} "
+                 f"added={added} steps, total -> {new_total} of {pitch:.1f}/pitch")
+        self.hal.request_phase_offset(new_total)
+        return self.PHASE_OFFSET_OK
+
+    def clear_phase_offset(self) -> str:
+        """Return the total to zero. An ordinary apply, so it acks like one.
+
+        Gated on the same blockers as an apply for one reason: while enable is
+        0 the firmware consumes the command without acking, so a Clear there
+        would leave a nonzero total on screen with no explanation. The next
+        enable 0->1 edge clears it regardless.
+        """
+        blocked = self._phase_offset_blockers()
+        if blocked != self.PHASE_OFFSET_OK:
+            return blocked
+        log.info("*** clear_phase_offset: total -> 0")
+        self.hal.request_phase_offset(0)
+        return self.PHASE_OFFSET_OK
+
     # ——— Safety margin ———
     def _safety_margin_display(self) -> float:
         """Minimum distance (in display units) Z must be from stop_z before cutting is allowed.

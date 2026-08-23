@@ -207,6 +207,10 @@ typedef struct {
   uint16_t machineModeReserved;
   uint16_t latchCommand;
   uint16_t latchSeq;
+  uint16_t phaseOffsetCommand;
+  uint16_t phaseOffsetSeq;
+  int32_t  phaseOffsetPending;
+  int32_t  phaseOffsetSteps;
 } elsStop_t;
 """
 
@@ -215,12 +219,14 @@ typedef struct {
 # Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
 # Modbus contract; never renumber, only append.
 
-ELS_PROTOCOL_VERSION = 4        # elsStop.protocolVersion this UI is built against
+ELS_PROTOCOL_VERSION = 5        # elsStop.protocolVersion this UI is built against
                                 # 3 (2026-08-22): machineMode promoted to a permanent
                                 # register so the rung-2 census collects in every build.
                                 # 4 (2026-08-22): latchCommand/latchSeq for the manual
                                 # reference latch, appended after the diagnostic block so
                                 # every offset exercised on the lathe keeps its address.
+                                # 5 (2026-08-22): the thread-phase offset block for
+                                # multi-start threading, appended the same way.
 
 # Diagnostic scratchpad schema ids (elsStop.diagSchema). 0 means no probe is
 # compiled into the firmware and the block must not be interpreted at all.

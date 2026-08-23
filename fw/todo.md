@@ -231,28 +231,38 @@ Two unit traps, both live (full list in `els_slip.h`):
   forward-biases to pitch-|offset|). The only call site passes 0.
 - **Decided (Evan, 2026-08-21): cumulative entry, running total shown.**
 
-### Remaining: the register/command half, then the UI
-- **Fields** appended to `elsStop_t` in the 16-then-32 order the block already uses:
-  `phaseOffsetCommand` (host writes 1), `phaseOffsetSeq` (firmware ack, host
-  edge-detects), `phaseOffsetPending` (int32, candidate), `phaseOffsetSteps` (int32,
-  live total, read-only). Consume in the ISR exactly like `calCommand` (`elsCalUpdate`).
-- **Reset `phaseOffsetSteps` to 0 on the enable 0->1 edge that clears
-  `referenceLatched`**; leave it alone across per-pass stop/resume within a job.
-- **Register-map change => `protocolVersion` bump to 5.** Re-sync merged on
-  2026-08-22 and took 4; this is the next append.
-  `ui/reflex/utils/devices.py` mirrors the block byte-for-byte (the contract test
-  enforces it) -- same commit, both halves.
-- **Host side (cumulative):** read `phaseOffsetSteps`, add the entered distance
-  (mm/in -> leadscrew steps via the exact-Fraction-then-round-once pattern already in
-  `els_fsm.py`), write `Pending`, fire `Command`, wait for `Seq`. Display the running
-  total, in distance units AND as a fraction of pitch. Expert-only control, hidden by
-  default ("an accidental phase offset silently ruins a thread").
-- **Guards the UI must carry, from the math:** refuse a running total >= 1 pitch (it
-  aliases to total mod pitch -- the groove would meet the next one anyway); do not
-  offer a symmetric +/- nudge without making the asymmetry explicit (a negative entry
-  jogs forward by pitch-|offset|, never back by |offset|).
-- **Still Evan's:** where the total is displayed; advance-only vs signed entry;
-  refuse vs clamp at the pitch boundary.
+### Landed: the register/command half (2026-08-22)
+- `phaseOffsetCommand` / `phaseOffsetSeq` / `phaseOffsetPending` / `phaseOffsetSteps`
+  appended to `elsStop_t`, `protocolVersion` -> **5**, consumed in the ISR with the
+  `calCommand` idiom, cleared on the enable 0->1 edge alongside `referenceLatched`,
+  and fed to `elsComputePhaseCorrection()` in place of the placeholder 0.
+- `els_phase_offset_command_test` pins the plumbing: accept / refuse-outside-a-job /
+  Pending-inert-without-Command / replace-not-accumulate / dies-with-the-job-survives-
+  the-pass / reaches-the-math / polarity. Eight mutations applied and killed; M7
+  (call site still passing 0) leaves 23 of 26 assertions green, which is why the
+  reaches-the-math case exists.
+- Host half in `els_fsm.py`: conversion, accumulation, and all refusals, with
+  `tests/fsms/test_els_phase_offset.py` (25 cases, nine mutations killed).
+
+### Decided 2026-08-22 (Evan)
+- Running total displayed in the **advanced bar** when nonzero, as distance AND
+  fraction of pitch.
+- **Advance-only** entry plus a Clear. A signed control would misrepresent the math:
+  a negative offset jogs forward by pitch-|offset|, never back by |offset|.
+- **Refuse** at one pitch with a stated reason, never clamp -- a clamp hands back a
+  different thread start than the one asked for, in metal, before anything looks wrong.
+
+### Remaining
+- **THE POLARITY QUESTION, for the bench.** The offset is summed into `phaseError`
+  raw, so it displaces phase in the MACHINE frame; on a `cuttingDir == -1` machine a
+  given entry selects the COMPLEMENTARY start of an N-start thread (2/3 pitch where
+  the operator pictured 1/3). The lathe's own fixture geometry says elspi is
+  `cuttingDir == -1`. Not a safety issue -- every start is a legitimate start, and
+  cumulative entry self-corrects -- but it decides whether the UI's wording is honest.
+  Settle it by cutting a 2-start (where it is symmetric and therefore safe) and then a
+  3-start. `els_phase_offset_command_test` case 7 prints the corrections for both
+  polarities to compare against.
+- Hardware verification of the whole feature: nothing here has been near a lathe.
 - Second source: 6a77c598 (X-depth compound infeed) feeds the same `Pending` path from
   `scaledPosition` * tan(theta); do not build a second offset path.
 

@@ -217,8 +217,12 @@ void RampsStart(rampsHandler_t *rampsData) {
    * The new pair is appended AFTER the diagnostic scratchpad on purpose, so
    * every offset that has been exercised on the lathe -- the whole diag block
    * included -- keeps the address it was verified at. Only genuinely new
-   * registers move. */
-  rampsData->shared.elsStop.protocolVersion = 4;
+   * registers move.
+   *
+   * 5 (2026-08-22): the thread-phase offset block (phaseOffsetCommand/Seq/
+   * Pending/Steps) appended for multi-start threading, same append-at-the-tail
+   * discipline. */
+  rampsData->shared.elsStop.protocolVersion = 5;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
    * explicitly zeroed when no probe is compiled in, rather than left to whatever
@@ -229,6 +233,10 @@ void RampsStart(rampsHandler_t *rampsData) {
   rampsData->shared.elsStop.calSeq       = 0;
   rampsData->shared.elsStop.latchCommand = 0;
   rampsData->shared.elsStop.latchSeq     = 0;
+  rampsData->shared.elsStop.phaseOffsetCommand = 0;
+  rampsData->shared.elsStop.phaseOffsetSeq     = 0;
+  rampsData->shared.elsStop.phaseOffsetPending = 0;
+  rampsData->shared.elsStop.phaseOffsetSteps   = 0;
   rampsData->shared.elsStop.calResult    = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupResult = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupSeq    = 0;
@@ -412,8 +420,9 @@ static inline void applyPhaseCorrection(rampsSharedData_t *shared) {
       shared->scales[0].syncRatioNum, shared->scales[0].syncRatioDen,
       shared->elsStop.threadPitchSteps, shared->elsStop.zCountsPerPitch,
       shared->elsStop.stopDirection,
-      0 /* offsetSteps: no elsStop_t field yet -- see the PHASE OFFSET note in
-         * els_phase.h and todo.md. 0 is bit-for-bit the pre-feature path. */);
+      /* The live cumulative offset. Zero for every job that never sets one,
+       * which is bit-for-bit the pre-feature path (els_phase_offset_test T1). */
+      shared->elsStop.phaseOffsetSteps);
 
   shared->servo.stepsToGo += r.stepsToAdd;
 
@@ -567,6 +576,12 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   // Reset reference latch on elsStop.enable rising edge (start of a new threading job)
   if (shared->elsStop.enable && !data->elsStopPreviousEnable) {
     shared->elsStop.referenceLatched = 0;
+    /* The phase offset dies with the datum it was measured from. A new job means
+     * a new reference, so carrying a half-pitch shift into it would put the very
+     * first pass of the next thread out of phase for reasons the operator has no
+     * way to see. Per-pass stop/resume does NOT come through here, so the offset
+     * survives within a job -- which is the entire point of holding a total. */
+    shared->elsStop.phaseOffsetSteps = 0;
   }
 
   // Auto-clear active when enable is deasserted
@@ -629,6 +644,20 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
       shared->elsStop.latchedSpindle   = shared->scales[0].position;
       shared->elsStop.referenceLatched = 1;
       shared->elsStop.latchSeq++;
+    }
+  }
+
+  /* Thread-phase offset apply. The calCommand idiom again: Pending was fully
+   * written before Command was set, so reading it here is atomic without a
+   * lock. Gated on enable for the same reason as the latch above -- outside a
+   * job the total would be wiped by the next enable edge, so accepting it would
+   * be a lie. Absent seq increment = refused. NOTHING MOVES as a result of
+   * this; the new total is consumed by the next applyPhaseCorrection(). */
+  if (shared->elsStop.phaseOffsetCommand != 0u) {
+    shared->elsStop.phaseOffsetCommand = 0u;
+    if (shared->elsStop.enable != 0u) {
+      shared->elsStop.phaseOffsetSteps = shared->elsStop.phaseOffsetPending;
+      shared->elsStop.phaseOffsetSeq++;
     }
   }
 
