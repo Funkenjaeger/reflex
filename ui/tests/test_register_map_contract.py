@@ -380,3 +380,96 @@ def test_ui_recognises_no_schema_the_firmware_never_defined():
         f"not define. Retired probes keep their id in Ramps.h forever; they are "
         f"never deleted."
     )
+
+
+# ── seq/payload ORDERING: why cal and diag need no torn-read guard ───────────
+#
+# THE MECHANISM, read rather than assumed (Modbus.c process_FC3):
+#
+#     for (i = u16StartAdd; i < u16StartAdd + u8regsno; i++)
+#         ... copy modH->u16regs[i] into the TX buffer ...
+#
+# Registers are copied into the response ONE AT A TIME, in ASCENDING ADDRESS
+# ORDER, and the ~100 kHz ISR can preempt that loop at any point. So within a
+# single response frame a lower-addressed register is sampled EARLIER IN TIME
+# than a higher-addressed one. That gives one invariant with real consequences:
+#
+#     lower address  =>  older-or-equal
+#     higher address =>  newer-or-equal
+#
+# Apply it to an ack counter and the payload it vouches for:
+#
+#   seq BEFORE payload  ->  a torn frame reads (OLD seq, NEW payload). The host
+#       edge-detects seq, sees no edge, and does nothing; the next frame is
+#       consistent. The dangerous pairing (NEW seq, OLD payload) CANNOT occur,
+#       because for seq to be new the ISR must already have run before seq was
+#       sampled, and the payload is sampled later still. SAFE BY LAYOUT.
+#
+#   payload BEFORE seq  ->  a torn frame reads (OLD payload, NEW seq): an ack
+#       that vouches for a stale result. NEEDS A GUARD.
+#
+# takeupResult/takeupSeq is the ONE pair written payload-first, which is why it
+# alone carries the two-poll guard in ui_controller._poll_takeup_outcome, added
+# after elspi logged a REFUSED first pass as "CONFIRMED: moved 0 counts, needed
+# 2" on 2026-08-21. calSeq and diagSeq are both written seq-first and need
+# nothing -- the take-up was the anomaly, not the pattern.
+#
+# These tests exist because that safety is a property of FIELD ORDER: invisible
+# at every call site, and one tidy-up of Ramps.h away from silently vanishing.
+# Reordering a pair should cost a failing test and a deliberate decision, not a
+# bug found later on a machine.
+
+SEQ_SAFE_BY_LAYOUT = {
+    # seq field                      payload it vouches for
+    "elsStop.calSeq":               ["elsStop.calResult",
+                                     "elsStop.calMeasured.0",
+                                     "elsStop.calMeasured.1",
+                                     "elsStop.calMeasured.2"],
+    "elsStop.diagSeq":              ["elsStop.diagBucketTicks",
+                                     "elsStop.diagBucketCount",
+                                     "elsStop.diagSettleTicks",
+                                     "elsStop.diagNetCounts",
+                                     "elsStop.diagCaptureTicks",
+                                     "elsStop.diagEndReason"],
+    "elsStop.phaseOffsetSeq":       ["elsStop.phaseOffsetSteps"],
+    "elsStop.latchSeq":             [],   # acks a state change, carries no payload
+}
+
+
+@pytest.mark.parametrize("seq_field", sorted(SEQ_SAFE_BY_LAYOUT))
+def test_ack_counters_are_ordered_ahead_of_the_payload_they_vouch_for(
+        firmware_map, seq_field):
+    """seq at a LOWER address than its payload => a torn frame is harmless.
+
+    If this fails, the pair has been reordered and the host now needs the
+    two-poll guard that takeupSeq carries -- adding the guard is the fix, NOT
+    moving the assertion.
+    """
+    assert seq_field in firmware_map, f"{seq_field} not in the firmware layout"
+    seq_off = firmware_map[seq_field][1]
+    for payload in SEQ_SAFE_BY_LAYOUT[seq_field]:
+        assert payload in firmware_map, f"{payload} not in the firmware layout"
+        pay_off = firmware_map[payload][1]
+        assert seq_off < pay_off, (
+            f"{seq_field} (offset {seq_off}) must come BEFORE {payload} "
+            f"(offset {pay_off}). Reversed, a torn Modbus frame reads a NEW "
+            f"ack alongside a STALE payload -- the elspi 2026-08-21 failure, "
+            f"where a refused take-up reported itself CONFIRMED."
+        )
+
+
+def test_takeup_is_the_pair_that_genuinely_needs_its_guard(firmware_map):
+    """The inverse, pinned deliberately.
+
+    takeupResult sits BEFORE takeupSeq, so a torn frame CAN read (stale result,
+    new seq) -- which is why ui_controller carries a two-poll guard for this
+    pair and no other. If someone ever reorders these two, that guard becomes
+    unnecessary and this test should be the thing that says so.
+    """
+    result_off = firmware_map["elsStop.takeupResult"][1]
+    seq_off = firmware_map["elsStop.takeupSeq"][1]
+    assert result_off < seq_off, (
+        "takeupResult no longer precedes takeupSeq. That REMOVES the torn-read "
+        "hazard the two-poll guard in ui_controller._poll_takeup_outcome exists "
+        "for -- revisit the guard rather than deleting this test."
+    )
