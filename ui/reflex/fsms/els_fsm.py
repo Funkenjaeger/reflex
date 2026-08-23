@@ -688,20 +688,26 @@ class ElsFsm:
         return 1 / (servo_ratio * factor)
 
     def thread_pitch_steps(self) -> float:
-        """One thread pitch in leadscrew steps.
+        """One thread pitch in leadscrew steps, or 0.0 if it cannot be known.
 
         The modulus the offset wraps at, so it is both the bound an entry is
         refused against and the denominator of the "fraction of a pitch"
         readout. Computed from the SAME inputs push_thread_geometry sends the
         firmware, so the two cannot disagree about what a pitch is.
+
+        NEVER RAISES. _spindle_pitch_mm() reaches els.get_spindle_axis(), which
+        is None until an axis is mapped -- and this is read from a Kivy clock
+        callback, where an exception takes the update loop with it rather than
+        producing a visible error. AttributeError/TypeError are caught for
+        exactly that case, not defensively.
         """
         try:
             servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
-        except (ValueError, ZeroDivisionError):
+            if servo_ratio == 0:
+                return 0.0
+            return float(self._spindle_pitch_mm() / servo_ratio)
+        except (ValueError, ZeroDivisionError, TypeError, AttributeError):
             return 0.0
-        if servo_ratio == 0:
-            return 0.0
-        return float(self._spindle_pitch_mm() / servo_ratio)
 
     def phase_offset_steps(self) -> int:
         """The live total the FIRMWARE is applying, in leadscrew steps."""
@@ -710,6 +716,31 @@ class ElsFsm:
     def phase_offset_seq(self) -> int:
         """Ack counter. Capture before an apply, edge-detect after."""
         return self.hal.read_phase_offset_seq()
+
+    def steps_to_display(self, steps) -> float:
+        """Leadscrew steps -> a distance in display units (mm or inch).
+
+        Public because the alternative is worse: a caller that needs "half a
+        pitch as a distance" either reaches into a private helper or rebuilds
+        servo-ratio x format-factor locally, and a second copy of that
+        arithmetic is free to drift from the one the firmware is fed.
+        Returns 0.0 rather than raising when the geometry is unavailable.
+        """
+        per_unit = self._leadscrew_steps_per_display_unit()
+        if not per_unit:
+            return 0.0
+        try:
+            return float(Fraction(int(steps)) / per_unit)
+        except (ValueError, TypeError, ZeroDivisionError):
+            return 0.0
+
+    def pitch_display(self) -> float:
+        """One thread pitch as a distance in display units.
+
+        The number a "1/2 pitch" or "1/3 pitch" entry is computed from, so it
+        comes from the same place the refusal bound does.
+        """
+        return self.steps_to_display(int(round(self.thread_pitch_steps())))
 
     def phase_offset_display(self):
         """(distance in display units, fraction of one pitch) for the total.
@@ -721,8 +752,7 @@ class ElsFsm:
         machine; only the fraction makes the entry unverifiable.
         """
         steps = self.phase_offset_steps()
-        per_unit = self._leadscrew_steps_per_display_unit()
-        distance = float(Fraction(steps) / per_unit) if per_unit else 0.0
+        distance = self.steps_to_display(steps)
         pitch = self.thread_pitch_steps()
         fraction = (steps / pitch) if pitch else 0.0
         return distance, fraction

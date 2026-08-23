@@ -1,0 +1,136 @@
+<PhaseOffsetPopup>:
+    title: "Thread phase offset (multi-start)"
+    size_hint_x: 0.8
+    size_hint_y: None
+    height: 520
+    # Not auto-dismiss: a stray tap outside the modal must not drop an apply
+    # that is still waiting for its ack, which would leave the operator with no
+    # word either way about whether the phase moved.
+    auto_dismiss: False
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: dp(14)
+        spacing: dp(8)
+
+        Label:
+            id: lbl_intro
+            text: root.body_intro
+            halign: "left"
+            valign: "top"
+            text_size: self.width, None
+            size_hint_y: None
+            height: self.texture_size[1]
+            color: app.theme.text
+            font_size: app.formats.font_size
+
+        # The running total, in the readout font. Mono because the operator
+        # reads this against a dial and a proportional font makes a changed
+        # digit hard to spot; accent because it is the one number on this
+        # screen that says which start the next pass will land on.
+        Label:
+            id: lbl_total
+            text: root.total_text
+            halign: "left"
+            valign: "middle"
+            text_size: self.width, None
+            size_hint_y: None
+            height: dp(38)
+            color: app.theme.accent_text
+            font_name: app.theme.font_mono
+            font_size: app.formats.font_size
+
+        # Fill-from-fraction row. "Half a pitch for a 2-start" is the actual
+        # use case, and pitch/N is exactly the arithmetic this feature exists
+        # to stop the operator doing at the machine. These FILL the entry only
+        # — nothing here applies, so a mis-tap cannot shift a live job.
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(52)
+            spacing: dp(8)
+
+            FormLabel:
+                text: "Fill entry:"
+                size_hint_x: 0.4
+
+            FormValueButton:
+                text: "1/2 pitch"
+                disabled: root.busy
+                on_press: app.beep()
+                on_release: root.fill_fraction(2)
+
+            FormValueButton:
+                text: "1/3 pitch"
+                disabled: root.busy
+                on_press: app.beep()
+                on_release: root.fill_fraction(3)
+
+            FormValueButton:
+                text: "1/4 pitch"
+                disabled: root.busy
+                on_press: app.beep()
+                on_release: root.fill_fraction(4)
+
+        # Entry row. Unsigned magnitude by design — see the module docstring
+        # for why a +/- control would misdescribe what a negative entry does.
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(56)
+            spacing: dp(8)
+
+            FormLabel:
+                text: "Advance by (" + root.unit_label + ")"
+                size_hint_x: 0.6
+
+            FormValueButton:
+                text: root.entry_text
+                disabled: root.busy
+                on_press: app.beep()
+                on_release: root.edit_entry()
+
+        # Outcome/instruction text. Scrolled rather than sized to its texture:
+        # the refusals are the longest strings on this screen and one that
+        # overflowed a fixed-height modal would render over the buttons — the
+        # exact failure mode els_advbar.kv's collapsible strips were fixed for.
+        ScrollView:
+            do_scroll_x: False
+            do_scroll_y: True
+
+            Label:
+                id: lbl_message
+                text: root.message
+                halign: "left"
+                valign: "top"
+                text_size: self.width, None
+                size_hint_y: None
+                height: self.texture_size[1]
+                color: app.theme.danger_text if root.state == "refused" else (app.theme.success_text if root.state == "applied" else app.theme.text_dim)
+                font_size: app.formats.font_size
+
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(56)
+            spacing: dp(10)
+
+            FormValueButton:
+                text: "Close"
+                on_press: app.beep()
+                on_release: root.close()
+
+            # Clear is an ordinary apply of zero, so it acks — and is refused —
+            # exactly like one. It is deliberately NOT a "cancel": it drives
+            # the controller, and closing the modal does not undo it.
+            FormValueButton:
+                text: "Clear"
+                disabled: root.busy
+                on_press: app.beep()
+                on_release: root.clear()
+
+            FormValueButton:
+                text: "Apply"
+                disabled: root.busy
+                on_press: app.beep()
+                on_release: root.apply()

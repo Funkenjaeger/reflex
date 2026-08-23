@@ -269,6 +269,50 @@ def test_display_is_zero_without_geometry_rather_than_raising():
     assert fsm.phase_offset_display() == (0.0, 0.0)
 
 
+def test_survives_an_unmapped_spindle_axis():
+    """get_spindle_axis() returns None until an axis is mapped, and the pitch
+    calculation reaches straight through it. Found by building the operator
+    popup against this API: the readout polls on a 10 Hz clock, so this raising
+    would not surface as an error message — it would stop the update loop."""
+    fsm, _ = _fsm(total_steps=750)
+    fsm.els.get_spindle_axis.return_value = None
+    assert fsm.thread_pitch_steps() == 0.0
+    assert fsm.apply_phase_offset(0.5) == ElsFsm.PHASE_OFFSET_NO_PITCH
+
+    # The DISTANCE half survives, and should: converting steps to millimetres
+    # needs the servo gearing and the display factor, neither of which involves
+    # the spindle. Only the fraction-of-a-pitch half is unknowable, and it
+    # reports 0.0 rather than inventing a denominator.
+    distance, fraction = fsm.phase_offset_display()
+    assert distance == pytest.approx(0.75)
+    assert fraction == 0.0
+
+
+# ─── the public conversion, so callers never rebuild the arithmetic ────────
+
+def test_steps_to_display_inverts_the_entry_conversion():
+    """A caller asking for 'half a pitch as a distance' must land on the same
+    number that, typed back in, produces those steps. A second copy of this
+    arithmetic elsewhere is free to drift from the one the firmware is fed."""
+    fsm, _ = _fsm()
+    assert fsm.steps_to_display(750) == pytest.approx(0.75)
+
+
+def test_pitch_display_matches_the_refusal_bound():
+    """The '1/2 pitch' button and the at-one-pitch refusal must agree about
+    what a pitch is, or a suggested entry could be refused on arrival."""
+    fsm, _ = _fsm()
+    assert fsm.pitch_display() == pytest.approx(1.5)
+    half = fsm.pitch_display() / 2
+    assert fsm.apply_phase_offset(half) == ElsFsm.PHASE_OFFSET_OK
+
+
+def test_steps_to_display_is_zero_without_geometry():
+    fsm, _ = _fsm(ratio_num=0)
+    assert fsm.steps_to_display(750) == 0.0
+    assert fsm.pitch_display() == 0.0
+
+
 # ─── HAL: the write ORDER is the lock-free property ────────────────────────
 # Lives here rather than with the other HAL tests because it is only
 # meaningful alongside the reason it exists. The 32-bit Pending crosses a

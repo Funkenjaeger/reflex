@@ -118,6 +118,17 @@ class ElsSettingsPopup(Popup):
         from reflex.components.home.els_resync_popup import ThreadResyncPopup
         ThreadResyncPopup().open()
 
+    def open_phase_offset(self):
+        """Open the thread-phase offset (multi-start) entry surface.
+
+        Lazily imported like the wizards above. It needs no gating here either:
+        the FSM refuses an offset with a stated reason when there is no job, no
+        pitch or no connection, and a button greyed out on this screen could
+        not say which of those it was.
+        """
+        from reflex.components.home.els_phase_offset_popup import PhaseOffsetPopup
+        PhaseOffsetPopup().open()
+
     def refresh_backlash(self):
         """Re-read the stored take-up after a calibration commits.
 
