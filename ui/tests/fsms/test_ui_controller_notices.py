@@ -217,3 +217,52 @@ def test_a_successful_engage_says_nothing(ctrl):
 
     assert ctrl.engaged is True, "precondition: the engage was accepted"
     assert ctrl.notice_text == ""
+
+
+# ─── the wizard's own dead ends ───────────────────────────────────────────────
+# Same shape as toggle_engage's Z guard, and arguably worse: these are WIZARD
+# STEPS. The operator has been told to set a value and taps to capture it, so a
+# silent return is a dead button in the middle of a procedure the machine itself
+# asked them to follow.
+
+def test_the_wizard_says_why_a_stop_z_tap_did_nothing(ctrl_no_z):
+    ctrl_no_z._ui_fsm.state = "set_stop_z"
+
+    ctrl_no_z.on_action_button_clicked()
+
+    assert ctrl_no_z.notice_severity == NOTICE_WARNING
+    assert "Z axis" in ctrl_no_z.notice_text
+    assert "ELS settings" in ctrl_no_z.notice_text
+
+
+def test_the_wizard_says_why_a_retract_z_tap_did_nothing(ctrl_no_z):
+    """The other Z step through the same guard -- pinned separately because the
+    guard covers two states and a future refactor could easily fix one."""
+    ctrl_no_z._ui_fsm.state = "set_retract_z"
+
+    ctrl_no_z.on_action_button_clicked()
+
+    assert ctrl_no_z.notice_severity == NOTICE_WARNING
+    assert "Z axis" in ctrl_no_z.notice_text
+
+
+def test_the_x_message_names_the_cross_slide_not_just_x(clock):
+    """"No X axis" would send the operator hunting for which of the two axes
+    this step wanted. The message has to name the thing they will look for."""
+    ctrl = _controller(clock, z_axis=_make_z_axis())   # X unmapped
+    ctrl._ui_fsm.state = "set_start_dia"
+
+    ctrl.on_action_button_clicked()
+
+    assert ctrl.notice_severity == NOTICE_WARNING
+    assert "cross-slide" in ctrl.notice_text
+    assert "ELS settings" in ctrl.notice_text
+
+
+def test_a_wizard_tap_that_works_says_nothing(ctrl):
+    """The surface is only worth anything if it stays quiet on success."""
+    ctrl._ui_fsm.state = "set_stop_z"
+
+    ctrl.on_action_button_clicked()
+
+    assert ctrl.notice_text == ""

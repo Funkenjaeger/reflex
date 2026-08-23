@@ -1118,13 +1118,22 @@ class ElsUiController(EventDispatcher):
         # over from the previous visit to this wizard step.
         #
         # The axis may be unmapped (None) if the operator hasn't assigned it in
-        # ELS settings -- bail with a warning rather than dereferencing None
-        # (mirrors the engage-time Z guard in toggle_engage).
+        # ELS settings -- bail rather than dereferencing None (mirrors the
+        # engage-time Z guard in toggle_engage).
+        #
+        # SAID OUT LOUD, not only logged. These are wizard steps: the operator
+        # has been asked to set a value and taps to capture it, so a silent
+        # return reads as a dead button in the middle of a procedure they were
+        # instructed to follow -- the worst place for one. The log line stays;
+        # the log is the record and the strip is the surface. Warning rather
+        # than info because it names something the operator must go and change.
         state = self._ui_fsm.state
         if state in ("set_stop_z", "set_retract_z"):
             axis = self._els.get_z_axis()
             if axis is None:
                 log.warning(f"action button: no Z (saddle) axis assigned in state '{state}'")
+                self.notify("No ELS Z axis assigned — map it in ELS settings",
+                            NOTICE_WARNING)
                 return
             if state == "set_stop_z":
                 # Anchor the stop to the physical encoder at the captured Z.
@@ -1135,6 +1144,12 @@ class ElsUiController(EventDispatcher):
             axis = self._els.get_x_axis()
             if axis is None:
                 log.warning(f"action button: no X (cross-slide) axis assigned in state '{state}'")
+                # Names the cross-slide explicitly. "X axis" alone would send an
+                # operator hunting through settings for which of the two this
+                # step wanted -- the Z message has the same problem solved the
+                # same way.
+                self.notify("No ELS X (cross-slide) axis assigned — map it in "
+                            "ELS settings", NOTICE_WARNING)
                 return
             if state == "set_start_dia":
                 self._commit_start_dia(axis.scaledPosition)
