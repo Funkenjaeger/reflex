@@ -67,9 +67,42 @@ def _make_x_axis(scaled_position=0.0, encoder_offset=0):
     return axis
 
 
+class FakeConnectionManager:
+    """Read-failure accounting with the PRODUCTION semantics, not a Mock.
+
+    A MagicMock would make `reads_failed_since()` return a truthy Mock, so every
+    guarded poll would discard itself and the tests would pass for the wrong
+    reason -- green because nothing is ever interpreted. The counter is the
+    whole mechanism under test, so it is modelled for real: an int that only
+    goes up, and a comparison against a caller-held baseline.
+    """
+
+    def __init__(self, connected: bool = True):
+        self.read_failures = 0
+        # Production reads this on the write-verification path
+        # (ElsFsm.on_enter_cutting accumulates the per-write ACK from it), so
+        # the fake carries it rather than leaving a Mock to answer truthily.
+        self.connected = connected
+
+    def reads_failed_since(self, baseline: int) -> bool:
+        return self.read_failures != baseline
+
+    def fail_read(self, n: int = 1):
+        """Simulate n failed Modbus reads (checksum / timeout / short frame)."""
+        self.read_failures += n
+
+
 def _make_collaborators(*, z_axis=None, x_axis=None, connected=False):
     board = MagicMock()
     board.connected = connected
+    # Real semantics, deliberately not a Mock -- see FakeConnectionManager.
+    # connected defaults True and deliberately does NOT follow board.connected:
+    # this models the SERIAL LINK, not the board dispatcher's view of it, and
+    # before this fake existed it was a MagicMock attribute that every test read
+    # as truthy. Tying it to board.connected silently sent the default fixture
+    # down on_enter_cutting's abort-to-alarm path. A test that wants a dead link
+    # sets it explicitly.
+    board.connection_manager = FakeConnectionManager()
     # ElsFsm._safety_margin_display reads leadScrewPitch / leadScrewPitchIn /
     # ratioNum / ratioDen off board.servo. leadScrewPitch=0.0 keeps the margin
     # at zero, matching these tests' assumption that "safe side of stop_z"

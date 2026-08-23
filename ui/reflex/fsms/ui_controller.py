@@ -400,6 +400,18 @@ class ElsUiController(EventDispatcher):
         Edge-detected on takeupSeq, which increments once per OUTCOME (not per
         tick, and not per take-up attempt).
         """
+        # Snapshot the read-failure counter BEFORE any read in this poll. A
+        # failed read returns 0 (communication.py), and in this register map
+        # zero is not a neutral value -- it is a sequence reset. On elspi
+        # 2026-08-21 a CRC-failed 148-byte frame of zeros made takeupSeq read
+        # 2 -> 0; this poller took that for an edge, read zeros for result,
+        # moved and needed through the same failing path, logged a phantom
+        # "CONFIRMED: moved 0 counts, needed 0" and CLEARED a live refusal.
+        # The two-poll guard below does not cover it: a zero frame is only
+        # consistent across two polls if it repeats, and it did not.
+        cm = self._board.connection_manager
+        reads_baseline = cm.read_failures
+
         seq = self._hal.read_takeup_seq()
         if seq == self._prev_takeup_seq:
             self._pending_takeup_seq = None
@@ -419,11 +431,26 @@ class ElsUiController(EventDispatcher):
             self._pending_takeup_seq = seq
             return
         self._pending_takeup_seq = None
+        prev_seq_before_commit = self._prev_takeup_seq
         self._prev_takeup_seq = seq
 
         result = self._hal.read_takeup_result()
         moved = self._hal.read_last_takeup_z_delta()
         needed = self._hal.read_takeup_thresh_counts()
+        if cm.reads_failed_since(reads_baseline):
+            # ANY read in this poll failed -- the seq read that produced the
+            # edge, or one of the three that make up the outcome. The baseline
+            # is taken at the top of the poll deliberately, so this ONE check
+            # covers the whole poll and an earlier duplicate of it was removed
+            # as unkillable: no mutation could distinguish it from this.
+            #
+            # Reporting now would announce an outcome assembled from zeros --
+            # the phantom CONFIRMED. _prev_takeup_seq has already been
+            # advanced, so roll it back and let the next poll re-detect the
+            # edge cleanly; a real outcome is deferred by a tick, never lost.
+            self._prev_takeup_seq = prev_seq_before_commit
+            self._pending_takeup_seq = None
+            return
 
         if result == 0:
             self.takeup_warning = ""
@@ -460,9 +487,19 @@ class ElsUiController(EventDispatcher):
         Never raises into the update loop: phase_offset_display reaches through
         the spindle axis, which is None until ELS is configured.
         """
+        # A FAILED READ MUST NOT READ AS "NO OFFSET". The read helpers return 0
+        # on a checksum/timeout failure, and 0 here means exactly "no phase
+        # shift is being cut" -- so a bad frame would clear this readout while
+        # the machine is still cutting at an offset, which is the one thing it
+        # exists to prevent the operator forgetting. Same counter the take-up
+        # poller uses; see the elspi 2026-08-21 phantom CONFIRMED.
+        cm = self._board.connection_manager
+        reads_baseline = cm.read_failures
         try:
             steps = self._els_fsm.phase_offset_steps()
         except Exception:
+            return
+        if cm.reads_failed_since(reads_baseline):
             return
 
         if steps != self._prev_phase_offset_steps:

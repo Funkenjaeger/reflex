@@ -91,3 +91,130 @@ def test_a_second_edge_before_confirmation_waits_for_the_newer_seq(ctrl, caplog)
     assert caplog.text.count("CONFIRMED") == 1
     assert ctrl._prev_takeup_seq == 2
     assert ctrl.takeup_warning == ""
+
+
+# ── a failed read must not be consumed as the value zero ─────────────────────
+# elspi 2026-08-21: a CRC-failed 148-byte frame of ZEROS made takeupSeq read
+# 2 -> 0. The poller took that for a sequence edge, read zeros for result,
+# moved and needed through the same failing path, logged
+# "CONFIRMED: moved 0 counts, needed 0" and CLEARED a live take-up refusal --
+# the operator-facing half of a safety gate, silently switched off by a bad
+# frame.
+#
+# The two-poll torn-read guard does NOT cover this and was never meant to: it
+# defends against a frame that is internally inconsistent, whereas a zero frame
+# is perfectly self-consistent. It is only wrong.
+
+def test_a_failed_read_is_not_taken_for_a_sequence_reset(ctrl, caplog):
+    """The elspi defect, reproduced: seq 2 -> 0 because the read FAILED."""
+    caplog.set_level(logging.INFO)
+    cm = ctrl._board.connection_manager
+
+    # A real outcome first, so there is a live refusal on screen to destroy.
+    _polls(ctrl, [(2, ELS_TAKEUP_ERR_UNCONFIRMED), (2, ELS_TAKEUP_ERR_UNCONFIRMED)])
+    warning_before = ctrl.takeup_warning
+    assert warning_before, "fixture precondition: a refusal is showing"
+
+    # Now the bad frame: every read in the poll returns 0 AND fails.
+    caplog.clear()
+
+    def _zero_and_fail(*_a, **_k):
+        cm.fail_read()
+        return 0
+
+    ctrl._hal.read_takeup_seq.side_effect = _zero_and_fail
+    ctrl._hal.read_takeup_result.side_effect = _zero_and_fail
+    # POLL IT TWICE. A single bad frame is already absorbed by the two-poll
+    # torn-read guard, so one poll proves nothing about this one -- the first
+    # version of this test did exactly that and passed with the read-failure
+    # guard removed. The real incident had RX starvation lasting longer than a
+    # poll interval, so the zero frame REPEATED and was self-consistent across
+    # both polls, which is precisely what the two-poll guard cannot catch.
+    ctrl._poll_takeup_outcome()
+    ctrl._poll_takeup_outcome()
+
+    assert ctrl.takeup_warning == warning_before, (
+        "a failed read cleared a live take-up refusal")
+    assert "CONFIRMED" not in caplog.text, "phantom confirmation from a zero frame"
+    assert ctrl._prev_takeup_seq == 2, (
+        "the failed poll must not rewrite the last known sequence")
+
+
+def test_a_read_that_fails_midway_through_the_outcome_is_discarded(ctrl, caplog):
+    """The nastier half: seq reads fine, then a read fails while collecting the
+    outcome. Reporting then announces an outcome built from zeros."""
+    caplog.set_level(logging.INFO)
+    cm = ctrl._board.connection_manager
+
+    _polls(ctrl, [(3, ELS_TAKEUP_ERR_UNCONFIRMED), (3, ELS_TAKEUP_ERR_UNCONFIRMED)])
+    caplog.clear()
+
+    # Two clean polls establish the edge for seq 4, then result fails.
+    ctrl._hal.read_takeup_seq.side_effect = None
+    ctrl._hal.read_takeup_seq.return_value = 4
+    ctrl._hal.read_takeup_result.side_effect = None
+    ctrl._hal.read_takeup_result.return_value = 0
+    ctrl._poll_takeup_outcome()          # first sighting of the edge
+
+    def _zero_and_fail(*_a, **_k):
+        cm.fail_read()
+        return 0
+
+    ctrl._hal.read_takeup_result.side_effect = _zero_and_fail
+    ctrl._poll_takeup_outcome()          # commit poll, but the result read fails
+
+    assert "CONFIRMED" not in caplog.text, (
+        "reported an outcome assembled from a failed read")
+    assert ctrl._prev_takeup_seq == 3, (
+        "seq must roll back so the real outcome is still reported once the "
+        "link recovers")
+
+    # Link recovers: the same outcome must still arrive.
+    ctrl._hal.read_takeup_result.side_effect = None
+    ctrl._hal.read_takeup_result.return_value = 0
+    _polls(ctrl, [(4, 0), (4, 0)])
+    assert "CONFIRMED" in caplog.text, "the real outcome was lost, not deferred"
+    assert ctrl._prev_takeup_seq == 4
+
+
+def test_only_the_sequence_read_failing_is_still_caught(ctrl, caplog):
+    """The baseline is sampled BEFORE the seq read, not after, and this is the
+    case that proves it matters.
+
+    A frame can fail for the seq read and the very next read succeed. If the
+    baseline were taken after the seq read, that failure would be invisible and
+    a fabricated seq of 0 would be interpreted against a perfectly good result
+    -- reporting a real outcome under a sequence number that never existed.
+    """
+    caplog.set_level(logging.INFO)
+    cm = ctrl._board.connection_manager
+
+    _polls(ctrl, [(5, ELS_TAKEUP_ERR_UNCONFIRMED), (5, ELS_TAKEUP_ERR_UNCONFIRMED)])
+    warning_before = ctrl.takeup_warning
+    caplog.clear()
+
+    def _seq_zero_and_fail(*_a, **_k):
+        cm.fail_read()
+        return 0
+
+    ctrl._hal.read_takeup_seq.side_effect = _seq_zero_and_fail
+    # The outcome reads are CLEAN and would look like a confirmation.
+    ctrl._hal.read_takeup_result.side_effect = None
+    ctrl._hal.read_takeup_result.return_value = 0
+    ctrl._poll_takeup_outcome()
+    ctrl._poll_takeup_outcome()
+
+    assert "CONFIRMED" not in caplog.text, (
+        "a fabricated sequence number was interpreted against a clean result")
+    assert ctrl.takeup_warning == warning_before
+    assert ctrl._prev_takeup_seq == 5
+
+
+def test_a_clean_poll_still_reports_normally(ctrl, caplog):
+    """The guard must not make the poller inert -- the failure mode of a
+    too-eager 'discard the poll' check is a machine that never reports."""
+    caplog.set_level(logging.INFO)
+    _polls(ctrl, [(1, 0), (1, 0)])
+    assert "CONFIRMED" in caplog.text
+    assert ctrl.takeup_warning == ""
+    assert ctrl._board.connection_manager.read_failures == 0

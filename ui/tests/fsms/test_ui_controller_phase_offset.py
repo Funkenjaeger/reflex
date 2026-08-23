@@ -168,3 +168,26 @@ def test_an_unconvertible_offset_still_announces_itself(ctrl):
 ])
 def test_a_fraction_is_named_only_when_it_really_is_one(fraction, expected):
     assert phase_offset_fraction_text(fraction) == expected
+
+
+def test_a_failed_read_does_not_clear_the_offset_readout(ctrl):
+    """A checksum failure returns 0, and 0 here means "no phase shift is being
+    cut". Clearing the strip on a bad frame would hide a live offset -- the one
+    thing this readout exists to stop the operator forgetting."""
+    cm = ctrl._board.connection_manager
+
+    # Establish a live offset on screen (seen twice, per the torn-read guard).
+    _polls(ctrl, 200, 200)
+    assert ctrl.phase_offset_active, "fixture precondition: an offset is showing"
+    text_before = ctrl.phase_offset_text
+
+    def _zero_and_fail(*_a, **_k):
+        cm.fail_read()
+        return 0
+
+    ctrl._els_fsm.hal.read_phase_offset_steps.side_effect = _zero_and_fail
+    ctrl._poll_phase_offset()
+    ctrl._poll_phase_offset()
+
+    assert ctrl.phase_offset_active, "a failed read cleared a live offset readout"
+    assert ctrl.phase_offset_text == text_before
