@@ -32,6 +32,42 @@
  * small so the emulator's bounded-guard scenario loop doesn't time out. */
 #define ELS_SETTLE_TICKS 50
 
+/* ---- QUIESCENCE: has the carriage actually STOPPED? --------------------
+ *
+ * The Z confirmation gate asks whether the carriage moved FAR ENOUGH. It has
+ * never asked whether it has stopped moving, and it has no channel through
+ * which it could: els_takeup_settle_gate_test drives the real ISR against the
+ * emulator's carriage settle model and shows the firmware behaving
+ * BIT-IDENTICALLY -- same release tick, same verdict -- whether the carriage is
+ * stationary or still owes 1.36 Z counts that take another 360 ticks to arrive.
+ * So this is a missing INPUT, not a mis-tuned constant, and no amount of
+ * adjusting ELS_SETTLE_TICKS would have found it.
+ *
+ * DEFAULT OFF, and deliberately so. Enabling it changes the release condition
+ * of EVERY pass, and the machine it would run on cannot currently be measured
+ * for it: elspi's 18 takeup-settle-v3 captures show the carriage never moving
+ * more than ONE encoder count after a take-up, which is the resolution floor of
+ * a 200 counts/mm scale. At that floor "still moving" and "stopped" are not
+ * distinguishable, so switching this on there would buy nothing and could cost
+ * spurious refusals. It is built now because the emulator can finally make it
+ * fail; it is enabled when a measurement says it should be.
+ *
+ * What those captures DO establish is that a quiescence test is implementable
+ * at all: across 900 trace buckets, 893 were exactly 0 and 7 were exactly -1,
+ * with not a single +1. Encoder dither would have produced both signs and would
+ * have made a stillness test unusable. It is real motion, in one direction.
+ *
+ * ELS_QUIESCENT_TICKS is sized against the EMULATOR, not that field data --
+ * those single counts arrive scattered across the whole window and may be drift
+ * rather than settle. Treat it as provisional and commission it with the
+ * inter-pulse-gap measurement (todo.md), the same way ELS_SLIP_SETTLE_TICKS
+ * must be. The confirm window still bounds the wait, so a machine that never
+ * goes quiet aborts rather than hangs. */
+#ifndef ELS_REQUIRE_QUIESCENCE
+#define ELS_REQUIRE_QUIESCENCE 0
+#endif
+#define ELS_QUIESCENT_TICKS 200
+
 /* Backstop for a backlash takeup that never reaches its commanded target. ISR
  * runs at ~100 kHz (TIM9, 10 us/tick), so this is ~5 s — far longer than any
  * legitimate takeup (tens to low hundreds of steps) even at a slow maxSpeed, and
@@ -667,6 +703,28 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   // at the takeup target.
   if (shared->elsStop.takeupPending) {
     data->elsStopTakeupTicks++;
+    /* Stillness, tracked every tick the take-up is in flight -- including
+     * during the commanded move, so the counter is already meaningful when the
+     * dwell ends. Any change in Z resets it: the test is "has it stopped", and
+     * one count of movement means it has not.
+     *
+     * COMPILED OUT ENTIRELY when the flag is off, not merely ignored. The
+     * comparison is cheap, but this is the ~100 kHz ISR whose execution time is
+     * itself a published register, and a release build should carry no cost at
+     * all for a feature it does not use. Leaving it in cost 64 bytes of flash
+     * and made the claim "a release build is bit-for-bit the old gate" false,
+     * which is worse than the cycles. */
+#if ELS_REQUIRE_QUIESCENCE
+    {
+      int32_t zQ = shared->scales[shared->elsStop.scaleIndex].position;
+      if (zQ != data->elsStopQuiescentZ) {
+        data->elsStopQuiescentZ     = zQ;
+        data->elsStopQuiescentTicks = 0;
+      } else if (data->elsStopQuiescentTicks < ELS_QUIESCENT_TICKS) {
+        data->elsStopQuiescentTicks++;
+      }
+    }
+#endif
     // Crossing test (not exact equality): the servo emits one step per servoCycle
     // while desiredSteps can advance several steps per tick, so currentSteps may
     // skip the exact target (esp. across the reversal pulse-skip). Treat the
@@ -764,7 +822,29 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
          * narrows the exposure without closing it — a nudge landing inside the
          * settle horizon of a real pulse is still indistinguishable, and no
          * amount of arithmetic here changes that. */
-        if (elsSlipConfirmed(&data->elsSlip, shared->elsStop.takeupThreshCounts)) {
+        /* QUIESCENCE, and note it is an AND against the existing evidence, never
+         * a replacement: a carriage that is merely stationary has proved
+         * nothing about coupling. Compiled to a constant `true` unless
+         * ELS_REQUIRE_QUIESCENCE is set, so a release build reaches the old
+         * gate's decision by exactly the old path.
+         *
+         * NOT literally bit-for-bit, and the difference is stated rather than
+         * rounded off: the two tracker fields stay in rampsHandler_t either way
+         * -- measured at +16 bytes of flash in the ARM release build -- because
+         * making a struct layout depend on a compile flag is a worse trade than
+         * 16 bytes. Behaviour is unchanged; the binary is slightly larger.
+         *
+         * When it withholds, it does so WITHOUT reporting a refusal:
+         * the take-up may be perfectly good and simply still settling, and the
+         * gate re-evaluates every tick. A carriage that never goes quiet is
+         * caught by the confirm window below, which is the honest failure. */
+#if ELS_REQUIRE_QUIESCENCE
+        bool carriageStopped = (data->elsStopQuiescentTicks >= ELS_QUIESCENT_TICKS);
+#else
+        bool carriageStopped = true;
+#endif
+        if (carriageStopped
+            && elsSlipConfirmed(&data->elsSlip, shared->elsStop.takeupThreshCounts)) {
           if (shared->elsStop.takeupResult != ELS_CAL_OK) {
             shared->elsStop.takeupResult = ELS_CAL_OK;
           }
@@ -781,9 +861,16 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
           if (data->elsStopCorrectOnConfirm) {
             applyPhaseCorrection(shared);
           }
-        } else if (shared->elsStop.takeupResult != ELS_TAKEUP_ERR_UNCONFIRMED) {
+        } else if (carriageStopped
+                   && shared->elsStop.takeupResult != ELS_TAKEUP_ERR_UNCONFIRMED) {
           /* Report once on the transition, not every tick, so takeupSeq stays a
-           * count of OUTCOMES rather than a tick counter. */
+           * count of OUTCOMES rather than a tick counter.
+           *
+           * Gated on carriageStopped as well: while the carriage is still
+           * moving there is no verdict yet, and announcing UNCONFIRMED then
+           * would put a refusal on the operator's screen for a take-up that is
+           * about to succeed. Silence until the machine has settled enough to
+           * be judged. */
           shared->elsStop.takeupResult = ELS_TAKEUP_ERR_UNCONFIRMED;
           shared->elsStop.takeupSeq++;
         }
@@ -1032,6 +1119,20 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
       /* Baseline for the Z confirmation gate. Captured at INITIATION, before
        * any pulses are issued, so the gate measures the whole takeup. */
       data->elsStopTakeupZStart      = shared->scales[shared->elsStop.scaleIndex].position;
+      /* Quiescence tracker, reset with the take-up so no count carries over
+       * from the previous one.
+       *
+       * NOT LOAD-BEARING, and said plainly because the comment here first
+       * claimed otherwise: pre-seeding the counter to a fully-satisfied value
+       * instead was mutation-tested and changed NOTHING (Q5). Any take-up that
+       * actually moves the carriage resets the counter on its first tick of
+       * motion, and one that moves the carriage nowhere is refused by
+       * elsSlipConfirmed regardless of what this counter says. It is hygiene,
+       * not a guard -- do not build a safety argument on it. */
+#if ELS_REQUIRE_QUIESCENCE
+      data->elsStopQuiescentZ        = data->elsStopTakeupZStart;
+      data->elsStopQuiescentTicks    = 0;
+#endif
       /* Same instant, same reason, for the attribution accumulator: it must
        * cover the whole take-up. It starts credited with nothing and stays
        * that way until the first pulse fires (els_slip.h), so the Z motion of

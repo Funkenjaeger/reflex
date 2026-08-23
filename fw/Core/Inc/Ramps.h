@@ -370,6 +370,8 @@ typedef struct {
   int32_t  elsStopTakeupZStart;       // scales[elsStop.scaleIndex].position captured at takeup INITIATION; the baseline the Z confirmation gate measures against
   int32_t  elsStopTakeupZSign;        // +1/-1: sign the Z scale should move in for this takeup; sign(signedTakeup) x droSign. Only the magnitude gates completion — the sign turns lastTakeupZDelta into a wrong-way diagnostic
   int32_t  elsStopTakeupTicks;        // ISR ticks since takeup initiation; backstop against a takeup that never reaches target (see ELS_TAKEUP_TIMEOUT_TICKS)
+  int32_t  elsStopQuiescentZ;         // last Z scale position the quiescence tracker saw; any change resets elsStopQuiescentTicks
+  int32_t  elsStopQuiescentTicks;     // consecutive ISR ticks with Z unchanged. The "has it STOPPED" input the confirmation gate never had; only consulted when ELS_REQUIRE_QUIESCENCE is set (see Ramps.c)
   uint16_t elsStopTakeupLatched;      // 1 once the Z confirmation window has closed on an unconfirmed takeup; further Z motion can no longer release the gate (see ELS_TAKEUP_CONFIRM_WINDOW_TICKS)
   uint16_t elsStopCorrectOnConfirm;  // 1 if the take-up in flight is to be followed by applyPhaseCorrection() once CONFIRMED, i.e. a reference was latched and thread geometry was set at initiation. 0 on a first pass (no reference yet) and in turning (no pitch): those take-ups exist to prove coupling only. Set at initiation, read at confirmation, cleared with the job (2026-08-21).
   elsCalCtx_t elsCal;                 // backlash calibration run state; non-Modbus, the ISR owns it entirely (els_backlash_cal.h)

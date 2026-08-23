@@ -341,6 +341,20 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
 target_link_libraries(els_takeup_settle_gate_test m pthread)
 add_test(NAME els_takeup_settle_gate_test COMMAND els_takeup_settle_gate_test)
 
+# Same rig as els_takeup_settle_gate_test, with the quiescence input COMPILED IN.
+# The pair is only meaningful because they share a fixture: the flag is the one
+# thing that differs between them.
+add_executable(els_takeup_quiescence_test
+    ${CMAKE_SOURCE_DIR}/test/els_takeup_quiescence_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/physics.cpp
+    ${CMAKE_SOURCE_DIR}/src/config.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_compile_definitions(els_takeup_quiescence_test PRIVATE ELS_REQUIRE_QUIESCENCE=1)
+target_link_libraries(els_takeup_quiescence_test m pthread)
+add_test(NAME els_takeup_quiescence_test COMMAND els_takeup_quiescence_test)
+
 add_executable(els_phase_offset_command_test
     ${CMAKE_SOURCE_DIR}/test/els_phase_offset_command_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)
