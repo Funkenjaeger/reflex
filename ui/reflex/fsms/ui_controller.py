@@ -14,6 +14,7 @@ from reflex.fsms.els_mode_watch import ElsModeWatch
 from reflex.utils.devices import (takeup_failure_text,
                                   ELS_DIAG_SCHEMA_MODE_WATCH,
                                   ELS_DIAG_SCHEMA_MODE_WATCH_V2)
+from reflex.utils.notices import (NoticeCenter, NOTICE_INFO, NOTICE_WARNING)
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
 
 log = Logger.getChild(__name__)
@@ -40,6 +41,13 @@ BLINK_TARGET = {
     "set_start_dia": "major_dia",
     "set_stop_dia":  "minor_dia",
 }
+
+# How often the notice queue is swept for expiry. 10 Hz: fast enough that a
+# notice never visibly outstays the duration it was given (a tenth of a second
+# on a 4 s strip is not perceptible), slow enough to be free. The sweep does no
+# I/O and touches no registers -- it compares one float against another.
+NOTICE_SWEEP_SECONDS = 0.1
+
 
 # ── Thread-phase offset readout ──────────────────────────────────────────────
 # The operator-facing text lives HERE rather than in utils/devices.py (where
@@ -131,6 +139,26 @@ class ElsUiController(EventDispatcher):
     # Without it a refusal and a hung machine are indistinguishable, which is
     # exactly how it presented on hardware 2026-08-08.
     takeup_warning      = StringProperty("")
+
+    # ── Transient operator notices (top status bar) ────────────────────
+    # The live notice, republished from the NoticeCenter for kv to bind to.
+    # Empty text means nothing is showing; `notice_severity` picks the colour.
+    #
+    # WHY TWO PROPERTIES AND NOT THE Notice OBJECT. kv binds to properties, and
+    # an ObjectProperty holding a mutable dataclass does not fire when a field
+    # inside it changes -- the strip would go stale exactly when one notice
+    # replaced another with the same object identity. Flattening to the two
+    # values the renderer actually needs keeps every update a real property
+    # change.
+    #
+    # WHY THE TEXT DOES NOT DOUBLE AS THE VISIBILITY FLAG the way
+    # `takeup_warning` does, and why that asymmetry is correct: a take-up
+    # refusal is a LATCH -- it is true until something clears it -- so its text
+    # and its truth are the same fact. A notice is an EVENT with a lifetime, and
+    # the lifetime is owned by the NoticeCenter. Nothing outside it may decide
+    # the strip is up; the strip is up because there is text.
+    notice_text         = StringProperty("")
+    notice_severity     = StringProperty("")
 
     # ── Thread-phase offset (multi-start threading) ────────────────────
     # True whenever elsStop.phaseOffsetSteps is nonzero, i.e. the machine is
@@ -226,6 +254,11 @@ class ElsUiController(EventDispatcher):
         self._hal = ElsStopHal(board)
         self._diag_recorder = ElsDiagRecorder(self._hal, board)
 
+        # Built FIRST, before any FSM or poller exists, because `notify()` must
+        # be safe to call from anywhere below -- including from construction, if
+        # a future reconcile-on-connect wants to say something.
+        self._notices = NoticeCenter()
+
         # Rung-2 sampler (log-only): compares the domain FSM's state against
         # the firmware-published machine mode. Runs against every build now
         # that machineMode is a permanent register (2026-08-22); it used to be
@@ -320,6 +353,16 @@ class ElsUiController(EventDispatcher):
         # Rung-2 mode sampler; equally dormant without the schema-4 probe.
         self._board.bind(update_tick=self._poll_mode_watch)
 
+        # Notice expiry runs off the Kivy Clock, NOT off board.update_tick like
+        # every other poller in this file, and the difference is load-bearing:
+        # update_tick only fires while a board is talking to us, and the very
+        # first notice migrated onto this surface ("no ELS Z axis is assigned --
+        # map it in ELS settings") fires most often when NOTHING is connected.
+        # On update_tick that notice would appear and then stay on screen
+        # forever, which is precisely the persistent-banner failure this surface
+        # is defined not to be.
+        Clock.schedule_interval(self._poll_notices, NOTICE_SWEEP_SECONDS)
+
         # 7. Re-arm HAL when mode flags change so firmware tracks the operator.
         self.bind(retract_enabled=self._on_modes_changed,
                   wizard_enabled=self._on_modes_changed,
@@ -382,6 +425,67 @@ class ElsUiController(EventDispatcher):
             # (non-wizard auto-advances to in_cycle.waiting_to_cut).
             self._sync_ui_state_to_modes()
         self._apply_policy()
+
+    # ——— transient operator notices ———
+    def notify(self, message: str, severity: str = NOTICE_INFO, *,
+               seconds: float | None = None) -> bool:
+        """Tell the operator something, on the top status bar, for a few seconds.
+
+        THE GENERAL CHANNEL. Anything in the app that wants the operator to know
+        something happened calls this: `app.els_uic.notify(...)`. It is
+        deliberately not ELS-specific -- it lives here because this is where
+        every other value republished into kv already lives, not because the
+        notices are about threading.
+
+        WHAT BELONGS HERE, and it is a narrow set: an EVENT the operator would
+        otherwise experience as nothing happening. A refused button press, an
+        action that completed silently, a condition that must change before the
+        machine will do what was asked. Two things do NOT belong here:
+
+          * PERSISTENT MACHINE STATE. A live thread-phase offset or an armed
+            stop is true for the length of a job, and a strip that covers
+            something for a whole job needs its placement argued on its own
+            merits -- see the two overlays in els_advbar.kv. `seconds` is
+            clamped (notices.MAX_SECONDS) so this cannot be bent into one.
+          * ANYTHING THE OPERATOR MUST ACKNOWLEDGE OR DECIDE. A notice has no
+            buttons and vanishes on a timer; if the answer matters, it is a
+            CustomPopup (see _on_pass_interrupted).
+
+        Returns True iff something will be shown. False means the message was
+        empty -- i.e. the caller built it out of nothing -- and is worth
+        checking in a test, never worth branching on at a call site.
+
+        Safe to call from the board polling thread, like the other property
+        writes in this file: the queue itself is locked, and a Kivy property
+        assignment is atomic enough for a string.
+        """
+        posted = self._notices.post(message, severity, seconds=seconds)
+        self._publish_notice()
+        return posted is not None
+
+    def _publish_notice(self):
+        """Mirror whatever the NoticeCenter says is current into the two kv
+        properties. Assignment is guarded so an unchanged notice does not
+        re-fire every binding on the status bar 10 times a second."""
+        current = self._notices.showing
+        text = current.message if current is not None else ""
+        severity = current.severity if current is not None else ""
+        # Severity FIRST: the renderer picks its colour from it, and setting the
+        # text first would paint one frame of the new message in the old
+        # message's colour -- an amber refusal flashing cyan.
+        if severity != self.notice_severity:
+            self.notice_severity = severity
+        if text != self.notice_text:
+            self.notice_text = text
+
+    def _poll_notices(self, _dt):
+        """Retire an expired notice and promote whatever was waiting behind it.
+
+        Republishes only when the current notice actually changed, so the steady
+        state (nothing showing) costs one float comparison per tick.
+        """
+        if self._notices.poll():
+            self._publish_notice()
 
     def _poll_takeup_outcome(self, *args):
         """Log every backlash take-up outcome so it is visible AT THE MACHINE.
@@ -870,7 +974,22 @@ class ElsUiController(EventDispatcher):
         return bool(self._board.servo.servoMode)
 
     def toggle_engage(self):
-        """Engage/disengage button intent. Drives the domain FSM."""
+        """Engage/disengage button intent. Drives the domain FSM.
+
+        EVERY REFUSAL BELOW ALSO NOTIFIES (migrated 2026-08-23). This method is
+        the app's clearest example of the problem the notice surface exists for:
+        four paths that end in `return` with nothing but a log line, on a button
+        whose entire feedback is that the LED card changes state. The
+        no-Z-axis path is not hypothetical -- an unmapped ELS Z axis (or simply
+        no controller connected) makes Engage a button that does nothing, with
+        the explanation written to a file the operator has no way to read while
+        standing at the lathe.
+
+        The log lines stay. The log is the record and the notice is the
+        surface; they answer different questions ("what happened during that
+        session" vs "why did nothing happen just now") and neither replaces the
+        other.
+        """
         if self.engaged and self.is_feeding and self._els.spindle_is_running:
             # REFUSE. "Disable the stop" while sync motion is armed is an
             # ambiguous instruction: it reads equally as "stop the carriage" and
@@ -899,6 +1018,11 @@ class ElsUiController(EventDispatcher):
                 "Disengage refused — sync motion is armed. Turn Sync Enable off "
                 "first (equivalent to opening the half nut)."
             )
+            # WARNING, not info: the operator has to go and change something
+            # before this button will work. The notice says WHAT to change,
+            # because "refused" on its own leaves them pressing it again.
+            self.notify("Turn Sync Enable off before disengaging",
+                        NOTICE_WARNING)
             return
         if self.engaged:
             # Guard the trigger: disable() is only valid from stopped/retracting/
@@ -910,6 +1034,12 @@ class ElsUiController(EventDispatcher):
                 log.warning(
                     f"Disengage ignored — not valid from '{self._els_fsm.state}'"
                 )
+                # INFO, not warning: this branch is the double-tap race guard
+                # (the button is already disabled mid-cycle), so nothing is
+                # wrong with the machine and nothing needs fixing. It says the
+                # press was seen and ignored, which is all the operator needs.
+                self.notify(f"Disengage ignored — ELS is {self._els_fsm.state}",
+                            NOTICE_INFO)
         elif self._els.get_z_axis() is None:
             # No Z (leadscrew) axis assigned — engaging would arm ELS against a
             # non-existent axis and crash on_enter_stopped. Refuse instead of
@@ -919,6 +1049,11 @@ class ElsUiController(EventDispatcher):
                 "Cannot engage ELS: no Z axis assigned "
                 "(map the ELS Z axis in setup, or connect the controller)"
             )
+            # THE ONE THAT PROVES THE SURFACE. Reachable with the button fully
+            # enabled, and before this the operator's entire feedback was a
+            # press that did nothing. Names the fix, not the fault.
+            self.notify("No ELS Z axis assigned — map it in ELS settings",
+                        NOTICE_WARNING)
         elif self._els_fsm.may_enable():
             self._els_fsm.enable()
         else:
@@ -928,6 +1063,10 @@ class ElsUiController(EventDispatcher):
             log.warning(
                 f"Engage ignored — not valid from '{self._els_fsm.state}'"
             )
+            # INFO for the same reason as the disengage twin above: a stale or
+            # doubled tap, not a machine problem.
+            self.notify(f"Engage ignored — ELS is {self._els_fsm.state}",
+                        NOTICE_INFO)
 
     def commit_standalone_stop_z(self, stop_z_value: float):
         """Stop-Z entered via the standalone keypad or long-press capture.
