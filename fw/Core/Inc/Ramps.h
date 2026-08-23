@@ -277,8 +277,20 @@ typedef struct {
    * which turns invisible padding into a phantom register nobody declared and
    * reflex-ui cannot mirror. Naming it keeps both sides computing the same
    * size, which is exactly what the contract test caught here: firmware 436,
-   * mirror 434. Same reason diagReserved[4] exists. */
+   * mirror 434. Same reason diagReserved[4] exists.
+   *
+   * KEPT even though the re-sync pair below now happens to restore alignment
+   * on its own: this block must not depend on what follows it. Delete the pad
+   * and the padding comes back the moment anything after it is removed. */
   uint16_t machineModeReserved;
+  /* --- Interactive re-sync to an existing thread. The manual latch is the SAME
+   * capture as the first-trigger auto-latch, at an operator-chosen point where
+   * lash state was established by a cutting-direction jog. It sets
+   * referenceLatched, which is exactly what suppresses the auto-latch for the
+   * rest of the job. Appended at the tail per the reserved order above; the pair
+   * is 4 bytes so no padding. Next append is the auto-start block. */
+  uint16_t latchCommand;          // bidirectional: SW writes 1 to request a manual reference latch; FIRMWARE CLEARS IT on consume. Consumed ONLY while enable == 1 (a reference is meaningless outside a job and would be wiped by the next enable 0->1 anyway); when enable == 0 it is cleared with NO latchSeq increment, so an absent ack IS the refusal. SW must edge-detect latchSeq, never poll this
+  uint16_t latchSeq;              // READ-ONLY (firmware-owned): increments once per ACCEPTED manual latch. Monotonic; the ack for latchCommand
 } elsStop_t;
 
 typedef struct {

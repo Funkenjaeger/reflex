@@ -291,6 +291,24 @@ class ElsStopHal:
             return [0, 0, 0]
         return [int(v) for v in self._board.device['elsStop']['calMeasured']]
 
+    # ── manual reference latch (interactive re-sync) ──────────────────
+    # Same command/ack split as calibration: request_latch() sets latchCommand,
+    # the FIRMWARE clears it the instant the ISR consumes it, and latchSeq is
+    # the ack — edge-detect it against a baseline captured at request time.
+    # A latch requested with enable == 0 is consumed with NO seq increment;
+    # the absent ack IS the refusal.
+
+    def request_latch(self) -> None:
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['latchCommand'] = 1
+
+    def read_latch_seq(self) -> int:
+        """Monotonic counter, incremented once per ACCEPTED manual latch."""
+        if not self._board.connected:
+            return 0
+        return int(self._board.device['elsStop']['latchSeq'])
+
     # ── take-up outcome ───────────────────────────────────────────────
     def read_takeup_result(self) -> int:
         if not self._board.connected:

@@ -212,12 +212,13 @@ Two unit traps, both live (full list in `els_slip.h`):
 
 ---
 
-## protocolVersion is 3 -- re-sync must renumber to 4 (2026-08-22)
+## protocolVersion history (RESOLVED 2026-08-22)
 
-- `machineMode` landed as a permanent register and took the 2 -> 3 bump.
-- `feat/els-thread-resync` also bumps to 3, written before this landed. Whichever
-  merges second renumbers; that is now re-sync, and it must become **4**. The
-  branch is 5 ahead / 80 behind, so this is one line to change at merge time.
+- **3**: `machineMode` promoted to a permanent register, so the rung-2 census
+  collects in every build rather than only under a mode-watch probe.
+- **4**: the manual reference latch merged and appended `latchCommand`/`latchSeq`.
+  That branch had also written 3; the scratch-test pin is what forced the
+  renumber instead of two layouts sharing a number. Next append takes **5**.
 - The house rule that made this cheap: reflex-ui checks `protocolVersion` at
   connect, so a mismatch names itself instead of surfacing as plausible garbage.
 
@@ -237,8 +238,8 @@ Two unit traps, both live (full list in `els_slip.h`):
   live total, read-only). Consume in the ISR exactly like `calCommand` (`elsCalUpdate`).
 - **Reset `phaseOffsetSteps` to 0 on the enable 0->1 edge that clears
   `referenceLatched`**; leave it alone across per-pass stop/resume within a job.
-- **Register-map change => `protocolVersion` bump.** `feat/els-thread-resync` already
-  carries 2->3; land this AFTER that merge and bump to 4, or fold the two into one bump.
+- **Register-map change => `protocolVersion` bump to 5.** Re-sync merged on
+  2026-08-22 and took 4; this is the next append.
   `ui/reflex/utils/devices.py` mirrors the block byte-for-byte (the contract test
   enforces it) -- same commit, both halves.
 - **Host side (cumulative):** read `phaseOffsetSteps`, add the entered distance
@@ -267,6 +268,32 @@ its own ~100 ms divider. Removing the firmware call site breaks nothing in CI.
 Declared rather than papered over. It is verified by reading
 `elsStop.machineMode` off the real machine after a flash, and any task-side
 firmware logic added later has the same gap.
+## ELS interactive re-sync: manual reference latch (2026-08-08)
+
+### Landed (branch feat/els-thread-resync)
+- `latchCommand`/`latchSeq` appended to `elsStop_t` (96 -> 100 bytes,
+  `rampsSharedData_t` 304 -> 308, `protocolVersion` 1 -> 2, reflex-ui
+  `devices.py` + `KNOWN_ROOT_SIZE` moved in lockstep). Same command/ack
+  contract as `calCommand`/`calSeq`; a latch with `enable == 0` is consumed
+  with NO seq increment (absent ack = refusal).
+- ISR consumes the command in one pass: captures `latchedSpindle`/`latchedZ`
+  coherently, sets `referenceLatched` (which is what suppresses the
+  first-trigger auto-latch), acks via `latchSeq`. Mechanism only — fresh-job
+  policy lives in the reflex-ui wizard.
+- `els_manual_latch_test` (ISR-level, mutation-proven ×4) and reflex-ui's
+  `tests/system/test_els_thread_resync.py` (emulator end-to-end: 3 passes,
+  mid-cut phase residual spread 1.4 steps on a 400-step pitch).
+
+### NOT proven on hardware
+- Emulator + host tests only: no servo dynamics, no Modbus timing, no metal.
+- The elspi verification is a real re-chucked threaded part (TickTick task
+  6a768a98 checklist item 8): jog into the thread, hand-seat, latch, AIR PASS
+  first, then confirm passes chase the existing groove.
+- The 1–3 count Z-hold tolerance and the spindle stillness dwell (~0.7 s,
+  ±1 count) have never been exercised against real scale jitter — elspi's Z
+  is 200 counts/mm, half the emulator's resolution.
+
+---
 
 ## Emulator
 

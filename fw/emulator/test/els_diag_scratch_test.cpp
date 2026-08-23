@@ -108,14 +108,17 @@ int main(void)
 
     RampsStart(&data);
 
-    /* Guards the one-time bump. Anything appended to elsStop_t after this must
-     * move it again, and reflex-ui's ELS_PROTOCOL_VERSION with it. */
-    /* 3 since 2026-08-22: machineMode was promoted out of the diagnostic
-     * scratchpad into a permanent register at the tail of elsStop_t, which is
-     * a real map change. Bump this WITH the map, never ahead of it -- the
-     * whole point of the pin is that a layout change cannot land quietly. */
-    check(data.shared.elsStop.protocolVersion == 3,
-          "protocolVersion is 3 (permanent machineMode register)");
+    /* Guards the bump. Anything appended to elsStop_t after this must move it
+     * again, and reflex-ui's ELS_PROTOCOL_VERSION with it.
+     *
+     * It has now done that job twice for real. 2 -> 3 on 2026-08-22, when
+     * machineMode was promoted out of the diagnostic scratchpad into a
+     * permanent register. 3 -> 4 on the same day, when the manual reference
+     * latch merged and appended latchCommand/latchSeq -- that branch had also
+     * written 3, and this assertion is what forced the renumber rather than
+     * letting two distinct layouts quietly share a version number. */
+    check(data.shared.elsStop.protocolVersion == 4,
+          "protocolVersion is 4 (machineMode + manual latch map)");
 
 #ifdef ELS_DIAG_SCRATCH
     /* Pinned to a SPECIFIC schema, not "any nonzero". A probe revision changes
