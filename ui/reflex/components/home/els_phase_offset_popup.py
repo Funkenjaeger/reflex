@@ -71,10 +71,30 @@ WAITING_TEXT = "Waiting for the controller to acknowledge…"
 NO_ACK_TEXT = (
     "The controller never acknowledged the offset, so it was NOT applied. "
     "That normally means the threading job disengaged between the button "
-    "press and the write landing — the controller ignores a phase offset "
-    "outside a job because the next job would wipe it anyway. Check the ELS "
-    "stop is still engaged, check the total above, and try again."
+    "press and the write landing. Check the ELS stop is still engaged, check "
+    "the total above, and try again."
 )
+
+# ── HOW LONG A MESSAGE MAY BE, AND WHY THERE IS A NUMBER FOR IT ──────
+# This screen's message viewport is whatever the popup can spare after its
+# five fixed rows, and the popup can grow only as far as the machine's 600 px
+# screen. Measured 2026-08-23 at the target 1024x600: four of the eight
+# messages this modal can show overflowed a 92 px viewport, and the half that
+# went below the fold was in every case the LAST sentence — the one that says
+# what to do. AT_PITCH ended on "…so rather than"; NEGATIVE hid "enter the
+# rest of the pitch"; NO_ACK — which exists precisely because a dropped write
+# is otherwise silent — hid "check the ELS stop is still engaged".
+#
+# The layout fix is in the kv (the popup sizes to its content and the scroller
+# has a real affordance). This budget is the other half: a modal that grows to
+# the screen still has a ceiling, so the strings have one too. 52 chars per
+# rendered line was measured across the whole message catalogue at this width
+# and font, and 5 lines is what fits with the popup at full screen height.
+# previews/preview_walkthrough_shots.py measures the real pixels; this is the
+# cheap guard that fails in the unit suite first.
+MESSAGE_WRAP_CHARS = 52
+MESSAGE_LINE_BUDGET = 5
+MESSAGE_CHAR_BUDGET = MESSAGE_WRAP_CHARS * MESSAGE_LINE_BUDGET
 
 # One message per outcome code. Deliberately one per code rather than a shared
 # "could not apply": the fix for "engage the stop" and the fix for "you are not
@@ -102,19 +122,16 @@ REFUSAL_TEXT = {
         "right, nothing on this screen can be converted into a real distance."
     ),
     ElsFsm.PHASE_OFFSET_NEGATIVE: (
-        "Enter a plain positive distance to ADVANCE by. Backing the phase up "
-        "is not the mirror of advancing it — the controller's forward bias "
-        "turns a negative entry into a forward move of one pitch minus what "
-        "you typed, so a minus sign would not do what it reads as. To reach a "
-        "start behind this one, enter the rest of the pitch, or press Clear "
-        "and start over."
+        "Enter a plain positive distance to ADVANCE by. A minus sign does not "
+        "back the phase up — the forward bias turns it into a forward move of "
+        "one pitch minus what you typed. To reach a start behind this one, "
+        "enter the rest of the pitch, or press Clear."
     ),
     ElsFsm.PHASE_OFFSET_AT_PITCH: (
         "That would put the total at a full pitch or more. One whole pitch is "
         "the same start you began on, and anything past it cannot be told "
-        "apart from the leftover — so rather than quietly hand back a "
-        "different start than the one you asked for, the controller refuses. "
-        "Enter a smaller amount, or press Clear and build the total again."
+        "apart from the leftover. Enter a smaller amount, or press Clear and "
+        "build the total again."
     ),
 }
 

@@ -2,42 +2,171 @@
     title: "Pick up existing thread"
     size_hint_x: 0.8
     size_hint_y: None
-    height: 470
     # Not auto-dismiss: a stray tap outside the modal must not silently drop a
     # live Z watch the operator believes is still running.
     auto_dismiss: False
+
+    # ── WHY THE HEIGHT IS DERIVED AND THE BODY IS IN A SCROLLER ───────────
+    # It used to be a flat 470. That fitted five of the six states and
+    # overflowed the sixth -- JOG_TEXT, the FIRST screen of the feature -- by
+    # exactly one line: measured 2026-08-23, a 330 px body in a 402 px content
+    # box, label 179..509 against a container 77..479. A Label sized to its own
+    # texture inside a fixed BoxLayout does not CLIP, so Kivy drew that line
+    # upward, over the popup's own title and through its separator.
+    #
+    # Two changes, and the second is the one that holds:
+    #   1. the box grows with its text, up to the screen, so in practice
+    #      nothing on this surface has to be scrolled at all; and
+    #   2. the body sits in a ScrollView, which clips. Getting the arithmetic
+    #      below wrong now costs a scroll, never a corrupted title -- which is
+    #      the property the old fixed height did not have and the reason one
+    #      added sentence used to be enough to break this screen.
+    #
+    # dp(70) is Kivy's own <Popup> chrome: dp(12) padding twice, the title
+    # label (texture + dp(16)) and separator_height, which measures 68 px at
+    # this theme's 18sp title. The clamp is the WINDOW (a Popup's parent once
+    # opened), not a constant -- and not `kivy.core.window.Window`, because a
+    # `#:import` of it would construct a real window at kv-load time, i.e.
+    # during test collection.
+    height: min((self.parent.height if self.parent else 600) - dp(16), dp(70) + dp(32) + dp(30) + banner.height + lbl_body.height + live_row.height + dp(56))
 
     BoxLayout:
         orientation: "vertical"
         padding: dp(16)
         spacing: dp(10)
 
+        # ── Severity banner ───────────────────────────────────────────
+        # The wizard's body used to be app.theme.text in EVERY state, so a
+        # custody fault whose own text says "Do not cut" arrived in the same
+        # neutral grey as the jog instructions and the success message, while
+        # the phase-offset modal put "engage the stop first" in alarm red.
+        # Severity is now carried the way that modal carries it -- by the
+        # colour of the message -- with one addition: colour alone cannot
+        # separate a machine FAULT from an ordinary refusal, since both are
+        # danger_text. RED_FLAG additionally gets this bar filled, so the one
+        # state that means "stop and go look at the machine" does not read as
+        # "you pressed the button at the wrong time".
+        #
+        # This label owns the severity colour for the whole modal; lbl_body
+        # reads it back rather than repeating the expression, so the body and
+        # its caption can never disagree about how bad this screen is.
         Label:
-            id: lbl_body
-            text: root.body_text
-            halign: "left"
-            valign: "top"
-            text_size: self.width, None
+            id: banner
+            text: root.severity_caption
             size_hint_y: None
-            height: self.texture_size[1]
-            color: app.theme.text
+            height: dp(40) if root.severity_caption else 0
+            opacity: 1 if root.severity_caption else 0
+            halign: "left"
+            valign: "middle"
+            text_size: self.size
+            padding: dp(12), 0
+            font_name: app.theme.font_bold
             font_size: app.formats.font_size
+            color: app.theme.danger_text if root.severity in ("fault", "refused") else (app.theme.success_text if root.severity == "success" else (app.theme.warning if root.severity == "caution" else app.theme.text))
+            canvas.before:
+                Color:
+                    rgba: app.theme.danger_bg if root.severity == "fault" else (0, 0, 0, 0)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [dp(5)]
+                Color:
+                    rgba: app.theme.danger if root.severity == "fault" else (0, 0, 0, 0)
+                Line:
+                    rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(5))
+                    width: 1.2
 
-        Label:
-            id: lbl_live
-            text: root.live_text
-            halign: "left"
-            valign: "top"
-            text_size: self.width, None
+        # ── Body ──────────────────────────────────────────────────────
+        FloatLayout:
+            size_hint_y: 1
+
+            ScrollView:
+                id: sv_body
+                size_hint: 1, 1
+                pos_hint: {"x": 0, "y": 0}
+                do_scroll_x: False
+                do_scroll_y: True
+                # A ~2 px hairline that only shows up once a finger is already
+                # dragging is not an affordance at arm's length on a lathe.
+                bar_width: dp(9)
+                bar_margin: dp(1)
+                bar_color: app.theme.accent
+                bar_inactive_color: app.theme.accent
+                scroll_type: ["bars", "content"]
+
+                Label:
+                    id: lbl_body
+                    text: root.body_text
+                    halign: "left"
+                    valign: "top"
+                    text_size: self.width - dp(12), None
+                    size_hint_y: None
+                    height: self.texture_size[1]
+                    color: banner.color
+                    font_size: app.formats.font_size
+
+            # Shown only when there really is something below the fold. The
+            # popup sizes itself so this should stay dark; it is what makes the
+            # residual case -- a body longer than the whole screen -- legible
+            # instead of silently cut off.
+            Label:
+                id: more_body
+                text: "▼  more below — drag to scroll"
+                size_hint: 1, None
+                height: dp(28)
+                pos_hint: {"x": 0, "y": 0}
+                opacity: 1 if lbl_body.height > sv_body.height + dp(2) else 0
+                halign: "right"
+                valign: "middle"
+                text_size: self.width - dp(16), self.height
+                font_name: app.theme.font_bold
+                font_size: app.formats.font_size * 0.7
+                color: app.theme.accent_text
+                canvas.before:
+                    Color:
+                        rgba: app.theme.accent_bg if self.opacity else (0, 0, 0, 0)
+                    Rectangle:
+                        pos: self.pos
+                        size: self.size
+
+        # ── Live readout ──────────────────────────────────────────────
+        # In `align` these two numbers are what decide when Confirm arms, and
+        # in `drifted` they are the drift the operator is nulling out by hand
+        # -- so this is the thing being read off the screen while the other
+        # hand is on the cross-slide. It used to be text_dim at body size,
+        # flush under the prose telling you to look at it: the dimmest element
+        # on the screen where it mattered most. It is now the readout it
+        # always was -- recessed panel, mono, accent, larger than the prose --
+        # the same treatment lbl_total gets in els_phase_offset_popup.kv, and
+        # for the same reason.
+        BoxLayout:
+            id: live_row
+            orientation: "vertical"
             size_hint_y: None
-            height: self.texture_size[1] if root.live_text else 0
+            height: (lbl_live.texture_size[1] + dp(18)) if root.live_text else 0
             opacity: 1 if root.live_text else 0
-            color: app.theme.text_dim if hasattr(app.theme, "text_dim") else app.theme.text
-            font_name: app.theme.font_mono
-            font_size: app.formats.font_size
+            canvas.before:
+                Color:
+                    rgba: app.theme.recess
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [dp(5)]
+                Color:
+                    rgba: app.theme.border
+                Line:
+                    rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(5))
+                    width: 1.0
 
-        Widget:
-            # spacer so the buttons sit at the bottom regardless of text length
+            Label:
+                id: lbl_live
+                text: root.live_text
+                halign: "center"
+                valign: "middle"
+                text_size: self.width - dp(20), None
+                color: app.theme.accent_text
+                font_name: app.theme.font_mono
+                font_size: app.formats.font_size * 1.2
 
         BoxLayout:
             orientation: "horizontal"

@@ -2,15 +2,33 @@
     title: "Thread phase offset (multi-start)"
     size_hint_x: 0.8
     size_hint_y: None
-    height: 520
     # Not auto-dismiss: a stray tap outside the modal must not drop an apply
     # that is still waiting for its ack, which would leave the operator with no
     # word either way about whether the phase moved.
     auto_dismiss: False
 
+    # ── WHY THE HEIGHT IS DERIVED RATHER THAN A CONSTANT 520 ──────────────
+    # 520 left the message scroller exactly 92 px, and four of the eight
+    # messages this modal can show are taller than that (measured 2026-08-23:
+    # AT_PITCH, NEGATIVE and NO_ACK at 180 px, NO_GEOMETRY at 120). The
+    # scroller kept them off the buttons, which is what it was added for, and
+    # traded that for hiding the last sentence of each — the one that says what
+    # to do. The popup now spends whatever the screen has: it stays compact on
+    # the entry state (~one line of message) and grows to fit a refusal, so the
+    # long messages are on screen without scrolling at all.
+    #
+    # Terms: Kivy's own <Popup> chrome (dp(12) padding twice + title texture +
+    # dp(16) + separator_height, 68 px at this theme's 18sp title), this box's
+    # padding and its five inter-row gaps, then the rows themselves. Clamped to
+    # the WINDOW — a Popup's parent once opened — rather than to a constant,
+    # and deliberately not to `kivy.core.window.Window`, since a `#:import` of
+    # that constructs a real window at kv-load time, i.e. during test
+    # collection.
+    height: min((self.parent.height if self.parent else 600) - dp(16), dp(70) + dp(24) + dp(40) + lbl_intro.height + dp(38) + dp(52) + dp(56) + lbl_message.height + dp(56))
+
     BoxLayout:
         orientation: "vertical"
-        padding: dp(14)
+        padding: dp(12)
         spacing: dp(8)
 
         Label:
@@ -50,9 +68,38 @@
             height: dp(52)
             spacing: dp(8)
 
-            FormLabel:
+            # Sized to its own text, not to a fraction of the row. At
+            # size_hint_x 0.4 against three sibling buttons at the default 1
+            # this caption got ~87 px of row — 55 px of it once FormLabel's
+            # dp(16) padding is taken off — for a 132 px string, so it wrapped
+            # inside a dp(52) row and rendered as a half-cut "Fill" over
+            # "entr" in every phase-offset shot. texture_size is the width the
+            # font actually needs, so this cannot come apart again when the
+            # operator changes the UI font size, which app.formats.font_size
+            # lets them do.
+            #
+            # NOT a FormLabel, and that is the whole trick: that dynamic class
+            # binds `text_size: self.size`, and a kv class-rule binding is not
+            # replaced by an instance-level one — both stay live, so the
+            # override loses every time the widget is resized. Width bound to
+            # texture_size against a live `text_size: self.size` binding is a
+            # LOOP, and it converges: measured 2026-08-23, the label settled at
+            # 44 px wide and two lines tall. So the styling is repeated here
+            # instead (it is four lines of it) and text_size is simply never
+            # set, which is what lets the texture be its natural size.
+            # font_name is deliberately NOT set: home_screen.kv's global
+            # <Label> rule wins over <FormLabel@Label>'s font_name (the race
+            # facelift_chrome.py documents for the help glyph), so the sibling
+            # caption below renders in iosevka whatever FormLabel asks for.
+            # Naming a face here would leave the two captions in one modal in
+            # two different fonts.
+            Label:
                 text: "Fill entry:"
-                size_hint_x: 0.4
+                size_hint_x: None
+                width: self.texture_size[0]
+                color: app.theme.text
+                font_size: app.formats.font_size
+                padding: dp(16), 0
 
             FormValueButton:
                 text: "1/2 pitch"
@@ -90,24 +137,60 @@
                 on_press: app.beep()
                 on_release: root.edit_entry()
 
-        # Outcome/instruction text. Scrolled rather than sized to its texture:
-        # the refusals are the longest strings on this screen and one that
-        # overflowed a fixed-height modal would render over the buttons — the
-        # exact failure mode els_advbar.kv's collapsible strips were fixed for.
-        ScrollView:
-            do_scroll_x: False
-            do_scroll_y: True
+        # Outcome/instruction text. Still scrolled rather than sized to its
+        # texture — a message that overflowed a fixed box would render over the
+        # buttons, the exact failure mode els_advbar.kv's collapsible strips
+        # were fixed for, and the same one the wizard's body had until
+        # 2026-08-23. But the scroller is now the LAST line of defence rather
+        # than the first: the popup above sizes itself so every message this
+        # modal can produce is on screen whole, the bar is wide enough to see
+        # from the operator's side of the lathe, and anything that does end up
+        # below the fold says so in words instead of behind a 2 px hairline.
+        FloatLayout:
+            size_hint_y: 1
+
+            ScrollView:
+                id: sv_message
+                size_hint: 1, 1
+                pos_hint: {"x": 0, "y": 0}
+                do_scroll_x: False
+                do_scroll_y: True
+                bar_width: dp(9)
+                bar_margin: dp(1)
+                bar_color: app.theme.accent
+                bar_inactive_color: app.theme.accent
+                scroll_type: ["bars", "content"]
+
+                Label:
+                    id: lbl_message
+                    text: root.message
+                    halign: "left"
+                    valign: "top"
+                    text_size: self.width - dp(12), None
+                    size_hint_y: None
+                    height: self.texture_size[1]
+                    color: app.theme.danger_text if root.state == "refused" else (app.theme.success_text if root.state == "applied" else app.theme.text_dim)
+                    font_size: app.formats.font_size
 
             Label:
-                id: lbl_message
-                text: root.message
-                halign: "left"
-                valign: "top"
-                text_size: self.width, None
-                size_hint_y: None
-                height: self.texture_size[1]
-                color: app.theme.danger_text if root.state == "refused" else (app.theme.success_text if root.state == "applied" else app.theme.text_dim)
-                font_size: app.formats.font_size
+                id: more_message
+                text: "▼  more below — drag to scroll"
+                size_hint: 1, None
+                height: dp(28)
+                pos_hint: {"x": 0, "y": 0}
+                opacity: 1 if lbl_message.height > sv_message.height + dp(2) else 0
+                halign: "right"
+                valign: "middle"
+                text_size: self.width - dp(16), self.height
+                font_name: app.theme.font_bold
+                font_size: app.formats.font_size * 0.7
+                color: app.theme.accent_text
+                canvas.before:
+                    Color:
+                        rgba: app.theme.accent_bg if self.opacity else (0, 0, 0, 0)
+                    Rectangle:
+                        pos: self.pos
+                        size: self.size
 
         BoxLayout:
             orientation: "horizontal"

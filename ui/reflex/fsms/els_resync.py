@@ -115,7 +115,16 @@ class ThreadResync:
         """Operator finished the coarse jog; capture the Z baseline and start
         the watch. False (state REFUSED) if preconditions fail."""
         if not self._hal.connected:
-            return self._refuse("Not connected to the controller.")
+            # Four words with no next step used to be the whole message here,
+            # while its five siblings below — and the phase-offset modal's
+            # message for this identical condition — are sentences that say
+            # what to do. The refusal CONDITION is unchanged; only what the
+            # operator is told about it.
+            return self._refuse(
+                "Not connected to the controller. The thread reference is "
+                "latched by the controller, so there is nothing here to latch "
+                "it in — reconnect and start the pick-up again."
+            )
 
         version = self._hal.read_protocol_version()
         if version != ELS_PROTOCOL_VERSION:

@@ -12,6 +12,15 @@ The major diameter is only known to the software in wizard mode, and even
 there it is operator-entered — so a hard interlock would gate on a number the
 software cannot trust. The warning is carried prominently in the jog step
 itself instead (decision 2026-08-08).
+
+WHY SEVERITY IS A PROPERTY AND NOT A COLOUR IN THE KV
+-----------------------------------------------------
+Every state's body used to render in ``app.theme.text``, so RED_FLAG — whose
+own text says "Do not cut" — arrived in the same neutral grey as the routine
+jog instructions and the success message. It is derived here rather than in
+the kv so the mapping is one table that can be enumerated and tested, and so
+adding a state without deciding how loud it is fails loudly instead of
+silently inheriting "routine".
 """
 from kivy.clock import Clock
 from kivy.logger import Logger
@@ -64,6 +73,39 @@ AIR_PASS_TEXT = (
 )
 
 
+# How loud each state is, and the caption that names it. Five severities for
+# six states, because these are LEVELS rather than a rename of the state: the
+# two walkthrough steps are one level ("info", the operator is being walked
+# through a procedure), then "caution" is something to go fix at the machine
+# before continuing, "success" is done, "refused" is a button that did not take,
+# and "fault" is the machine itself being wrong.
+#
+# The captions exist because colour cannot separate the last two: an ordinary
+# refusal and a custody fault are both danger_text. RED_FLAG is the only state
+# that means "stop, and go look at the drivetrain", and it is the one state the
+# operator must not read as "you pressed that at the wrong time".
+SEVERITY_INFO = "info"
+SEVERITY_CAUTION = "caution"
+SEVERITY_SUCCESS = "success"
+SEVERITY_REFUSED = "refused"
+SEVERITY_FAULT = "fault"
+
+STATE_SEVERITY = {
+    "jog":      (SEVERITY_INFO, ""),
+    "align":    (SEVERITY_INFO, ""),
+    "drifted":  (SEVERITY_CAUTION, "CARRIAGE DRIFTED — RE-SEAT IT BY HAND"),
+    "latched":  (SEVERITY_SUCCESS, "THREAD REFERENCE LATCHED"),
+    "refused":  (SEVERITY_REFUSED, "REFUSED — NOTHING WAS LATCHED"),
+    "red_flag": (SEVERITY_FAULT, "DO NOT CUT — Z POSITION NOT TRUSTWORTHY"),
+}
+
+# An unmapped state is a programming error, and it is coerced UP — the same
+# rule reflex/utils/notices.py applies to an unknown notice severity, for the
+# same reason: over-warning is noise, under-warning is a message the operator
+# learns to ignore. Raising here instead would take the app down at the lathe.
+FALLBACK_SEVERITY = (SEVERITY_FAULT, "UNEXPECTED STATE — DO NOT CUT")
+
+
 class ThreadResyncPopup(Popup):
 
     # "jog" | "align" | "drifted" | "latched" | "red_flag" | "refused"
@@ -72,12 +114,31 @@ class ThreadResyncPopup(Popup):
     live_text = StringProperty("")
     confirm_enabled = BooleanProperty(False)
 
+    # Derived from `state`; the kv colours the whole modal off these two.
+    severity = StringProperty(SEVERITY_INFO)
+    severity_caption = StringProperty("")
+
     def __init__(self, **kv):
         super().__init__(**kv)
         from reflex.app import MainApp
         self.app = MainApp.get_running_app()
         self._resync = self._build_controller()
         self._poll_ev = None
+        # on_state does not fire for the property's default, so the opening
+        # state has to be classified explicitly rather than relying on the
+        # declared defaults happening to agree with the table.
+        self._apply_severity(self.state)
+
+    # ── severity ─────────────────────────────────────────────────────
+    def on_state(self, _instance, value):
+        self._apply_severity(value)
+
+    def _apply_severity(self, state: str) -> None:
+        pair = STATE_SEVERITY.get(state)
+        if pair is None:
+            log.error("els_resync popup: no severity for state %r", state)
+            pair = FALLBACK_SEVERITY
+        self.severity, self.severity_caption = pair
 
     def _build_controller(self):
         els = self.app.els
@@ -146,9 +207,14 @@ class ThreadResyncPopup(Popup):
             tol = self._resync.tolerance_counts
             spindle = ("still" if self._resync.spindle_still
                        else f"settling {int(self._resync.stillness_fraction * 100)}%")
+            # Two explicit lines rather than one long one padded with spaces:
+            # the readout is rendered a fifth larger than the body prose now,
+            # and a single line of it wraps at this modal's width — where it
+            # breaks would then be decided by the length of the spindle word.
             self.live_text = (
                 f"Z hold: {self._resync.z_delta_counts:+d} counts "
-                f"(tolerance ±{tol})    Spindle: {spindle}"
+                f"(tolerance ±{tol})\n"
+                f"Spindle: {spindle}"
             )
             self.confirm_enabled = self._resync.confirm_allowed
             return
@@ -157,8 +223,9 @@ class ThreadResyncPopup(Popup):
                 self.state = "drifted"
                 self.body_text = DRIFTED_TEXT
             self.live_text = (
-                f"Z offset from baseline: {self._resync.z_delta_counts:+d} "
-                f"counts (tolerance ±{self._resync.tolerance_counts})"
+                f"Z offset from baseline: "
+                f"{self._resync.z_delta_counts:+d} counts\n"
+                f"Tolerance: ±{self._resync.tolerance_counts} counts"
             )
             self.confirm_enabled = False
             return

@@ -131,6 +131,41 @@ def test_refuses_when_disconnected():
     assert rc.state == ResyncState.REFUSED
 
 
+def test_the_disconnected_refusal_is_a_sentence_with_a_next_step():
+    """It was four words — "Not connected to the controller." — while its five
+    siblings on this same surface are sentences that say what to do, and the
+    phase-offset modal explains the IDENTICAL condition in two. A refusal that
+    only names the state leaves the operator at the machine with nothing to act
+    on, which is the failure mode every other message here already avoids.
+    """
+    machine = Machine()
+    rc, _, _ = _controller(machine, FakeHal(machine, connected=False))
+    rc.begin_alignment()
+    assert len(rc.message.split()) > 8, "the refusal is a label, not an explanation"
+    assert rc.message.rstrip().endswith("."), "the refusal is not a sentence"
+    assert "reconnect" in rc.message.lower(), (
+        "the refusal does not name the next step")
+
+
+def test_every_begin_alignment_refusal_explains_itself():
+    """Guard the guard: the five refusals this entry point can produce, all
+    through the production call, all held to the same shape. A new refusal
+    added as a bare label fails here instead of reaching the lathe."""
+    cases = {
+        "disconnected": dict(connected=False),
+        "old firmware": dict(protocol_version=0),
+        "no job armed": dict(enable=False),
+        "already referenced": dict(reference_latched=True),
+    }
+    for label, kwargs in cases.items():
+        machine = Machine()
+        rc, _, _ = _controller(machine, FakeHal(machine, **kwargs))
+        assert not rc.begin_alignment(), label
+        assert rc.state == ResyncState.REFUSED, label
+        assert len(rc.message.split()) > 8, f"{label}: refusal is not an explanation"
+        assert rc.message.rstrip().endswith("."), f"{label}: refusal is not a sentence"
+
+
 def test_refuses_old_firmware_by_name():
     """A version-0 readback means firmware predating the latch registers; the
     message must blame the firmware, not the link (the command write would

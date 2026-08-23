@@ -28,7 +28,8 @@ import pytest
 
 import reflex.components.home.els_phase_offset_popup as popup_mod
 from reflex.components.home.els_phase_offset_popup import (
-    NO_ACK_TEXT, PhaseOffsetPopup, REFUSAL_TEXT,
+    APPLIED_TEXT, CLEARED_TEXT, ENTRY_HINT, MESSAGE_CHAR_BUDGET, NO_ACK_TEXT,
+    PhaseOffsetPopup, REFUSAL_TEXT, WAITING_TEXT,
 )
 from reflex.fsms.els_fsm import ElsFsm
 
@@ -158,6 +159,82 @@ def test_a_refusal_never_renders_as_success_or_as_a_bare_code(popup, fsm, code):
     assert popup.message.strip() != code
     assert len(popup.message.split()) > 8, "refusal message is not an explanation"
     assert popup.message.rstrip().endswith("."), "refusal message is not a sentence"
+
+
+# ── message length: what fits on the screen ──────────────────────────
+# The message label sits in a scroller, so an over-long message no longer
+# renders over the buttons -- it goes below the fold instead, silently. On
+# 2026-08-23, measured at the machine's real 1024x600, four of the eight
+# messages this modal can show were taller than the viewport, and the part
+# hidden was in every case the LAST sentence: the one that says what to do.
+# AT_PITCH ended on "...so rather than"; NEGATIVE hid "enter the rest of the
+# pitch"; NO_ACK -- which exists precisely because a dropped write is otherwise
+# silent -- hid "check the ELS stop is still engaged".
+#
+# The layout half of the fix is in the kv (the popup sizes itself to its
+# content, up to the screen) and is measured in pixels by
+# previews/preview_walkthrough_shots.py. This is the other half, and it is here
+# because a modal that grows to the screen still has a ceiling: the strings
+# need one too, and a character budget is the part of that a unit suite can
+# hold. A sentence added to any of these fails here first.
+
+def _message_catalogue():
+    """Every string this modal's message label can be asked to render."""
+    catalogue = [(f"REFUSAL {code}", text) for code, text in REFUSAL_TEXT.items()]
+    catalogue += [
+        ("NO_ACK", NO_ACK_TEXT),
+        ("CLEARED", CLEARED_TEXT),
+        ("APPLIED", APPLIED_TEXT),
+        ("ENTRY_HINT", ENTRY_HINT),
+        ("WAITING", WAITING_TEXT),
+    ]
+    return catalogue
+
+
+@pytest.mark.parametrize("name,text", _message_catalogue(),
+                         ids=[n for n, _ in _message_catalogue()])
+def test_no_message_outgrows_the_space_the_screen_can_give_it(name, text):
+    lines = len(text) / popup_mod.MESSAGE_WRAP_CHARS
+    assert len(text) <= MESSAGE_CHAR_BUDGET, (
+        f"{name} is {len(text)} chars (~{lines:0.1f} rendered lines) against a "
+        f"{MESSAGE_CHAR_BUDGET}-char budget. The popup can only grow to the "
+        f"machine's 600 px screen, so past this the tail of the message goes "
+        f"below the fold -- and the tail is the instruction.")
+
+
+ACTION_WORDS = ("enter", "engage", "check", "choose", "reconnect", "press",
+                "flash", "clear", "try again")
+
+
+@pytest.mark.parametrize("code", _refusal_codes())
+def test_a_refusal_ends_on_the_thing_to_do(code):
+    """The last sentence is the one at risk of falling below the fold, so it is
+    the one that has to be worth reading: every refusal here closes on an
+    action, not on more explanation. Held separately from the budget because
+    the two fail differently -- the budget catches a message that grew, this
+    catches an instruction that moved into the middle and left explanation
+    trailing after it."""
+    text = REFUSAL_TEXT[code]
+    tail = [s for s in text.split(". ") if s.strip()][-1].lower()
+    assert any(word in tail for word in ACTION_WORDS), (
+        f"{code}: the message ends on {tail!r}, which tells the operator "
+        f"nothing to do. Put the instruction last -- it is the part the "
+        f"screen runs out of room for.")
+
+
+def test_the_no_ack_message_keeps_its_instruction(popup, fsm):
+    """NO_ACK exists because a dropped write is otherwise indistinguishable
+    from a successful one. It reached the screen with "check the ELS stop is
+    still engaged" below the fold, i.e. the one message whose whole purpose is
+    to break a silence was itself half-silent."""
+    fsm.phase_offset_seq.return_value = 7          # never acks
+    popup.entry = 0.75
+    popup.apply()
+    for _ in range(PhaseOffsetPopup.ACK_TIMEOUT_POLLS):
+        popup._tick(0.1)
+    assert popup.message == NO_ACK_TEXT
+    assert "ELS stop is still engaged" in popup.message
+    assert len(NO_ACK_TEXT) <= MESSAGE_CHAR_BUDGET
 
 
 def test_an_unknown_outcome_code_still_reads_as_english(popup, fsm):
