@@ -370,3 +370,11 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
 target_link_libraries(els_takeup_jog_guard_test m pthread)
 add_test(NAME els_takeup_jog_guard_test COMMAND els_takeup_jog_guard_test)
+
+add_executable(els_isr_peak_test
+    ${CMAKE_SOURCE_DIR}/test/els_isr_peak_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_isr_peak_test m pthread)
+add_test(NAME els_isr_peak_test COMMAND els_isr_peak_test)

@@ -413,6 +413,35 @@ class ElsStopHal:
             return self._no_link(0)
         return int(self._board.device['elsStop']['latchSeq'])
 
+    # ── ISR headroom ──────────────────────────────────────────────────
+    # The worst SynchroRefreshTimerIsr duration seen, in CPU cycles, against a
+    # budget of 1000 (100 MHz core, 10 us tick). Everything else on the chip --
+    # the Modbus task, the USART RX interrupt -- runs in whatever the ISR
+    # leaves, so this is the number that says whether a comms timeout was a
+    # load problem or a peripheral one.
+    #
+    # Read ON DEMAND, deliberately not on the tick: it is a diagnostic, a peak
+    # does not go stale, and putting it on the tick would add traffic to the
+    # very thing it exists to diagnose.
+
+    def read_execution_cycles_peak(self) -> int:
+        """Worst ISR duration since the last reset, in CPU cycles."""
+        if not self._board.connected:
+            return self._no_link(0)
+        return int(self._board.device['elsStop']['executionCyclesPeak'])
+
+    def reset_execution_cycles_peak(self) -> None:
+        """Arm a fresh measurement.
+
+        The ISR only ever RAISES the value, so a host write of zero that lands
+        between its compare and its store is simply lost -- write again. That
+        costs one repeat and nothing else, which is a better trade than a
+        command/ack pair for a diagnostic counter.
+        """
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['executionCyclesPeak'] = 0
+
     # ── thread-phase offset (widening a groove past the cutter) ───────
     # The command/ack split once more, with one addition that matters: the
     # 32-bit Pending MUST be written before the command, never after. The ISR

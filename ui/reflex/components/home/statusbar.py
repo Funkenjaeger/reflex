@@ -13,6 +13,10 @@ class StatusBar(BoxLayout):
     update_tick = NumericProperty(0)
     interval = NumericProperty(0)
     cycles = NumericProperty(0)
+    # Worst ISR duration since reset, in CPU cycles, against a 1000-cycle
+    # budget. Sampled at 1 Hz from its own clock rather than from the board
+    # tick -- see _poll_isr_peak.
+    cycles_peak = NumericProperty(0)
     fps = NumericProperty(0)
 
     # ── Transient operator notice ────────────────────────────────────────────
@@ -37,8 +41,32 @@ class StatusBar(BoxLayout):
         self._notice_source = None
         super().__init__(**kv)
         Clock.schedule_interval(self.update, 1.0 / 5)
+        # The ISR peak gets its OWN, slower clock. It is a load-headroom
+        # diagnostic, and reading it on the board tick would add traffic to the
+        # very thing it measures. A peak does not go stale.
+        Clock.schedule_interval(self._poll_isr_peak, self.ISR_PEAK_POLL_SECONDS)
         self.app.bind(els_uic=self._follow_notice_source)
         self._follow_notice_source(self.app, self.app.els_uic)
+
+    ISR_PEAK_POLL_SECONDS = 1.0
+
+    def _poll_isr_peak(self, _dt):
+        """Sample the ISR peak-hold, once a second.
+
+        One exchange per second against a ~90/s baseline. The number it fetches
+        is the worst SynchroRefreshTimerIsr duration since reset, in CPU
+        cycles, and the budget it should be read against is 1000 — the whole
+        per-tick allowance at a 100 MHz core and a 10 µs tick. A peak near that
+        means the Modbus task got no CPU at all, which is what a comms timeout
+        at cut-start looks like from the firmware's side.
+
+        Never raises into the clock: there is no controller during startup and
+        no link whenever the machine is off.
+        """
+        try:
+            self.cycles_peak = self.app.els_uic.hal.read_execution_cycles_peak()
+        except Exception:
+            pass
 
     def _follow_notice_source(self, _app, controller):
         """(Re)attach the notice mirror to whichever controller the app holds.

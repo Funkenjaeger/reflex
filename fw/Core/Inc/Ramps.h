@@ -353,6 +353,33 @@ typedef struct {
   uint16_t phaseOffsetSeq;        // READ-ONLY (firmware-owned): increments once per ACCEPTED apply. Monotonic; the ack for phaseOffsetCommand
   int32_t  phaseOffsetPending;    // host-written candidate total, leadscrew steps. Read by the ISR ONLY under a nonzero phaseOffsetCommand; write it BEFORE the command, never after
   int32_t  phaseOffsetSteps;      // READ-ONLY (firmware-owned): the live cumulative total in leadscrew steps, applied at every phase correction. Cleared on the enable 0->1 edge that clears referenceLatched -- an offset is meaningless without the datum it offsets -- and survives per-pass stop/resume within a job
+
+  /* --- WORST ISR DURATION SEEN, in CPU cycles. The headroom measurement.
+   *
+   * THE BUDGET IS 1000 CYCLES. The core runs at 100 MHz (8 MHz HSE /4 x100 /2)
+   * and TIM9 gives a 10 us tick, so SynchroRefreshTimerIsr has 1000 cycles per
+   * tick and the Modbus task, the USART RX interrupt and everything else on the
+   * chip live in what is left. Read this against 1000, not against nothing.
+   *
+   * WHY A PEAK AND NOT THE EXISTING COUNTER. executionCycles is measured every
+   * tick, but the only copy anyone can see is fastData.cycles, which
+   * servoEnableTask samples once per ~10 ms osDelay -- about one tick in a
+   * thousand. The event worth measuring is cut-start, where take-up initiation,
+   * applyPhaseCorrection's float work and diagnostic arming land in the same
+   * few ticks; a spot sampler will essentially never catch it. On 2026-08-23
+   * the machine lost Modbus on 6 of 6 cuts, every one a TIMEOUT rather than a
+   * CRC error, meaning the Modbus task never got CPU -- and the instrument that
+   * should have shown that was structurally unable to.
+   *
+   * PERMANENT, not a diagnostic probe, for the reason machineMode was made
+   * permanent: a measurement that exists only in a probe build is a measurement
+   * nobody has, and probes are one-at-a-time by construction.
+   *
+   * RESET BY WRITING 0. The ISR only ever raises it. A host write of zero that
+   * lands between the ISR's compare and its store is lost, which costs one
+   * repeat of the write and nothing else -- the alternative, a command/ack pair,
+   * is a lot of machinery for a diagnostic counter. */
+  uint32_t executionCyclesPeak;   // READ-ONLY except for reset: highest executionCycles since the host last wrote 0 here. Compare against 1000 (the per-tick budget at 100 MHz / 10 us)
 } elsStop_t;
 
 typedef struct {

@@ -190,14 +190,22 @@ def els_stop_device():
 
 
 def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
-    """122 registers at 64 a request. It was four requests at 32.
+    """124 registers at 64 a request. It was four requests at 32.
 
     The absolute number matters more than the ratio: this block is read once
     per board tick now, so every request in it is paid 30 times a second.
+
+    THE MARGIN IS FOUR REGISTERS. At 64 a request, 128 is the boundary where
+    this becomes THREE requests and the per-tick cost goes up by 50%. The block
+    was 122 when this case was written and is 124 after executionCyclesPeak
+    (2026-08-23), so the next append of more than two registers crosses it.
+    That is not a reason to avoid appending -- it is a reason to raise the
+    chunk size deliberately when it happens, with the same firmware-buffer
+    arithmetic that chose 64, rather than paying a silent third request.
     """
     device, transport = els_stop_device
-    assert device.size == 122, (
-        f"elsStop is {device.size} registers, not the 122 this case was "
+    assert device.size == 124, (
+        f"elsStop is {device.size} registers, not the 124 this case was "
         f"reasoned about -- re-check the chunk arithmetic, do not just "
         f"update the number")
 
@@ -205,7 +213,22 @@ def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
 
     base = device.base_address
     assert len(transport.requests) == 2
-    assert transport.requests == [(base, 64), (base + 64, 58)]
+    assert transport.requests == [(base, 64), (base + 64, 60)]
+
+
+def test_the_block_still_fits_in_two_requests_with_room_to_spare(els_stop_device):
+    """The boundary, asserted rather than left in a comment: a block that
+    quietly grew past 128 would cost a third request on every one of 30 ticks a
+    second, and nothing else in the suite would notice."""
+    device, _ = els_stop_device
+    from reflex.utils.base_device import BaseDevice
+
+    chunk = BaseDevice.MAX_REGISTERS_PER_READ
+    assert device.size <= 2 * chunk, (
+        f"elsStop ({device.size} registers) no longer fits in two requests of "
+        f"{chunk}. Raise the chunk size against the firmware buffer arithmetic "
+        f"(process_FC3, MAX_BUFFER 256, uint8_t length field) -- do not let it "
+        f"silently become three.")
 
 
 def test_no_request_ever_exceeds_the_chunk_size(els_stop_device):

@@ -257,8 +257,13 @@ void RampsStart(rampsHandler_t *rampsData) {
    *
    * 5 (2026-08-22): the thread-phase offset block (phaseOffsetCommand/Seq/
    * Pending/Steps) appended for the groove-widening offset, same
-   * append-at-the-tail discipline. */
-  rampsData->shared.elsStop.protocolVersion = 5;
+   * append-at-the-tail discipline.
+   *
+   * 6 (2026-08-23): executionCyclesPeak, the ISR headroom measurement. Added
+   * after the machine lost Modbus on 6 of 6 cuts and the counter that should
+   * have shown why turned out to be a spot sampler that could not see the
+   * event. */
+  rampsData->shared.elsStop.protocolVersion = 6;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
    * explicitly zeroed when no probe is compiled in, rather than left to whatever
@@ -273,6 +278,7 @@ void RampsStart(rampsHandler_t *rampsData) {
   rampsData->shared.elsStop.phaseOffsetSeq     = 0;
   rampsData->shared.elsStop.phaseOffsetPending = 0;
   rampsData->shared.elsStop.phaseOffsetSteps   = 0;
+  rampsData->shared.elsStop.executionCyclesPeak = 0;
   rampsData->shared.elsStop.calResult    = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupResult = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupSeq    = 0;
@@ -1316,6 +1322,11 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
 #endif
 
   shared->executionCycles = DWT->CYCCNT - start;
+  /* Peak-hold. Three instructions, and the only reason the cut-start spike is
+   * visible at all -- see the executionCyclesPeak comment in Ramps.h. */
+  if (shared->executionCycles > shared->elsStop.executionCyclesPeak) {
+    shared->elsStop.executionCyclesPeak = shared->executionCycles;
+  }
 }
 
 _Noreturn void userLedTask(__attribute__((unused)) void *argument) {

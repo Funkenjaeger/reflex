@@ -224,6 +224,7 @@ typedef struct {
   uint16_t phaseOffsetSeq;
   int32_t  phaseOffsetPending;
   int32_t  phaseOffsetSteps;
+  uint32_t executionCyclesPeak;
 } elsStop_t;
 """
 
@@ -232,7 +233,7 @@ typedef struct {
 # Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
 # Modbus contract; never renumber, only append.
 
-ELS_PROTOCOL_VERSION = 5        # elsStop.protocolVersion this UI is built against
+ELS_PROTOCOL_VERSION = 6        # elsStop.protocolVersion this UI is built against
                                 # 3 (2026-08-22): machineMode promoted to a permanent
                                 # register so the rung-2 census collects in every build.
                                 # 4 (2026-08-22): latchCommand/latchSeq for the manual
