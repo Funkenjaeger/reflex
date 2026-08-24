@@ -65,7 +65,7 @@ instead of leaving bare `TODO:` comments in code.
 
 ## Real-time / performance
 
-### Reduce 100 kHz synchro-ISR CPU load
+### Reduce 100 kHz synchro-ISR CPU load — CHOSEN 2026-08-23, over RX DMA
 - `SynchroRefreshTimerIsr` (`Core/Src/Ramps.c`) runs every 10 µs (TIM9, 100 kHz) at
   NVIC prio 5 and does non-trivial work every tick (phase correction, elsStop
   bookkeeping, GPIO). This is what starved Modbus RX in the first place. Moving
@@ -73,6 +73,45 @@ instead of leaving bare `TODO:` comments in code.
   ISR into a normal FreeRTOS task would free CPU, cut the worst-case ISR duration, and
   reduce starvation pressure on everything else. Keep only the must-happen-now step
   pulse in the ISR.
+
+**Decision (Evan, 2026-08-23): this, not DMA.** After comms dropped on 6 of 6 cuts.
+The deciding argument is the SYMPTOM: those failures are timeouts — *no answer* — with
+no kernel UART errors, not the CRC-from-dropped-bytes that RX overrun produces. The
+overrun recovery already shipped and works. A timeout means the Modbus **task** never
+got CPU, which is a load problem, not a peripheral problem. DMA would also have meant
+re-opening an attempt that failed on the bench and needs a logic analyser to debug.
+
+**THE BUDGET, so the target is a number rather than a feeling.** Core is 100 MHz
+(8 MHz HSE ÷4 ×100 ÷2); TIM9 gives a 10 µs tick. So the ISR has **1000 CPU cycles per
+tick**, and the Modbus task, the USART RX interrupt and everything else live in what is
+left. `executionCycles` (DWT, measured every tick, `Ramps.c` end of the ISR) is already
+the right instrument.
+
+**BUT THE INSTRUMENT CANNOT SEE THE EVENT AS IT STANDS.** `fastData.cycles` is a SPOT
+SAMPLE: `servoEnableTask` copies `executionCycles` once per `osDelay` (~10 ms), so it
+catches roughly one tick in a thousand and reports a typical tick, never the worst one.
+The cut-start spike — take-up initiation, `applyPhaseCorrection`'s float work
+(`fmodf`/`lroundf`), diagnostic arming, all in the same tick — lasts a handful of ticks
+and will essentially never be sampled. The number on the status bar today is real and
+irrelevant.
+
+**So the first step is a peak-hold, not a refactor.** A max of `executionCycles` since
+last read, cleared on read, costs about three instructions in the ISR. Without it there
+is no way to tell how far over budget cut-start actually goes, no way to rank what to
+move, and no way to prove a refactor helped. Same lesson as the rung-2 census: a
+measurement that only exists in a diagnostic build is a measurement nobody has, so this
+should be a permanent register rather than a probe.
+
+**Then, in likely order of payoff** (to be confirmed by the peak measurement, not
+assumed):
+1. `applyPhaseCorrection` — float math including `fmodf`, on the resume tick, which IS
+   cut-start, which is exactly when comms dies. Strongest suspect.
+2. The take-up confirmation gate — roughly 220 lines inside the `takeupPending` block,
+   almost all of it a settle counter and a decision that happens once per pass.
+3. `elsCalUpdate` — a whole state machine that only matters during a calibration run.
+
+The ISR is 718 lines. The only thing that genuinely must happen at 100 kHz is the step
+pulse.
 
 ---
 

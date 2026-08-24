@@ -57,16 +57,30 @@ def ctrl():
                                                         syncRatioDen=2)
     c = ElsUiController(els=els, board=board)
     _pump()
-    # The FSM holds the HAL the readout reads through, so it is the one to
-    # stand in for -- replacing only the controller's `_hal` would leave the
-    # readout talking to the real (disconnected) one and reading zero forever.
-    c._els_fsm.hal = MagicMock(name="hal")
+    # ONE stand-in HAL on BOTH holders. The poller reads the total through the
+    # controller's own `_hal` (from the tick snapshot), while the FSM's `hal`
+    # is what the conversion path would reach for on any live read. Replacing
+    # only one of them leaves the other talking to the real, disconnected HAL
+    # and reading zero forever -- which looks exactly like "no offset", the one
+    # answer this readout exists to contradict.
+    hal = MagicMock(name="hal")
+    c._hal = hal
+    c._els_fsm.hal = hal
     return c
 
 
 def _polls(ctrl, *step_totals):
+    """Feed the poller one snapshot per poll.
+
+    Through `tick`, not `read_phase_offset_steps`: the poller is tick-driven
+    and reads the board's once-per-tick snapshot. Stubbing the live reader
+    instead would leave `tick` a bare MagicMock returning a fresh object per
+    call -- never equal to the previous one, so the seen-it-twice guard would
+    never settle and every readout assertion below would fail for a reason
+    that has nothing to do with what it is testing.
+    """
     for steps in step_totals:
-        ctrl._els_fsm.hal.read_phase_offset_steps.return_value = steps
+        ctrl._hal.tick.phase_offset_steps.return_value = steps
         ctrl._poll_phase_offset()
 
 
@@ -177,7 +191,13 @@ def test_a_fraction_is_named_only_when_it_really_is_one(fraction, expected):
 def test_a_failed_read_does_not_clear_the_offset_readout(ctrl):
     """A checksum failure returns 0, and 0 here means "no phase shift is being
     cut". Clearing the strip on a bad frame would hide a live offset -- the one
-    thing this readout exists to stop the operator forgetting."""
+    thing this readout exists to stop the operator forgetting.
+
+    Since the poller reads from the board's per-tick snapshot, "the read
+    failed" now means "there was no snapshot this tick" -- the board clears it
+    when the refresh raises, and every read against an empty one returns its
+    fallback AND bumps read_failures, exactly as the per-field read it replaced
+    did. That is what is simulated here."""
     cm = ctrl._board.connection_manager
 
     # Establish a live offset on screen (seen twice, per the torn-read guard).
@@ -189,7 +209,7 @@ def test_a_failed_read_does_not_clear_the_offset_readout(ctrl):
         cm.fail_read()
         return 0
 
-    ctrl._els_fsm.hal.read_phase_offset_steps.side_effect = _zero_and_fail
+    ctrl._hal.tick.phase_offset_steps.side_effect = _zero_and_fail
     ctrl._poll_phase_offset()
     ctrl._poll_phase_offset()
 

@@ -77,18 +77,19 @@ load_kv(__file__)
 
 
 INTRO_TEXT = (
-    "Advance the thread phase to widen the groove past the width of your "
-    "cutter. Entries add up; applying one MOVES NOTHING — it takes effect "
-    "where the tool next re-enters the thread."
+    "Shift the thread phase to widen the groove past the width of your cutter. "
+    "This is the whole offset, not an amount to add — applying MOVES NOTHING, "
+    "it takes effect where the tool next re-enters the thread."
 )
 
 ENTRY_HINT = (
-    "Enter how far to step over. Only you know how wide the cutter is."
+    "Enter the total offset from the original groove. Only you know how wide "
+    "the cutter is."
 )
 
 APPLIED_TEXT = (
-    "Applied. The new total is shown above; it takes effect where the tool "
-    "next re-enters the thread. Run an air pass before cutting metal."
+    "Applied. The offset is shown above; it takes effect where the tool next "
+    "re-enters the thread. Run an air pass before cutting metal."
 )
 
 CLEARED_TEXT = (
@@ -132,11 +133,6 @@ MESSAGE_CHAR_BUDGET = MESSAGE_WRAP_CHARS * MESSAGE_LINE_BUDGET
 # cutting a thread" are different actions, and a merged message would send the
 # operator to the wrong one.
 REFUSAL_TEXT = {
-    ElsFsm.PHASE_OFFSET_READ_FAILED: (
-        "The controller did not answer cleanly while reading the total so far, "
-        "so nothing was changed. Adding to a number it never sent would throw "
-        "away the step-overs already made. Check the connection and try again."
-    ),
     ElsFsm.PHASE_OFFSET_OFFLINE: (
         "Not connected to the controller. The phase offset lives in the "
         "controller, so there is nothing here to apply it to — reconnect and "
@@ -381,11 +377,11 @@ class PhaseOffsetPopup(Popup):
             distance, fraction = self._fsm.phase_offset_display()
         except Exception:
             log.exception("phase offset: total unavailable")
-            self.total_text = "Widened so far:  unavailable"
+            self.total_text = "Widened by:  unavailable"
             self.fraction_text = ""
             return
         self.total_text = (
-            f"Widened so far:  {self._format_distance(distance)} "
+            f"Widened by:  {self._format_distance(distance)} "
             f"{self.unit_label}"
         )
         self.fraction_text = (

@@ -140,9 +140,22 @@ class ElsStop(BaseDevice):
     diagSchema is the only thing standing between a reader and a plausible
     number with the wrong meaning.
 
-    Read the block ON DEMAND only. 64 registers is ~12 ms of extra serial time
-    at 115200 baud against ~29 ms for the whole map -- a permanent 40% tax on
-    every poll cycle for a block that is empty in production.
+    The scratchpad's ~12 ms-of-serial-time cost used to be the argument for
+    never reading this block on a tick. That argument was overturned on
+    2026-08-23 and the note is kept because the reasoning is worth having: the
+    whole elsStop block IS now refreshed once per board tick
+    (Board._refresh_els_stop_snapshot). What the byte-count argument missed is
+    that bytes are not what fails. The firmware answers when its 100 kHz ISR
+    lets it, so what times out is REQUESTS, and the per-field live reads the
+    snapshot replaced cost five to fourteen of those per tick against the
+    snapshot's two -- at the price of about 200 extra bytes, roughly 2 ms of a
+    33 ms tick. Six of six cuts lost comms under the old arrangement on
+    2026-08-23, every drop a timeout at the transition into `cutting`.
+
+    Still true, and unaffected: the 50-register diagTrace has no reader on the
+    tick path. It rides along only because it sits between registers that do
+    (diagSeq at 49, machineMode at 112, phaseOffsetSteps at 120), so skipping
+    it would not save a request -- 122 registers and 72 registers are both two.
     Manual latch pair (latchCommand, latchSeq) added with the interactive
     re-sync feature, and REBASED onto the scratchpad map on 2026-08-16: the pair
     now sits AFTER diagReserved, not where the pre-rebase branch put it. struct

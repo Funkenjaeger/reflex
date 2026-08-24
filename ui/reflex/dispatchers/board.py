@@ -39,6 +39,9 @@ class Board(EventDispatcher):
         self.formats = formats
         self.offset_provider = offset_provider
         self.fast_data_values = dict()
+        # This tick's elsStop registers. See _refresh_els_stop_snapshot for what
+        # an EMPTY dict means and why it is the only honest way to say it.
+        self.els_stop_values = dict()
 
         serial_port = config.getdefault("device", "serial_port", "/dev/serial0")
         baudrate = int(config.getdefault("device", "baudrate", 115200))
@@ -168,6 +171,7 @@ class Board(EventDispatcher):
 
         if self.connection_manager.device is None:
             self.connected = False
+            self.els_stop_values = {}
             self.task_update.timeout = 2.0
             self.update_tick = (self.update_tick + 1) % 100
             return
@@ -178,9 +182,15 @@ class Board(EventDispatcher):
             self.connection_manager._log_error_once(str(e))
             self.connection_manager.disconnect()
             self.connected = False
+            self.els_stop_values = {}
             self.task_update.timeout = 1.0
             self.update_tick = (self.update_tick + 1) % 100
             return
+
+        # Taken BEFORE update_tick is bumped, because the tick-driven pollers
+        # that consume it are bound to update_tick -- so by the time any of them
+        # runs, the snapshot it reads is this tick's.
+        self._refresh_els_stop_snapshot()
 
         was_disconnected = not self.connected
         self.connection_manager.connected = True
@@ -191,6 +201,43 @@ class Board(EventDispatcher):
             self._check_protocol_version()
 
         self.update_tick = (self.update_tick + 1) % 100
+
+    def _refresh_els_stop_snapshot(self):
+        """Read the whole elsStop block once per tick, for the pollers to share.
+
+        The same arrangement `fast_data_values` has always had, extended to the
+        block the ELS pollers read. It exists because `BaseDevice.__getitem__`
+        is a LIVE per-field read, not a cache lookup: every
+        ``device['elsStop']['active']`` in a tick-driven poller was its own
+        Modbus exchange, and there are enough of those pollers that a board tick
+        cost five to fourteen exchanges depending on which edges were due. At
+        30 Hz, with the firmware's 100 kHz ISR saturated at cut-start, that is
+        what lost comms on six of six cuts on 2026-08-23 -- every drop a
+        timeout, none a corrupted frame. One block read of 122 registers is two
+        exchanges (BaseDevice.MAX_REGISTERS_PER_READ) no matter how many
+        pollers read it, and it costs MORE bytes than the reads it replaces.
+        That trade is the point: bytes are not what times out, exchanges are.
+
+        A SNAPSHOT THAT DID NOT HAPPEN MUST NOT LOOK LIKE ONE THAT DID, which
+        is why failure CLEARS the dict rather than leaving the last good one in
+        place. Every reader goes through ElsStopHal's snapshot accessor, which
+        treats an empty dict exactly as it treats a read attempted with no link
+        -- returning the fallback AND bumping ConnectionManager.read_failures --
+        so `reads_fabricated_since()` still tells the acknowledgement pollers to
+        discard the poll. Keeping the stale values would serve a plausible
+        number with the counter unmoved, which is precisely the fabricated-zero
+        hole that counter was added to close.
+
+        Deliberately NOT a disconnect path. `fast_data_values` above owns the
+        connection verdict; a single failed elsStop read is one bad tick for the
+        ELS pollers, and tearing the link down over it would take the DRO with
+        it for no reason.
+        """
+        try:
+            self.els_stop_values = self.device['elsStop'].refresh()
+        except Exception as e:
+            self.els_stop_values = {}
+            self.connection_manager._log_error_once(str(e))
 
     def _check_protocol_version(self):
         """Verify the firmware's register-layout version on each new connection.
@@ -210,7 +257,12 @@ class Board(EventDispatcher):
         """
         from reflex.utils.devices import ELS_PROTOCOL_VERSION
         try:
-            version = int(self.device['elsStop'].refresh()['protocolVersion'])
+            # From THIS tick's snapshot, taken moments ago in update(). It used
+            # to refresh the block again here, which read the same 122
+            # registers twice on the tick a connection comes up. An empty
+            # snapshot (the refresh failed) raises KeyError and lands in the
+            # same branch a failed read always did.
+            version = int(self.els_stop_values['protocolVersion'])
         except Exception as e:
             # A read failure here is not a version verdict — leave the previous
             # state alone rather than reporting a mismatch we did not observe.

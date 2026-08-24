@@ -119,21 +119,36 @@ def test_apply_converts_distance_to_leadscrew_steps():
     hal.request_phase_offset.assert_called_once_with(500)
 
 
-def test_apply_accumulates_onto_the_firmware_total():
-    """The firmware REPLACES on every apply, so the host must send the sum. A
-    host that sent only the increment would silently discard every earlier
-    entry — and the readout would still look plausible."""
-    fsm, hal = _fsm(total_steps=500)
+def test_apply_SETS_the_offset_rather_than_adding_to_it():
+    """Evan, 2026-08-23: the entered number IS the offset, measured from the
+    latched reference. It is not another helping added to what is there.
+
+    The old behaviour accumulated, which came from the multi-start framing
+    where stepping by pitch/N repeatedly was the workflow. For widening a
+    groove the field reads as a setting.
+    """
+    fsm, hal = _fsm(total_steps=500)          # an offset is already applied
     assert fsm.apply_phase_offset(0.2) == ElsFsm.PHASE_OFFSET_OK
-    hal.request_phase_offset.assert_called_once_with(700)
+    hal.request_phase_offset.assert_called_once_with(200)
 
 
-def test_accumulation_reads_the_firmware_not_a_local_copy():
-    """The firmware clears the total on the enable 0->1 edge. A UI-side running
-    total would survive that and start the next job pre-offset."""
+def test_applying_the_same_value_twice_is_idempotent():
+    """The whole point of the change, and it deletes a hazard: under accumulate,
+    an operator unsure the first press landed pressed again and silently stepped
+    the groove one increment wider than they had measured for."""
     fsm, hal = _fsm(total_steps=0)
     fsm.apply_phase_offset(0.2)
-    hal.read_phase_offset_steps.assert_called()
+    fsm.apply_phase_offset(0.2)
+    assert [c.args[0] for c in hal.request_phase_offset.call_args_list] == [200, 200]
+
+
+def test_apply_never_reads_the_current_total():
+    """Setting depends only on what was typed, so the read that accumulation
+    needed is gone -- and with it the exposure that a fabricated read of that
+    total collapsed the offset to a single step-over while reporting success."""
+    fsm, hal = _fsm(total_steps=500)
+    fsm.apply_phase_offset(0.2)
+    hal.read_phase_offset_steps.assert_not_called()
 
 
 def test_inch_entry_converts_through_the_display_factor():
@@ -154,12 +169,12 @@ def test_rounding_happens_once_at_the_end():
     assert sent == 333
 
 
-def test_a_zero_entry_is_accepted_and_changes_nothing():
-    """Not a refusal: re-applying the same total is how Clear works, and a
-    zero entry must not be special-cased into an error."""
+def test_a_zero_entry_sets_the_offset_to_zero():
+    """Under SET, entering nothing means no offset -- the same thing Clear
+    does. Not a refusal: a zero is a legitimate setting, not a slip."""
     fsm, hal = _fsm(total_steps=400)
     assert fsm.apply_phase_offset(0.0) == ElsFsm.PHASE_OFFSET_OK
-    hal.request_phase_offset.assert_called_once_with(400)
+    hal.request_phase_offset.assert_called_once_with(0)
 
 
 # ─── the refusals ──────────────────────────────────────────────────────────
@@ -168,26 +183,29 @@ def test_a_zero_entry_is_accepted_and_changes_nothing():
 # does it anyway.
 
 def test_refuses_at_exactly_one_pitch():
-    """One pitch of offset is a no-op — the tool re-enters the same groove one
+    """Tested against the ENTRY now, not a running sum: with SET semantics the
+    number typed is the offset, so the aliasing bound applies to it directly.
+
+    One pitch of offset is a no-op — the tool re-enters the same groove one
     turn along. Refused rather than clamped, so the cut is never quietly put
     somewhere other than where it was asked for (decision 2026-08-22). This is
     the ALIASING bound and holds whatever the offset is being used for."""
-    fsm, hal = _fsm(total_steps=PITCH_STEPS - 500)
-    assert fsm.apply_phase_offset(0.5) == ElsFsm.PHASE_OFFSET_AT_PITCH
+    fsm, hal = _fsm()
+    assert fsm.apply_phase_offset(PITCH_STEPS / STEPS_PER_MM) == ElsFsm.PHASE_OFFSET_AT_PITCH
     hal.request_phase_offset.assert_not_called()
 
 
 def test_refuses_beyond_one_pitch():
     """1.5 pitches is indistinguishable from 0.5 at the tool."""
-    fsm, hal = _fsm(total_steps=PITCH_STEPS - 100)
-    assert fsm.apply_phase_offset(1.0) == ElsFsm.PHASE_OFFSET_AT_PITCH
+    fsm, hal = _fsm()
+    assert fsm.apply_phase_offset(2.0) == ElsFsm.PHASE_OFFSET_AT_PITCH
     hal.request_phase_offset.assert_not_called()
 
 
 def test_accepts_just_under_one_pitch():
     """The bound is a real edge, not a blanket 'large entries are scary'."""
-    fsm, hal = _fsm(total_steps=PITCH_STEPS - 500)
-    assert fsm.apply_phase_offset(0.499) == ElsFsm.PHASE_OFFSET_OK
+    fsm, hal = _fsm()
+    assert fsm.apply_phase_offset(1.499) == ElsFsm.PHASE_OFFSET_OK
     hal.request_phase_offset.assert_called_once_with(1499)
 
 
@@ -372,45 +390,14 @@ def test_request_writes_nothing_while_disconnected():
     assert writes == []
 
 
-# ─── fabricated reads: the total is READ, not remembered ───────────────────
-# The 2026-08-23 read-failure guard covered the pollers that DISPLAY state and
-# missed this, the one path that steers the machine. A failed frame returns 0,
-# so new_total = 0 + added: the firmware's running total silently collapses to
-# a single step-over, every earlier one is discarded, and the screen says
-# "Applied". Reproduced by Fable's adversarial review before it was fixed.
-
-def test_a_fabricated_total_read_refuses_instead_of_resetting_the_total():
-    fsm, hal = _fsm(total_steps=500)          # four step-overs already made
-    hal.reads_fabricated_since.return_value = True
-
-    assert fsm.apply_phase_offset(0.1) == ElsFsm.PHASE_OFFSET_READ_FAILED
-    hal.request_phase_offset.assert_not_called()
-
-
-def test_the_refusal_is_not_the_offline_one():
-    """A frame that failed mid-apply is NOT a disconnected controller, and the
-    two send the operator to different checks. board.connected cannot even
-    change during the synchronous apply, which is why the counter exists."""
-    fsm, hal = _fsm(total_steps=500)
-    hal.reads_fabricated_since.return_value = True
-
-    assert fsm.apply_phase_offset(0.1) != ElsFsm.PHASE_OFFSET_OFFLINE
-
-
-def test_the_baseline_is_taken_before_the_total_is_read():
-    """Sampled after, a failure DURING that read is invisible -- which is the
-    whole failure being guarded against."""
-    fsm, hal = _fsm(total_steps=500)
-    order = []
-    hal.reads_baseline.side_effect = lambda: (order.append("baseline"), 0)[1]
-    hal.read_phase_offset_steps.side_effect = lambda: (order.append("read"), 500)[1]
-
-    fsm.apply_phase_offset(0.1)
-    assert order.index("baseline") < order.index("read")
-
-
-def test_a_healthy_apply_still_goes_through():
-    """The failure mode of a too-eager guard is a machine that never applies."""
-    fsm, hal = _fsm(total_steps=500)
-    assert fsm.apply_phase_offset(0.1) == ElsFsm.PHASE_OFFSET_OK
-    hal.request_phase_offset.assert_called_once_with(600)
+# ─── fabricated reads ──────────────────────────────────────────────────────
+# There used to be four tests here, guarding a read of the running total that
+# apply_phase_offset made in order to accumulate onto it. A failed frame
+# returned 0, so the new total collapsed to just the entry -- every earlier
+# step-over discarded, under a green "Applied".
+#
+# SET semantics removed the read, and with it the exposure: the value written
+# depends only on what the operator typed. test_apply_never_reads_the_current
+# _total above pins that the read is gone, which is a stronger guarantee than
+# guarding it was. The equivalent hazard on the ACK path is still real and is
+# covered in tests/fsms/test_els_resync.py and the popup tests.

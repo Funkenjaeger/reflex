@@ -9,6 +9,73 @@ from kivy.logger import Logger
 log = Logger.getChild(__name__)
 
 
+class TickReads:
+    """elsStop values served from THIS BOARD TICK's snapshot, not from the wire.
+
+    WHAT THIS IS FOR, and the line it draws. Every read on ElsStopHal below is
+    live: ``device['elsStop']['active']`` is a Modbus exchange, not a cache
+    lookup. That is correct for an on-demand read — an apply, a wizard step, a
+    calibration run — where the operator has just acted and the answer must
+    describe the machine NOW. It was ruinous for the tick-driven pollers, which
+    between them made several such exchanges 30 times a second and lost comms on
+    six of six cuts on 2026-08-23 by asking the firmware to answer them at the
+    moment its 100 kHz ISR had nothing spare (see Board._refresh_els_stop_snapshot).
+
+    So: the pollers read through here, everything else keeps reading live. The
+    split is deliberately visible at the call site — ``hal.tick.active()`` reads
+    differently from ``hal.read_active()`` — because the two are not
+    interchangeable and a future reader must not be able to reach for the cheap
+    one by accident. A poller gets once-per-tick freshness, which is all it ever
+    had: it fires once per tick.
+
+    FABRICATION IS REPORTED THE SAME WAY IT ALWAYS WAS. When the board holds no
+    snapshot — the refresh failed, or the link is down — these return the same
+    fallbacks the live readers return, through the same ElsStopHal._no_link, so
+    reads_baseline()/reads_fabricated_since() keep working for the callers that
+    discard a poll rather than act on a value they cannot trust.
+    """
+
+    def __init__(self, hal: "ElsStopHal"):
+        self._hal = hal
+
+    def _get(self, key, fallback):
+        snapshot = self._hal._board.els_stop_values
+        if not snapshot:
+            # No snapshot this tick. Indistinguishable, to a caller, from a
+            # per-field read that timed out — which is exactly right, because
+            # that is what it replaced.
+            return self._hal._no_link(fallback)
+        # A missing key is NOT this case and must not be swallowed into it: an
+        # empty snapshot is a runtime condition, a name the register map does
+        # not have is a bug, and turning the second into a permanent silent
+        # "communications failure" would hide it forever. Let it raise.
+        return snapshot[key]
+
+    def active(self) -> bool:
+        return bool(self._get('active', 0))
+
+    def takeup_seq(self) -> int:
+        return int(self._get('takeupSeq', 0))
+
+    def takeup_result(self) -> int:
+        return int(self._get('takeupResult', 0))
+
+    def last_takeup_z_delta(self) -> int:
+        return int(self._get('lastTakeupZDelta', 0))
+
+    def takeup_thresh_counts(self) -> int:
+        return int(self._get('takeupThreshCounts', 0))
+
+    def phase_offset_steps(self) -> int:
+        return int(self._get('phaseOffsetSteps', 0))
+
+    def diag_seq(self) -> int:
+        return int(self._get('diagSeq', 0))
+
+    def current_mode(self) -> int:
+        return int(self._get('machineMode', 0))
+
+
 class ElsStopHal:
     """Domain-named operations against the elsStop register block."""
 
@@ -18,6 +85,10 @@ class ElsStopHal:
 
     def __init__(self, board):
         self._board = board
+        # Built once. It holds no state of its own -- it reads whatever the
+        # board is holding at the moment it is asked -- so a fresh one per tick
+        # would be pure allocation.
+        self.tick = TickReads(self)
 
     @property
     def connected(self) -> bool:
@@ -307,7 +378,10 @@ class ElsStopHal:
     def _no_link(self, fallback):
         """Record a read that could not happen, and hand back the fallback.
 
-        Every read below short-circuits through here when the link is down.
+        Every read below short-circuits through here when the link is down, and
+        so does every snapshot read in TickReads when the board holds no
+        snapshot for this tick — the two are the same event to a consumer, and
+        counting them the same way is what keeps one guard sufficient.
         The fallback is usually 0, and in this register map 0 is never neutral
         -- it reads as "no offset", "not enabled", "sequence reset". Counting
         it is what lets a caller whose decision depends on the value tell a
@@ -443,6 +517,17 @@ class ElsStopHal:
         has changed -- this is the expensive read the block is designed around
         (64 registers, roughly 12 ms of serial time at 115200 baud), and it has
         no business anywhere near the steady-state poll loop.
+
+        DELIBERATELY STILL LIVE, even though the board now holds a per-tick
+        snapshot of this whole block. The recorder's contract is "the seq edge
+        says a capture COMPLETED; then read the block", and a snapshot cannot
+        promise that ordering: it is assembled from two FC3 responses, so a
+        capture completing between the two would pair one capture's seq with
+        the next capture's trace -- and the recorder would then write the same
+        trace twice under two different sequence numbers. Re-reading after the
+        edge keeps the two phases genuinely separate. The cost is two exchanges
+        on the rare tick a capture lands, against nothing in steady state,
+        which is exactly the split the diagSeq/scratchpad design asks for.
 
         Returns raw firmware values with no unit conversion. Bucket width is
         reported in ISR TICKS, and the tick period is deliberately NOT assumed

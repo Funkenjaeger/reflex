@@ -365,7 +365,14 @@ class ElsFsm:
 
     # bound to update_tick during moves
     def _on_board_update(self, *args, **kv):
-        if self.hal.read_active():
+        # `tick.active()`, not `read_active()`: this is bound to update_tick, so
+        # it reads the snapshot the board already took this tick rather than
+        # spending its own Modbus exchange on a register three other pollers are
+        # also asking for. Freshness is unchanged -- this runs once per tick
+        # either way -- and a failed snapshot yields False here exactly as a
+        # failed live read did. is_move_done() below stays LIVE: it reads the
+        # SERVO block, which has no per-tick snapshot.
+        if self.hal.tick.active():
             if self.state == 'cutting':
                 bus.publish("els_stop_activated")
                 self.stop_active()
@@ -671,7 +678,6 @@ class ElsFsm:
     # would happily survive a job change the machine already discarded.
 
     PHASE_OFFSET_OK         = 'ok'
-    PHASE_OFFSET_READ_FAILED = 'read_failed'
     PHASE_OFFSET_OFFLINE    = 'offline'
     PHASE_OFFSET_NO_JOB     = 'no_job'
     PHASE_OFFSET_NO_PITCH   = 'no_pitch'
@@ -766,7 +772,7 @@ class ElsFsm:
         """
         return self.steps_to_display(int(round(self.thread_pitch_steps())))
 
-    def phase_offset_display(self):
+    def phase_offset_display(self, steps=None):
         """(distance in display units, fraction of one pitch) for the total.
 
         Both numbers, because they answer different questions. The DISTANCE is
@@ -776,8 +782,18 @@ class ElsFsm:
         much of the one pitch an offset may accumulate has been spent. A
         readout with only the distance hides how close the total is to the
         refusal; only the fraction makes the entry unverifiable.
+
+        `steps` lets a caller that has ALREADY read the total pass it in rather
+        than provoke a second read of the same register. The status-bar poller
+        is the one that needed it: it reads the total, waits to see it twice
+        (the torn-read guard), and only then renders — so calling this with no
+        argument made every rendered tick read phaseOffsetSteps twice, and the
+        two reads could straddle a firmware update and render a distance and a
+        fraction computed from different totals. Omitting it reads the total
+        live, which is what an on-demand caller wants.
         """
-        steps = self.phase_offset_steps()
+        if steps is None:
+            steps = self.phase_offset_steps()
         distance = self.steps_to_display(steps)
         pitch = self.thread_pitch_steps()
         fraction = (steps / pitch) if pitch else 0.0
@@ -804,7 +820,27 @@ class ElsFsm:
         return self.PHASE_OFFSET_OK
 
     def apply_phase_offset(self, distance_display: float) -> str:
-        """Add a distance to the running total. Returns a PHASE_OFFSET_* code.
+        """SET the offset to a distance. Returns a PHASE_OFFSET_* code.
+
+        SETS, DOES NOT ACCUMULATE (Evan, 2026-08-23). The entered number is the
+        offset, measured from the latched reference — not a further helping
+        added to whatever is already there. Applying 0.010 twice leaves the
+        offset at 0.010.
+
+        The accumulate behaviour it replaces was a host-side choice made under
+        the multi-start framing, where stepping by pitch/N repeatedly was the
+        workflow. For widening a groove the field reads as a setting, and an
+        incremental version of this deserves its own control that says so
+        rather than being the same button behaving differently.
+
+        Three things fall out of the change, which is why it is worth stating:
+          * pressing Apply twice is now idempotent, so the double-press that
+            silently stepped the groove one increment wider is gone;
+          * the firmware already held ONE ABSOLUTE TOTAL and replaced it on
+            every write, so this is now the same shape on both sides of the
+            link rather than the host maintaining a running sum;
+          * nothing reads the current total to compute the new one, so a
+            fabricated read can no longer poison it.
 
         REFUSES RATHER THAN CLAMPS AT ONE PITCH (decided 2026-08-22). A total of
         exactly one pitch is a no-op and 1.5 pitches is indistinguishable from
@@ -836,32 +872,20 @@ class ElsFsm:
 
         per_unit = self._leadscrew_steps_per_display_unit()
         # ROUND ONCE, at the end: the entry is exact up to here.
-        added = int(round(entry * per_unit))
+        offset_steps = int(round(entry * per_unit))
 
-        # THE TOTAL IS READ, NOT REMEMBERED, so a fabricated read poisons the
-        # sum. A failed frame returns 0, making new_total = 0 + added: the
-        # firmware's running total silently collapses to just this one
-        # step-over, every earlier one is discarded, and the operator is told
-        # "Applied". The groove then gets widened by one step where they had
-        # asked for five.
-        #
-        # The blockers above already refuse a DISCONNECTED controller, but
-        # board.connected is a Kivy property that cannot change during this
-        # synchronous call, so a frame failing midway through the apply would
-        # not move it. The counter is the only thing that sees that.
-        baseline = self.reads_baseline()
-        total_now = self.phase_offset_steps()
-        if self.reads_fabricated_since(baseline):
-            return self.PHASE_OFFSET_READ_FAILED
-        new_total = total_now + added
-
+        # NO READ OF THE CURRENT TOTAL. Under the old accumulate behaviour this
+        # is where the firmware's running total was read and added to, and a
+        # fabricated read there made the new total collapse to just the entry.
+        # Setting has no such exposure: the value written depends only on what
+        # the operator typed.
         pitch = self.thread_pitch_steps()
-        if new_total >= pitch:
+        if offset_steps >= pitch:
             return self.PHASE_OFFSET_AT_PITCH
 
-        log.info(f"*** apply_phase_offset: entry={float(distance_display)} "
-                 f"added={added} steps, total -> {new_total} of {pitch:.1f}/pitch")
-        self.hal.request_phase_offset(new_total)
+        log.info(f"*** apply_phase_offset: SET entry={float(distance_display)} "
+                 f"-> {offset_steps} steps of {pitch:.1f}/pitch")
+        self.hal.request_phase_offset(offset_steps)
         return self.PHASE_OFFSET_OK
 
     def clear_phase_offset(self) -> str:

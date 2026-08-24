@@ -526,10 +526,23 @@ class ElsUiController(EventDispatcher):
         # "CONFIRMED: moved 0 counts, needed 0" and CLEARED a live refusal.
         # The two-poll guard below does not cover it: a zero frame is only
         # consistent across two polls if it repeats, and it did not.
+        #
+        # Every read in this poll now comes from the board's once-per-tick
+        # elsStop snapshot rather than four separate exchanges, and the guard
+        # below is unchanged BECAUSE the snapshot reports its own failure the
+        # same way: no snapshot means each read here returns its fallback and
+        # bumps read_failures, exactly as a timed-out per-field read did.
+        #
+        # The snapshot also makes the four values MORE consistent, not less:
+        # takeupResult (register 32) and takeupSeq (33) now arrive in the same
+        # FC3 response instead of two exchanges milliseconds apart. It does not
+        # close the tear the two-poll guard below exists for -- the firmware's
+        # process_FC3 still copies the block a register at a time and the ISR
+        # can still land mid-copy -- so that guard stays.
         cm = self._board.connection_manager
         reads_baseline = cm.read_failures
 
-        seq = self._hal.read_takeup_seq()
+        seq = self._hal.tick.takeup_seq()
         if seq == self._prev_takeup_seq:
             self._pending_takeup_seq = None
             return
@@ -551,9 +564,9 @@ class ElsUiController(EventDispatcher):
         prev_seq_before_commit = self._prev_takeup_seq
         self._prev_takeup_seq = seq
 
-        result = self._hal.read_takeup_result()
-        moved = self._hal.read_last_takeup_z_delta()
-        needed = self._hal.read_takeup_thresh_counts()
+        result = self._hal.tick.takeup_result()
+        moved = self._hal.tick.last_takeup_z_delta()
+        needed = self._hal.tick.takeup_thresh_counts()
         if cm.reads_failed_since(reads_baseline):
             # ANY read in this poll failed -- the seq read that produced the
             # edge, or one of the three that make up the outcome. The baseline
@@ -610,10 +623,14 @@ class ElsUiController(EventDispatcher):
         # the machine is still cutting at an offset, which is the one thing it
         # exists to prevent the operator forgetting. Same counter the take-up
         # poller uses; see the elspi 2026-08-21 phantom CONFIRMED.
+        # Read from the board's once-per-tick elsStop snapshot, not live: this
+        # is a poller, it runs once per tick, and the snapshot is this tick's.
+        # An absent snapshot bumps read_failures just as a failed live read did,
+        # so the guard below is unchanged.
         cm = self._board.connection_manager
         reads_baseline = cm.read_failures
         try:
-            steps = self._els_fsm.phase_offset_steps()
+            steps = self._hal.tick.phase_offset_steps()
         except Exception:
             return
         if cm.reads_failed_since(reads_baseline):
@@ -633,7 +650,11 @@ class ElsUiController(EventDispatcher):
             return
 
         try:
-            distance, fraction = self._els_fsm.phase_offset_display()
+            # Hand it the total already read above. Calling this bare would
+            # read phaseOffsetSteps a SECOND time on every rendered tick, and
+            # the two reads could straddle a firmware update — rendering a
+            # distance from one total and a fraction from another.
+            distance, fraction = self._els_fsm.phase_offset_display(steps)
         except Exception:
             # Same meaning as a zero distance below: nothing here can convert
             # the total, but the total is real and must still be announced.
@@ -689,7 +710,14 @@ class ElsUiController(EventDispatcher):
             self._mode_watch_tick += 1
             if self._mode_watch_tick % self.MODE_WATCH_SAMPLE_EVERY:
                 return
-            mode = self._hal.read_current_mode()
+            # From the tick snapshot. The sample is now genuinely free rather
+            # than "a rounding error on the serial budget" — the note on
+            # MODE_WATCH_SAMPLE_EVERY above was the cost argument for sampling
+            # only every 5th tick, and that cost is gone. The rate is left
+            # alone anyway: 6 Hz against the firmware's ~10 Hz publication is
+            # what the census was collected at, and changing the sampling rate
+            # would change what the census means.
+            mode = self._hal.tick.current_mode()
             self._mode_watch.feed(self._els_fsm.state, mode)
         except Exception as e:
             log.warning(f"mode-watch sample failed: {e}")
@@ -697,7 +725,12 @@ class ElsUiController(EventDispatcher):
     def _poll_els_stop_active(self, *args):
         # Bound to board.update_tick. Kivy property writes from the polling
         # thread are an existing project-wide pattern; matching that here.
-        active = self._hal.read_active()
+        #
+        # Served from the tick snapshot (see ElsStopHal.TickReads): the domain
+        # FSM's _on_board_update wants the same register on the same tick, and
+        # before the snapshot the two spent an exchange each — and could
+        # disagree, having read the register a few milliseconds apart.
+        active = self._hal.tick.active()
         if active != self.els_stop_active:
             self.els_stop_active = active
 

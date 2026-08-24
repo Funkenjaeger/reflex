@@ -95,6 +95,14 @@ class FakeConnectionManager:
 def _make_collaborators(*, z_axis=None, x_axis=None, connected=False):
     board = MagicMock()
     board.connected = connected
+    # A REAL dict, for the same reason FakeConnectionManager is a real object.
+    # This is the board's once-per-tick elsStop snapshot, and ElsStopHal.TickReads
+    # treats an empty one as "no snapshot -> fabricated read". Left as a MagicMock
+    # attribute it would be truthy and would hand every snapshot read a Mock, so
+    # a poller under test would interpret a Mock as a register value and the test
+    # would pass without a number ever being checked. Empty by default: a test
+    # that wants the pollers to see registers puts them here.
+    board.els_stop_values = {}
     # Real semantics, deliberately not a Mock -- see FakeConnectionManager.
     # connected defaults True and deliberately does NOT follow board.connected:
     # this models the SERIAL LINK, not the board dispatcher's view of it, and
@@ -1025,11 +1033,11 @@ class TestModeWatchSampler:
         ctrl._diag_recorder = MagicMock()
         ctrl._diag_recorder.schema = None          # release firmware
         ctrl._hal = MagicMock()
-        ctrl._hal.read_current_mode.return_value = 5      # HELD
+        ctrl._hal.tick.current_mode.return_value = 5      # HELD
         ctrl._mode_watch = MagicMock()
         for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY * 3):
             ctrl._poll_mode_watch()
-        assert ctrl._hal.read_current_mode.call_count == 3
+        assert ctrl._hal.tick.current_mode.call_count == 3
         ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 5)
 
     def test_samples_under_an_unrelated_probe(self, ctrl):
@@ -1040,28 +1048,28 @@ class TestModeWatchSampler:
         ctrl._diag_recorder = MagicMock()
         ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
         ctrl._hal = MagicMock()
-        ctrl._hal.read_current_mode.return_value = 6      # TAKEUP
+        ctrl._hal.tick.current_mode.return_value = 6      # TAKEUP
         ctrl._mode_watch = MagicMock()
         for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY):
             ctrl._poll_mode_watch()
-        assert ctrl._hal.read_current_mode.call_count == 1
+        assert ctrl._hal.tick.current_mode.call_count == 1
         ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 6)
 
     def test_samples_every_nth_tick_and_feeds_the_watch(self, ctrl):
         ctrl._diag_recorder = MagicMock()
         ctrl._hal = MagicMock()
-        ctrl._hal.read_current_mode.return_value = 4      # JOG
+        ctrl._hal.tick.current_mode.return_value = 4      # JOG
         ctrl._mode_watch = MagicMock()
         for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY * 2):
             ctrl._poll_mode_watch()
-        assert ctrl._hal.read_current_mode.call_count == 2
+        assert ctrl._hal.tick.current_mode.call_count == 2
         ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 4)
 
     def test_a_failing_read_never_reaches_the_update_loop(self, ctrl):
         ctrl._diag_recorder = MagicMock()
         ctrl._mode_watch_tick = ctrl.MODE_WATCH_SAMPLE_EVERY - 1
         ctrl._hal = MagicMock()
-        ctrl._hal.read_current_mode.side_effect = RuntimeError("link glitch")
+        ctrl._hal.tick.current_mode.side_effect = RuntimeError("link glitch")
         ctrl._poll_mode_watch()                    # must not raise
 
 

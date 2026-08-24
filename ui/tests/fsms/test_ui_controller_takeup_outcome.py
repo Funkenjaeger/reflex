@@ -36,16 +36,24 @@ def ctrl():
     c = ElsUiController(els=els, board=board)
     _pump()
     c._hal = MagicMock(name="hal")
-    c._hal.read_last_takeup_z_delta.return_value = 0
-    c._hal.read_takeup_thresh_counts.return_value = 2
+    # Stubbed on `tick`, not on the live readers: this poller is tick-driven,
+    # so since 2026-08-23 all four of its reads come from the board's
+    # once-per-tick elsStop snapshot rather than four separate Modbus
+    # exchanges. The live readers still exist for on-demand callers and are
+    # deliberately NOT what this poller uses; stubbing those instead would
+    # leave `tick` a bare MagicMock handing the poller a fresh object per call,
+    # never equal to the previous one, so the seen-it-twice guard would never
+    # settle and nothing below would test what it says it tests.
+    c._hal.tick.last_takeup_z_delta.return_value = 0
+    c._hal.tick.takeup_thresh_counts.return_value = 2
     return c
 
 
 def _polls(ctrl, snapshots):
     """Feed the poller a sequence of (seq, result) snapshots, one per poll."""
     for seq, result in snapshots:
-        ctrl._hal.read_takeup_seq.return_value = seq
-        ctrl._hal.read_takeup_result.return_value = result
+        ctrl._hal.tick.takeup_seq.return_value = seq
+        ctrl._hal.tick.takeup_result.return_value = result
         ctrl._poll_takeup_outcome()
 
 
@@ -63,7 +71,7 @@ def test_torn_snapshot_does_not_clear_the_refusal(ctrl, caplog):
 
 def test_a_stable_confirmation_is_reported_exactly_once(ctrl, caplog):
     caplog.set_level(logging.INFO)
-    ctrl._hal.read_last_takeup_z_delta.return_value = 44
+    ctrl._hal.tick.last_takeup_z_delta.return_value = 44
     ctrl.takeup_warning = "stale warning from an earlier pass"
 
     _polls(ctrl, [(1, 0), (1, 0), (1, 0)])
@@ -122,8 +130,8 @@ def test_a_failed_read_is_not_taken_for_a_sequence_reset(ctrl, caplog):
         cm.fail_read()
         return 0
 
-    ctrl._hal.read_takeup_seq.side_effect = _zero_and_fail
-    ctrl._hal.read_takeup_result.side_effect = _zero_and_fail
+    ctrl._hal.tick.takeup_seq.side_effect = _zero_and_fail
+    ctrl._hal.tick.takeup_result.side_effect = _zero_and_fail
     # POLL IT TWICE. A single bad frame is already absorbed by the two-poll
     # torn-read guard, so one poll proves nothing about this one -- the first
     # version of this test did exactly that and passed with the read-failure
@@ -150,17 +158,17 @@ def test_a_read_that_fails_midway_through_the_outcome_is_discarded(ctrl, caplog)
     caplog.clear()
 
     # Two clean polls establish the edge for seq 4, then result fails.
-    ctrl._hal.read_takeup_seq.side_effect = None
-    ctrl._hal.read_takeup_seq.return_value = 4
-    ctrl._hal.read_takeup_result.side_effect = None
-    ctrl._hal.read_takeup_result.return_value = 0
+    ctrl._hal.tick.takeup_seq.side_effect = None
+    ctrl._hal.tick.takeup_seq.return_value = 4
+    ctrl._hal.tick.takeup_result.side_effect = None
+    ctrl._hal.tick.takeup_result.return_value = 0
     ctrl._poll_takeup_outcome()          # first sighting of the edge
 
     def _zero_and_fail(*_a, **_k):
         cm.fail_read()
         return 0
 
-    ctrl._hal.read_takeup_result.side_effect = _zero_and_fail
+    ctrl._hal.tick.takeup_result.side_effect = _zero_and_fail
     ctrl._poll_takeup_outcome()          # commit poll, but the result read fails
 
     assert "CONFIRMED" not in caplog.text, (
@@ -170,8 +178,8 @@ def test_a_read_that_fails_midway_through_the_outcome_is_discarded(ctrl, caplog)
         "link recovers")
 
     # Link recovers: the same outcome must still arrive.
-    ctrl._hal.read_takeup_result.side_effect = None
-    ctrl._hal.read_takeup_result.return_value = 0
+    ctrl._hal.tick.takeup_result.side_effect = None
+    ctrl._hal.tick.takeup_result.return_value = 0
     _polls(ctrl, [(4, 0), (4, 0)])
     assert "CONFIRMED" in caplog.text, "the real outcome was lost, not deferred"
     assert ctrl._prev_takeup_seq == 4
@@ -197,10 +205,10 @@ def test_only_the_sequence_read_failing_is_still_caught(ctrl, caplog):
         cm.fail_read()
         return 0
 
-    ctrl._hal.read_takeup_seq.side_effect = _seq_zero_and_fail
+    ctrl._hal.tick.takeup_seq.side_effect = _seq_zero_and_fail
     # The outcome reads are CLEAN and would look like a confirmation.
-    ctrl._hal.read_takeup_result.side_effect = None
-    ctrl._hal.read_takeup_result.return_value = 0
+    ctrl._hal.tick.takeup_result.side_effect = None
+    ctrl._hal.tick.takeup_result.return_value = 0
     ctrl._poll_takeup_outcome()
     ctrl._poll_takeup_outcome()
 

@@ -171,7 +171,13 @@ class ElsDiagRecorder:
                 self._interrogate()
                 return
 
-            seq = self._hal.read_diag_seq()
+            # The cheap tick, from the board's once-per-tick elsStop snapshot
+            # rather than its own Modbus exchange -- this runs on every board
+            # update, and property 2 above ("cheap to watch") is now literally
+            # free. _interrogate/_choose_baseline below stay LIVE: they run
+            # once per connection, before any snapshot is guaranteed to exist,
+            # and one exchange at connect time is not the problem.
+            seq = self._hal.tick.diag_seq()
             if seq == self._baseline_seq:
                 return
 
