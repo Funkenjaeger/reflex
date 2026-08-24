@@ -86,7 +86,11 @@
         LedButton:
           flat: True
           font_name: app.theme.font_mono
-          label: "{:0.0f}".format(root.cycles)
+          # Current tick / worst tick since reset, against a 1000-cycle
+          # budget. The peak is the number that matters: a spot reading of
+          # the current tick essentially never catches cut-start, which is
+          # where take-up, phase correction and diagnostics land together.
+          label: "{:0.0f}/{:0.0f}".format(root.cycles, root.cycles_peak)
 
       # ── Reflex logo + version: their own recessed box at the right end, with the
       #    logo filling the box height (per the mockup). ──

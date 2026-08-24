@@ -39,6 +39,7 @@ class StatusBar(BoxLayout):
         from reflex.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
         self._notice_source = None
+        self._peak_poll_failed = False
         super().__init__(**kv)
         Clock.schedule_interval(self.update, 1.0 / 5)
         # The ISR peak gets its OWN, slower clock. It is a load-headroom
@@ -65,8 +66,20 @@ class StatusBar(BoxLayout):
         """
         try:
             self.cycles_peak = self.app.els_uic.hal.read_execution_cycles_peak()
-        except Exception:
-            pass
+        except Exception as e:
+            # Never raises into the Clock -- there is no controller during
+            # startup and no link whenever the machine is off, both routine.
+            # But it must not be SILENT either: the failure mode is a cell
+            # that reads "312/0" forever while someone writes 0 down as a
+            # measured peak. Log the transition, not every tick, so an
+            # ordinary machine-off session does not spam the log at 1 Hz.
+            if not self._peak_poll_failed:
+                self._peak_poll_failed = True
+                log.warning("ISR peak poll failed, reading is stale: %s", e)
+            return
+        if self._peak_poll_failed:
+            self._peak_poll_failed = False
+            log.info("ISR peak poll recovered")
 
     def _follow_notice_source(self, _app, controller):
         """(Re)attach the notice mirror to whichever controller the app holds.
