@@ -8,17 +8,27 @@ unchanged and unaware of which producer latched the reference.
 
 THE PROCEDURE THIS ENFORCES (order is load-bearing)
 ---------------------------------------------------
-1. Coarse jog, CUTTING DIRECTION ONLY, into the threaded region. The
-   cutting-direction constraint loads the leadscrew lash on the correct side —
-   the same side a real pass starts from. Fine-tuning by jogging is forbidden:
-   it would need bidirectional motion across the lash and is not repeatable.
+1. Position the carriage BY HAND into the threaded region, close the half
+   nut, then move it back BY HAND in the ANTI-CUTTING direction until it seats
+   against the leadscrew. That last move is the whole point: it loads the lash
+   on the side the leadscrew will push from.
+
+   CORRECTED 2026-08-24. This step used to read "coarse jog, CUTTING DIRECTION
+   ONLY", which was wrong twice over. The jog does not exist -- jog is a
+   separate screen, disabled in lathe mode, and this runs two modals deep -- so
+   the carriage is moved by hand regardless. And hand-moving in direction D
+   seats the nut against the OPPOSITE flank from the leadscrew driving it in D,
+   so an operator following the old wording loaded the lash backwards. A
+   powered cutting-direction jog and a hand pull in the anti-cutting direction
+   arrive at the SAME state, which is why everything downstream is unchanged.
 2. Fine alignment is NOT a Z operation. The operator rotates the SPINDLE by
    hand and works the CROSS-SLIDE to ease the tool into the groove. Z is HELD.
-3. This controller watches the Z scale throughout step 2. After the
-   cutting-direction jog the nut sits hard against its drive flank, so retract
-   is mechanically blocked and the only motion the carriage is capable of is
-   drifting FURTHER in the cutting direction through the free play — which is
-   why the monitor is not direction-aware: any Z motion IS that drift.
+3. This controller watches the Z scale throughout step 2. Once seated the nut
+   sits hard against the flank the leadscrew drives from, so further
+   anti-cutting motion is mechanically blocked and the only motion the carriage
+   is capable of is drifting in the CUTTING direction through the free play —
+   which is why the monitor is not direction-aware: any Z motion IS that
+   drift.
 4. On confirm, the firmware latches (spindle, Z) in one ISR pass.
 
 THE TOLERANCE IS A FINDING, NOT A KNOB
@@ -70,6 +80,10 @@ class ResyncState:
     LATCHED = "latched"
     RED_FLAG = "red_flag"          # re-seat missed the baseline — custody fault
     REFUSED = "refused"
+    # Not a refusal: a question. The job already carries a reference, which is
+    # worth stopping for but not worth sending the operator back out to the ELS
+    # screen to disengage and re-engage (2026-08-24 bench feedback).
+    CONFIRM_OVERWRITE = "confirm_overwrite"
 
 
 class ThreadResync:
@@ -111,7 +125,7 @@ class ThreadResync:
         self._latch_polls = 0
 
     # ── lifecycle ────────────────────────────────────────────────────
-    def begin_alignment(self) -> bool:
+    def begin_alignment(self, force: bool = False) -> bool:
         """Operator finished the coarse jog; capture the Z baseline and start
         the watch. False (state REFUSED) if preconditions fail."""
         if not self._hal.connected:
@@ -143,16 +157,25 @@ class ThreadResync:
                 "reference belongs to a job and is cleared when one starts."
             )
 
-        if self._hal.read_reference_latched():
-            # Fresh-job-only, by policy (the firmware itself would happily
-            # overwrite). A job that already has a reference either cut with
-            # it — in which case re-syncing mid-job silently re-anchors every
-            # remaining pass — or something has gone wrong enough that a
-            # fresh start is warranted anyway.
-            return self._refuse(
-                "This job already has a thread reference. Disengage and "
-                "re-engage the ELS stop to start a fresh job, then re-sync."
+        if self._hal.read_reference_latched() and not force:
+            # ASKED, NOT REFUSED (2026-08-24). The concern is real: a job that
+            # already has a reference either cut with it -- in which case
+            # re-syncing re-anchors every remaining pass -- or something has
+            # gone wrong. But this used to be a hard refusal telling the
+            # operator to disengage and re-engage, which meant leaving two
+            # modals, crossing to the ELS screen, cycling engage, re-enabling
+            # sync, and navigating back in. The firmware would happily
+            # overwrite; the policy is ours; so make it a question with an
+            # abort, not a maze. force=True is that answer coming back.
+            self.state = ResyncState.CONFIRM_OVERWRITE
+            self.message = (
+                "This job already has a thread reference. Overwriting it "
+                "re-anchors EVERY remaining pass to the new one — any pass "
+                "already cut with the old reference will not match. Overwrite "
+                "only if that is what you want."
             )
+            log.warning("els_resync: reference already latched, asking to overwrite")
+            return False
 
         self.baseline_z = int(self._read_z())
         self._last_spindle = int(self._read_spindle())

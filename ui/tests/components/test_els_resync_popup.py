@@ -226,3 +226,100 @@ def test_the_live_readout_is_cleared_on_every_terminal_state(popup):
     popup._tick(0.0)
     assert popup.state == "red_flag"
     assert popup.live_text == ""
+
+
+# ── an existing reference asks, and asking is not refusing ───────────
+# begin_alignment() returns False for BOTH "refused" and "please confirm", so
+# the popup has to read the controller's state to tell them apart. Getting that
+# wrong renders a question as a dead end -- which is the exact failure this
+# change set out to remove (2026-08-24 bench feedback 4.5).
+
+class _StubGate:
+    """A resync controller that answers begin_alignment and nothing else."""
+
+    def __init__(self, state, message="a message long enough to be a sentence."):
+        self.state = state
+        self.message = message
+        self.force_calls = []
+
+    def begin_alignment(self, force=False):
+        self.force_calls.append(force)
+        return False
+
+    def cancel(self):
+        pass
+
+
+def test_an_existing_reference_renders_as_a_question(popup):
+    from reflex.fsms.els_resync import ResyncState
+    popup._resync = _StubGate(ResyncState.CONFIRM_OVERWRITE)
+
+    popup.begin()
+
+    assert popup.state == "confirm_overwrite"
+
+
+def test_an_existing_reference_does_not_render_as_a_refusal(popup):
+    """The distinction the operator acts on: a refusal means the button did
+    not take and there is nowhere to go from here; a question has a button."""
+    from reflex.fsms.els_resync import ResyncState
+    popup._resync = _StubGate(ResyncState.CONFIRM_OVERWRITE)
+
+    popup.begin()
+
+    assert popup.state != "refused"
+
+
+def test_the_question_carries_the_controllers_own_words(popup):
+    from reflex.fsms.els_resync import ResyncState
+    popup._resync = _StubGate(
+        ResyncState.CONFIRM_OVERWRITE,
+        message="Overwriting re-anchors every remaining pass.")
+
+    popup.begin()
+
+    assert popup.body_text == "Overwriting re-anchors every remaining pass."
+
+
+def test_a_real_refusal_still_renders_as_a_refusal(popup):
+    """The failure mode of the new branch is swallowing every refusal into the
+    question, which would put an Overwrite button on a disconnected link."""
+    from reflex.fsms.els_resync import ResyncState
+    popup._resync = _StubGate(ResyncState.REFUSED)
+
+    popup.begin()
+
+    assert popup.state == "refused"
+
+
+def test_begin_does_not_force(popup):
+    """Entering the wizard must never overwrite silently -- force is only ever
+    the answer to the question, never the way in."""
+    from reflex.fsms.els_resync import ResyncState
+    stub = _StubGate(ResyncState.CONFIRM_OVERWRITE)
+    popup._resync = stub
+
+    popup.begin()
+
+    assert stub.force_calls == [False]
+
+
+def test_overwrite_forces(popup):
+    from reflex.fsms.els_resync import ResyncState
+    stub = _StubGate(ResyncState.CONFIRM_OVERWRITE)
+    popup._resync = stub
+
+    popup.overwrite()
+
+    assert stub.force_calls == [True]
+
+
+def test_the_question_does_not_shout_do_not_cut(popup):
+    """It is a caution, not a fault. An unmapped state falls through to the
+    fallback severity, which is the loudest one -- so a missing entry here
+    would show up as a wizard shouting DO NOT CUT at a routine confirmation,
+    and the operator learns to ignore the loudest thing on the screen."""
+    popup.state = "confirm_overwrite"
+
+    assert popup.severity != SEVERITY_FAULT
+    assert popup.severity_caption != FALLBACK_SEVERITY[1]

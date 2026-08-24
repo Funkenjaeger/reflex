@@ -16,6 +16,12 @@ class Keypad(Popup):
     container = None
     current_value = NumericProperty(0)
     integer = BooleanProperty(False)
+    # Hide the sign key for quantities that have no negative. Refusing a minus
+    # AFTER it is typed is a worse design than not offering one: it spends the
+    # operator's attention on a rule the keypad could simply have enforced.
+    # Groove widening is the case that prompted it -- step-overs only ever go
+    # one way (2026-08-24 bench feedback).
+    nonnegative = BooleanProperty(False)
 
     def __init__(self, **kwargs):
         from reflex.app import MainApp
@@ -68,7 +74,7 @@ class Keypad(Popup):
         row3.add_widget(KeypadButton(text="1",on_release=self.add_text))
         row3.add_widget(KeypadButton(text="2",on_release=self.add_text))
         row3.add_widget(KeypadButton(text="3",on_release=self.add_text))
-        row3.add_widget(KeypadIconButton(text="\ue43c",on_release=self.sign_key,disabled=self.integer))
+        row3.add_widget(KeypadIconButton(text="\ue43c",on_release=self.sign_key,disabled=self.integer or self.nonnegative))
         layout.add_widget(row3)
 
         row4 = BoxLayout(orientation="horizontal")
@@ -101,7 +107,7 @@ class Keypad(Popup):
         # log.info(f'Last key pressed: {text}')
         if text == "." and not self.integer:
             self.dot_key()
-        if text == "-" and not self.integer:
+        if text == "-" and not self.integer and not self.nonnegative:
             self.sign_key()
         if text in ["00", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]:
             self.ids['value'].text += text
@@ -191,6 +197,11 @@ class Keypad(Popup):
             self.ids['value'].text += "."
 
     def sign_key(self, *args):
+        # Guarded as well as hidden. A disabled button is a look; this is the
+        # rule. Anything that reaches the method another way -- a hardware
+        # keyboard, a future caller -- gets the same answer as the button.
+        if self.nonnegative:
+            return
         if self.ids['value'].text[0:1] == "-":
             self.ids['value'].text = self.ids['value'].text[1:]
         else:

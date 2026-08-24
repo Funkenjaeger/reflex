@@ -83,8 +83,8 @@ INTRO_TEXT = (
 )
 
 ENTRY_HINT = (
-    "Enter the total offset from the original groove. Only you know how wide "
-    "the cutter is."
+    "This box holds the WHOLE offset from the original groove, not an amount "
+    "to add to it. Only you know how wide the cutter is."
 )
 
 APPLIED_TEXT = (
@@ -102,7 +102,7 @@ NO_ACK_TEXT = (
     "The controller never acknowledged the offset, so it was NOT applied. "
     "That normally means the threading job disengaged between the button "
     "press and the write landing. Check the ELS stop is still engaged, check "
-    "the total above, and try again."
+    "the offset shown above, and try again."
 )
 
 # ── HOW LONG A MESSAGE MAY BE, AND WHY THERE IS A NUMBER FOR IT ──────
@@ -160,10 +160,9 @@ REFUSAL_TEXT = {
         "distance without the sign, or press Clear."
     ),
     ElsFsm.PHASE_OFFSET_AT_PITCH: (
-        "That would put the total at a full pitch or more. One whole pitch is "
-        "the same place in the groove you started at, and anything past it "
-        "cannot be told apart from the leftover. Enter a smaller amount, or "
-        "press Clear and build the total again."
+        "That is a full pitch or more. One whole pitch is the same place in "
+        "the groove you started at, and anything past it cannot be told apart "
+        "from the leftover. Type a smaller offset, or press Clear."
     ),
 }
 
@@ -208,6 +207,7 @@ class PhaseOffsetPopup(Popup):
         self._pending = None
         self._sync_units()
         self._refresh_total()
+        self._seed_entry_from_current()
 
     # ── actions ──────────────────────────────────────────────────────
     # THERE IS NO FILL-FROM-A-FRACTION ROW, and its absence is deliberate
@@ -230,7 +230,7 @@ class PhaseOffsetPopup(Popup):
         if self.busy:
             return
         from reflex.components.popups.keypad import Keypad
-        Keypad().show(self, "entry")
+        Keypad(nonnegative=True).show(self, "entry")
 
     def apply(self):
         self._command(lambda: self._fsm.apply_phase_offset(self.entry),
@@ -250,6 +250,7 @@ class PhaseOffsetPopup(Popup):
         # failure worth leaving to construction order.
         self._sync_units()
         self._refresh_total()
+        self._seed_entry_from_current()
         self._poll_ev = Clock.schedule_interval(self._tick, 1.0 / self.POLL_HZ)
         return super().on_open()
 
@@ -347,6 +348,11 @@ class PhaseOffsetPopup(Popup):
         self.busy = False
         self._show(self._pending or APPLIED_TEXT, state="applied")
         self._pending = None
+        # Re-seed after ANY acknowledged command, not just on open. After a
+        # Clear the offset really is 0 and the box must say so -- otherwise it
+        # keeps showing the number that was just thrown away, and the next
+        # Apply silently reinstates it.
+        self._seed_entry_from_current()
 
     def _stop_polling(self):
         if self._poll_ev is not None:
@@ -354,8 +360,32 @@ class PhaseOffsetPopup(Popup):
             self._poll_ev = None
 
     # ── readouts ─────────────────────────────────────────────────────
+    def _seed_entry_from_current(self):
+        """Put the CURRENT offset in the entry box.
+
+        Apply SETS the offset rather than adding to it, so this box is not an
+        amount to add -- it is the value the offset will BECOME. Opening it at
+        0.000 under those semantics reads as "the offset is zero", which is the
+        one thing it must not imply while a widening job is live: applying
+        without editing would then silently throw the real offset away.
+
+        Read from the controller rather than remembered locally, for the same
+        reason _refresh_total is: the firmware clears the offset on the enable
+        0->1 edge, so a job disengaged and re-engaged behind this modal would
+        otherwise seed the box from a number the machine no longer holds.
+        """
+        try:
+            distance, _fraction = self._fsm.phase_offset_display()
+        except Exception:
+            # Leave whatever is in the box. The readout above is the same call
+            # and reports its own failure, so this would be the second notice
+            # of one fault -- and blanking the entry would look like a value.
+            log.exception("phase offset: current offset unavailable to seed entry")
+            return
+        self.entry = distance
+
     def _refresh_total(self):
-        """Re-read the running total from the controller and render it.
+        """Re-read the current offset from the controller and render it.
 
         BOTH halves of ``phase_offset_display()`` are shown, but not as peers.
         The DISTANCE leads: step-overs all go one way, so the total IS the

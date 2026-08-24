@@ -180,14 +180,17 @@ def test_the_disconnected_refusal_is_a_sentence_with_a_next_step():
 
 
 def test_every_begin_alignment_refusal_explains_itself():
-    """Guard the guard: the five refusals this entry point can produce, all
-    through the production call, all held to the same shape. A new refusal
-    added as a bare label fails here instead of reaching the lathe."""
+    """Guard the guard: every refusal this entry point can produce, all through
+    the production call, all held to the same shape. A new refusal added as a
+    bare label fails here instead of reaching the lathe."""
     cases = {
         "disconnected": dict(connected=False),
         "old firmware": dict(protocol_version=0),
         "no job armed": dict(enable=False),
-        "already referenced": dict(reference_latched=True),
+        # "already referenced" is NOT here any more. It stopped being a
+        # refusal on 2026-08-24 and became a question with an Overwrite
+        # button -- see test_asks_before_overwriting_an_existing_reference,
+        # which holds its message to this same shape.
     }
     for label, kwargs in cases.items():
         machine = Machine()
@@ -216,13 +219,74 @@ def test_refuses_without_an_armed_job():
     assert rc.state == ResyncState.REFUSED
 
 
-def test_refuses_when_reference_already_latched():
-    """Fresh-job-only is HOST policy — the firmware would happily overwrite."""
+# ── an existing reference is a question, not a wall ──────────────────
+# Fresh-job-only is HOST policy -- the firmware would happily overwrite. Until
+# 2026-08-24 the policy was enforced as a flat refusal telling the operator to
+# disengage and re-engage, which from inside this wizard meant leaving two
+# modals, crossing to the ELS screen, cycling engage, re-enabling sync and
+# navigating back in. The concern is real; the maze was the wrong answer to it.
+
+def test_asks_before_overwriting_an_existing_reference():
     machine = Machine()
     rc, _, _ = _controller(machine, FakeHal(machine, reference_latched=True))
+
     assert not rc.begin_alignment()
-    assert rc.state == ResyncState.REFUSED
-    assert "re-engage" in rc.message.lower()
+    assert rc.state == ResyncState.CONFIRM_OVERWRITE
+    assert rc.state != ResyncState.REFUSED
+
+
+def test_the_overwrite_question_says_what_overwriting_costs():
+    """Held to the same shape as every refusal on this surface: a sentence
+    that names the consequence, not a label. The operator is being asked to
+    authorise something that silently re-anchors passes already cut."""
+    machine = Machine()
+    rc, _, _ = _controller(machine, FakeHal(machine, reference_latched=True))
+
+    rc.begin_alignment()
+
+    assert len(rc.message.split()) > 8, "the question is a label, not an explanation"
+    assert rc.message.rstrip().endswith("."), "the question is not a sentence"
+    assert "remaining pass" in rc.message.lower(), (
+        "the question does not say what overwriting costs")
+
+
+def test_nothing_is_latched_merely_by_asking(machine=None):
+    """The question must not be a side effect. Answering it is."""
+    machine = Machine()
+    rc, _, hal = _controller(machine, FakeHal(machine, reference_latched=True))
+
+    rc.begin_alignment()
+
+    assert rc.state == ResyncState.CONFIRM_OVERWRITE
+    assert hal.latch_command == 0
+    assert hal.latch_seq == 4        # the untouched baseline
+
+
+def test_forcing_proceeds_past_an_existing_reference():
+    """The answer coming back. force=True is reachable only from the
+    Overwrite button, which only exists in the CONFIRM_OVERWRITE state."""
+    machine = Machine()
+    rc, _, _ = _controller(machine, FakeHal(machine, reference_latched=True))
+
+    assert rc.begin_alignment(force=True)
+    assert rc.state == ResyncState.ALIGNING
+
+
+def test_forcing_does_not_bypass_the_other_gates():
+    """force answers ONE question. A disconnected controller, old firmware or
+    an unarmed job must still refuse -- otherwise the Overwrite button becomes
+    a way to skip every check on the way in."""
+    for label, kwargs in (
+        ("disconnected", dict(connected=False)),
+        ("old firmware", dict(protocol_version=0)),
+        ("no job armed", dict(enable=False)),
+    ):
+        machine = Machine()
+        rc, _, _ = _controller(
+            machine, FakeHal(machine, reference_latched=True, **kwargs))
+
+        assert not rc.begin_alignment(force=True), label
+        assert rc.state == ResyncState.REFUSED, label
 
 
 # ── happy path ───────────────────────────────────────────────────────

@@ -75,6 +75,84 @@ def popup(running_app, fsm):
         return PhaseOffsetPopup()
 
 
+# ── the entry box holds the CURRENT offset (bench 2.2) ───────────────
+# Apply SETS the offset rather than adding to it, so the box is not "an amount
+# to add" -- it is the value the offset will become. Opening it at 0.000 while
+# a widening job is live reads as "the offset is zero", and applying without
+# editing would throw the real one away.
+
+def _popup_with_offset(running_app, fsm, distance, fraction=0.0):
+    fsm.phase_offset_display.return_value = (distance, fraction)
+    running_app.els_uic = SimpleNamespace(els_fsm=fsm)
+    running_app.formats = SimpleNamespace(
+        current_format="MM", position_format="{:+0.3f}")
+    with patch.object(PhaseOffsetPopup, "apply_class_lang_rules"):
+        return PhaseOffsetPopup()
+
+
+def test_the_entry_box_opens_holding_the_current_offset(running_app, fsm):
+    p = _popup_with_offset(running_app, fsm, 0.750, 0.5)
+
+    assert p.entry == pytest.approx(0.750)
+
+
+def test_the_entry_box_opens_at_zero_when_there_is_no_offset(running_app, fsm):
+    p = _popup_with_offset(running_app, fsm, 0.0)
+
+    assert p.entry == pytest.approx(0.0)
+
+
+def test_the_entry_text_follows_the_seeded_value(running_app, fsm):
+    """Seeding the property is only half of it -- the operator reads the text."""
+    p = _popup_with_offset(running_app, fsm, 0.250)
+
+    assert "0.250" in p.entry_text
+
+
+def test_the_entry_is_reseeded_after_an_acknowledged_clear(running_app, fsm):
+    """After a Clear the offset really is 0 and the box must say so. Leaving
+    the old number there means the next Apply silently reinstates what was
+    just thrown away."""
+    p = _popup_with_offset(running_app, fsm, 0.750)
+    assert p.entry == pytest.approx(0.750)
+
+    # The controller now reports no offset, and an ack arrives.
+    fsm.phase_offset_display.return_value = (0.0, 0.0)
+    p._baseline_seq = 7
+    fsm.phase_offset_seq.return_value = 8
+    p.state = "waiting"
+    p.busy = True
+    p._pending = CLEARED_TEXT
+    p._tick(0)
+
+    assert p.entry == pytest.approx(0.0)
+
+
+def test_a_failed_read_leaves_the_entry_alone(running_app, fsm):
+    """Blanking it would look like a value. The readout above is the same call
+    and reports the fault itself, so this must not be a second notice of one
+    failure -- nor a silent zero the operator might Apply."""
+    p = _popup_with_offset(running_app, fsm, 0.500)
+
+    fsm.phase_offset_display.side_effect = RuntimeError("link down")
+    p._seed_entry_from_current()
+
+    assert p.entry == pytest.approx(0.500)
+
+
+def test_the_keypad_for_this_field_offers_no_sign_key(running_app, fsm):
+    """Bench 3.3: step-overs only go one way, so refusing a minus after it is
+    typed spends the operator's attention on a rule the keypad could enforce.
+    Keypad cannot be constructed under test, so the contract pinned here is
+    the argument -- the behaviour it selects is pinned in test_keypad.py."""
+    p = _popup_with_offset(running_app, fsm, 0.0)
+
+    with patch("reflex.components.popups.keypad.Keypad") as Keypad:
+        p.edit_entry()
+
+    assert Keypad.call_args.kwargs.get("nonnegative") is True
+
+
 # ── the running total ────────────────────────────────────────────────
 def test_total_shows_both_the_distance_and_the_fraction(popup, fsm):
     """Both numbers, in two properties. The distance is total widening so far —

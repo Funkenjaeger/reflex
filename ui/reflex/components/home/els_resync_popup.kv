@@ -231,6 +231,30 @@
                 on_press: app.beep()
                 on_release: root.reseat()
 
+            # ── confirm_overwrite: abort / overwrite ────────────────
+            #    The job already carries a reference. This used to be a flat
+            #    refusal that sent the operator out to the ELS screen to
+            #    disengage and re-engage; it is a question now. Abort is FIRST
+            #    and Overwrite second, matching every other row here, so the
+            #    consequential button is never where Cancel was a moment ago.
+            FormValueButton:
+                text: "Abort"
+                opacity: 1 if root.state == "confirm_overwrite" else 0
+                disabled: root.state != "confirm_overwrite"
+                size_hint_x: 1 if root.state == "confirm_overwrite" else None
+                width: 0 if root.state != "confirm_overwrite" else 100
+                on_press: app.beep()
+                on_release: root.cancel()
+
+            FormValueButton:
+                text: "Overwrite"
+                opacity: 1 if root.state == "confirm_overwrite" else 0
+                disabled: root.state != "confirm_overwrite"
+                size_hint_x: 1 if root.state == "confirm_overwrite" else None
+                width: 0 if root.state != "confirm_overwrite" else 100
+                on_press: app.beep()
+                on_release: root.overwrite()
+
             # ── latched: done ───────────────────────────────────────
             FormValueButton:
                 text: "Done"

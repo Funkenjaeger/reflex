@@ -38,12 +38,15 @@ load_kv(__file__)
 JOG_TEXT = (
     "Pick up an existing thread. Once synced, every pass will follow the "
     "existing groove.\n\n"
-    "MAKE SURE THE TOOL IS CLEAR OF THE WORK IN X BEFORE JOGGING.\n\n"
-    "  1.  Jog the carriage in the CUTTING direction only, until the tool "
-    "tip is over the threaded section. Jogging in the cutting direction "
-    "loads the leadscrew backlash on the side a pass starts from.\n"
-    "  2.  Stop there. Do NOT fine-tune the position by jogging, and do not "
-    "jog again after this point."
+    "MAKE SURE THE TOOL IS CLEAR OF THE WORK IN X BEFORE YOU START.\n\n"
+    "  1.  Move the carriage BY HAND until the tool tip is over the "
+    "threaded section.\n"
+    "  2.  Close the HALF NUT.\n"
+    "  3.  Now pull the carriage back BY HAND in the ANTI-CUTTING direction "
+    "(away from the way a pass feeds) until it seats firmly against the "
+    "leadscrew. This loads the backlash on the side the leadscrew will push "
+    "from — moving it the other way loads the wrong side.\n"
+    "  4.  Stop there. Do not move the carriage again after this point."
 )
 
 ALIGN_TEXT = (
@@ -59,8 +62,9 @@ ALIGN_TEXT = (
 DRIFTED_TEXT = (
     "The carriage has drifted off its jogged position — the leadscrew's free "
     "play lets it creep toward the cut.\n\n"
-    "Nudge the carriage BACK by hand (against the jog direction) until it "
-    "seats firmly against the leadscrew, then press Re-seated. Because that "
+    "Nudge the carriage BACK by hand — the ANTI-CUTTING direction, the same "
+    "way you seated it — until it seats firmly against the leadscrew, then "
+    "press Re-seated. Because that "
     "is a mechanical stop the carriage was already sitting against, the Z "
     "readout must come back to almost exactly the same count."
 )
@@ -96,6 +100,10 @@ STATE_SEVERITY = {
     "drifted":  (SEVERITY_CAUTION, "CARRIAGE DRIFTED — RE-SEAT IT BY HAND"),
     "latched":  (SEVERITY_SUCCESS, "THREAD REFERENCE LATCHED"),
     "refused":  (SEVERITY_REFUSED, "REFUSED — NOTHING WAS LATCHED"),
+    # A question, so "caution" rather than "refused": nothing has gone wrong
+    # and no button failed -- the operator is being asked to authorise
+    # something consequential.
+    "confirm_overwrite": (SEVERITY_CAUTION, "THIS JOB ALREADY HAS A REFERENCE"),
     "red_flag": (SEVERITY_FAULT, "DO NOT CUT — Z POSITION NOT TRUSTWORTHY"),
 }
 
@@ -164,8 +172,21 @@ class ThreadResyncPopup(Popup):
             self.body_text = ("No Z or spindle axis is assigned — map them in "
                               "setup and connect the controller first.")
             return
-        if not self._resync.begin_alignment():
-            self.state = "refused"
+        self._start_alignment()
+
+    def overwrite(self):
+        """Operator authorised replacing the reference this job already has."""
+        self._start_alignment(force=True)
+
+    def _start_alignment(self, force: bool = False):
+        if not self._resync.begin_alignment(force=force):
+            # CONFIRM_OVERWRITE is not a refusal, and must not be shown as one:
+            # nothing failed and nothing was refused -- the wizard is asking a
+            # question, and its state carries the two buttons that answer it.
+            if self._resync.state == ResyncState.CONFIRM_OVERWRITE:
+                self.state = "confirm_overwrite"
+            else:
+                self.state = "refused"
             self.body_text = self._resync.message
             return
         self.state = "align"
