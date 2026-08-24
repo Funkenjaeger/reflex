@@ -619,10 +619,33 @@ class ElsStopHal:
         pulses, producing the proportional overshoot we hit in testing.
         Wait for the pulses to actually flush by also requiring
         `currentSteps == desiredSteps`.
+
+        A FABRICATED ZERO IS NOT "DONE". The three reads below are live -- the
+        servo block has no per-tick snapshot -- and every read helper returns 0
+        on a failed frame. Unguarded, those zeros compose into precisely the
+        false positive the paragraph above exists to prevent: stepsToGo
+        fabricates 0 and clears the planner test, then currentSteps and
+        desiredSteps both fabricate 0 and compare equal, so a retract in
+        mid-flight reports COMPLETE and the FSM issues its follow-up on top of
+        the pulses still draining.
+
+        THE DISCONNECT CHECK DOES NOT COVER THIS. A timeout is not a
+        disconnect, and a timeout is the failure this machine actually has: six
+        comms losses in six cuts on 2026-08-23, every one a timeout rather than
+        a CRC error, on the very tick path this method sits in.
+
+        So answer "not yet" instead. The caller polls this every tick, so a
+        fabricated poll costs one tick and is re-read cleanly on the next --
+        the same trade ElsUiController makes on the take-up outcome edge.
         """
         if not self._board.connected:
             return self._no_link(False)
+        baseline = self.reads_baseline()
         if self._board.device['servo']['stepsToGo'] != 0:
+            # No fabrication check needed on this branch: a NONZERO stepsToGo
+            # is a value the controller really sent (a fabricated read is 0),
+            # and "not done" is the conservative answer either way.
             return False
-        return (self._board.device['servo']['currentSteps']
+        done = (self._board.device['servo']['currentSteps']
                 == self._board.device['servo']['desiredSteps'])
+        return False if self.reads_fabricated_since(baseline) else done
