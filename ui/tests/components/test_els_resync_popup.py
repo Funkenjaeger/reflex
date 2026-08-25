@@ -40,8 +40,9 @@ import pytest
 
 import reflex.components.home.els_resync_popup as popup_mod
 from reflex.components.home.els_resync_popup import (
-    FALLBACK_SEVERITY, SEVERITY_FAULT, SEVERITY_INFO, STATE_SEVERITY,
-    ThreadResyncPopup,
+    ALIGN_TEXT, BODY_LINE_BUDGETS, BODY_WRAP_CHARS, DRIFTED_TEXT,
+    FALLBACK_SEVERITY, HELP_TEXT, HELP_TITLE, JOG_TEXT, SEVERITY_FAULT,
+    SEVERITY_INFO, STATE_SEVERITY, ThreadResyncPopup,
 )
 
 MODULE_DIR = Path(popup_mod.__file__).parent
@@ -171,6 +172,96 @@ def test_an_unmapped_state_is_coerced_up_not_ignored(popup):
     assert (popup.severity, popup.severity_caption) == FALLBACK_SEVERITY
     assert popup.severity == SEVERITY_FAULT
     assert popup.severity_caption
+
+
+# ── the base/help split (bench 2026-08-24) ───────────────────────────
+# The jog body opened with two sentences of what-happens-next, so reading the
+# bottom of the steps pushed the next stage off the 600 px screen. The base
+# is now bare steps in execution order; the rationale lives behind the
+# HelpButton in the button row. Pinned from both sides: the base must keep
+# its SAFETY content and its order but may not grow back to scrolling, and
+# the help must keep the rationale the trim removed.
+
+def _rendered_lines(text: str) -> int:
+    """Wrapped lines the body label renders, the cheap way: each explicit
+    line wraps at the measured BODY_WRAP_CHARS, blank lines count as one.
+    A flat character count cannot see a numbered list's newlines."""
+    import math
+    return sum(max(1, math.ceil(len(line) / BODY_WRAP_CHARS))
+               for line in text.split("\n"))
+
+
+@pytest.mark.parametrize("name,text,budget", [
+    ("jog", JOG_TEXT, BODY_LINE_BUDGETS["jog"]),
+    ("align", ALIGN_TEXT, BODY_LINE_BUDGETS["align"]),
+    ("drifted", DRIFTED_TEXT, BODY_LINE_BUDGETS["drifted"]),
+])
+def test_a_walkthrough_body_fits_its_screen_without_scrolling(name, text, budget):
+    """The scroller below the fold is the last line of defence, not the plan:
+    each budget is set a line under what the 600 px screen gives that state.
+    A sentence added to any of these fails here before it scrolls at the
+    lathe — and the fix is HELP_TEXT, not a bigger budget."""
+    lines = _rendered_lines(text)
+    assert lines <= budget, (
+        f"{name} body renders ~{lines} lines against a budget of {budget}. "
+        f"Move the explanation to HELP_TEXT.")
+
+
+def test_the_jog_steps_keep_their_safety_content():
+    """The two things the trim was not allowed to take: the tool-clear-in-X
+    warning (the software cannot interlock it — the major diameter is
+    operator-entered at best) and the ANTI-CUTTING pull-back that loads the
+    lash on the flank the leadscrew pushes from."""
+    assert "CLEAR OF THE WORK IN X" in JOG_TEXT
+    assert "ANTI-CUTTING" in JOG_TEXT
+
+
+def test_the_jog_steps_are_in_execution_order():
+    """Bare numbered steps, in the order the hands perform them: X-clear
+    check first, position over the thread, close the half nut, pull back
+    anti-cutting, then hands off. The old text put framing prose first and
+    rationale mid-step; order is the property that makes bare steps safe to
+    follow line by line."""
+    order = [
+        JOG_TEXT.index("CLEAR OF THE WORK IN X"),
+        JOG_TEXT.index("over the threaded section"),
+        JOG_TEXT.index("HALF NUT"),
+        JOG_TEXT.index("ANTI-CUTTING"),
+        JOG_TEXT.index("Do not move the carriage again"),
+    ]
+    assert order == sorted(order), f"jog steps out of execution order: {order}"
+
+
+def test_the_drift_recovery_still_names_the_direction_and_the_button():
+    """DRIFTED is an act-now state: the base must say which way to nudge
+    (the same ANTI-CUTTING seat) and which button ends it. The why — that a
+    mechanical stop must reproduce the Z count — is help, not base."""
+    assert "ANTI-CUTTING" in DRIFTED_TEXT
+    assert "Re-seated" in DRIFTED_TEXT
+
+
+def test_the_align_step_still_forbids_touching_the_carriage():
+    """The one hand-position rule the whole reference rests on."""
+    assert "carriage alone" in ALIGN_TEXT
+
+
+def test_the_help_keeps_what_the_trim_removed():
+    """Moved, not deleted: the lash-loading rationale behind ANTI-CUTTING,
+    why the X clearance cannot be interlocked, why Z is watched, and the
+    air-pass check that catches a tool confirmed in the wrong place."""
+    assert "backlash" in HELP_TEXT or "free play" in HELP_TEXT
+    assert "major diameter" in HELP_TEXT
+    assert "AIR PASS" in HELP_TEXT
+    assert "reference" in HELP_TEXT
+    assert HELP_TITLE
+
+
+def test_the_modal_hands_the_help_button_its_words(popup):
+    """The kv binds the HelpButton to these two properties; a popup whose
+    properties drifted from the module constants would open empty help over
+    stripped steps — the worst of both halves."""
+    assert popup.help_title == HELP_TITLE
+    assert popup.help_text == HELP_TEXT
 
 
 # ── the live readout ─────────────────────────────────────────────────

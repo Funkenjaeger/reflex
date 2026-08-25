@@ -28,7 +28,8 @@ import pytest
 
 import reflex.components.home.els_phase_offset_popup as popup_mod
 from reflex.components.home.els_phase_offset_popup import (
-    APPLIED_TEXT, CLEARED_TEXT, ENTRY_HINT, MESSAGE_CHAR_BUDGET, NO_ACK_TEXT,
+    APPLIED_TEXT, CLEARED_TEXT, ENTRY_HINT, HELP_TEXT, HELP_TITLE,
+    INTRO_TEXT, MESSAGE_CHAR_BUDGET, NO_ACK_TEXT,
     PhaseOffsetPopup, REFUSAL_TEXT, WAITING_TEXT,
 )
 from reflex.fsms.els_fsm import ElsFsm
@@ -338,6 +339,51 @@ def test_the_no_ack_message_keeps_its_instruction(popup, fsm):
     assert popup.message == NO_ACK_TEXT
     assert "ELS stop is still engaged" in popup.message
     assert len(NO_ACK_TEXT) <= MESSAGE_CHAR_BUDGET
+
+
+# ── the base/help split (bench 2026-08-24) ───────────────────────────
+# "Way too many words about the whole offset." The base strings say what to
+# DO; the why lives behind the HelpButton in the button row. Both halves are
+# pinned: a base that grows back defeats the split, and a help that loses the
+# moved rationale makes the trim a deletion.
+
+def test_the_base_text_stays_stripped_to_the_doing():
+    """Two short sentences for the intro, one for the hint. The ceiling is
+    deliberately tight — the whole point of the split is that the always-on
+    text CANNOT grow back to scrolling; new explanation goes in HELP_TEXT."""
+    assert len(INTRO_TEXT) <= 160, (
+        f"INTRO_TEXT is {len(INTRO_TEXT)} chars — explanation belongs in "
+        f"HELP_TEXT, behind the help button")
+    assert len(ENTRY_HINT) <= 80, (
+        f"ENTRY_HINT is {len(ENTRY_HINT)} chars — explanation belongs in "
+        f"HELP_TEXT, behind the help button")
+
+
+def test_the_base_text_still_carries_the_set_not_add_semantics():
+    """The one thing the base may not lose in the trim: Apply SETS the whole
+    offset. An operator who reads only the base and treats the box as an
+    increment applies the wrong number with no refusal to catch it."""
+    assert "WHOLE" in INTRO_TEXT
+    assert "not an amount to add" in ENTRY_HINT
+
+
+def test_the_help_keeps_what_the_trim_removed():
+    """The rationale is moved, not deleted: the set-not-add why, the
+    no-motion-until-re-entry behaviour, what a minus would really do, and the
+    aliasing bound the dim fraction line renders."""
+    assert "does not add" in HELP_TEXT
+    assert "re-enters the thread" in HELP_TEXT
+    assert "minus" in HELP_TEXT
+    assert "pitch" in HELP_TEXT
+    assert HELP_TITLE
+
+
+def test_the_modal_hands_the_help_button_its_words(popup):
+    """The kv binds the HelpButton to these two properties; a popup whose
+    properties drifted from the module constants would open empty help over
+    a stripped base — the worst of both halves."""
+    assert popup.help_title == HELP_TITLE
+    assert popup.help_text == HELP_TEXT
 
 
 def test_an_unknown_outcome_code_still_reads_as_english(popup, fsm):
