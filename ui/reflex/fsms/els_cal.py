@@ -177,6 +177,27 @@ class BacklashCalibration:
             )
             return False
 
+        # THE SCALE THE GATE WATCHES IS A PRECONDITION OF THIS RUN, so it is
+        # pushed here alongside the limits rather than inherited from ambient
+        # state. elsStop.scaleIndex lives in firmware RAM: a power cycle
+        # resets it to 0 -- the SPINDLE -- and the only other writers are the
+        # retract/arm/cutting paths, none of which a fresh-boot calibration
+        # traverses. Found 2026-08-25: the cal drove the carriage its whole
+        # ceiling while watching a stationary spindle and reported NO_MOTION
+        # on two different firmware builds; every earlier fresh-boot cal had
+        # worked only because some incidental operator action pushed the
+        # index first. Same resolution ElsFsm.set_scale_index uses.
+        z_axis = self._els.get_z_axis()
+        z_input = z_axis._primary_input() if z_axis is not None else None
+        if z_input is None:
+            self._fail(
+                ELS_CAL_ERR_CONFIG,
+                "No Z axis is assigned, so there is no scale to watch the "
+                "carriage with. Map the Z axis in setup, then calibrate.",
+            )
+            return False
+        self._hal.set_scale_index(z_input.inputIndex)
+
         # Drive at a known speed rather than whatever the machine is set to,
         # and restore afterwards. See CAL_MAX_SPEED.
         self._saved_motion = self._hal.read_servo_motion_params()

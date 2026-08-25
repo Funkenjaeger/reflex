@@ -61,11 +61,15 @@ class FakeHal:
         self.cal_result = ELS_CAL_OK
         self.limits = None
         self.backlash_written = None
+        self.scale_index_written = None
         self._running = 0
 
     # -- writes ------------------------------------------------------
     def set_cal_limits(self, ceiling, thresh):
         self.limits = (ceiling, thresh)
+
+    def set_scale_index(self, scale_index):
+        self.scale_index_written = scale_index
 
     def request_calibration(self):
         # The firmware consumes and CLEARS the command in the same ISR pass.
@@ -119,7 +123,16 @@ def _els(**overrides):
         els_backlash_steps=0,
     )
     cfg.update(overrides)
-    return SimpleNamespace(**cfg)
+    z_input_index = cfg.pop("z_input_index", 1)
+    ns = SimpleNamespace(**cfg)
+    if not hasattr(ns, "get_z_axis"):
+        if z_input_index is None:
+            ns.get_z_axis = lambda: None
+        else:
+            inp = SimpleNamespace(inputIndex=z_input_index)
+            ns.get_z_axis = lambda: SimpleNamespace(
+                _primary_input=lambda: inp)
+    return ns
 
 
 def _run_to_completion(cal, limit=50):
@@ -359,3 +372,46 @@ def test_takeup_timeout_has_its_own_text():
     from reflex.utils.devices import ELS_TAKEUP_ERR_TIMEOUT, takeup_failure_text
     msg = takeup_failure_text(ELS_TAKEUP_ERR_TIMEOUT)
     assert "half-nut" not in msg.lower(), "a timeout is not a half-nut diagnosis"
+
+
+# ── the run owns its scale index (2026-08-25 bench failure) ────────────────
+# elsStop.scaleIndex is firmware RAM: a power cycle resets it to 0, the
+# SPINDLE. Nothing between boot and a calibration used to push the real Z
+# index, so a fresh-boot cal drove the carriage its whole ceiling while
+# watching a stationary spindle and reported NO_MOTION -- on two different
+# firmware builds, at the machine, before this was understood. Every earlier
+# fresh-boot cal had worked only because some incidental operator action
+# (a retract, an engage) pushed the index first.
+
+def test_start_pushes_the_z_scale_index():
+    hal = FakeHal()
+    cal = BacklashCalibration(hal, _els(z_input_index=1))
+
+    assert cal.start() is True
+    assert hal.scale_index_written == 1
+
+
+def test_the_index_pushed_is_the_mapped_axis_not_a_constant():
+    """A hardcoded 1 would pass the test above on elspi and silently watch
+    the wrong scale on any machine mapped differently."""
+    hal = FakeHal()
+    cal = BacklashCalibration(hal, _els(z_input_index=3))
+
+    cal.start()
+
+    assert hal.scale_index_written == 3
+
+
+def test_no_z_axis_refuses_before_anything_is_written():
+    """The refusal must name the operator's fix, and nothing may reach the
+    firmware -- limits included: a half-configured run that then gets its
+    index from a later accidental push would calibrate with THESE limits."""
+    hal = FakeHal()
+    cal = BacklashCalibration(hal, _els(z_input_index=None))
+
+    assert cal.start() is False
+    assert cal.state == CalState.REFUSED
+    assert "Z axis" in cal.message
+    assert hal.scale_index_written is None
+    assert hal.limits is None
+    assert hal.cal_command == 0 or hal._running == 0
