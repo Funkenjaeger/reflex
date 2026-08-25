@@ -4,6 +4,7 @@ import sentry_sdk
 from kivy.app import App
 from kivy.config import Config
 from kivy.core.audio import SoundLoader
+from kivy.clock import Clock
 from kivy.properties import ObjectProperty, ConfigParserProperty, NumericProperty, ListProperty, StringProperty, BooleanProperty
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
@@ -80,6 +81,15 @@ class MainApp(App):
     sound = ObjectProperty()
 
     version = StringProperty()
+
+    # Set by scripts/replay_ui_state.py while it applies a recorded snapshot.
+    # Periodic updaters (the status bar's 5 Hz timer, the board's blink, the ELS
+    # controller's policy pass) check it and stand down, so a replayed frame is
+    # not overwritten by live values a disconnected app would otherwise compute.
+    # Always False in normal operation.
+    replay_mode = BooleanProperty(False)
+
+    uistate = ObjectProperty(allownone=True)
 
     def __init__(self, **kv):
         super().__init__(**kv)
@@ -238,6 +248,13 @@ class MainApp(App):
 
         from reflex.components.manager import Manager
         self.manager = Manager()
+
+        # UI state recording. Started on the next frame so the screens it binds
+        # to (and the ELS bar it reaches into) are mounted first.
+        from reflex.uistate.recorder import UiStateRecorder
+        self.uistate = UiStateRecorder(self)
+        Clock.schedule_once(lambda _dt: self.uistate.start(), 0)
+
         return self.manager
 
     def _apply_mouse_cursor(self):

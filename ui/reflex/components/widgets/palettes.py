@@ -63,6 +63,43 @@ def _parse_color(text: str) -> list[float]:
     return vals
 
 
+def _safe_asset_path(theme: str, key: str, value: str) -> str | None:
+    """Validate a ``[paths]`` value, or return None to fall back to the default.
+
+    Asset paths are resolved against the package resource root (see
+    ``resource_add_path(os.path.dirname(reflex.__file__))`` in the app and in
+    the capture/replay scripts), and every shipped font and logo lives inside
+    it. A theme file is the ONE place a path can point somewhere else: user
+    themes load from ``~/.config/reflex/themes/*.ini`` and this section was
+    previously taken verbatim, so a hand-edited theme could name
+    ``/usr/share/fonts/...``.
+
+    Two things go wrong when it does. The obvious one is at the lathe: a font
+    that exists on the machine it was written on and not on the Pi renders
+    wrong, with nothing in the log to say why. The other is that a UI state
+    code stops being replayable anywhere but that machine -- the whole point of
+    keeping assets in the package is that a replay resolves byte-identical
+    files by construction.
+
+    Returning None leaves the token missing, which ``_load_all`` already
+    backfills from the default theme -- the same "a partial user file still
+    loads" behaviour this module documents, extended from merely absent values
+    to unusable ones.
+    """
+    if not value:
+        return None
+    if os.path.isabs(value) or (len(value) > 1 and value[1] == ":"):
+        log.warning(f"Theme '{theme}': '{key}' is an absolute path ({value!r}); "
+                    f"assets must live in the package. Using default.")
+        return None
+    normalised = os.path.normpath(value).replace(os.sep, "/")
+    if normalised.startswith("../"):
+        log.warning(f"Theme '{theme}': '{key}' escapes the package ({value!r}). "
+                    f"Using default.")
+        return None
+    return normalised
+
+
 def _load_file(path: str, name: str):
     """Parse one theme file -> (palette, seeds). The theme's identity is the
     file name.
@@ -82,7 +119,9 @@ def _load_file(path: str, name: str):
                 log.warning(f"Theme '{name}': bad color '{k} = {v}' ({e}); using default")
     if cp.has_section("paths"):
         for k, v in cp.items("paths"):
-            palette[k] = v.strip()
+            value = _safe_asset_path(name, k, v.strip())
+            if value is not None:
+                palette[k] = value
 
     seeds = {}
     if cp.has_section("seeds"):

@@ -560,3 +560,43 @@ Works-as-specified (note, not bugs):
   (signed spindle-axis `syncRatioNum/Den` from `els_forward`); all ELS system tests now select
   16 TPI (`Fraction(254, 160)`, feeds.py Thread IN "16" = 1.5875 mm/rev, ~0.79 mm/s at
   EMU_RPM=30) explicitly.
+
+---
+
+## UI state codes — follow-ups
+
+Shipped on `claude/reflex-ui-state-encoding-8yz67z`: `reflex/uistate/` records a
+versioned code per visual state change, `scripts/replay_ui_state.py` re-renders
+any code to a PNG, `scripts/storyboard.py` builds a contact sheet. See the
+AGENTS.md section for the rules; these are the known gaps.
+
+- **Schema v1 covers the home screen only.** Setup and config screens encode as
+  a screen name and replay in their default state. Extending to them is a new
+  schema id, not an edit to v1.
+- **Modals are not reconstructed.** Open `ModalView`s are digested (so a replay
+  of a frame with a popup open reports drift rather than lying), but nothing
+  re-opens them. Needs a small registry of popup classes plus their visual
+  properties: `Keypad`, `ModePopup`, `FeedsTablePopup`, `ElsSettingsPopup`,
+  `BacklashCalPopup`, `HelpPopup`.
+- **Mid-transition frames are not captured.** The recorder waits for the picture
+  to stop changing before recording (`SETTLE_SECONDS`, and a stability probe
+  over both values and the widget tree), so a 50 ms `FadeTransition` between
+  screens is never a recorded frame. That is the right trade for a storyboard,
+  but it means the log shows discrete screens, not the wipe between them.
+- **Not yet run on the Pi.** The per-capture cost (a widget walk plus a zlib
+  compress, on state changes only — never on `board.update_tick`) is measured
+  only on a dev box. Worth confirming at the machine before trusting the
+  "steady-state cost is negligible" claim, and `REFLEX_UISTATE=off` is the lever
+  if it is not.
+- **No retention policy beyond rotation.** 5 MB x 5 files under
+  `uistate_dir()`. Fine for a card, but there is no "keep the frames around an
+  alarm and discard the rest" pass, which is what an incident actually wants.
+
+## Release flow: uv.lock version is not updated
+
+`ui/uv.lock` recorded `reflex 1.0.0rc2` while `ui/pyproject.toml` said
+`1.1.0rc1`, so any `uv run` rewrites the lock and dirties the tree. The release
+workflow writes the repo-root `VERSION` and `pyproject.toml`'s `version` but
+does not refresh the lock. Noticed 2026-08-25 while working on the UI state
+codes branch, and deliberately not fixed there — it belongs with the release
+workflow, not a feature branch.

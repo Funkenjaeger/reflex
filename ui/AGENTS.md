@@ -161,6 +161,70 @@ did, and the two registries could disagree with CI green.
 so captures taken under an older probe must stay readable. Retired ids are never
 deleted and never reissued.
 
+## UI state codes — recording what the screen looked like
+
+`reflex/uistate/` records a short, versioned code for the visual UI state on
+every relevant change, and `scripts/replay_ui_state.py` re-renders any code back
+into a PNG by booting the app headless and applying the snapshot. It exists so
+"what did the screen say when the stop fired" has an answer, at a few hundred
+bytes per operator interaction instead of gigabytes of screen recording.
+
+**It follows `els_diag.py`'s discipline, and for the same reasons.** Read
+`reflex/uistate/schema.py` before touching the field list. The rules that matter:
+
+- **The field list and its ORDER are a wire format.** Values are packed
+  positionally. Adding, removing, reordering or repurposing a field is a **new
+  schema id** — there is no compatible edit to a live schema.
+- **Retired ids stay in `KNOWN_SCHEMAS` and are never reissued.** Every recorded
+  line carries its own schema, so old captures must stay replayable.
+- **Declare fields, never reflect them.** `SavingDispatcher.get_our_properties`
+  enumerates by reflection, which is right for a file rewritten on every read
+  and wrong here: it would silently change the wire format when someone adds a
+  property, and every code recorded before that day would decode into the wrong
+  shape — readable, plausible, and wrong.
+
+**Capture inputs, hash outputs.** A `Field` must be an *input* to the render:
+something set, which kv then reacts to. Computed geometry, resolved text and
+resolved colors are *outputs* — they cannot be pushed back (the next layout pass
+or binding fire overwrites them), so they belong to the drift digest in
+`digest.py`. This is why "semantic" does not mean "dispatchers only": a third of
+the schema is widget-level properties, just the input side of them.
+
+**The drift guard is the part that makes this trustworthy.** Semantic replay
+fails silently — a visual driven by an undeclared field reproduces at its
+default and the screenshot is confident and wrong. So each capture also digests
+the visible widget tree per region, and replay recomputes and compares. A
+`DRIFT` report names the region and means *a field is missing from the schema*:
+it is a bug report, not a warning to live with. Every bug found while building
+this feature was found that way and by nothing else.
+
+**Adding a field to the live schema means:**
+
+| Where | What |
+|---|---|
+| `reflex/uistate/schema_v1.py` | the `Field`, with BOTH `get` and `apply` |
+| a new schema id | if you changed anything about the existing order |
+| `replay_mode` | if a timer or poll would overwrite the value during replay |
+
+That last one bites. `MainApp.replay_mode` is checked by `StatusBar.update`,
+`Board.blinker`, `ElsSpindleInfo._update_spindle`, `TextHeaderButton.blinker`
+and `ElsUiController._apply_policy`; without it those recompute the captured
+frame from a disconnected board and the replay silently shows live state.
+
+**Assets must stay inside the package.** Fonts and the logo are vendored and
+referenced repo-relatively, which is what lets a replay resolve byte-identical
+files by construction. `palettes.py` rejects a theme `[paths]` value that is
+absolute or escapes the package, falling back to the default theme's token.
+
+Run the real thing (needs a display; the suite's mock GL backends cannot render):
+
+```bash
+xvfb-run -a -s "-screen 0 1024x600x24" uv run pytest -m render
+```
+
+`REFLEX_UISTATE=off` disables recording; `REFLEX_UISTATE_DIR` moves the log;
+`REFLEX_UISTATE_VERBOSE=1` adds a widget dump for chasing a drift report.
+
 ## Design Patterns
 
 Follow the architecture guidelines in [kivy-fsm-design-pattern.md](kivy-fsm-design-pattern.md)
