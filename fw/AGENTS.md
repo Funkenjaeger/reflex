@@ -25,13 +25,18 @@ machine.
 
 If unsure whether a change qualifies, it does not. Put it on a branch and ask.
 
-**Never push without being asked.** `origin` fans out to BOTH
-`github.com/Funkenjaeger/reflex-fw` and `dserver:/mnt/git/reflex-fw.git`, so any
-push writes two remotes at once. Note also that git only *fetches* from GitHub,
-so there is no tracking ref for dserver and `--force-with-lease` cannot protect
-it — a force-push needs an explicit
-`--force-with-lease=<branch>:<expected-sha>` aimed at the dserver URL directly,
-or it fails with "stale info" after GitHub has already moved.
+**Never push without being asked.** Check what `origin` actually is before you
+do — `git remote -v` — because it may be configured with MORE THAN ONE push
+URL (`github.com/Funkenjaeger/reflex` alongside `dserver:/mnt/git/reflex.git`),
+in which case a single push writes both at once. A fresh clone has only the
+GitHub remote; the fan-out is local push-URL config, so it is present in some
+checkouts and not others. Look, do not assume.
+
+Where it IS configured, note that git only *fetches* from GitHub, so there is no
+tracking ref for dserver and `--force-with-lease` cannot protect it — a
+force-push needs an explicit `--force-with-lease=<branch>:<expected-sha>` aimed
+at the dserver URL directly, or it fails with "stale info" after GitHub has
+already moved.
 
 Record hardware-verification points in `todo.md` so the next session knows what
 has actually been proven on metal. Last verified: **2026-08-03 ~20:00**.
