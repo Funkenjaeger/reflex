@@ -35,39 +35,82 @@ log = Logger.getChild(__name__)
 load_kv(__file__)
 
 
+# ── BASE TEXT vs HELP TEXT (bench 2026-08-24) ────────────────────────
+# The jog body used to open with two sentences of what-happens-next, so
+# reading the bottom of the steps pushed the next stage off the 600 px
+# screen. The base strings below are bare steps IN EXECUTION ORDER — what to
+# do, nothing about why — and every rationale (why anti-cutting, what loading
+# the lash means, why Z is watched) moved to HELP_TEXT, rendered on demand by
+# the HelpButton in the button row. The ANTI-CUTTING instruction and the
+# tool-clear-in-X warning stay in the base: they are the safety content, and
+# help is optional reading.
+
 JOG_TEXT = (
-    "Pick up an existing thread. Once synced, every pass will follow the "
-    "existing groove.\n\n"
-    "MAKE SURE THE TOOL IS CLEAR OF THE WORK IN X BEFORE YOU START.\n\n"
+    "MAKE SURE THE TOOL IS CLEAR OF THE WORK IN X.\n\n"
     "  1.  Move the carriage BY HAND until the tool tip is over the "
     "threaded section.\n"
     "  2.  Close the HALF NUT.\n"
-    "  3.  Now pull the carriage back BY HAND in the ANTI-CUTTING direction "
-    "(away from the way a pass feeds) until it seats firmly against the "
-    "leadscrew. This loads the backlash on the side the leadscrew will push "
-    "from — moving it the other way loads the wrong side.\n"
-    "  4.  Stop there. Do not move the carriage again after this point."
+    "  3.  Pull the carriage back BY HAND in the ANTI-CUTTING direction "
+    "(opposite the feed) until it seats firmly.\n"
+    "  4.  Stop. Do not move the carriage again."
 )
 
 ALIGN_TEXT = (
-    "Ease the tool into the groove — without jogging:\n\n"
-    "  •  Rotate the SPINDLE by hand.\n"
-    "  •  Feed the CROSS-SLIDE in until the tool tip nests in the "
-    "existing groove.\n"
-    "  •  Leave the carriage alone — the Z scale is being watched.\n\n"
-    "Confirm arms when the tool position is held and the spindle has been "
-    "still for a moment."
+    "Ease the tool into the groove — no jogging:\n\n"
+    "  1.  Rotate the SPINDLE by hand.\n"
+    "  2.  Feed the CROSS-SLIDE in until the tool tip nests in the "
+    "groove.\n"
+    "  3.  Leave the carriage alone.\n\n"
+    "Confirm arms when Z holds and the spindle is still."
 )
 
 DRIFTED_TEXT = (
-    "The carriage has drifted off its jogged position — the leadscrew's free "
-    "play lets it creep toward the cut.\n\n"
-    "Nudge the carriage BACK by hand — the ANTI-CUTTING direction, the same "
-    "way you seated it — until it seats firmly against the leadscrew, then "
-    "press Re-seated. Because that "
-    "is a mechanical stop the carriage was already sitting against, the Z "
-    "readout must come back to almost exactly the same count."
+    "The carriage has crept off its seated position.\n\n"
+    "Nudge it BACK by hand — the ANTI-CUTTING direction, the same way you "
+    "seated it — until it seats firmly, then press Re-seated."
 )
+
+HELP_TITLE = "Picking up an existing thread"
+
+HELP_TEXT = (
+    "Use this on a thread this job did not cut — a re-chucked part, a "
+    "thread cut elsewhere, a damaged thread being chased. Once the "
+    "reference is latched, every pass follows the existing groove.\n\n"
+    "Why pull back in the ANTI-CUTTING direction: the half nut sits on the "
+    "leadscrew with free play (backlash). Pulling against the feed seats "
+    "the carriage on the flank the leadscrew pushes from during a pass, so "
+    "the reference is taken with that play already used up. Seated the "
+    "other way, the first pass starts by falling through the free play, and "
+    "the reference is off by the whole clearance. The same free play is "
+    "what lets a seated carriage creep toward the cut — which is why the "
+    "wizard may ask you to re-seat it.\n\n"
+    "Why the tool must be clear in X: the software cannot know the major "
+    "diameter, so nothing can stop the tool touching the work while the "
+    "carriage is moved by hand.\n\n"
+    "Why Z is watched: from the seat onward, the carriage position IS the "
+    "reference. A re-seat presses against the same mechanical stop, so the "
+    "Z readout must return to almost exactly the same count — landing "
+    "anywhere else means the Z scale cannot be trusted, and the wizard "
+    "says so.\n\n"
+    "After latching, run an AIR PASS before cutting metal: back the tool "
+    "clear in X, run one pass, and watch the tip track the existing "
+    "groove. Software cannot detect a tool confirmed in the wrong place — "
+    "the air pass is what catches it."
+)
+
+# ── HOW LONG A WALKTHROUGH BODY MAY BE ───────────────────────────────
+# The same cheap guard els_phase_offset_popup.py keeps for its messages,
+# adapted for bodies that carry their own newlines: the budget is rendered
+# LINES (wrapped at the 52 chars/line measured there at this same width and
+# font), because a flat character count cannot see a numbered list.
+#
+# Ceilings from the machine's 600 px screen at font_size 24 (~29 px/line):
+# jog shows neither banner nor live readout, ~13 lines fit; align adds the
+# live readout, ~10; drifted adds the banner too, ~9. Each budget sits a
+# line under its ceiling so a sentence added in review fails in the unit
+# suite before it scrolls at the lathe.
+BODY_WRAP_CHARS = 52
+BODY_LINE_BUDGETS = {"jog": 12, "align": 9, "drifted": 8}
 
 AIR_PASS_TEXT = (
     "\n\nBefore cutting metal: run an AIR PASS. Back the tool slightly clear "
@@ -121,6 +164,10 @@ class ThreadResyncPopup(Popup):
     body_text = StringProperty(JOG_TEXT)
     live_text = StringProperty("")
     confirm_enabled = BooleanProperty(False)
+    # The on-demand half of the base/help split; the kv hands both to the
+    # HelpButton in the button row.
+    help_title = StringProperty(HELP_TITLE)
+    help_text = StringProperty(HELP_TEXT)
 
     # Derived from `state`; the kv colours the whole modal off these two.
     severity = StringProperty(SEVERITY_INFO)

@@ -76,15 +76,45 @@ log = Logger.getChild(__name__)
 load_kv(__file__)
 
 
+# ── BASE TEXT vs HELP TEXT (bench 2026-08-24) ────────────────────────
+# The operator's words: "way too many words about the whole offset". The base
+# strings below say only what to DO; every WHY moved to HELP_TEXT, rendered on
+# demand by the HelpButton in the button row. The split is the fix for a real
+# failure shape: prose long enough to scroll pushes its own last sentence — on
+# this screen, always the instruction — below the fold.
+
 INTRO_TEXT = (
-    "Shift the thread phase to widen the groove past the width of your cutter. "
-    "This is the whole offset, not an amount to add — applying MOVES NOTHING, "
-    "it takes effect where the tool next re-enters the thread."
+    "Enter the WHOLE offset from the original groove and press Apply. It "
+    "takes effect where the tool next re-enters the thread."
 )
 
-ENTRY_HINT = (
-    "This box holds the WHOLE offset from the original groove, not an amount "
-    "to add to it. Only you know how wide the cutter is."
+ENTRY_HINT = "The whole offset, not an amount to add."
+
+HELP_TITLE = "Widening a groove"
+
+# Everything the old intro and entry hint explained, plus the questions the
+# refusals used to answer inline. Not bound by MESSAGE_CHAR_BUDGET: this
+# renders in the HelpButton's own scrollable popup, never in the message
+# viewport the budget protects.
+HELP_TEXT = (
+    "This screen cuts a thread groove WIDER than the tool that cuts it: cut, "
+    "apply a small offset, cut again, until the groove is wide enough. The "
+    "workpiece is never touched and the datum is never re-established.\n\n"
+    "The entry is the WHOLE offset from the original groove — Apply SETS the "
+    "offset, it does not add to it. The box opens holding the current offset, "
+    "so applying without editing changes nothing.\n\n"
+    "There are no preset step-overs because the right step depends on the "
+    "width of the cutter in the toolpost, which nothing here knows.\n\n"
+    "Applying moves nothing by itself. The shift takes effect where the tool "
+    "next re-enters the thread — run an air pass before cutting metal.\n\n"
+    "There is no minus because widening runs one way, away from the groove "
+    "cut first. The firmware's forward bias would turn a negative into a "
+    "forward move of nearly a whole pitch — a real cut, on the flank you "
+    "were not opening.\n\n"
+    "The dim line under the total is the safety bound: offsets alias at one "
+    "full pitch, so it shows how much of that budget the total has used. On "
+    "a widening job it stays small — a fraction climbing toward one means "
+    "the entries are not what you think they are."
 )
 
 APPLIED_TEXT = (
@@ -99,10 +129,9 @@ CLEARED_TEXT = (
 WAITING_TEXT = "Waiting for the controller to acknowledge…"
 
 NO_ACK_TEXT = (
-    "The controller never acknowledged the offset, so it was NOT applied. "
-    "That normally means the threading job disengaged between the button "
-    "press and the write landing. Check the ELS stop is still engaged, check "
-    "the offset shown above, and try again."
+    "The controller never acknowledged the offset, so it was NOT applied — "
+    "usually the job disengaged mid-write. Check the ELS stop is still "
+    "engaged and try again."
 )
 
 # ── HOW LONG A MESSAGE MAY BE, AND WHY THERE IS A NUMBER FOR IT ──────
@@ -131,38 +160,34 @@ MESSAGE_CHAR_BUDGET = MESSAGE_WRAP_CHARS * MESSAGE_LINE_BUDGET
 # One message per outcome code. Deliberately one per code rather than a shared
 # "could not apply": the fix for "engage the stop" and the fix for "you are not
 # cutting a thread" are different actions, and a merged message would send the
-# operator to the wrong one.
+# operator to the wrong one. Trimmed with the base text (bench 2026-08-24) to
+# one clause of why plus the next step — each must still NAME that step, which
+# is the property the tests hold them to.
 REFUSAL_TEXT = {
     ElsFsm.PHASE_OFFSET_OFFLINE: (
-        "Not connected to the controller. The phase offset lives in the "
-        "controller, so there is nothing here to apply it to — reconnect and "
-        "try again."
+        "Not connected to the controller, so there is nothing to apply the "
+        "offset to. Reconnect and try again."
     ),
     ElsFsm.PHASE_OFFSET_NO_JOB: (
-        "No threading job is engaged. Engage the ELS stop first: the "
-        "controller clears the offset every time a job starts, so one applied "
-        "now would be thrown away without a word."
+        "No threading job is engaged, and the controller discards the offset "
+        "when one starts. Engage the ELS stop first."
     ),
     ElsFsm.PHASE_OFFSET_NO_PITCH: (
-        "No thread pitch is set. A phase offset shifts where the tool "
-        "re-enters the thread, and turning has no thread phase to shift — "
-        "choose a threading mode and a pitch first."
+        "No thread pitch is set — turning has no thread phase to shift. "
+        "Choose a threading mode and a pitch first."
     ),
     ElsFsm.PHASE_OFFSET_NO_GEOMETRY: (
-        "The machine geometry needed to turn a distance into leadscrew steps "
-        "is missing or zero. Check the servo gearing in setup — until it is "
-        "right, nothing on this screen can be converted into a real distance."
+        "The machine geometry that turns a distance into leadscrew steps is "
+        "missing or zero. Check the servo gearing in setup."
     ),
     ElsFsm.PHASE_OFFSET_NEGATIVE: (
-        "Step-overs only go one way. A minus sign does not back the phase up — "
-        "the forward bias turns it into a forward move of one pitch minus what "
-        "you typed, which opens the wrong side of the groove. Enter the "
-        "distance without the sign, or press Clear."
+        "A minus sign does not back the phase up — it becomes a forward move "
+        "that opens the wrong side of the groove. Enter the distance without "
+        "the sign, or press Clear."
     ),
     ElsFsm.PHASE_OFFSET_AT_PITCH: (
-        "That is a full pitch or more. One whole pitch is the same place in "
-        "the groove you started at, and anything past it cannot be told apart "
-        "from the leftover. Type a smaller offset, or press Clear."
+        "That is a full pitch or more, which lands back in the groove you "
+        "started at. Type a smaller offset, or press Clear."
     ),
 }
 
@@ -172,6 +197,10 @@ class PhaseOffsetPopup(Popup):
     # "entry" | "waiting" | "applied" | "refused"
     state = StringProperty("entry")
     body_intro = StringProperty(INTRO_TEXT)
+    # The on-demand half of the base/help split; the kv hands both to the
+    # HelpButton in the button row.
+    help_title = StringProperty(HELP_TITLE)
+    help_text = StringProperty(HELP_TEXT)
     # TWO PROPERTIES, NOT ONE STRING. The distance is the answer to the job's
     # question and the fraction is the safety bound; they are rendered at
     # different sizes and weights, so they cannot share a label.

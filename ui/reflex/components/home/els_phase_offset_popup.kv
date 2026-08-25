@@ -1,3 +1,5 @@
+#: import HelpButton reflex.components.widgets.help_button.HelpButton
+
 <PhaseOffsetPopup>:
     title: "Thread phase offset (widen a groove)"
     size_hint_x: 0.8
@@ -173,6 +175,15 @@
             size_hint_y: None
             height: dp(56)
             spacing: dp(10)
+
+            # The WHY behind the stripped base text (bench 2026-08-24). In the
+            # button row rather than beside the prose: this row exists in every
+            # state, so the affordance never moves, and a fixed-size square
+            # here costs nothing in the height arithmetic above.
+            HelpButton:
+                pos_hint: {"center_y": 0.5}
+                help_title: root.help_title
+                help_text: root.help_text
 
             FormValueButton:
                 text: "Close"

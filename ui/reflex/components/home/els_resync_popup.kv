@@ -1,3 +1,5 @@
+#: import HelpButton reflex.components.widgets.help_button.HelpButton
+
 <ThreadResyncPopup>:
     title: "Pick up existing thread"
     size_hint_x: 0.8
@@ -173,6 +175,17 @@
             size_hint_y: None
             height: dp(56)
             spacing: dp(10)
+
+            # The WHY behind the stripped step text (bench 2026-08-24). In the
+            # button row, NOT beside the body: every other widget in this row
+            # collapses and reappears per state, and this one deliberately
+            # does neither — one fixed square that never moves, never enters
+            # the height arithmetic, and stays reachable from every state
+            # including red_flag.
+            HelpButton:
+                pos_hint: {"center_y": 0.5}
+                help_title: root.help_title
+                help_text: root.help_text
 
             # ── jog: cancel / tool is over the thread ───────────────
             FormValueButton:
