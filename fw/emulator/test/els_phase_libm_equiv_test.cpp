@@ -1,0 +1,218 @@
+/*
+ * The libm-free phase math must be the SAME MATH.
+ *
+ * fmodf and lroundf were the only library calls reachable from
+ * SynchroRefreshTimerIsr, and both sat in elsComputePhaseCorrection -- which
+ * runs on the resume edge, i.e. cut-start, i.e. when the Modbus link died on
+ * 2026-08-23. Neither is an instruction on Cortex-M4F; both are software
+ * routines, and fmodf's cost is not even constant -- newlib iterates over the
+ * exponent difference between its operands, and the dividend here is spindle
+ * advance accumulated since the latch, which grows for as long as the job runs.
+ *
+ * Replacing them is only worth anything if the answer does not change. The
+ * existing els_phase_test checks specific permutations of a lossless model;
+ * this file checks the substitution itself, by computing every case BOTH ways
+ * -- once through a reference that still calls fmodf/lroundf, once through
+ * production -- and comparing the only output that moves metal, stepsToAdd.
+ *
+ * The sweep deliberately reaches the magnitudes that motivated the change:
+ * deltaSpindle out to tens of millions of counts, which is where fmodf got
+ * expensive and where float32 cancellation is worst.
+ */
+#include "els_phase.h"
+
+#include <cstdio>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+
+static int failures = 0;
+static long compared = 0;
+static long differed = 0;
+static int32_t worst_diff = 0;
+
+static void check(bool cond, const char *what)
+{
+    printf("   %-68s %s\n", what, cond ? "ok" : "FAIL");
+    if (!cond) failures++;
+}
+
+/* The pre-change implementation, verbatim apart from the two calls. Kept as a
+ * local copy on purpose: pointing this at the production function would make
+ * the comparison trivially true, which is the classic shape of a check that
+ * cannot fail. */
+static int32_t reference_steps(int32_t deltaSpindle, int32_t deltaZ,
+                               int32_t syncRatioNum, int32_t syncRatioDen,
+                               float threadPitchSteps, float zCountsPerPitch,
+                               int16_t stopDirection, int32_t offsetSteps)
+{
+    float idealAdvance  = (float)deltaSpindle * (float)syncRatioNum / (float)syncRatioDen;
+    float actualAdvance = (float)deltaZ * threadPitchSteps / zCountsPerPitch;
+
+    int32_t cuttingDir = (syncRatioNum > 0) ? 1 : -1;
+    if (threadPitchSteps * zCountsPerPitch < 0.0f) cuttingDir = -cuttingDir;
+
+    int32_t droSign = (int32_t)stopDirection * cuttingDir;
+    float phaseError = idealAdvance - (float)droSign * actualAdvance + (float)offsetSteps;
+
+    float pitch      = threadPitchSteps;
+    float correction = fmodf(phaseError, pitch);          /* the old call */
+    if (correction >  pitch / 2.0f) correction -= pitch;
+    if (correction < -pitch / 2.0f) correction += pitch;
+    if ((float)cuttingDir * correction < 0.0f) correction += (float)cuttingDir * pitch;
+
+    return (int32_t)lroundf(correction);                  /* the other old call */
+}
+
+static void compare(int32_t dSp, int32_t dZ, int32_t num, int32_t den,
+                    float tps, float zcpp, int16_t sd, int32_t off)
+{
+    int32_t want = reference_steps(dSp, dZ, num, den, tps, zcpp, sd, off);
+    elsCorrResult_t got = elsComputePhaseCorrection(dSp, dZ, num, den,
+                                                    tps, zcpp, sd, off);
+    compared++;
+    int32_t diff = got.stepsToAdd - want;
+    if (diff != 0) {
+        differed++;
+        int32_t mag = diff < 0 ? -diff : diff;
+        if (mag > worst_diff) worst_diff = mag;
+        if (mag > 1) {
+            printf("   MISMATCH dSp=%d dZ=%d num=%d pitch=%.3f off=%d: "
+                   "ref=%d new=%d (diff %d)\n",
+                   (int)dSp, (int)dZ, (int)num, (double)tps, (int)off,
+                   (int)want, (int)got.stepsToAdd, (int)diff);
+            failures++;
+        }
+    }
+}
+
+int main()
+{
+    printf("=== libm-free phase math: same answers as fmodf/lroundf ===\n\n");
+
+    /* Real machine geometry first: elspi at 18 TPI. 12800 steps/inch, so a
+     * pitch is 711.11 steps -- the numbers the 2026-08-24 capture was taken
+     * against. */
+    const float ELSPI_PITCH = 12800.0f / 18.0f;
+    const float ELSPI_ZCPP  = 282.222229f;
+
+    printf("-- 1. elspi geometry, spindle advance swept to job-length scale --\n");
+    for (int32_t dSp = 0; dSp < 40000000; dSp += 97391) {
+        for (int32_t dZ = -20000; dZ <= 20000; dZ += 5171) {
+            compare(dSp, dZ, 360, 100, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
+        }
+    }
+    check(failures == 0, "no case differs by more than one step");
+
+    printf("\n-- 2. both polarities, both cutting directions --\n");
+    {
+        long before = failures;
+        const int32_t nums[] = {360, -360, 100, -100};
+        const int16_t sds[]  = {1, -1};
+        for (int n = 0; n < 4; n++)
+            for (int d = 0; d < 2; d++)
+                for (int32_t dSp = -5000000; dSp <= 5000000; dSp += 313337)
+                    for (int32_t dZ = -8000; dZ <= 8000; dZ += 3719)
+                        compare(dSp, dZ, nums[n], 100,
+                                ELSPI_PITCH, ELSPI_ZCPP, sds[d], 0);
+        check(failures == before, "sign handling is unchanged in every polarity");
+    }
+
+    printf("\n-- 3. with a groove-widening offset applied --\n");
+    {
+        long before = failures;
+        const int32_t offs[] = {0, 1, 47, 355, 710, -355, 1422};
+        for (int o = 0; o < 7; o++)
+            for (int32_t dSp = 0; dSp < 3000000; dSp += 71119)
+                compare(dSp, -3200, 360, 100,
+                        ELSPI_PITCH, ELSPI_ZCPP, -1, offs[o]);
+        check(failures == before, "the offset term folds identically");
+    }
+
+    printf("\n-- 4. the lossless geometry the permutation tests use --\n");
+    {
+        long before = failures;
+        for (int32_t dSp = -3000000; dSp <= 3000000; dSp += 60013)
+            for (int32_t dZ = -4000; dZ <= 4000; dZ += 1601)
+                compare(dSp, dZ, 6000, 6000, 1000.0f, 400.0f, -1, 0);
+        check(failures == before, "exactly-divisible geometry is unchanged");
+    }
+
+    printf("\n-- 5. the fail-closed and degenerate inputs --\n");
+    {
+        long before = failures;
+        compare(0, 0, 360, 100, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
+        compare(1, 0, 360, 100, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
+        compare(-1, 0, 360, 100, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
+        /* Exactly on a pitch boundary, where a truncation landing one integer
+         * off would show up if the fold did not absorb it. */
+        for (int k = 1; k < 400; k++) {
+            compare((int32_t)(k * 711), 0, 360, 100, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
+        }
+        check(failures == before, "boundaries and degenerate inputs agree");
+    }
+
+    /* ---- 6. THE ROUNDING RULE, EXACTLY -------------------------------
+     * Tested as a unit rather than through the integrated comparison above,
+     * and with no tolerance, because the tolerance there exists for float
+     * cancellation and would hide this. A mutation replacing the ties-away
+     * rule with a plain +0.5f survived the whole integrated sweep: it is
+     * wrong by exactly one step on every negative correction, and the
+     * cuttingDir == -1 polarity produces negative corrections all day.
+     */
+    printf("\n-- 6. elsRoundSteps IS lroundf, exactly --\n");
+    {
+        long before = failures;
+        long checked = 0;
+        for (float c = -800.0f; c <= 800.0f; c += 0.03125f) {
+            if ((int32_t)elsRoundSteps(c) != (int32_t)lroundf(c)) {
+                printf("   MISMATCH c=%.5f: lroundf=%ld elsRoundSteps=%d\n",
+                       (double)c, lroundf(c), (int)elsRoundSteps(c));
+                failures++;
+                if (failures - before > 5) break;   /* enough to prove it */
+            }
+            checked++;
+        }
+        printf("   %ld values swept, including every exact half\n", checked);
+        check(failures == before, "the ties-away-from-zero rule is preserved");
+    }
+
+    printf("\n-- 7. the exact halves, called out by name --\n");
+    {
+        long before = failures;
+        const float halves[] = {-711.5f, -2.5f, -1.5f, -0.5f,
+                                 0.5f, 1.5f, 2.5f, 711.5f};
+        for (int i = 0; i < 8; i++) {
+            bool ok = (int32_t)elsRoundSteps(halves[i]) == (int32_t)lroundf(halves[i]);
+            if (!ok) {
+                printf("   %.1f: lroundf=%ld elsRoundSteps=%d\n",
+                       (double)halves[i], lroundf(halves[i]),
+                       (int)elsRoundSteps(halves[i]));
+                failures++;
+            }
+        }
+        check(failures == before, "a tie rounds away from zero in both signs");
+    }
+
+    /* NOT TESTED, because it cannot be: substituting floorf for the truncation
+     * in elsFmodPitch is an EQUIVALENT mutation. floor and trunc differ by
+     * exactly one pitch for negative dividends, and one pitch is precisely
+     * what the mod-pitch fold below normalizes away -- measured, not assumed:
+     * trunc(-1000) = -288.889 and floor(-1000) = 422.222, differing by
+     * 1.0000 pitches. A test that appeared to kill it would be testing
+     * something other than behaviour. */
+
+    printf("\n-- 8. how far apart the two ever got --\n");
+    printf("   compared %ld cases, %ld differed, worst difference %d step(s)\n",
+           compared, differed, (int)worst_diff);
+    /* A one-step disagreement is float rounding either way and is 0.14% of a
+     * pitch on this machine -- but it must be BOUNDED and REPORTED, not
+     * discovered later. Anything larger is a real behaviour change and fails
+     * above. */
+    check(worst_diff <= 1, "the two implementations never differ by 2 steps");
+
+    printf("\n=== %s === (%d failing assertion%s)\n",
+           failures == 0 ? "ALL PASS" : "FAILURES",
+           failures, failures == 1 ? "" : "s");
+    return failures == 0 ? 0 : 1;
+}

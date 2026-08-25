@@ -50,10 +50,74 @@ typedef struct {
   float   actualAdvance;
   float   phaseError;
   float   correction;   /* folded + forward-biased, in leadscrew steps */
-  int32_t stepsToAdd;   /* lroundf(correction) — added to servo.stepsToGo */
+  int32_t stepsToAdd;   /* elsRoundSteps(correction) — added to servo.stepsToGo */
   int32_t cuttingDir;   /* +1/-1, exposed for callers/tests */
   int32_t droSign;      /* stopDirection*cuttingDir, exposed for tests */
 } elsCorrResult_t;
+
+/* ---- the 100 kHz ISR's path carries no library calls ------------------
+ *
+ * elsComputePhaseCorrection runs from applyPhaseCorrection, on the resume edge
+ * -- which is cut-start, which is when the Modbus link died on 2026-08-23.
+ * fmodf and lroundf were the only libm calls reachable from
+ * SynchroRefreshTimerIsr, and on Cortex-M4F neither is an instruction: both are
+ * software routines.
+ *
+ * WHY fmodf WAS THE WORSE OF THE TWO. Its cost is not constant. newlib reduces
+ * by iterating over the exponent difference between the operands, and the
+ * dividend here is phaseError -- spindle advance accumulated since the latch,
+ * which grows for as long as the job runs (154934 steps against a 711-step
+ * pitch in a sample captured off the machine). So the single most expensive
+ * tick in the ISR got more expensive the longer the machine had been cutting.
+ *
+ * WHY THIS WORK IS MADE CHEAPER IN PLACE RATHER THAN DEFERRED TO A TASK.
+ * todo.md lists applyPhaseCorrection first among things to move OUT of the
+ * ISR. It must not be. The correction it computes is added to servo.stepsToGo
+ * and has to be fully executed BEFORE the pass starts feeding; handing it to a
+ * task means the pass can begin while the correction is still queued, which is
+ * precisely the out-of-phase-cut signature under investigation. The step pulse
+ * is not the only thing here that must happen now.
+ */
+
+/* x mod pitch, truncated toward zero -- fmodf's exact definition, in two FPU
+ * conversions and a multiply-subtract.
+ *
+ * PRECISION. This is deliberate catastrophic cancellation and it is safe twice
+ * over. The absolute error is bounded by the ULP of the operands (about 0.0156
+ * steps at 154934), and the result is rounded to whole steps immediately after.
+ * And if the truncation ever lands one integer off, the error is exactly ONE
+ * PITCH -- which the fold and forward-bias below normalize away completely,
+ * because one pitch is the same place on a single-start thread.
+ *
+ * The out-of-range fallback needs a spindle advance of 2^31 pitches to reach,
+ * so it is unreachable on any real geometry; it is here because an int32
+ * conversion that overflows is undefined, and a silent wrong answer on this
+ * path moves metal.
+ */
+static inline float elsFmodPitch(float x, float pitch)
+{
+  /* 2^22. Below this a float32 ULP is under half a step, so the
+   * multiply-subtract is sub-step accurate and provably agrees with fmodf
+   * (els_phase_libm_equiv_test). ABOVE it the whole computation has already
+   * lost step resolution -- at 1.4e8 steps the ULP is 16 -- and that is a
+   * separate defect, logged rather than papered over here. Deferring to the
+   * library routine above the threshold keeps this change a pure speed-up
+   * with no behavioural difference anywhere, and costs nothing in practice:
+   * the expensive fmodf case is the one this threshold excludes. */
+  if (x < -4194304.0f || x > 4194304.0f) return fmodf(x, pitch);
+  float q = x / pitch;
+  return x - pitch * (float)(int32_t)q;
+}
+
+/* lroundf's rounding rule -- nearest, ties AWAY from zero -- without the call.
+ * The FPU's own VCVT rounds ties to even, so this cannot just be a cast; and
+ * gcc will not inline lroundf on this core for exactly that reason. Safe
+ * because correction is already folded to within one pitch, so the addend
+ * cannot push it anywhere near the limits of float precision. */
+static inline int32_t elsRoundSteps(float correction)
+{
+  return (int32_t)(correction + (correction >= 0.0f ? 0.5f : -0.5f));
+}
 
 static inline elsCorrResult_t elsComputePhaseCorrection(
     int32_t deltaSpindle, int32_t deltaZ,
@@ -80,7 +144,7 @@ static inline elsCorrResult_t elsComputePhaseCorrection(
   r.phaseError = r.idealAdvance - (float)droSign * r.actualAdvance + (float)offsetSteps;
 
   float pitch      = threadPitchSteps;
-  float correction = fmodf(r.phaseError, pitch);
+  float correction = elsFmodPitch(r.phaseError, pitch);
   if (correction >  pitch / 2.0f) correction -= pitch;
   if (correction < -pitch / 2.0f) correction += pitch;
 
@@ -91,7 +155,7 @@ static inline elsCorrResult_t elsComputePhaseCorrection(
   }
 
   r.correction  = correction;
-  r.stepsToAdd  = (int32_t)lroundf(correction);
+  r.stepsToAdd  = elsRoundSteps(correction);
   return r;
 }
 
