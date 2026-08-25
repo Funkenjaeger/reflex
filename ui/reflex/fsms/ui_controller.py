@@ -10,7 +10,8 @@ from reflex.fsms.ui_fsm import ElsUiFsm
 from reflex.fsms.els_fsm import ElsFsm
 from reflex.fsms.els_stop_hal import ElsStopHal
 from reflex.fsms.els_diag import ElsDiagRecorder
-from reflex.fsms.els_phase_recorder import PhaseCorrectionRecorder
+from reflex.fsms.els_phase_recorder import (
+    PhaseCorrectionRecorder, PhaseLiveTracker)
 from reflex.fsms.els_mode_watch import ElsModeWatch
 from reflex.utils.devices import (takeup_failure_text,
                                   ELS_DIAG_SCHEMA_MODE_WATCH,
@@ -279,6 +280,7 @@ class ElsUiController(EventDispatcher):
         self._hal = ElsStopHal(board)
         self._diag_recorder = ElsDiagRecorder(self._hal, board)
         self._phase_recorder = PhaseCorrectionRecorder(board)
+        self._phase_tracker = PhaseLiveTracker(board)
 
         # Built FIRST, before any FSM or poller exists, because `notify()` must
         # be safe to call from anywhere below -- including from construction, if
@@ -381,6 +383,10 @@ class ElsUiController(EventDispatcher):
         # so unlike the scratchpad recorder above it runs against EVERY build
         # and costs no Modbus traffic. See els_phase_recorder.py.
         self._board.bind(update_tick=self._poll_phase_correction)
+        # Live physical phase, ~1 Hz while a reference is latched. Scale
+        # positions from fastData, reference from the elsStop snapshot; the
+        # one non-snapshot input (sync ratio) is read once per reference.
+        self._board.bind(update_tick=self._poll_phase_live)
         # Rung-2 mode sampler; equally dormant without the schema-4 probe.
         self._board.bind(update_tick=self._poll_mode_watch)
 
@@ -766,6 +772,17 @@ class ElsUiController(EventDispatcher):
         Never raises -- see PhaseCorrectionRecorder.poll().
         """
         self._phase_recorder.poll()
+
+    def _poll_phase_live(self, *args):
+        """Sample the physical phase error against the commanded ledger.
+
+        Separate from _poll_phase_correction: that records what the firmware
+        DECIDED at each pass start; this records whether the machine is
+        physically in phase while the pass RUNS -- the measurement that
+        separates dropped steps from every other theory of the 2026-08-24
+        re-sync misalignment. Never raises -- see PhaseLiveTracker.poll().
+        """
+        self._phase_tracker.poll()
 
     # Every 5th update tick ≈ 6 Hz against the firmware's ~10 Hz publication:
     # fast enough that no dwell in a mode is missed, slow enough that the one
