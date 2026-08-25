@@ -186,6 +186,17 @@ class ElsUiController(EventDispatcher):
     phase_offset_active = BooleanProperty(False)
     phase_offset_text   = StringProperty("")
 
+    # ── Thread reference latch (elsStop.referenceLatched, gated on enable) ──
+    # True while the firmware BOTH holds a thread reference AND is enabled.
+    # Persistent job state like the offset above -- the latch is banked on the
+    # first Cut of a job and consumed by every subsequent pass -- and until
+    # 2026-08-24 nothing on screen showed it, so "is anything latched?" could
+    # not be answered at the bench. The enable term is not decoration: the
+    # firmware clears referenceLatched on the enable RISING edge, not on
+    # disengage, so between jobs the register still holds the OLD job's latch
+    # and showing it would claim a reference the next Cut will not use.
+    thread_ref_latched  = BooleanProperty(False)
+
     # ── Operator-job descriptors (mirrored from the widget) ────────────
     # is_threading toggles the X-clear-of-start-dia gate in waiting_to_retract.
     # is_inner flips the "outside" comparison: OD work retracts to larger X,
@@ -361,6 +372,7 @@ class ElsUiController(EventDispatcher):
         self._board.bind(update_tick=self._poll_reframe_targets)
         self._board.bind(update_tick=self._poll_takeup_outcome)
         self._board.bind(update_tick=self._poll_phase_offset)
+        self._board.bind(update_tick=self._poll_thread_ref_latched)
         # Firmware diagnostic scratchpad. Dormant against any release build --
         # it reads diagSchema once per connection and, finding 0, issues no
         # further reads at all. See reflex/fsms/els_diag.py.
@@ -679,6 +691,54 @@ class ElsUiController(EventDispatcher):
             # a readable line into "[ELS thread-phase offset now N steps] ..."
             # in the captured output.
             log.info("ELS thread-phase offset now %s steps -> %s", steps, text)
+
+    def _poll_thread_ref_latched(self, *args):
+        """Republish the firmware's thread-reference latch as screen state.
+
+        Same data path as _poll_phase_offset -- both values from the board's
+        once-per-tick elsStop snapshot, no extra Modbus traffic -- but the
+        OPPOSITE failure policy, because the dangerous lie points the other
+        way. There, clearing on a failed read would hide a live offset the
+        operator must not forget, so a failed poll HOLDS the last state. Here
+        the hazard is a lamp claiming a reference that may not exist: an
+        operator who trusts a stale "latched" re-enters a thread the machine
+        cannot actually pick up. So a failed or absent snapshot HIDES the
+        lamp, and it relights on the first good tick that still says latched.
+        A dark lamp only ever costs a re-latch.
+
+        No seen-twice guard, deliberately: referenceLatched and enable are
+        single uint16 registers, so unlike the 32-bit offset total they cannot
+        be read torn.
+
+        Never raises into Kivy's dispatch. The only exception _get can raise
+        is a KeyError for a register name the map does not have -- a bug, not
+        a runtime condition -- and it is logged, not swallowed silently.
+        """
+        cm = self._board.connection_manager
+        reads_baseline = cm.read_failures
+        try:
+            latched = self._hal.tick.reference_latched()
+            enabled = self._hal.tick.enable()
+        except Exception as e:
+            log.error("thread-ref-latch poll failed: %s", e)
+            latched = enabled = False
+        else:
+            if cm.reads_failed_since(reads_baseline):
+                # Fabricated fallbacks (no snapshot this tick). Both False by
+                # construction already; made explicit so this poller's
+                # hide-don't-hold policy survives a fallback-value change.
+                latched = enabled = False
+
+        show = latched and enabled
+        if show != self.thread_ref_latched:
+            self.thread_ref_latched = show
+            # Both terms in the line, because the indicator going dark has
+            # three distinct causes (unlatched, disengaged, no snapshot) and
+            # a session log that cannot tell them apart is how the next
+            # phantom gets chased. No colon -- Kivy's logger eats everything
+            # before one as a category.
+            log.info("ELS thread-ref indicator %s -- latched=%s enable=%s",
+                     "SHOWN" if show else "hidden", latched, enabled)
 
     def _poll_diag_capture(self, *args):
         """Drain any completed firmware settle capture to disk.

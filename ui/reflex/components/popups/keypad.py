@@ -4,6 +4,7 @@ from kivy.properties import NumericProperty, BooleanProperty
 from kivy.uix.popup import Popup
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
+from kivy.uix.widget import Widget
 
 from reflex.components.widgets.keypad_button import KeypadButton
 from reflex.components.widgets.keypad_icon_button import KeypadIconButton
@@ -74,7 +75,20 @@ class Keypad(Popup):
         row3.add_widget(KeypadButton(text="1",on_release=self.add_text))
         row3.add_widget(KeypadButton(text="2",on_release=self.add_text))
         row3.add_widget(KeypadButton(text="3",on_release=self.add_text))
-        row3.add_widget(KeypadIconButton(text="\ue43c",on_release=self.sign_key,disabled=self.integer or self.nonnegative))
+        if self.nonnegative:
+            # ABSENT, not grayed out (2026-08-24 bench feedback). The first
+            # cut of this rendered the sign key disabled, and the operator
+            # read the gray key as something to diagnose rather than a rule
+            # being enforced -- a key that cannot ever do anything has no
+            # business being offered. A bare Widget takes the same equal
+            # share of the row as a key would (every key keeps its default
+            # size_hint), so the 1/2/3 keys stay on the 4-column grid of the
+            # rows above and below. `nonnegative` is fixed at construction
+            # (every caller passes it to Keypad(...)), so building the row
+            # once here is exactly as live as the old `disabled=` was.
+            row3.add_widget(Widget())
+        else:
+            row3.add_widget(KeypadIconButton(text="\ue43c",on_release=self.sign_key,disabled=self.integer))
         layout.add_widget(row3)
 
         row4 = BoxLayout(orientation="horizontal")

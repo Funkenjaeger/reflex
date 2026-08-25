@@ -86,6 +86,55 @@ def test_advbar_notice_overlay_accounts_for_every_collapsible_strip():
             )
 
 
+def test_advbar_status_overlay_carries_both_persistent_tenants():
+    """Every persistent tenant must appear in the STATUS overlay's height.
+
+    The thread-reference latch lamp (2026-08-24 bench feedback: nothing on
+    screen said whether a reference was latched) shares the phase-offset band
+    rather than stacking a second dp(30) strip -- during a widening job both
+    show at once, and a stack would cover the field VALUE readouts for the
+    whole job. Sharing has its own failure shape, and this pins it: a tenant
+    whose controller property is missing from the band's height expression
+    sits inside a zero-height band -- rendered nowhere while the controller
+    happily reports it shown, which for the lamp is the original invisible-
+    latch defect reintroduced silently.
+
+    Deliberately STRUCTURAL, like the notice_overlay guard above and for the
+    same reason: the kv rule tree cannot be built under the mock GL backend,
+    so there is no runtime height to measure. Layout is verified by rendering
+    instead: previews/preview_phase_offset.py.
+    """
+    text = open(ADVBAR_KV).read()
+
+    band = re.search(r"^\s+id:\s*status_overlay\s*$(.*?)^\s+Label:",
+                     text, re.M | re.S)
+    assert band, "could not find the status_overlay block"
+    height = re.search(r"^\s+height:\s*(\S.*)$", band.group(1), re.M)
+    assert height, "could not find the status_overlay height expression"
+
+    for prop in ("phase_offset_active", "thread_ref_latched"):
+        assert prop in height.group(1), (
+            f"'{prop}' is a persistent status tenant but does not raise the "
+            f"status_overlay: its segment will sit in a zero-height band and "
+            f"render nowhere while the controller reports it shown.\n"
+            f"  height: {height.group(1)}"
+        )
+
+    # The lamp's own segment must collapse by WIDTH on the same property --
+    # collapsing by height inside a horizontal band does nothing, and a fixed
+    # width would park an empty success-green label over the Stop Z header
+    # whenever the band is up for the offset alone.
+    lamp = re.search(r"^\s+id:\s*label_ref_latched\s*$(.*?)(?:^\s+Label:|\Z)",
+                     text, re.M | re.S)
+    assert lamp, "could not find the label_ref_latched block"
+    lamp_width = re.search(r"^\s+width:\s*(\S.*)$", lamp.group(1), re.M)
+    assert lamp_width and "thread_ref_latched" in lamp_width.group(1), (
+        "label_ref_latched's width must collapse on "
+        "root.controller.thread_ref_latched.\n  found: "
+        f"{lamp_width.group(1) if lamp_width else None}"
+    )
+
+
 def test_advbar_has_no_size_hint_y_of_zero():
     """`size_hint_y: 0` must not appear in the advanced bar. It is a trap.
 
