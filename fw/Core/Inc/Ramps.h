@@ -380,7 +380,40 @@ typedef struct {
    * repeat of the write and nothing else -- the alternative, a command/ack pair,
    * is a lot of machinery for a diagnostic counter. */
   uint32_t executionCyclesPeak;   // READ-ONLY except for reset: highest executionCycles since the host last wrote 0 here. Compare against 1000 (the per-tick budget at 100 MHz / 10 us)
+
+  /* STEP pulse width instrument (2026-08-25, the dropped-step investigation).
+   *
+   * The pulse is SET at emission, mid-tick after the heavy blocks, and RESET
+   * as the first action of the next ISR entry -- so its HIGH width is however
+   * much wall clock separates those two points, and an overrunning tick can
+   * squeeze it under the servo drive's minimum (typ. 1.5-2.5 us = 150-250
+   * cycles at 100 MHz). A pulse the drive never registered is a step
+   * currentSteps counted and the carriage never made: sync is open-loop on
+   * commanded steps, so the error is PERMANENT and invisible to every
+   * register but the scales. These two MEASURE whether that happens, rather
+   * than inferring it from executionCyclesPeak.
+   *
+   * The width is the DWT delta from the set to the next entry's
+   * already-taken timestamp, so interrupt latency and pending-overrun
+   * compression are IN the number, exactly as the drive experiences them.
+   *
+   * stepPulseMinCycles is a MIN-hold: narrowest pulse since the host last
+   * wrote 0. Zero means "nothing measured since reset", never "a zero-width
+   * pulse" -- the first width replaces it unconditionally.
+   * stepPulseRuntCount counts pulses under ELS_STEP_RUNT_CYCLES: the min
+   * answers "how bad", the count answers "how often". Same reset-by-
+   * writing-0 trade as executionCyclesPeak above. */
+  uint32_t stepPulseMinCycles;    // READ-ONLY except for reset: narrowest STEP pulse since host wrote 0. 0 = nothing measured yet
+  uint32_t stepPulseRuntCount;    // READ-ONLY except for reset: pulses narrower than ELS_STEP_RUNT_CYCLES since host wrote 0
 } elsStop_t;
+
+/* Runt threshold, CPU cycles. 250 = 2.5 us at 100 MHz -- the top of the
+ * minimum-pulse range common step-servo drives specify. Deliberately the
+ * CONSERVATIVE end: a count of pulses under it is "pulses a drive could
+ * plausibly have missed", and the min-hold carries the exact number for any
+ * tighter spec. Compile-time because the threshold is a property of the
+ * DRIVE, not something an operator tunes. */
+#define ELS_STEP_RUNT_CYCLES 250u
 
 typedef struct {
   uint32_t executionInterval;          // READ-ONLY (firmware-owned): ISR period in CPU cycles (current - previous timestamp)
@@ -407,6 +440,11 @@ typedef struct {
   deltaPosError_t scalesSpeed[SCALES_COUNT];
   deltaPosError_t rampsDeltaPos;
   uint32_t servoPreviousDirection;
+  /* STEP pulse width bookkeeping (see elsStop_t): DWT timestamp of the last
+   * pulse SET, and whether one is in flight awaiting its width measurement
+   * at the next entry. Handler-private; the map publishes the results. */
+  uint32_t stepPulseSetAt;
+  uint32_t stepPulseArmed;
   uint16_t elsStopPreviousActive;
   uint16_t elsStopPreviousEnable;
   int32_t  elsStopTakeupTargetSteps;  // servo.currentSteps target value at end of post-resume backlash takeup

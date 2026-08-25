@@ -190,22 +190,24 @@ def els_stop_device():
 
 
 def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
-    """124 registers at 64 a request. It was four requests at 32.
+    """128 registers at 64 a request: two FULL requests, margin ZERO.
 
     The absolute number matters more than the ratio: this block is read once
     per board tick now, so every request in it is paid 30 times a second.
 
-    THE MARGIN IS FOUR REGISTERS. At 64 a request, 128 is the boundary where
-    this becomes THREE requests and the per-tick cost goes up by 50%. The block
-    was 122 when this case was written and is 124 after executionCyclesPeak
-    (2026-08-23), so the next append of more than two registers crosses it.
-    That is not a reason to avoid appending -- it is a reason to raise the
-    chunk size deliberately when it happens, with the same firmware-buffer
-    arithmetic that chose 64, rather than paying a silent third request.
+    THE MARGIN IS NOW EXACTLY ZERO. The block was 122 when this case was
+    first written, 124 after executionCyclesPeak (2026-08-23), and 128 after
+    the STEP pulse width instrument (2026-08-25) -- which lands PRECISELY on
+    the 2x64 boundary. The NEXT register appended, even one, makes this THREE
+    requests and raises the per-tick cost by 50%. That is not a reason to
+    avoid appending -- it is a reason the next append MUST come with the
+    chunk-size decision made deliberately, with the same firmware-buffer
+    arithmetic that chose 64 (Modbus FC3 tops out at 125 registers a request,
+    so headroom exists), rather than paying a silent third request.
     """
     device, transport = els_stop_device
-    assert device.size == 124, (
-        f"elsStop is {device.size} registers, not the 124 this case was "
+    assert device.size == 128, (
+        f"elsStop is {device.size} registers, not the 128 this case was "
         f"reasoned about -- re-check the chunk arithmetic, do not just "
         f"update the number")
 
@@ -213,7 +215,7 @@ def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
 
     base = device.base_address
     assert len(transport.requests) == 2
-    assert transport.requests == [(base, 64), (base + 64, 60)]
+    assert transport.requests == [(base, 64), (base + 64, 64)]
 
 
 def test_the_block_still_fits_in_two_requests_with_room_to_spare(els_stop_device):

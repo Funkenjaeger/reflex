@@ -327,6 +327,11 @@ class PhaseLiveTracker:
             # "physically lost"
             "stepsToGo": fast["stepsToGo"],
             "servoBacklog": backlog,
+            # the pulse-width instrument, correlated per sample: a phase
+            # error that appears alongside a shrinking min / rising runt
+            # count is the dropped-step signature caught in the act
+            "stepPulseMinCycles": snapshot["stepPulseMinCycles"],
+            "stepPulseRuntCount": snapshot["stepPulseRuntCount"],
         })
 
     def _sync_ratio(self, snapshot):

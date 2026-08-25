@@ -118,8 +118,8 @@ int main(void)
      * this assertion is what forced the renumber rather than letting two
      * distinct layouts quietly share a version number. 4 -> 5 when the
      * thread-phase offset block was appended for the groove-widening offset. */
-    check(data.shared.elsStop.protocolVersion == 6,
-          "protocolVersion is 6 (machineMode + manual latch + phase offset map)");
+    check(data.shared.elsStop.protocolVersion == 7,
+          "protocolVersion is 7 (v6 map + the STEP pulse width instrument)");
 
 #ifdef ELS_DIAG_SCRATCH
     /* Pinned to a SPECIFIC schema, not "any nonzero". A probe revision changes

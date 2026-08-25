@@ -385,4 +385,12 @@ add_executable(els_resync_powered_test
 set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
 add_test(NAME els_resync_powered_test COMMAND els_resync_powered_test)
+
+add_executable(els_step_pulse_width_test
+    ${CMAKE_SOURCE_DIR}/test/els_step_pulse_width_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+add_test(NAME els_step_pulse_width_test COMMAND els_step_pulse_width_test)
+target_link_libraries(els_step_pulse_width_test m pthread)
 target_link_libraries(els_resync_powered_test m pthread)

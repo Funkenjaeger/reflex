@@ -27,6 +27,7 @@ def _snapshot(**overrides):
         "latchedSpindle": 1000000, "latchedZ": -2000,
         "latchSeq": 3, "scaleIndex": 1, "stopDirection": -1,
         "phaseOffsetSteps": 0, "active": 0, "takeupPending": 0,
+        "stepPulseMinCycles": 0, "stepPulseRuntCount": 0,
     }
     snap.update(overrides)
     return snap

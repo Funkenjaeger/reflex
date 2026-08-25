@@ -263,7 +263,7 @@ void RampsStart(rampsHandler_t *rampsData) {
    * after the machine lost Modbus on 6 of 6 cuts and the counter that should
    * have shown why turned out to be a spot sampler that could not see the
    * event. */
-  rampsData->shared.elsStop.protocolVersion = 6;
+  rampsData->shared.elsStop.protocolVersion = 7;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
    * explicitly zeroed when no probe is compiled in, rather than left to whatever
@@ -614,6 +614,24 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   shared->executionIntervalCurrent = DWT->CYCCNT;
   shared->executionInterval = shared->executionIntervalCurrent - shared->executionIntervalPrevious;
   shared->fastData.executionInterval = shared->executionInterval;
+
+  /* The STEP pulse that the reset above just ended began at emission last
+   * pass; its HIGH width is exactly start - stepPulseSetAt (Ramps.h, the
+   * pulse width instrument). `start` was taken before the reset, so the
+   * computation sitting here -- after `shared` exists -- measures the same
+   * edge the drive saw. ~5 cycles per tick, unconditional: an instrument
+   * that exists only in a probe build is a measurement nobody has. */
+  if (data->stepPulseArmed) {
+    data->stepPulseArmed = 0;
+    uint32_t stepPulseWidth = start - data->stepPulseSetAt;
+    if (shared->elsStop.stepPulseMinCycles == 0u
+        || stepPulseWidth < shared->elsStop.stepPulseMinCycles) {
+      shared->elsStop.stepPulseMinCycles = stepPulseWidth;
+    }
+    if (stepPulseWidth < ELS_STEP_RUNT_CYCLES) {
+      shared->elsStop.stepPulseRuntCount++;
+    }
+  }
 
   // Reset reference latch on elsStop.enable rising edge (start of a new threading job)
   if (shared->elsStop.enable && !data->elsStopPreviousEnable) {
@@ -1206,6 +1224,11 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
     if (direction == data->servoPreviousDirection && change != 0) {
       HAL_GPIO_WritePin(STEP_GPIO_PORT, STEP_PIN, GPIO_PIN_SET);
       HAL_GPIO_WritePin(SPARE_2_GPIO_PORT, SPARE_2_PIN, GPIO_PIN_SET);
+      /* Pulse born here; its width is measured at the next entry's reset.
+       * Fresh DWT read, not `start`: the whole point is how late in the tick
+       * this set happened. */
+      data->stepPulseSetAt = DWT->CYCCNT;
+      data->stepPulseArmed = 1;
       shared->servo.currentSteps += direction;
 #ifdef EMULATOR_BUILD
       if (emu_step6_active) {
