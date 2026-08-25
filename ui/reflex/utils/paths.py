@@ -33,3 +33,21 @@ def diag_dir() -> Path:
     if override:
         return Path(override).expanduser()
     return config_dir() / "diag"
+
+
+def uistate_dir() -> Path:
+    """Return the directory UI state codes are appended to.
+
+    Sits under :func:`config_dir` for the same reason :func:`diag_dir` does: on
+    the machine that directory is already placed outside ``/root`` so an
+    unprivileged operator can read it, and a capture nobody can fetch without
+    sudo is a capture nobody fetches. Set ``REFLEX_UISTATE_DIR`` to override
+    independently.
+
+    Recording is on by default and costs a few hundred bytes per operator
+    interaction; ``REFLEX_UISTATE=off`` disables it entirely.
+    """
+    override = os.environ.get("REFLEX_UISTATE_DIR")
+    if override:
+        return Path(override).expanduser()
+    return config_dir() / "uistate"

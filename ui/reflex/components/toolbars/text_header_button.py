@@ -42,6 +42,12 @@ class TextHeaderButton(BeepMixin, ButtonBehavior, BoxLayout):
         self.display_value = self.text_button.replace("+", "")
 
     def blinker(self, *args):
+        from reflex.app import MainApp
+        app = MainApp.get_running_app()
+        if app is not None and app.replay_mode:
+            # The blink phase is part of the captured frame, not something to
+            # re-run underneath it.
+            return
         self._blink = not self._blink if self.blink_enable else False
 
     def on_press(self):

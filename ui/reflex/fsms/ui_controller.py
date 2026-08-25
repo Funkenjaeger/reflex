@@ -108,6 +108,17 @@ class ElsUiController(EventDispatcher):
 
     ui_state = StringProperty("idle")
 
+    @staticmethod
+    def _replaying() -> bool:
+        """True only while a snapshot is being applied by the replay tool.
+
+        Always False in normal operation -- ``MainApp.replay_mode`` is set
+        nowhere else.
+        """
+        from reflex.app import MainApp
+        app = MainApp.get_running_app()
+        return bool(app is not None and app.replay_mode)
+
     @property
     def hal(self):
         """Read-only access to the elsStop HAL.
@@ -477,6 +488,13 @@ class ElsUiController(EventDispatcher):
             self._ui_fsm.retract_mode_off()
 
     def _apply_policy(self):
+        if self._replaying():
+            # scripts/replay_ui_state.py has just written the captured values of
+            # these very properties. Recomputing them here from a disconnected
+            # board and an idle FSM would erase the frame being reproduced --
+            # this controller is where most of the ELS picture comes from.
+            return
+
         # X/Z input buttons are usable only when the machine is not moving.
         self.x_z_inputs_enabled = self._els_fsm.state in ["stopped", "disabled"]
         self.start_not_stop = self._ui_fsm.state == "idle"

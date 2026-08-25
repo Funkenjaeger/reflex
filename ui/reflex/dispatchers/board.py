@@ -245,4 +245,9 @@ class Board(EventDispatcher):
         log.error(self.protocol_message)
 
     def blinker(self, *args):
+        from reflex.app import MainApp
+        app = MainApp.get_running_app()
+        if app is not None and app.replay_mode:
+            # The COM led's blink phase is part of the captured frame.
+            return
         self.blink = not self.blink

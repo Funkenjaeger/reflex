@@ -40,6 +40,10 @@ class ElsSpindleInfo(BoxLayout):
         self.display_rpm = self.spindle_rpm.replace("+", "")
 
     def _update_spindle(self, *args):
+        if self.app.replay_mode:
+            # A replayed frame carries the rpm and direction that were on
+            # screen; this poll would recompute them from a disconnected board.
+            return
         axis = self.app.els.get_spindle_axis()
         if axis is None:
             if self.spindle_rpm != "--":

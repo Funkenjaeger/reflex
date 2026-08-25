@@ -22,6 +22,11 @@ class StatusBar(BoxLayout):
         Clock.schedule_interval(self.update, 1.0 / 5)
 
     def update(self, *args, **kv):
+        if self.app.replay_mode:
+            # A replayed frame carries the interval/fps/cycles that were on
+            # screen when it was captured; this timer would overwrite them with
+            # the replay box's own numbers.
+            return
         self.fps = Clock.get_fps()
         if not self.app.board.connected:
             return
