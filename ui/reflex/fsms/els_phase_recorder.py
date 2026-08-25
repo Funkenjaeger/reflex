@@ -386,3 +386,102 @@ class PhaseLiveTracker:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Spindle count watch: the belt-off experiment's eyes.
+# ════════════════════════════════════════════════════════════════════════
+
+WATCH_FILENAME = "spindle_counts.jsonl"
+WATCH_SAMPLE_SECONDS = 1.0
+
+
+class SpindleCountWatch:
+    """Logs the raw spindle counter whenever it moves. No job required.
+
+    THE GAP THIS CLOSES (2026-08-25): the phase tracker records only during a
+    latched, armed threading job -- correct for phase, useless for the
+    belt-off EMI experiment, where the whole point is watching the counter
+    with NO job, NO latch, and the encoder mechanically stationary. The UI
+    shows spindle SPEED (from the Scales.c inputs path -- a different chain);
+    this reads fastData's scaleCurrent[0], the ISR counter that sync and the
+    phase math actually consume, which is the chain under suspicion.
+
+    CHANGE-ONLY, ~1 Hz: a stationary counter writes nothing, so an idle
+    machine costs zero lines and a belt-off run produces output exactly when
+    something counts -- which, with the pulley bare, is only ever noise. The
+    counter is CUMULATIVE, so a burst briefer than the sample interval still
+    leaves a permanent displacement the next sample catches; only a
+    perfectly net-zero burst is invisible, and a net-zero burst cannot cause
+    the phase divergence this exists to chase. servoMode and the Z count ride
+    along so a session can be read without cross-referencing anything.
+    """
+
+    SPINDLE_SCALE = 0
+
+    def __init__(self, board, path=None, now=time.monotonic):
+        self._board = board
+        self._path = path
+        self._now = now
+        self._last_sample = None
+        self._last_count = None
+        self._failures = 0
+        self._disabled = False
+
+    @property
+    def path(self):
+        if self._path is None:
+            self._path = diag_dir() / WATCH_FILENAME
+        return self._path
+
+    @property
+    def disabled(self) -> bool:
+        return self._disabled
+
+    def poll(self) -> None:
+        """Called on every board tick. NEVER raises (Kivy dispatch above)."""
+        if self._disabled:
+            return
+        try:
+            self._poll()
+        except Exception as e:
+            self._failures += 1
+            if self._failures >= MAX_FAILURES:
+                self._disabled = True
+                log.warning(
+                    "spindle count watch disabled after %d failures: %s",
+                    self._failures, e)
+            else:
+                log.debug("spindle count sample failed: %s", e, exc_info=True)
+
+    def _poll(self) -> None:
+        now = self._now()
+        if self._last_sample is not None                 and (now - self._last_sample) < WATCH_SAMPLE_SECONDS:
+            return
+        fast = self._board.fast_data_values
+        if not fast:
+            return                              # no link: clean skip
+
+        count = int(fast["scaleCurrent"][self.SPINDLE_SCALE])
+        if count == self._last_count:
+            self._last_sample = now             # cadence advances, no line
+            return
+
+        first = self._last_count is None
+        delta = None if first else count - self._last_count
+        self._last_count = count
+        self._last_sample = now
+        self._append({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "spindleCount": count,
+            # None on the first line of a connection: a baseline, not motion.
+            "delta": delta,
+            "zCount": int(fast["scaleCurrent"][1]),
+            "servoMode": fast["servoMode"],
+        })
+
+    def _append(self, record: dict) -> None:
+        path = self.path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
