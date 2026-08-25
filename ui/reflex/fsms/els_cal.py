@@ -278,6 +278,11 @@ class BacklashCalibration:
         if self.state != CalState.PASSED:
             return False
         self._els.els_cal_last_measured_steps = self.mean_steps
+        # The legs themselves, not just the mean: reconcile re-teaches them to
+        # firmware RAM after a power cycle so the take-up gate keeps its
+        # derived threshold instead of falling to the floor (see
+        # ElsStopHal.set_cal_measured).
+        self._els.els_cal_measured_legs = [int(v) for v in self.measured]
         self._els.els_backlash_steps = self.command_steps
         self._hal.set_backlash_steps(self.command_steps)
         log.info("els_cal: committed measured=%d command=%d",

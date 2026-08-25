@@ -224,6 +224,12 @@ class PhaseLiveTracker:
         # every error in the file.
         self._ratio = None          # (num, den)
         self._ratio_key = None
+        # Idle-reason latch: the tracker's silent gates are correct, but
+        # fifteen silent minutes DURING a latched job (2026-08-25, sync ratio
+        # never re-taught after a power cycle) is a check that cannot fail
+        # pointed the other way. Pathological idles -- gates that pass the
+        # job-exists test but fail its premises -- log once per transition.
+        self._idle_reason = None
 
     @property
     def path(self):
@@ -266,15 +272,23 @@ class PhaseLiveTracker:
         # unlatched job has no datum -- a line written there would be a number
         # with no meaning, filed where meaningful numbers live.
         if not snapshot["referenceLatched"] or not snapshot["enable"]:
+            self._note_idle(None)               # ordinary idle: no job, no noise
             return
         pitch = float(snapshot["threadPitchSteps"])
         zcpp = float(snapshot["zCountsPerPitch"])
         if pitch == 0.0 or zcpp == 0.0:
+            self._note_idle(
+                "latched job but firmware thread geometry is ZERO -- nothing "
+                "has pushed it since the last power cycle; no samples recorded")
             return
 
         ratio = self._sync_ratio(snapshot)
         if ratio is None:
+            self._note_idle(
+                "latched job but the sync ratio is unreadable or zero in "
+                "firmware; no samples recorded")
             return                              # unreadable this tick; retried
+        self._note_idle(None)
         num, den = ratio
 
         scales = fast["scaleCurrent"]
@@ -333,6 +347,16 @@ class PhaseLiveTracker:
             "stepPulseMinCycles": snapshot["stepPulseMinCycles"],
             "stepPulseRuntCount": snapshot["stepPulseRuntCount"],
         })
+
+    def _note_idle(self, reason):
+        """Log pathological-idle transitions, once each way, never per tick."""
+        if reason == self._idle_reason:
+            return
+        if reason is not None:
+            log.warning("phase live tracker idle: %s", reason)
+        elif self._idle_reason is not None:
+            log.info("phase live tracker recording again")
+        self._idle_reason = reason
 
     def _sync_ratio(self, snapshot):
         """The ratio the firmware is using, read once per reference.

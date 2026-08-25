@@ -361,3 +361,71 @@ def test_repeated_failures_disable_the_tracker(tmp_path):
         t.poll()
 
     assert t.disabled is True
+
+
+# ─── pathological idles announce themselves (2026-08-25) ───────────────────
+# The tracker sat silent for fifteen minutes DURING a latched, armed test
+# because the firmware's thread geometry was never re-taught after a power
+# cycle. The silent gates are correct; silence about WHY, during a job, was
+# the check-that-cannot-fail shape pointed the other way.
+
+def test_zero_geometry_during_a_latched_job_logs_once(tmp_path, caplog):
+    import logging
+    clock = _Clock()
+    board = _Board(_snapshot(threadPitchSteps=0.0), _fast())
+    t = _tracker(tmp_path, board, clock)
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(5):
+            t.poll()
+            clock.t += LIVE_SAMPLE_SECONDS + 0.01
+
+    hits = [r for r in caplog.records if "geometry is ZERO" in r.getMessage()]
+    assert len(hits) == 1, "once per transition, never per tick"
+
+
+def test_unreadable_ratio_during_a_latched_job_logs_once(tmp_path, caplog):
+    import logging
+    clock = _Clock()
+    board = _Board(_snapshot(), _fast(), fabricate_ratio=True)
+    t = _tracker(tmp_path, board, clock)
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(5):
+            t.poll()
+            clock.t += LIVE_SAMPLE_SECONDS + 0.01
+
+    hits = [r for r in caplog.records if "sync ratio" in r.getMessage()]
+    assert len(hits) == 1
+
+
+def test_recovery_is_announced_and_recording_resumes(tmp_path, caplog):
+    import logging
+    clock = _Clock()
+    board = _Board(_snapshot(threadPitchSteps=0.0), _fast())
+    t = _tracker(tmp_path, board, clock)
+    t.poll()
+    clock.t += LIVE_SAMPLE_SECONDS + 0.01
+
+    board.els_stop_values = _snapshot()          # geometry arrives
+    with caplog.at_level(logging.INFO):
+        t.poll()
+
+    assert any("recording again" in r.getMessage() for r in caplog.records)
+    assert len(_lines(t)) == 1
+
+
+def test_ordinary_idle_stays_silent(tmp_path, caplog):
+    """No job latched is the machine's normal state for hours; logging it
+    would bury the pathological cases this exists to surface."""
+    import logging
+    clock = _Clock()
+    board = _Board(_snapshot(referenceLatched=0), _fast())
+    t = _tracker(tmp_path, board, clock)
+
+    with caplog.at_level(logging.INFO):
+        for _ in range(5):
+            t.poll()
+            clock.t += LIVE_SAMPLE_SECONDS + 0.01
+
+    assert not [r for r in caplog.records if "tracker" in r.getMessage()]

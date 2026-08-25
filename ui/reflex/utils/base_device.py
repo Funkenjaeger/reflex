@@ -93,6 +93,20 @@ class BaseDevice:
 
     def __setitem__(self, key, value):
         var = self._variable_index[key]
+        if var.count > 1 and isinstance(value, (list, tuple)):
+            # Symmetric with __getitem__'s array read: element-wise at
+            # type-length strides. Without this, assigning a list handed the
+            # WHOLE list to the scalar write function, whose int() coercion
+            # raised, was swallowed by the write path's except, and surfaced
+            # only as connected=False -- a silent no-op write. Needed by the
+            # calMeasured round-trip (the calibration legs the take-up gate
+            # derives its threshold from, restored at connect).
+            for i, v in enumerate(value[:var.count]):
+                var.type.write_function(
+                    self.dm,
+                    var.address + self.base_address + var.type.length * i,
+                    v, f"{key}[{i}]")
+            return
         var.type.write_function(self.dm, var.address + self.base_address, value, key)
         return
 

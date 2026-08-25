@@ -121,6 +121,7 @@ def _els(**overrides):
         els_takeup_margin_floor_steps=10,
         els_cal_last_measured_steps=0,
         els_backlash_steps=0,
+        els_cal_measured_legs=[0, 0, 0],
     )
     cfg.update(overrides)
     z_input_index = cfg.pop("z_input_index", 1)
@@ -415,3 +416,19 @@ def test_no_z_axis_refuses_before_anything_is_written():
     assert hal.scale_index_written is None
     assert hal.limits is None
     assert hal.cal_command == 0 or hal._running == 0
+
+
+def test_commit_stores_the_three_legs_for_reconcile():
+    """The mean was always saved; the LEGS are what reconcile re-teaches to
+    firmware RAM after a power cycle, so the take-up gate keeps its derived
+    threshold. Verbatim, not a fabricated [mean, mean, mean]."""
+    hal = FakeHal(measured=(365, 373, 366))
+    els = _els()
+    cal = BacklashCalibration(hal, els)
+    cal.start()
+    _run_to_completion(cal)
+    assert cal.state == CalState.PASSED
+
+    cal.commit()
+
+    assert els.els_cal_measured_legs == [365, 373, 366]

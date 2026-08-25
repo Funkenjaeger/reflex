@@ -374,6 +374,24 @@ class ElsStopHal:
             return self._no_link([0, 0, 0])
         return [int(v) for v in self._board.device['elsStop']['calMeasured']]
 
+    def set_cal_measured(self, legs) -> None:
+        """Restore the three calibration leg measurements to firmware RAM.
+
+        calMeasured is by convention firmware-written -- the end of a real run
+        publishes it -- and the take-up confirmation gate derives its
+        threshold from the legs' mean. But the registers live in RAM: every
+        power cycle zeroes them, the mean derivation fails valid (any zero leg
+        reports "no calibration on file"), and the gate silently drops to the
+        2-count floor until the operator recalibrates. Since 2026-08-25 the
+        legs are persisted UI-side at commit and re-taught here at reconcile.
+        Pushing the actual measured legs -- never a fabricated mean -- keeps
+        the registers honest; a stale-but-real bar is stricter than the floor,
+        and an overtight one refuses loudly, which announces its own fix.
+        """
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['calMeasured'] = [int(v) for v in legs]
+
     def reads_baseline(self) -> int:
         """Snapshot to detect fabricated reads across a group of reads.
 

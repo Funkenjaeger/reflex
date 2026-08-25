@@ -64,6 +64,11 @@ def _make_els(*, z_axis=None, x_axis=None, spindle=None, els_backlash_steps=0):
     els.stop_direction_value.side_effect = lambda els_forward: -1 if els_forward else 1
     els.direction_sign.side_effect = lambda els_forward: 1 if els_forward else -1
     els.els_backlash_steps = els_backlash_steps
+    # Reconcile re-teaches these to firmware RAM; real values, not Mocks, so
+    # int() coercion and the all-positive gate run for real.
+    els.els_cal_ceiling_steps = 1008
+    els.els_cal_motion_thresh_counts = 2
+    els.els_cal_measured_legs = [0, 0, 0]
     return els
 
 
@@ -90,6 +95,9 @@ def _make_servo(ratio_num=1, ratio_den=1, lead_screw_pitch=0.0,
 def _make_board(servo=None):
     board = MagicMock()
     board.connected = True
+    # Reconcile iterates board.axes to re-teach sync ratios; a bare MagicMock
+    # is not iterable and every reconcile test would explode on it.
+    board.axes = []
     # Real read-failure accounting, deliberately not a Mock: a MagicMock makes
     # reads_failed_since() answer with a truthy Mock, so every guarded read
     # would discard itself and the tests would pass for the wrong reason.
@@ -801,3 +809,114 @@ def test_reconcile_hands_off_mid_cut():
     hal.set_active.assert_not_called()
     hal.set_stop_position.assert_not_called()
     hal.set_stop_direction.assert_not_called()
+
+
+# ─── virgin-RAM re-teaching (2026-08-25, the power-cycle landmine family) ──
+# One power cycle exposed four faces of one defect: firmware RAM the UI
+# establishes lazily and never re-establishes. These pin the two paths that
+# now own the re-teaching: the ARM path teaches the job's premises, and
+# reconcile teaches the session-wide ones.
+
+def test_arm_idle_stop_teaches_the_jobs_premises():
+    """Geometry and backlash land when the job ARMS, not first at Cut. The
+    window this closes: engage after a power cycle, latch a re-sync reference
+    -- against pitch 0, so every phase instrument read the job as turning."""
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.els.els_backlash_steps = 444
+    fsm.controller.is_threading = True
+    fsm.controller.stop_z_encoder = 1200
+    fsm.push_thread_geometry = MagicMock()
+    fsm.push_turning_geometry = MagicMock()
+
+    fsm.arm_idle_stop()
+
+    fsm.push_thread_geometry.assert_called_once()
+    fsm.push_turning_geometry.assert_not_called()
+    hal.set_backlash_steps.assert_called_with(444)
+
+
+def test_arm_idle_stop_teaches_turning_geometry_in_turning_mode():
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.controller.is_threading = False
+    fsm.controller.stop_z_encoder = 1200
+    fsm.push_thread_geometry = MagicMock()
+    fsm.push_turning_geometry = MagicMock()
+
+    fsm.arm_idle_stop()
+
+    fsm.push_turning_geometry.assert_called_once()
+    fsm.push_thread_geometry.assert_not_called()
+
+
+def test_reconcile_reteaches_the_calibration_legs():
+    """A real record is pushed back; the take-up gate keeps its derived
+    threshold across power cycles instead of falling to the 2-count floor."""
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.els.els_cal_measured_legs = [365, 373, 366]
+
+    fsm.reconcile_firmware_on_connect()
+
+    hal.set_cal_measured.assert_called_once_with([365, 373, 366])
+
+
+def test_reconcile_never_teaches_zero_legs():
+    """An absent calibration must stay absent -- pushing zeros would be
+    teaching the firmware a lie that its own validity rule happens to catch
+    today. The gate is here, not in the firmware's forbearance."""
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.els.els_cal_measured_legs = [0, 0, 0]
+
+    fsm.reconcile_firmware_on_connect()
+
+    hal.set_cal_measured.assert_not_called()
+
+
+def test_reconcile_never_teaches_partial_legs():
+    """One dead leg means the set is not a calibration (the firmware mean
+    rule agrees); [365, 0, 366] must not be pushed either."""
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.els.els_cal_measured_legs = [365, 0, 366]
+
+    fsm.reconcile_firmware_on_connect()
+
+    hal.set_cal_measured.assert_not_called()
+
+
+def test_reconcile_repushes_every_axis_sync_ratio():
+    """The ratio registers are written only by a property-CHANGE binding, so
+    an unchanged UI setting is never re-sent on its own; after a power cycle
+    the firmware holds 0/0 and sync follows nothing. Reconcile re-teaches
+    every axis explicitly."""
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    a1, a2, a3 = MagicMock(), MagicMock(), MagicMock()
+    fsm.board.axes = [a1, a2, a3]
+
+    fsm.reconcile_firmware_on_connect()
+
+    a1.push_sync_ratio.assert_called_once()
+    a2.push_sync_ratio.assert_called_once()
+    a3.push_sync_ratio.assert_called_once()
+
+
+def test_reconcile_reteaching_happens_in_every_state():
+    """The re-taught values are data, not motion: they must land in the
+    disabled state too, where the next session's cal or arm depends on them."""
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    assert fsm.state == "disabled"
+    fsm.els.els_cal_measured_legs = [100, 101, 102]
+    axis = MagicMock()
+    fsm.board.axes = [axis]
+
+    fsm.reconcile_firmware_on_connect()
+
+    hal.set_cal_measured.assert_called_once()
+    axis.push_sync_ratio.assert_called_once()
+    # and the state policy still ran
+    hal.set_enable.assert_called_once_with(False)

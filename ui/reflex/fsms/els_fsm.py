@@ -504,6 +504,31 @@ class ElsFsm:
             int(self.els.els_cal_motion_thresh_counts),
         )
 
+        # THE REST OF WHAT FIRMWARE RAM FORGOT, same reasoning, all data-only
+        # (no motion, no arming) and therefore safe in every state. One
+        # 2026-08-25 power cycle exposed four faces of this defect: scaleIndex
+        # sent a calibration watching the SPINDLE (fixed at cal start), the
+        # sync ratio and thread geometry muted an instrumented bench test for
+        # fifteen minutes, and calMeasured drops the take-up gate to its floor
+        # every boot. The arm path now teaches the job's own premises; these
+        # two are the session-wide ones nothing else re-teaches.
+        #
+        # The calibration legs: only a real record, never zeros -- an absent
+        # calibration must stay absent, and the firmware's all-legs-positive
+        # validity rule means a zero push would be indistinguishable from it
+        # anyway. Stale-but-real raises the gate's bar above the floor; if the
+        # machine's lash has since shrunk enough to over-tighten it, the gate
+        # refuses LOUDLY and the fix (recalibrate) is in the message.
+        legs = [int(v) for v in self.els.els_cal_measured_legs]
+        if len(legs) == 3 and all(v > 0 for v in legs):
+            self.hal.set_cal_measured(legs)
+
+        # Sync ratios, every axis: the firmware registers are written only by
+        # a property-CHANGE binding, so an unchanged UI setting is never
+        # re-sent on its own. See Axis.push_sync_ratio.
+        for axis in self.board.axes:
+            axis.push_sync_ratio()
+
         # SNAPSHOT BEFORE TEARDOWN. The firmware keeps running across a UI
         # restart, so these registers are the only surviving evidence of what
         # the machine was doing. Read first, because everything below destroys
@@ -600,6 +625,17 @@ class ElsFsm:
             return
         self.hal.set_stop_position(enc)
         self.set_scale_index()
+        # THE JOB'S PREMISES LAND WHEN THE JOB ARMS, not first at cut. All of
+        # this is firmware RAM: after a power cycle an engaged-and-armed job
+        # used to sit with pitch 0 and backlash 0 until the first Cut pushed
+        # them -- during which window the re-sync wizard would latch against
+        # zero geometry and every phase instrument read the job as "turning".
+        # Found 2026-08-25 when exactly that muted a 15-minute bench test.
+        if self.controller.is_threading:
+            self.push_thread_geometry()
+        else:
+            self.push_turning_geometry()
+        self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
 
     def _spindle_pitch_mm(self) -> Fraction:
         # spindle.syncRatioNum/Den is mm-per-rev (= mm-per-thread-pitch when

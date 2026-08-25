@@ -256,6 +256,19 @@ class AxisDispatcher(SavingDispatcher):
 
     # ── Sync ratio ───────────────────────────────────────────────────
 
+    def push_sync_ratio(self):
+        """Re-write this axis's sync ratio into the firmware registers.
+
+        The ratio registers are firmware RAM and the binding below fires only
+        when the UI-side property CHANGES -- so after a power cycle the
+        firmware holds 0/0 while the UI believes the ratio is set, sync
+        follows nothing, and (2026-08-25) an instrumented bench test recorded
+        fifteen minutes of silence. Reconcile calls this for every axis at
+        connect; the same-value dispatch rule makes the explicit call the only
+        reliable way to re-teach an unchanged setting.
+        """
+        self._set_sync_ratio()
+
     def _set_sync_ratio(self, *args, **kv):
         if not self.board.connected:
             return

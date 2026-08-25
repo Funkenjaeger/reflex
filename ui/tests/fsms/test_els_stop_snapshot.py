@@ -490,3 +490,63 @@ def test_a_disconnected_board_still_counts_a_live_read_as_fabricated():
     assert hal.read_enable() is False
     assert hal.reads_fabricated_since(baseline) is True
     assert board.connection_manager.read_failures == 1
+
+
+# ─── array WRITES through the real register layout ─────────────────────────
+# __setitem__ historically passed a whole list to the scalar write function,
+# whose int() coercion raised, was swallowed by the write path's except, and
+# surfaced only as connected=False: a silent no-op. The calMeasured
+# round-trip (reconcile re-teaching the calibration legs) is the first array
+# write in the codebase, so the element-wise path is pinned here against the
+# REAL parsed layout, not a fake.
+
+def test_array_write_goes_element_wise_at_type_strides(els_stop_device):
+    device, _transport = els_stop_device
+    var = device._variable_index["calMeasured"]
+    writes = []
+    original = var.type.write_function
+    try:
+        var.type.write_function = (
+            lambda dm, addr, value, name="": writes.append((addr, value, name)))
+        device["calMeasured"] = [365, 373, 366]
+    finally:
+        var.type.write_function = original
+
+    base = var.address + device.base_address
+    stride = var.type.length
+    assert [(a, v) for a, v, _n in writes] == [
+        (base, 365), (base + stride, 373), (base + 2 * stride, 366)]
+    assert [n for _a, _v, n in writes] == [
+        "calMeasured[0]", "calMeasured[1]", "calMeasured[2]"]
+
+
+def test_array_write_never_exceeds_the_declared_count(els_stop_device):
+    """A four-element list against calMeasured[3] writes three registers and
+    stops -- the fourth would land on calCeilingSteps, silently."""
+    device, _transport = els_stop_device
+    var = device._variable_index["calMeasured"]
+    writes = []
+    original = var.type.write_function
+    try:
+        var.type.write_function = (
+            lambda dm, addr, value, name="": writes.append(addr))
+        device["calMeasured"] = [1, 2, 3, 4]
+    finally:
+        var.type.write_function = original
+
+    assert len(writes) == 3
+
+
+def test_scalar_writes_are_unchanged(els_stop_device):
+    device, _transport = els_stop_device
+    var = device._variable_index["calCommand"]
+    writes = []
+    original = var.type.write_function
+    try:
+        var.type.write_function = (
+            lambda dm, addr, value, name="": writes.append((addr, value)))
+        device["calCommand"] = 1
+    finally:
+        var.type.write_function = original
+
+    assert writes == [(var.address + device.base_address, 1)]

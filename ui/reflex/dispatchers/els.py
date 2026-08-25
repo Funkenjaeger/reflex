@@ -1,5 +1,6 @@
 from kivy.logger import Logger
-from kivy.properties import BooleanProperty, NumericProperty, StringProperty
+from kivy.properties import (BooleanProperty, ListProperty,
+                             NumericProperty, StringProperty)
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
 
@@ -57,6 +58,13 @@ class ElsDispatcher(SavingDispatcher):
     # A wide spread means the measurement is not reproducible, which is itself
     # the finding — do NOT widen this to make a wizard proceed.
     els_cal_max_spread_steps = NumericProperty(12)
+    # The three per-reversal leg measurements of the last ACCEPTED calibration,
+    # verbatim. Persisted so reconcile can re-teach firmware RAM after a power
+    # cycle -- the take-up gate derives its confirmation threshold from their
+    # mean, and without them it silently falls to the bare motion floor every
+    # boot. [0, 0, 0] means no accepted calibration on record; reconcile skips
+    # the push rather than teach the firmware a lie.
+    els_cal_measured_legs = ListProperty([0, 0, 0])
 
     # Take-up margin: always measured + max(pct, floor), never trimmed toward
     # the minimum. The floor exists because at a small lash a flat percentage
