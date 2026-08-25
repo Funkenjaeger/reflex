@@ -378,3 +378,11 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
 target_link_libraries(els_isr_peak_test m pthread)
 add_test(NAME els_isr_peak_test COMMAND els_isr_peak_test)
+
+add_executable(els_resync_powered_test
+    ${CMAKE_SOURCE_DIR}/test/els_resync_powered_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+add_test(NAME els_resync_powered_test COMMAND els_resync_powered_test)
+target_link_libraries(els_resync_powered_test m pthread)

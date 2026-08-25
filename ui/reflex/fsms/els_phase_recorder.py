@@ -64,8 +64,12 @@ IDENTITY_FIELDS = (
 # snapshot, so breadth is free -- and the cost of a missing field is another
 # bench session, which is not free.
 CONTEXT_FIELDS = (
-    # what the reference was
-    "latchedZ", "latchedSpindle", "referenceLatched",
+    # what the reference was -- latchSeq is the discriminator between the
+    # operator's manual latch (which increments it) and the first-trigger
+    # auto-latch (which does not). A reference that changes with no latchSeq
+    # change was replaced behind the operator's back.
+    "latchedZ", "latchedSpindle", "referenceLatched", "latchSeq",
+    "stopPosition",
     # the geometry the correction was computed against
     "threadPitchSteps", "zCountsPerPitch", "phaseOffsetSteps",
     # the take-up that was supposed to seat the lash first

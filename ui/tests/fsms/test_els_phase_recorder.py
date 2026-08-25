@@ -23,6 +23,7 @@ def _snapshot(**overrides):
         "lastIdealAdvance": 0.0, "lastActualAdvance": 0.0,
         "lastPhaseError": 0.0, "lastCorrection": 0.0,
         "latchedZ": 0, "latchedSpindle": 0, "referenceLatched": 0,
+        "latchSeq": 0, "stopPosition": 0,
         "threadPitchSteps": 711.1, "zCountsPerPitch": 200.0,
         "phaseOffsetSteps": 0, "backlashSteps": 444,
         "takeupSeq": 0, "takeupResult": 0,
