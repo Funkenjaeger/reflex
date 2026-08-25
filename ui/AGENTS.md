@@ -359,6 +359,19 @@ Every UI component follows this structure:
   (or `integration`) for work. See "Branching and Hardware Verification" at the
   top — `dev-staging` is gated on Evan's hardware verification and agents do not
   commit to it except for the clerical exception.
+- **Branch naming: `<type>/<short-description>`, and the type is one of the
+  conventional-commit types** — `feat/`, `fix/`, `chore/`, `docs/`, `refactor/`.
+  Evan reads the branch list in GitKraken, which groups by prefix, so the prefix
+  is a SORTING KEY, not decoration. A per-session or per-tool prefix (`claude/`,
+  a random suffix) puts every branch in its own group and turns the grouping
+  into clutter — which is the opposite of what it is for. Match the prefix to
+  the commit type the work will land as.
+
+  `perf/` is deliberately not in that list. A change made to fix a suspected
+  fault is a `fix/` even when the mechanism is a timing or throughput one:
+  it only "improves performance" inasmuch as it stops something being broken.
+  Reserve `perf/` for work whose actual goal is speed on something already
+  correct — and if you are hesitating, it is a `fix/`.
 - **Commit messages:** Follow conventional commits (`fix:`, `feat:`, `chore:`, etc.).
   The release notes are generated from them, so the log is what describes a release.
 - **Versioning:** ONE version for the whole monorepo — the repo-root `VERSION`

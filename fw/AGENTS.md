@@ -13,6 +13,14 @@ and everything on it is supposed to be hardware-verified.
 
 - Work on a **feature branch**, or on **`integration`** when several changes are
   in flight and separate branches would just be overhead.
+- **Name it `<type>/<short-description>`**, where the type is the
+  conventional-commit type the work will land as: `feat/`, `fix/`, `chore/`,
+  `docs/`, `refactor/`. Evan reads the branch list in GitKraken, which groups by
+  prefix, so the prefix is a SORTING KEY. A per-session or per-tool prefix
+  (`claude/`, a random suffix) puts every branch in a group of its own and makes
+  the grouping worse than none. `perf/` is deliberately not on the list: a
+  change made to fix a suspected fault is a `fix/` even when the mechanism is a
+  timing one — if you are hesitating, it is a `fix/`.
 - `integration` / feature branch → `dev-staging` is merged **only after Evan has
   verified on hardware**. He does that merge, or explicitly asks for it.
 - `dev-staging` → `dev` and `dev` → `main` are **Evan's alone**. Never do these.

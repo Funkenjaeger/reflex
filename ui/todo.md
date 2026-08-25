@@ -565,7 +565,7 @@ Works-as-specified (note, not bugs):
 
 ## UI state codes — follow-ups
 
-Shipped on `claude/reflex-ui-state-encoding-8yz67z`: `reflex/uistate/` records a
+Shipped on `feat/ui-state-encoding`: `reflex/uistate/` records a
 versioned code per visual state change, `scripts/replay_ui_state.py` re-renders
 any code to a PNG, `scripts/storyboard.py` builds a contact sheet. See the
 AGENTS.md section for the rules; these are the known gaps.
