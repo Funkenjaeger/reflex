@@ -394,12 +394,31 @@
           font_size: dp(13)
           color: app.theme.text
 
-    # ── Status overlay: thread-phase offset (widening a groove) ──────────────
-    #    A SECOND overlay, not a third strip in notice_overlay, because this one
-    #    is PERSISTENT. A nonzero elsStop.phaseOffsetSteps means the machine is
-    #    cutting at a deliberate phase shift, and it stays that way for the whole
-    #    job -- so whatever this covers, it covers for the length of the job,
-    #    which is a different trade from a strip that is up for three seconds.
+    # ── Status overlay: persistent job state (thread-phase offset + the
+    #    thread-reference latch lamp) ────────────────────────────────────────
+    #    A SECOND overlay, not a third strip in notice_overlay, because what
+    #    lives here is PERSISTENT. A nonzero elsStop.phaseOffsetSteps means the
+    #    machine is cutting at a deliberate phase shift, and it stays that way
+    #    for the whole job -- so whatever this covers, it covers for the length
+    #    of the job, which is a different trade from a strip that is up for
+    #    three seconds.
+    #
+    #    THE LATCH LAMP SHARES THIS BAND, NOT A SECOND ONE BELOW IT
+    #    (2026-08-24 bench feedback: nothing on screen said whether a thread
+    #    reference was latched). It is up for most of every engaged threading
+    #    job -- the latch banks on the first Cut -- and during a widening job
+    #    BOTH would show at once, so a stacked second dp(30) strip would cover
+    #    the field VALUE readouts, not just their headers, for the whole job.
+    #    One band holds both instead: the lamp is a fixed-width left segment
+    #    (next to the Engage card's Armed/Stopped lamp it belongs beside), the
+    #    offset text stays centered in the remainder, and the covering cost
+    #    never exceeds what the offset strip alone already paid for.
+    #
+    #    THE WIDTH FOLLOWS THE TENANTS: full inset while an offset is showing,
+    #    shrunk to just the lamp when the lamp is alone -- so the common case
+    #    (latched, no offset) covers ONE header ("Stop Z"), not four. Nothing
+    #    resizes anywhere else; this band was already the screen's one
+    #    exception, exempted by name in previews/preview_phase_offset.py.
     #
     #    WHY IT IS NOT PINNED TO THE TOP LIKE THE NOTICES. The bar's top 26 px is
     #    the wizard instruction strip, and a transient warning may sit over that
@@ -425,7 +444,12 @@
       orientation: 'horizontal'
       padding: dp(8), 0
       size_hint: None, None
-      height: dp(30) if root.controller.phase_offset_active else 0
+      # EITHER tenant raises the band; each hides its own segment below. A
+      # tenant missing from this expression would leave its segment inside a
+      # zero-height band -- invisible, which for the latch lamp is the exact
+      # defect this strip exists to fix (see test_kv_syntax.py's structural
+      # guard on the status overlay).
+      height: dp(30) if (root.controller.phase_offset_active or root.controller.thread_ref_latched) else 0
       opacity: 1 if self.height else 0
       disabled: not self.height
       # INSET BETWEEN THE ENGAGE CARD AND THE MODE COLUMN rather than spanning
@@ -441,9 +465,14 @@
       # fully readable underneath.
       #
       # Bound to the two widgets' real edges, not to their literal widths, so
-      # the inset cannot drift out of step with them.
+      # the inset cannot drift out of step with them. Full inset only while
+      # the offset text needs the room; the lamp alone gets lamp width.
+      # Lamp-only width is the LAMP'S width plus this band's own horizontal
+      # padding, read from the real properties rather than re-stated as a
+      # literal -- a literal here and a dp() there is how the lamp ends up
+      # half-outside its tint.
       x: card_engage.right
-      width: max(mode_column.x - card_engage.right, 0)
+      width: max((mode_column.x - card_engage.right) if root.controller.phase_offset_active else ((label_ref_latched.width + self.padding[0] + self.padding[2]) if root.controller.thread_ref_latched else 0), 0)
       # `y`, NOT `top`. Assigning `top` sets y ONCE (y = top - height), so when
       # the strip's own height goes 0 -> 30 the stale y is kept and the strip
       # grows UPWARD out of the bar, over the DRO rows -- the 2026-08-16 defect
@@ -472,6 +501,31 @@
         Line:
           points: (self.x, self.y + 0.5, self.right, self.y + 0.5)
           width: 1.0
+      # ── Thread-reference latch lamp ──────────────────────────────────────
+      # LAMP + TEXT ONLY, no latched-Z readout: latchedZ is raw Z-scale counts
+      # in the firmware's frame, and nothing on the tick path converts a bare
+      # count to display units (the axes convert their own live encoders).
+      # Building a conversion just for this line would be a second place for
+      # that arithmetic to rot. latchedSpindle is meaningless to a human and
+      # is deliberately not shown. Success-colored like the Engage card's
+      # "Armed" text -- it is the same kind of answer ("the machine holds what
+      # you think it holds"), and it sits right next to that card.
+      # Width-collapsed (not height) so the offset text keeps the band when
+      # the latch is down: a mid-job disengage takes the lamp away, not the
+      # offset the operator still has to remember.
+      Label:
+        id: label_ref_latched
+        text: "THREAD REF LATCHED"
+        size_hint_x: None
+        width: dp(180) if root.controller.thread_ref_latched else 0
+        opacity: 1 if self.width else 0
+        text_size: self.size
+        halign: 'left'
+        valign: 'middle'
+        font_name: app.theme.font_bold
+        font_size: dp(13)
+        color: app.theme.success_text
+
       Label:
         id: label_phase_offset
         text: root.controller.phase_offset_text

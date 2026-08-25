@@ -75,6 +75,18 @@ class TickReads:
     def current_mode(self) -> int:
         return int(self._get('machineMode', 0))
 
+    # The pair the latched-reference indicator polls, TOGETHER, from the same
+    # snapshot dict -- so "latched" and "enabled" describe the same board tick.
+    # Gating the lamp on the controller's own engaged mirror instead would let
+    # a latch retained from the previous job show against an enable the
+    # firmware never actually accepted. Both are uint16, so unlike
+    # phase_offset_steps neither can be read torn.
+    def enable(self) -> bool:
+        return bool(self._get('enable', 0))
+
+    def reference_latched(self) -> bool:
+        return bool(self._get('referenceLatched', 0))
+
 
 class ElsStopHal:
     """Domain-named operations against the elsStop register block."""

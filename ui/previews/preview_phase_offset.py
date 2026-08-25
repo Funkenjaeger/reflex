@@ -146,6 +146,16 @@ def set_offset(fraction_of_pitch):
     string -- is production code running against the app's live geometry. Two
     polls because the poller deliberately renders a total only on its second
     consecutive sighting (torn 32-bit Modbus reads).
+
+    The stub is on `tick.phase_offset_steps`, the ONCE-PER-TICK SNAPSHOT read
+    the poller actually makes since the Modbus-collapse change (0fb8f13) --
+    not on `read_phase_offset_steps`, the live reader it made before. From
+    that commit until 2026-08-25 this function stubbed the old reader, so the
+    poller went to the real, disconnected HAL, counted a fabricated zero, and
+    discarded every poll: the strip NEVER LIT in this preview, every _on
+    screenshot was quietly identical to its _off twin, and the nothing-moved
+    check printed PASS over a comparison of two identical layouts. A preview
+    whose subject cannot appear verifies nothing.
     """
     uic = app.els_uic
     fsm = uic._els_fsm
@@ -156,10 +166,29 @@ def set_offset(fraction_of_pitch):
         steps = int(round(pitch * fraction_of_pitch)) if pitch > 0 else FALLBACK_STEPS
         print(f"  thread pitch = {pitch:.1f} steps -> offset {steps} steps "
               f"({fraction_of_pitch:.4f} of a pitch)")
-    uic._hal.read_phase_offset_steps = lambda: steps
+    uic._hal.tick.phase_offset_steps = lambda: steps
     uic._poll_phase_offset()
     uic._poll_phase_offset()
     print(f"  active={uic.phase_offset_active!r} text={uic.phase_offset_text!r}")
+    assert uic.phase_offset_active == (fraction_of_pitch is not None), (
+        "the poller did not take the stubbed total -- the strip under preview "
+        "is not showing what this script is about to caption it as showing")
+
+
+def set_latched(on):
+    """Light (or douse) the thread-reference latch lamp through its poller.
+
+    Same shape as set_offset: stub the tick-snapshot accessors, run the real
+    poller. Both terms stubbed together because the lamp is latched AND
+    enabled by definition -- and one poll is enough, the two registers are
+    uint16 and the poller deliberately has no seen-twice guard.
+    """
+    uic = app.els_uic
+    uic._hal.tick.reference_latched = lambda: on
+    uic._hal.tick.enable = lambda: on
+    uic._poll_thread_ref_latched()
+    print(f"  thread_ref_latched={uic.thread_ref_latched!r}")
+    assert uic.thread_ref_latched == on, "the lamp poller did not take the stub"
 
 
 def _sizes():
@@ -209,10 +238,14 @@ def _capture(_dt):
     # first version of this exemption matched nothing and the check "failed" on
     # the two widgets it was meant to excuse.
     exempt = {id(bar.ids.status_overlay.__self__),
-              id(bar.ids.label_phase_offset.__self__)}
+              id(bar.ids.label_phase_offset.__self__),
+              # The thread-ref latch lamp shares the band (2026-08-24): it is
+              # part of what appears, not part of what must hold still.
+              id(bar.ids.label_ref_latched.__self__)}
 
     def variants(tag):
         set_offset(None)
+        set_latched(False)
         app.els_uic.takeup_warning = ""
         settle()
         dump(f"{tag} / no offset")
@@ -233,6 +266,24 @@ def _capture(_dt):
         dump(f"{tag} / offset + takeup warning")
         shot(f"{tag}_on_plus_warning")
         app.els_uic.takeup_warning = ""
+
+        # The latch lamp's two looks. ALONE is the one the width expression
+        # exists for -- the band must shrink to lamp width and cover one
+        # header, not park an 800 px accent band over all four to say three
+        # words. With the offset it shares the full band.
+        set_offset(None)
+        set_latched(True)
+        settle()
+        dump(f"{tag} / latch lamp alone")
+        assert_nothing_moved(before, _sizes(), f"{tag} lamp on", exempt)
+        shot(f"{tag}_lamp")
+
+        set_offset(1.0 / FRACTION_DENOM)
+        settle()
+        dump(f"{tag} / latch lamp + offset")
+        assert_nothing_moved(before, _sizes(), f"{tag} lamp + offset", exempt)
+        shot(f"{tag}_lamp_plus_offset")
+        set_latched(False)
 
     try:
         # Stop-only first: it is the mode the machine is actually run in, and
