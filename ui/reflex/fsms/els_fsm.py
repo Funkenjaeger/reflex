@@ -2,8 +2,11 @@ from kivy.logger import Logger
 from transitions import Machine
 
 from reflex.dispatchers import els, board
+from reflex.fsms import els_adopt
+from reflex.fsms.els_mode_watch import mode_name
 from reflex.fsms.els_stop_hal import ElsStopHal
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
+from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
 
 import math
 from fractions import Fraction
@@ -39,12 +42,18 @@ class ElsFsm:
         {'trigger': 'fault', 'source': '*', 'dest': 'alarm'},
     ]
 
-    def __init__(self, els: els, board: board, hal: ElsStopHal, controller):
+    def __init__(self, els: els, board: board, hal: ElsStopHal, controller,
+                 diag_recorder=None):
         self.els = els
         self.board = board
         self.servo = board.servo
         self.hal = hal
         self.controller = controller
+        # How the (dark) rung-3 adopt path learns which diagnostic probe THIS
+        # connection's firmware carries -- the recorder's learned schema is the
+        # gate, so no second diagSchema read is ever issued. Optional: None
+        # simply keeps the adopt gates failed (see _read_adoptable_mode).
+        self.diag_recorder = diag_recorder
 
         self.fsm = Machine(
             model=self,
@@ -487,6 +496,13 @@ class ElsFsm:
         - cutting / retracting → hands off, log only: motion may be live, and
           blindly rewriting could disarm a stop that is actively protecting the
           cut. (Full link-loss-mid-cut recovery is a known separate gap.)
+
+        A DARK rung-3 path sits ahead of these branches: when
+        els_adopt.ELS_ADOPT_ON_CONNECT is flipped and the mode-watch probe
+        (diag schema 4) is present, the policy keys on the firmware-published
+        machine mode (els_adopt.adopt_plan) instead of this session's state.
+        The flag ships False, so today every connect takes the branches above
+        unchanged; see els_adopt.py for the policy and what earns the flip.
         """
         # Push the calibration limits FIRST, in every state, before any
         # state-specific policy below.
@@ -534,6 +550,18 @@ class ElsFsm:
         # the machine was doing. Read first, because everything below destroys
         # it. Never raises -- a diagnostic must not block a safety teardown.
         flight = self.hal.read_motion_in_flight()
+
+        # RUNG-3 ADOPT PATH, DARK. With ELS_ADOPT_ON_CONNECT at its shipped
+        # False this evaluates one module attribute and falls through -- every
+        # gate below stays byte-for-byte today's behavior. When the census
+        # earns the flip, connect becomes a READ: the plan keys on the
+        # firmware's published mode, not on which state THIS session happens
+        # to be in (which after a restart is always 'disabled' -- the
+        # unreachable-branch class the 2026-08-16 review §4.4 documents).
+        mode = self._read_adoptable_mode()
+        if mode is not None:
+            self._adopt_on_connect(mode, flight)
+            return
 
         state = self.state
         if state in ('disabled', 'alarm'):
@@ -613,6 +641,76 @@ class ElsFsm:
                 f"reconcile_firmware_on_connect: state={state} — leaving "
                 f"firmware ELS stop untouched (motion may be live)"
             )
+
+    def _read_adoptable_mode(self):
+        """The firmware-published machine mode, or None unless EVERY rung-3
+        gate passes. Any None keeps reconcile on the state-keyed branches
+        unchanged. Gates, in order:
+
+        - els_adopt.ELS_ADOPT_ON_CONNECT, read live off the module so the
+          eventual flip (and tests) reach the real setting;
+        - the diag recorder has recognized the mode-watch probe (schema 4) on
+          THIS connection. read_current_mode is a scratchpad register that
+          means something else entirely under any other schema, so the
+          recorder's learned schema is the gate -- never a bare read;
+        - the read itself succeeds. A raising diagnostic read must degrade to
+          the state-keyed reconcile, never take connect down with it.
+        """
+        if not els_adopt.ELS_ADOPT_ON_CONNECT:
+            return None
+        recorder = self.diag_recorder
+        if recorder is None or recorder.schema != ELS_DIAG_SCHEMA_MODE_WATCH:
+            return None
+        try:
+            return int(self.hal.read_current_mode())
+        except Exception as e:
+            log.warning(
+                f"reconcile_firmware_on_connect: mode read failed ({e}) — "
+                f"falling back to the state-keyed reconcile"
+            )
+            return None
+
+    def _adopt_on_connect(self, mode, flight):
+        """Execute the rung-3 plan for an observed machine mode. The POLICY
+        lives in els_adopt.adopt_plan (each cell's reasoning documented
+        there); this method only carries it out, in the safe order:
+        teardown (sync first), then the operator notice, then the adoption.
+        `flight` is the pre-teardown register snapshot, taken by the caller
+        before anything here can destroy it."""
+        plan = els_adopt.adopt_plan(mode)
+        if plan.teardown:
+            # SYNC OFF FIRST, ALWAYS -- same two hazards as the state-keyed
+            # disabled/alarm branch (releasing a held stop, and the
+            # servoEnableTask race); see that branch's comment for the full
+            # reasoning. The ordering contract carries over unchanged.
+            self.hal.stop_sync()
+            self.hal.set_enable(False)
+            self.hal.set_active(False)
+        if plan.announce:
+            # Deliberately loud, and deliberately WITHOUT a teardown: the work
+            # in flight keeps its own armed stop precisely because nothing
+            # here touched it. The operator decides what happens next.
+            log.warning(
+                f"reconcile_firmware_on_connect: firmware reports "
+                f"{mode_name(mode)} at connect ({flight}) — hands off, "
+                f"notifying the operator of interrupted work"
+            )
+            self.interrupted_pass = dict(
+                flight, mode=mode, mode_name=mode_name(mode))
+            bus.publish("els_pass_interrupted")
+        if self.state != plan.state:
+            # ADOPTION, not a transition: set_state fires no callbacks, which
+            # is the point -- on_enter_stopped would arm a fresh stop and
+            # on_enter_disabled would run its own teardown, and the plan has
+            # already decided both. Broadcast manually so the controller
+            # mirrors the adopted state exactly as it would a transition.
+            self.fsm.set_state(plan.state)
+            self._broadcast()
+        log.info(
+            f"reconcile_firmware_on_connect: adopted mode={mode_name(mode)} → "
+            f"state='{plan.state}' (teardown={plan.teardown}, "
+            f"announce={plan.announce})"
+        )
 
     def push_stop_to_firmware(self):
         """Push the operator's frozen stop encoder to firmware + set scaleIndex.
