@@ -62,6 +62,7 @@ class FakeHal:
         self.limits = None
         self.backlash_written = None
         self.scale_index_written = None
+        self.cal_measured_written = None
         self._running = 0
 
     # -- writes ------------------------------------------------------
@@ -70,6 +71,9 @@ class FakeHal:
 
     def set_scale_index(self, scale_index):
         self.scale_index_written = scale_index
+
+    def set_cal_measured(self, legs):
+        self.cal_measured_written = list(legs)
 
     def request_calibration(self):
         # The firmware consumes and CLEARS the command in the same ISR pass.
@@ -416,6 +420,91 @@ def test_no_z_axis_refuses_before_anything_is_written():
     assert hal.scale_index_written is None
     assert hal.limits is None
     assert hal.cal_command == 0 or hal._running == 0
+
+
+# ── a failed run must not loosen the take-up gate (2026-08-23 finding) ─────
+# On EVERY calibration completion, success or failure, the firmware copies its
+# working measured[] into elsStop.calMeasured -- the same array the take-up
+# confirmation threshold derives from. A run that failed before measuring
+# anything copies ZEROS, silently dropping that gate to its 2-count floor for
+# every subsequent pass until the next successful calibration. The UI holds
+# the accepted record (els_cal_measured_legs), so a finished-but-failed run
+# re-teaches it immediately -- the same mechanism reconcile applies at connect.
+
+def test_failed_run_reteaches_the_stored_legs():
+    """MUTATION: drop the _reteach_stored_legs call on the result!=OK path and
+    the gate stays at the floor until the next connect."""
+    els = _els(els_cal_measured_legs=[365, 373, 366])
+    hal = FakeHal(result=ELS_CAL_ERR_NO_MOTION, measured=(0, 0, 0))
+    cal = BacklashCalibration(hal, els)
+    cal.start()
+
+    assert _run_to_completion(cal) == CalState.REFUSED
+    assert hal.cal_measured_written == [365, 373, 366]
+
+
+def test_inconsistent_run_reteaches_the_stored_legs():
+    """INCONSISTENT means the firmware run SUCCEEDED -- its wide-spread legs
+    are already in calMeasured -- but the host just rejected them, so the gate
+    must keep deriving from the ACCEPTED record, not the rejected one."""
+    els = _els(els_cal_measured_legs=[365, 373, 366])
+    hal = FakeHal(measured=(100, 240, 98))
+    cal = BacklashCalibration(hal, els)
+    cal.start()
+
+    assert _run_to_completion(cal) == CalState.INCONSISTENT
+    assert hal.cal_measured_written == [365, 373, 366]
+
+
+def test_timeout_reteaches_the_stored_legs():
+    els = _els(els_cal_measured_legs=[365, 373, 366])
+    hal = FakeHal(ticks_to_finish=10 ** 9)
+    cal = BacklashCalibration(hal, els)
+    cal.start()
+
+    for _ in range(BacklashCalibration.TIMEOUT_POLLS + 1):
+        cal.poll()
+
+    assert cal.state == CalState.REFUSED
+    assert hal.cal_measured_written == [365, 373, 366]
+
+
+def test_failed_run_with_no_stored_record_tells_the_operator():
+    """Nothing to restore is a state the operator must hear about: the gate
+    sits at its bare motion floor until a calibration passes, and today
+    nothing says so. MUTATION: drop the message append and this fails."""
+    els = _els()                          # legs [0, 0, 0]: never calibrated
+    hal = FakeHal(result=ELS_CAL_ERR_NO_MOTION)
+    cal = BacklashCalibration(hal, els)
+    cal.start()
+
+    assert _run_to_completion(cal) == CalState.REFUSED
+    assert hal.cal_measured_written is None      # zeros are not a record
+    assert "until a calibration passes" in cal.message
+
+
+def test_passed_run_does_not_repush_from_poll():
+    """Success needs no restoration: the firmware just wrote REAL legs, and
+    commit()/reconcile own persistence. A poll-side push on success would
+    overwrite the fresh measurement with the stale stored record."""
+    els = _els(els_cal_measured_legs=[365, 373, 366])
+    hal = FakeHal(measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, els)
+    cal.start()
+
+    assert _run_to_completion(cal) == CalState.PASSED
+    assert hal.cal_measured_written is None
+
+
+def test_start_refusal_does_not_repush():
+    """start() refusals never ran the firmware, so calMeasured was never
+    zeroed -- and on some refusals the hal is not even reachable."""
+    els = _els(els_cal_measured_legs=[365, 373, 366], z_input_index=None)
+    hal = FakeHal()
+    cal = BacklashCalibration(hal, els)
+
+    assert cal.start() is False
+    assert hal.cal_measured_written is None
 
 
 def test_commit_stores_the_three_legs_for_reconcile():

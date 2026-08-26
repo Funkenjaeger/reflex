@@ -234,6 +234,9 @@ class BacklashCalibration:
                     "a result. Check the servo is enabled and in sync/index "
                     "mode, then retry.",
                 )
+                # A stalled run that eventually finishes will overwrite this;
+                # reconcile at the next connect is the backstop for that race.
+                self._reteach_stored_legs()
             return self.state
 
         # Ack observed — the run finished, for better or worse.
@@ -244,6 +247,7 @@ class BacklashCalibration:
         if self.result_code != ELS_CAL_OK:
             self._fail(self.result_code, ELS_CAL_MESSAGES.get(
                 self.result_code, "Calibration failed."))
+            self._reteach_stored_legs()
             return self.state
 
         if not cal_is_consistent(self.measured, self._els.els_cal_max_spread_steps):
@@ -257,6 +261,10 @@ class BacklashCalibration:
             )
             log.warning("els_cal: inconsistent %s spread=%d",
                         self.measured, spread)
+            # The firmware accepted this run, so calMeasured now holds legs
+            # the HOST just rejected; the gate must keep deriving from the
+            # accepted record, not the rejected one.
+            self._reteach_stored_legs()
             return self.state
 
         self.state = CalState.PASSED
@@ -337,6 +345,39 @@ class BacklashCalibration:
         return (self.mean_steps - previous) if previous else 0
 
     # ── internals ────────────────────────────────────────────────────
+    def _reteach_stored_legs(self) -> None:
+        """Restore the take-up gate's basis after a finished-but-failed run.
+
+        The firmware copies its working measured[] into elsStop.calMeasured on
+        EVERY completion, success or failure — deliberate, so a partial run
+        leaves diagnostics — but the take-up confirmation threshold derives
+        from that same array, so a failed run's zeros silently drop the gate
+        to its bare motion floor for every subsequent pass (found 2026-08-23).
+        The partial values are already captured in self.measured and the log
+        by the time this runs, so restoring the last ACCEPTED record costs no
+        diagnostics; it is the same re-teaching reconcile does after a power
+        cycle, applied at the moment the corruption happens instead of at the
+        next connect.
+        """
+        legs = [int(v) for v in (self._els.els_cal_measured_legs or [])]
+        if len(legs) == 3 and all(v > 0 for v in legs):
+            self._hal.set_cal_measured(legs)
+            log.warning(
+                "els_cal: failed run zeroed the firmware's calMeasured; "
+                "re-taught stored legs %s so the take-up gate keeps its "
+                "derived threshold", legs)
+        else:
+            # No accepted record exists (fresh machine, or never passed): the
+            # gate genuinely sits at its floor, and silently is the one way
+            # that must not happen.
+            self.message += (
+                " Note: the take-up confirmation gate is at its minimum "
+                "threshold until a calibration passes."
+            )
+            log.warning(
+                "els_cal: failed run with no stored calibration; take-up "
+                "confirmation gate is at its motion floor until a run passes")
+
     def _fail(self, code: int, message: str) -> None:
         self.state = CalState.REFUSED
         self.result_code = code
