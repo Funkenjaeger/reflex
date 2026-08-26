@@ -14,6 +14,14 @@ class ElsDispatcher(SavingDispatcher):
     _skip_save = ["x", "y", "width", "height", "size_hint_x", "size_hint_y",
                   "pos", "size", "minimum_height", "minimum_width", "padding", "spacing",
                   "spindle_is_running"]
+    # get_our_properties() only auto-includes Numeric/String/BooleanProperty by
+    # exact type -- a ListProperty is invisible to it otherwise (see axis.py's
+    # identical "offsets" case). Without this, els_cal_measured_legs (2744c05)
+    # is never written to or read from the YAML file: it survives a firmware
+    # power cycle only because the UI PROCESS stays up and keeps it in memory,
+    # and resets silently to [0, 0, 0] on any UI/app restart -- reproducing
+    # the exact power-cycle defect 2744c05 was written to close.
+    _force_save = ["els_cal_measured_legs"]
 
     # ── ELS axis roles ────────────────────────────────────────────────
     spindle_axis_index = NumericProperty(-1)
