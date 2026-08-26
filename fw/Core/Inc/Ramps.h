@@ -201,6 +201,13 @@ typedef struct {
    * Core/Inc/els_backlash_cal.h — read that before changing anything here. */
   uint16_t protocolVersion;       // READ-ONLY (firmware-owned): register-layout version, starts at 1. Bump whenever this struct changes; reflex-ui checks it at connect so a map mismatch names itself instead of surfacing as garbled reads
   uint16_t calCommand;            // bidirectional: SW writes 1 to request a calibration run; FIRMWARE CLEARS IT on consume. This is the atomic hand-off. SW must NOT poll it for completion — it clears the instant the ISR picks it up, long before the run finishes. Edge-detect calSeq instead
+  // ORDERING INVARIANT (do not reorder these fields): calSeq must sit at a LOWER address than
+  // calResult/calMeasured. Modbus FC3 copies the block one register at a time in ascending address
+  // order and the 100 kHz ISR can land between any two -- seq-first makes a torn read come out as
+  // (stale seq, new payload), which edge-detection harmlessly re-reads, instead of (new seq, stale
+  // payload), which a host acts on. That inverted shape was the 2026-08-22 takeupSeq/takeupResult
+  // bug on elspi (fixed host-side in 947ef4b); this field order is what makes it structurally
+  // impossible for the calibration trio. Same rule for diagSeq below.
   uint16_t calSeq;                // READ-ONLY (firmware-owned): increments once per finished run, success OR failure. Monotonic, so a host polling at Modbus rates cannot alias a fast run
   uint16_t calResult;             // READ-ONLY (firmware-owned): outcome of the run counted by calSeq. ELS_CAL_* in els_backlash_cal.h; 0 = OK
   uint16_t takeupResult;          // READ-ONLY (firmware-owned): outcome of the last take-up. ELS_CAL_*/ELS_TAKEUP_* in els_backlash_cal.h; 0 = OK. Replaces a binary fault flag so "carriage never moved" and "never reached target" stay distinguishable
@@ -239,7 +246,7 @@ typedef struct {
    * production build. reflex-ui reads this only when a diagnostic view is open.
    */
   uint16_t diagSchema;         // READ-ONLY (firmware-owned): identifies the probe compiled into the block. 0 = none; do NOT interpret anything below it. Never assume a schema you did not read
-  uint16_t diagSeq;            // READ-ONLY (firmware-owned): increments once per COMPLETED capture. Edge-detect this; there is deliberately no "capture in progress" register to poll
+  uint16_t diagSeq;            // READ-ONLY (firmware-owned): increments once per COMPLETED capture. Edge-detect this; there is deliberately no "capture in progress" register to poll. ORDERING INVARIANT: must stay at a LOWER address than the capture payload it counts -- see the calSeq comment above for why a reorder reintroduces the torn-read bug
   uint16_t diagBucketTicks;    // READ-ONLY (firmware-owned): ISR ticks summed into each diagTrace bucket. PUBLISHED so the host never has to assume the ISR rate — the repo has disagreed with itself about that rate by 10x
   uint16_t diagBucketCount;    // READ-ONLY (firmware-owned): populated diagTrace entries, for the same reason
   int32_t  diagSettleTicks;    // READ-ONLY (firmware-owned): ticks from capture start to the LAST tick that saw nonzero dZ. THE measurement ELS_SLIP_SETTLE_TICKS is a guess at — meaningful in v2, where the capture stops before the pass starts
