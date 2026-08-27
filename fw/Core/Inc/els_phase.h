@@ -55,6 +55,97 @@ typedef struct {
   int32_t droSign;      /* stopDirection*cuttingDir, exposed for tests */
 } elsCorrResult_t;
 
+/* Reduce deltaSpindle modulo "one whole thread pitch", exactly, in INTEGER
+ * spindle counts, before it is ever widened to float. This is the fix for
+ * the float32-ULP resolution loss documented above elsComputePhaseCorrection
+ * (idealAdvance grows for the whole job since the reference was latched, and
+ * above 2^23 its ULP exceeds one leadscrew step).
+ *
+ * WHY THE MODULUS IS EXACT, NOT APPROXIMATE (this was the open design
+ * question -- "pitch in spindle counts is generally not an integer, so this
+ * needs care"): pitch in LEADSCREW STEPS (threadPitchSteps) is indeed not
+ * generally an integer -- e.g. 711.111... steps at elspi's real 18 TPI. But
+ * that is the wrong quantity to reduce by. A thread's sync ratio is BY
+ * DEFINITION "Z advance per one spindle revolution equals one pitch" --
+ * reflex-ui's push_thread_geometry (els_fsm.py) computes
+ *   threadPitchSteps = spindle_pitch_mm / servo_ratio
+ *   syncRatioNum/syncRatioDen = spindle_pitch_mm / (PPR * servo_ratio)
+ * from the SAME spindle_pitch_mm, so PPR * (syncRatioNum/syncRatioDen) ==
+ * threadPitchSteps exactly (in the rationals). Equivalently, the spindle-count
+ * period of one pitch is
+ *   P = threadPitchSteps * syncRatioDen / syncRatioNum
+ * computed here directly from the three registers already passed in --
+ * no new register or PPR parameter needed. This P recovers PPR (an exact
+ * integer) up to only the pre-existing, negligible float32 rounding already
+ * present in the threadPitchSteps register itself (a value in the tens to
+ * low thousands for any real thread, nowhere near the ULP-doubling range) --
+ * NOT the job-duration-dependent error this patch removes.
+ *
+ * ------------------------------------------------------------------------
+ * THE RESIDUAL. THIS IS NOT EXACT, AND SHIPPING IT ANYWAY WAS A DECISION.
+ * ------------------------------------------------------------------------
+ * An earlier draft of this comment ended "there is no residual care left to
+ * take." That was wrong, and the sweep in els_phase_reduce_test.cpp measures
+ * exactly how wrong. What follows is the honest version. Evan approved shape
+ * (a) on 2026-08-27 ON CONDITION the residual was written down here, so do not
+ * quietly re-tighten this wording back into a correctness claim.
+ *
+ * THE FIRMWARE HAS NO TRUE PPR. There is no register anywhere in the map
+ * carrying an integer pulses-per-revolution (grep confirms). encoder_ppr and
+ * gear_ratio_num/den live host-side only, in reflex-ui's InputDispatcher, and
+ * never cross Modbus -- axis.py's _set_sync_ratio folds them into a REDUCED
+ * Fraction before it is pushed, and reduction destroys PPR as an integer (at
+ * elspi's 18 TPI, PPR=1000 arrives as 32/45). So the period P above must be
+ * recovered from threadPitchSteps, which is an ALREADY-ROUNDED float32:
+ * 711.111145 where the true value is 711.111111... .
+ *
+ * WHAT THAT COSTS. P itself lands on the right integer with enormous margin
+ * (1000.00005 -> 1000; the test asserts this rather than assuming it). The
+ * residual is one step further down: the reduction removes whole multiples of
+ * the TRUE pitch, while the fold below folds modulo the ROUNDED pitch. Those
+ * differ by ~3.4e-5 leadscrew steps per revolution at 18 TPI, so near a fold
+ * boundary the decision can flip by a FULL PITCH -- 1.41 mm, a scrapped
+ * thread, not a small error. Measured over 811k sweep points, both
+ * stopDirection polarities, elspi geometry:
+ *
+ *     wrong-groove (>pitch/4) rate at 18 TPI, vs true geometry
+ *       20k-revolution job : 0.0454% unreduced -> 0.0010% reduced   (45x)
+ *       full int32 span    : 4.7220% unreduced -> 0.0010% reduced (4700x)
+ *
+ * The number that matters is that the reduced rate is FLAT in job length while
+ * the unreduced one grows without bound -- that is the whole point of the fix.
+ * The 0.0010% that survives does NOT come from deltaSpindle at all; it comes
+ * from the deltaZ term folding against the same rounded pitch, so it is a
+ * PRE-EXISTING property of the register set that this patch neither causes nor
+ * cures. At 4 TPI, where threadPitchSteps (3200.0) is exactly representable,
+ * the residual is exactly zero in both regimes -- which is the control that
+ * pins the cause on the rounded register rather than on the reduction.
+ *
+ * THE EXACT FIX, when the register-append queue allows it: give the firmware
+ * the true integer PPR -- either as its own register, or by pushing the sync
+ * ratio UNREDUCED so that syncRatioDen carries PPR as a factor. Either one
+ * makes P exact by construction and lets the fold use a pitch derived from
+ * integers instead of from a rounded float. Both are register-map changes and
+ * therefore a coordinated decision, which is why neither is done here. */
+static inline int32_t elsReduceDeltaSpindle(
+    int32_t deltaSpindle, int32_t syncRatioNum, int32_t syncRatioDen,
+    float threadPitchSteps)
+{
+  if (syncRatioNum == 0 || threadPitchSteps == 0.0f) {
+    return deltaSpindle;   /* turning, or degenerate config: no reduction */
+  }
+  double pd = (double)threadPitchSteps * (double)syncRatioDen
+              / (double)syncRatioNum;
+  if (pd < 0.0) pd = -pd;
+  int64_t P = (int64_t)(pd + 0.5);   /* round to nearest; P is ~PPR */
+  if (P <= 0) {
+    return deltaSpindle;
+  }
+  int64_t d = (int64_t)deltaSpindle;
+  int64_t r = ((d % P) + P) % P;     /* always non-negative; see 08-26 harness */
+  return (int32_t)r;
+}
+
 static inline elsCorrResult_t elsComputePhaseCorrection(
     int32_t deltaSpindle, int32_t deltaZ,
     int32_t syncRatioNum, int32_t syncRatioDen,
@@ -63,6 +154,9 @@ static inline elsCorrResult_t elsComputePhaseCorrection(
     int32_t offsetSteps)   /* phase offset, leadscrew steps; 0 = none (exact pre-feature path) */
 {
   elsCorrResult_t r;
+
+  deltaSpindle = elsReduceDeltaSpindle(deltaSpindle, syncRatioNum, syncRatioDen,
+                                        threadPitchSteps);
 
   r.idealAdvance  = (float)deltaSpindle * (float)syncRatioNum / (float)syncRatioDen;
   r.actualAdvance = (float)deltaZ * threadPitchSteps / zCountsPerPitch;

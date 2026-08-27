@@ -85,6 +85,17 @@ add_executable(els_phase_offset_test ${CMAKE_SOURCE_DIR}/test/els_phase_offset_t
 target_link_libraries(els_phase_offset_test m)
 add_test(NAME els_phase_offset_test COMMAND els_phase_offset_test)
 
+# The deltaSpindle mod-PPR reduction (elsReduceDeltaSpindle, 2026-08-27).
+# An equivalence SWEEP, not a permutation test: it compares the shipped float32
+# path and the pre-patch float32 path against the same formula in double, over
+# 20,000 revolutions of deltaSpindle, both stopDirection polarities, at a pitch
+# that is inexact in float32 (18 TPI) and one that is exact (4 TPI). The 4 TPI
+# leg is the control that pins the surviving residual on the rounded
+# threadPitchSteps register rather than on the reduction. Header-only.
+add_executable(els_phase_reduce_test ${CMAKE_SOURCE_DIR}/test/els_phase_reduce_test.cpp)
+target_link_libraries(els_phase_reduce_test m)
+add_test(NAME els_phase_reduce_test COMMAND els_phase_reduce_test)
+
 # Backlash calibration / take-up confirmation: exercises the pure decision layer
 # in Core/Inc/els_backlash_cal.h against a simulated drivetrain with lash.
 # Header-only — no HAL, no firmware sources, no emulator physics.
