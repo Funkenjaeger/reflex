@@ -82,12 +82,29 @@ typedef struct {
 /* x mod pitch, truncated toward zero -- fmodf's exact definition, in two FPU
  * conversions and a multiply-subtract.
  *
- * PRECISION. This is deliberate catastrophic cancellation and it is safe twice
- * over. The absolute error is bounded by the ULP of the operands (about 0.0156
- * steps at 154934), and the result is rounded to whole steps immediately after.
- * And if the truncation ever lands one integer off, the error is exactly ONE
- * PITCH -- which the fold and forward-bias below normalize away completely,
- * because one pitch is the same place on a single-start thread.
+ * PRECISION. This is deliberate catastrophic cancellation. The absolute error
+ * is bounded by the ULP of the operands (about 0.0156 steps at 154934), and the
+ * result is rounded to whole steps immediately after.
+ *
+ * QUALIFIED 2026-08-27. This comment used to go on to argue that a truncation
+ * landing one integer off is self-correcting, "because one pitch is the same
+ * place on a single-start thread". Measured, that argument survives on its own
+ * terms and is why the defect below stayed invisible -- but it answers the
+ * wrong question. What it establishes is that the THREAD PHASE comes out the
+ * same; what it quietly concedes is that the CORRECTION DOES NOT. In the worst
+ * case found (deltaSpindle=13829522, deltaZ=-4487) the shipped fmodf path
+ * commands +711 steps and the truncating path commands 0 -- a difference of
+ * 0.99984 pitches, so the same groove, but a whole pitch (1/18") difference in
+ * how far the carriage jogs before the pass starts feeding. That is a
+ * behavioral change introduced by a substitution whose entire justification was
+ * that the answer does not change, which is reason enough to not have it.
+ *
+ * The narrower and more important point: the fold below can only normalize a
+ * residual it can SEE, and the double-rounded subtraction returned exactly
+ * 0.0f -- an in-range, entirely plausible "phaseError is a whole multiple of
+ * pitch" answer that the fold passes straight through untouched. No range check
+ * placed after it can distinguish that from a legitimate zero. The error has to
+ * be prevented in the residual, not repaired after it.
  *
  * The out-of-range fallback needs a spindle advance of 2^31 pitches to reach,
  * so it is unreachable on any real geometry; it is here because an int32
@@ -105,8 +122,55 @@ static inline float elsFmodPitch(float x, float pitch)
    * with no behavioural difference anywhere, and costs nothing in practice:
    * the expensive fmodf case is the one this threshold excludes. */
   if (x < -4194304.0f || x > 4194304.0f) return fmodf(x, pitch);
-  float q = x / pitch;
-  return x - pitch * (float)(int32_t)q;
+  float q  = x / pitch;
+  int32_t qi = (int32_t)q;
+  /* q = x/pitch is correctly ROUNDED (IEEE754 float division), but
+   * "correctly rounded" is not "correctly truncated". When the true
+   * quotient sits a hair below an integer -- e.g. 2234.99997 -- the
+   * nearest representable float can BE that integer (2235.0f) once the
+   * true value is closer to it than to the next float down, and
+   * truncating 2235.0f is one whole pitch off from truncating 2234.99997.
+   * (Reproduced at deltaSpindle=13829522, deltaZ=-4487, pitch=711.111:
+   * q rounds up to exactly 2235.0f.) This is the same failure the header
+   * above already documents for x's own ULP, just one step removed -- it
+   * lives in q = x/pitch, not in x.
+   *
+   * A PLAIN range check on x - pitch*qi is NOT enough to catch this: that
+   * subtraction rounds TWICE (once forming pitch*qi, once subtracting),
+   * and at this magnitude the second rounding can land EXACTLY on 0.0f --
+   * a perfectly plausible-looking "phaseError is a whole multiple of
+   * pitch" answer -- even though qi is one too many and the true residual
+   * is +711 (measured: naive x - pitch*qi = 0.000000 here, masking the
+   * error completely). fmaf computes x - pitch*qi with a SINGLE rounding
+   * (VFMA is a hardware instruction on Cortex-M4F, not a software
+   * routine -- unlike fmodf/lroundf this is not a libm call), and that
+   * single rounding recovers the true sign: -0.0227, correctly revealing
+   * that qi overshot. The range check below then repairs it exactly as a
+   * truncating division always occasionally needs -- a compare that is
+   * essentially always not-taken, and when it IS taken, one FPU add/sub.
+   * No libm call, no double (Cortex-M4F has no FP64 hardware; a double
+   * divide -- or even a double multiply-subtract -- is a compiler softfp
+   * call here, trading one library call for another).
+   *
+   * PRECONDITION: pitch > 0. The range check below is written for a positive
+   * pitch and would push the result the WRONG WAY for a negative one, which
+   * narrows this function's domain versus the plain multiply-subtract it
+   * replaces. That is safe on every path that reaches here, verified rather
+   * than assumed: the host builds threadPitchSteps as
+   * Fraction(abs(...), abs(...)) (els_fsm.py push_thread_geometry), so it is
+   * never negative, and the only other value it writes is 0.0 for TURNING,
+   * which applyPhaseCorrection is gated out of by the threadPitchSteps != 0
+   * check in Ramps.c. Keep that true: a host that ever writes a signed pitch
+   * needs this fold made sign-agnostic first. */
+  float r = fmaf(-pitch, (float)qi, x);
+  if (x >= 0.0f) {
+    if (r < 0.0f)         r += pitch;
+    else if (r >= pitch)  r -= pitch;
+  } else {
+    if (r > 0.0f)         r -= pitch;
+    else if (r <= -pitch) r += pitch;
+  }
+  return r;
 }
 
 /* lroundf's rounding rule -- nearest, ties AWAY from zero -- without the call.

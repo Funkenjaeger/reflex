@@ -92,14 +92,29 @@ int main()
 
     /* Real machine geometry first: elspi at 18 TPI. 12800 steps/inch, so a
      * pitch is 711.11 steps -- the numbers the 2026-08-24 capture was taken
-     * against. */
+     * against.
+     *
+     * THE SYNC RATIO IS PART OF THE GEOMETRY, and getting it wrong is how this
+     * file missed a real defect. It swept 360/100 until 2026-08-27 -- the
+     * AxisDispatcher class default (ui/reflex/dispatchers/axis.py), an
+     * uncommissioned ROTARY setting that no lathe runs. elspi's spindle encoder
+     * is 6144 counts/rev, and 6144 * 25/216 = 711.111 steps, exactly one
+     * leadscrew pitch per spindle revolution at 18 TPI: the real ratio is
+     * 25/216, and it is 31x SMALLER than 3.60.
+     *
+     * That ratio scales idealAdvance, so the wrong one moved the entire sweep
+     * off the range under test: at 360/100 a job-length deltaSpindle produces a
+     * phaseError of ~5e7, which is above the 2^22 guard in elsFmodPitch and
+     * therefore took the fmodf fallback -- the sweep was re-testing the library
+     * routine, not the replacement. At the real 25/216 the same deltaSpindle
+     * lands at ~1.6e6, inside the guard, on the code that actually ships. */
     const float ELSPI_PITCH = 12800.0f / 18.0f;
     const float ELSPI_ZCPP  = 282.222229f;
 
     printf("-- 1. elspi geometry, spindle advance swept to job-length scale --\n");
     for (int32_t dSp = 0; dSp < 40000000; dSp += 97391) {
         for (int32_t dZ = -20000; dZ <= 20000; dZ += 5171) {
-            compare(dSp, dZ, 360, 100, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
+            compare(dSp, dZ, 25, 216, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
         }
     }
     check(failures == 0, "no case differs by more than one step");
@@ -107,13 +122,13 @@ int main()
     printf("\n-- 2. both polarities, both cutting directions --\n");
     {
         long before = failures;
-        const int32_t nums[] = {360, -360, 100, -100};
+        const int32_t nums[] = {25, -25, 216, -216};
         const int16_t sds[]  = {1, -1};
         for (int n = 0; n < 4; n++)
             for (int d = 0; d < 2; d++)
                 for (int32_t dSp = -5000000; dSp <= 5000000; dSp += 313337)
                     for (int32_t dZ = -8000; dZ <= 8000; dZ += 3719)
-                        compare(dSp, dZ, nums[n], 100,
+                        compare(dSp, dZ, nums[n], 216,
                                 ELSPI_PITCH, ELSPI_ZCPP, sds[d], 0);
         check(failures == before, "sign handling is unchanged in every polarity");
     }
@@ -124,7 +139,7 @@ int main()
         const int32_t offs[] = {0, 1, 47, 355, 710, -355, 1422};
         for (int o = 0; o < 7; o++)
             for (int32_t dSp = 0; dSp < 3000000; dSp += 71119)
-                compare(dSp, -3200, 360, 100,
+                compare(dSp, -3200, 25, 216,
                         ELSPI_PITCH, ELSPI_ZCPP, -1, offs[o]);
         check(failures == before, "the offset term folds identically");
     }
@@ -141,13 +156,13 @@ int main()
     printf("\n-- 5. the fail-closed and degenerate inputs --\n");
     {
         long before = failures;
-        compare(0, 0, 360, 100, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
-        compare(1, 0, 360, 100, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
-        compare(-1, 0, 360, 100, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
+        compare(0, 0, 25, 216, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
+        compare(1, 0, 25, 216, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
+        compare(-1, 0, 25, 216, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
         /* Exactly on a pitch boundary, where a truncation landing one integer
          * off would show up if the fold did not absorb it. */
         for (int k = 1; k < 400; k++) {
-            compare((int32_t)(k * 711), 0, 360, 100, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
+            compare((int32_t)(k * 711), 0, 25, 216, ELSPI_PITCH, ELSPI_ZCPP, -1, 0);
         }
         check(failures == before, "boundaries and degenerate inputs agree");
     }
