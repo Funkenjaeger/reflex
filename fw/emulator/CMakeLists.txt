@@ -114,6 +114,16 @@ target_include_directories(els_slip_test PRIVATE ${CMAKE_SOURCE_DIR}/../Core/Inc
 target_link_libraries(els_slip_test m)
 add_test(NAME els_slip_test COMMAND els_slip_test)
 
+# The COMMISSIONING of ELS_SLIP_SETTLE_TICKS: els_slip_test proves the horizon
+# mechanism, this proves the VALUE against elspi's 2026-08-27 capture set.
+add_executable(els_slip_horizon_commission_test
+    ${CMAKE_SOURCE_DIR}/test/els_slip_horizon_commission_test.cpp)
+target_include_directories(els_slip_horizon_commission_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/../Core/Inc)
+target_link_libraries(els_slip_horizon_commission_test m)
+add_test(NAME els_slip_horizon_commission_test
+    COMMAND els_slip_horizon_commission_test)
+
 # Half-nut engagement physics tests: exercise LathePhysics directly. Links
 # physics.cpp + config.cpp (EmuConfig ctor); the test file stubs the shim
 # externals (emu_hw, emu_log_event, emu_update_timer_counters), so hal_shim.c

@@ -248,13 +248,26 @@ it still falls through to the ~5 s timeout. Closing that needs the ISR to know
 copy would be free to drift from the first. Left alone deliberately; the
 timeout does name it.
 
-### Commission `ELS_SLIP_SETTLE_TICKS` on elspi (UNMEASURED PARAMETER)
+### Commission `ELS_SLIP_SETTLE_TICKS` on elspi — DONE 2026-08-27
+
+**Commissioned and lowered 1000 → 700.** 18 v3 captures off elspi, every one
+ending `END_WINDOW` at the full 2000-tick window (so none truncated): 11 were
+completely still, and the other 7 each delivered exactly one count (net −1) at
+79, 545, 571, 656, 1165, 1399 and 1786 ticks — at the measured 103.8 kHz, a
+longest tail of 17.2 ms. The carriage stops essentially dead. 700 was chosen
+because the observations clump into ≤656 and ≥1165 and it sits in the empty band
+between them, so the reduction abandons nothing ever observed while shrinking the
+window in which a hand nudge can be credited to the servo by 30%; the three late
+observations were already outside 1000 and are single counts against a confirm
+threshold in the tens, so they cannot false-refuse. Encoded as assertions in
+`emulator/test/els_slip_horizon_commission_test.cpp` (mutation-proven four ways),
+so the data now travels with the constant. Everything below is retained as the
+record of how it was measured.
 
 Motion attribution (`Core/Inc/els_slip.h`) replaced the 250 ms confirmation
 window as the thing that actually bounds the 2026-08-08 exposure. The number
-that bound is now made of — `ELS_SLIP_SETTLE_TICKS` in `Ramps.c`, currently
-**1000 ticks (~10 ms at the 100 kHz ISR rate)** — has never been measured on the
-machine.
+that bound is now made of — `ELS_SLIP_SETTLE_TICKS` in `Ramps.c` — had never
+been measured on the machine when this section was written.
 
 **The emulator can now exercise it (2026-08-22).** The old claim here — that it
 *cannot* be measured in the emulator, because the lash model moved the carriage

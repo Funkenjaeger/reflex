@@ -121,12 +121,35 @@
  * as the actual exposure bound, so it is the number an attacker — or an
  * unlucky operator — has to hit.
  *
- * THIS VALUE IS NOT COMMISSIONED. It is a starting point chosen to satisfy the
- * constraints below, not a measurement of elspi's drivetrain, and it CANNOT be
- * derived from the emulator: the emulator's lash model moves the carriage
- * instantaneously with the pulse, so it has no settle behaviour to measure at
- * all. Measuring it means watching real Z counts arrive after the last pulse of
- * a real take-up, on the machine, at the take-up speed actually in use.
+ * COMMISSIONED 2026-08-27 against elspi, and lowered 1000 -> 700 as a result.
+ * It still cannot be derived from the emulator -- that lash model moves the
+ * carriage instantaneously with the pulse, so it has no settle behaviour at all
+ * -- so the number comes from the machine, via the takeup-settle-v3 probe
+ * (els_diag_takeup_settle.h) whose t=0 is the tick after the LAST take-up pulse.
+ *
+ * THE DATA: 18 captures, every one ending END_WINDOW at the full 2000 ticks, so
+ * none was truncated. ELEVEN were completely still -- zero in every bucket. The
+ * other SEVEN each delivered EXACTLY ONE count (net -1, a single nonzero bucket)
+ * at 79, 545, 571, 656, 1165, 1399 and 1786 ticks. At the measured 103.8 kHz
+ * that longest tail is 17.2 ms. So the carriage stops essentially dead; what
+ * looks like a settle tail is one 5 um count arriving late, one-directional,
+ * and in most take-ups not at all.
+ *
+ * WHY 700 SPECIFICALLY. The observations clump into <=656 and >=1165 with
+ * NOTHING in between, and 700 sits inside that empty gap: lowering from 1000
+ * therefore discards no motion the old value was crediting. The four early
+ * counts stay attributed; the three late ones were already outside 1000 and are
+ * single counts against a confirm threshold measured in TENS, so failing to
+ * attribute them cannot refuse a healthy take-up. What it buys is a 30% smaller
+ * window for a hand nudge to be credited to the servo, which is the whole point
+ * of this constant.
+ *
+ * READ THE CAPTURES' ONE CAVEAT BEFORE EXTENDING THIS. They come from a
+ * diagnostic build whose hold computes the gate's verdict LATER than release,
+ * making that build MORE PERMISSIVE on a marginal take-up. That bears on
+ * whether the GATE would confirm -- never read "the diagnostic build confirmed"
+ * as "release would have". It does not touch the settle measurement itself,
+ * which is what the hold exists to make possible.
  *
  * Constraints any replacement value must satisfy:
  *  - MUST exceed ELS_SETTLE_TICKS (50). The gate's first evaluation happens that
@@ -137,15 +160,19 @@
  *    left to this constant — elsSlipSettleTicks() floors it at runtime — but a
  *    value below the pacing period means that floor is doing all the work and
  *    the number here is decorative.
- *  - Ticks, not milliseconds. At the ~100 kHz hardware ISR rate 1000 ticks is
- *    ~10 ms. The emulator's real-time serve loop runs the same ISR ~10x slower,
+ *  - Ticks, not milliseconds. At the measured 103.8 kHz ISR rate 700 ticks is
+ *    ~6.7 ms. The emulator's real-time serve loop runs the same ISR ~10x slower,
  *    so anything tuned by watching wall-clock there is 10x wrong here
  *    (els_slip.h has the full unit-trap list).
  *
  * Smaller is safer and only becomes unsafe in one direction: too small starts
  * refusing healthy take-ups. Tune it DOWN from here against a machine that still
- * confirms reliably, never up to make a refusal go away. */
-#define ELS_SLIP_SETTLE_TICKS 1000
+ * confirms reliably, never up to make a refusal go away. The commissioning data
+ * above is what any further move must argue against, and it is executable:
+ * els_slip_horizon_commission_test.cpp encodes those seven observations and the
+ * gap the current value sits in, so a change made without revisiting them turns
+ * that test red. */
+#define ELS_SLIP_SETTLE_TICKS 700
 
 /* Diagnostic probes live in Core/Inc/els_diag_*.h, dispatched by els_diag.h.
  * Their bodies are NOT in this file; their four call sites are, and each one

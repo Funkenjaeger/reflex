@@ -250,12 +250,23 @@ The release image is unaffected: `elsDiagExtraDwell()` is a constant 0
 everywhere else, and the release `reflex-fw.bin` is **byte-identical** across
 this change (`b3cea4f2…`, 37428 bytes, verified 2026-08-22).
 
-**The finding this probe exists to settle.** The gate releases the cut 50 ticks
-after the last take-up pulse while `ELS_SLIP_SETTLE_TICKS = 1000` — same code
-path, same physical settle — says motion may still be attributable to that
-pulse for 1000 ticks. Two constants 20× apart, and no measurement has ever
-adjudicated them. `ELS_SLIP_SETTLE_TICKS` remains an **unmeasured parameter**
-(`fw/todo.md`); a v3 capture session on a coupled take-up is what settles it.
+**The finding this probe existed to settle — SETTLED 2026-08-27.** The gate
+releases the cut 50 ticks after the last take-up pulse while
+`ELS_SLIP_SETTLE_TICKS` said motion may still be attributable for 1000 — two
+constants 20× apart that no measurement had adjudicated. The v3 capture session
+adjudicated them: 18 captures, all ending `END_WINDOW` at the full 2000 ticks,
+**11 completely still** and the other **7 delivering exactly one count each**
+(net −1) at 79, 545, 571, 656, 1165, 1399 and 1786 ticks. The carriage stops
+essentially dead; the "tail" is a single 5 µm count arriving late.
+`ELS_SLIP_SETTLE_TICKS` was lowered **1000 → 700** on that basis — 700 sits in
+the empty band between the ≤656 and ≥1165 clumps, so the reduction discards
+nothing ever observed while cutting the nudge-attribution window by 30%. The
+numbers are executable in `emulator/test/els_slip_horizon_commission_test.cpp`,
+so moving the constant without revisiting them turns a test red. **Read the
+caveat in that file before extending this**: these captures come from a
+diagnostic build whose hold computes the gate's verdict later than release, so
+that build is *more permissive* on a marginal take-up — the measurement of the
+carriage is valid, a conclusion about what the gate would do in release is not.
 
 v2 is kept in the registry (retired, id burned) rather than deleted: it is the
 reference implementation for writing another trace probe, and reflex-ui still

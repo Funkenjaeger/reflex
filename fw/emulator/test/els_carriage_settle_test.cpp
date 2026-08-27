@@ -85,7 +85,7 @@ static const double DT          = 1e-4;         /* 10 kHz ISR tick, the emulator
  * file rather than as a test that quietly re-derives whatever Ramps.c now says.
  * If Ramps.c changes these, S4 is where you find out. */
 static const int FW_ELS_SETTLE_TICKS      = 50;    /* gate dwell before its first verdict */
-static const int FW_ELS_SLIP_SETTLE_TICKS = 1000;  /* motion-attribution horizon */
+static const int FW_ELS_SLIP_SETTLE_TICKS = 700;   /* motion-attribution horizon, commissioned 2026-08-27 */
 
 /* Zeroed firmware shared state for tick(). Nothing in the settle path reads it;
  * the parameter is kept for signature compatibility with the production caller. */

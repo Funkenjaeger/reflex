@@ -96,8 +96,11 @@
  * (published per capture), unlike the v1->v2 gating change which altered what
  * the numbers MEANT.
  *
- * 40 x 50 = 2000 ticks ~= 19.4 ms at the measured ~103 kHz, which covers
- * ELS_SLIP_SETTLE_TICKS (1000) with 2x margin. Under v3 the gate is held open
+ * 40 x 50 = 2000 ticks ~= 19.4 ms at the measured ~103 kHz, which covered
+ * ELS_SLIP_SETTLE_TICKS with 2x margin when that constant was 1000, and with
+ * ~2.9x since it was commissioned down to 700 on 2026-08-27 using exactly these
+ * captures -- the margin only grew, so the geometry still stands. Under v3 the
+ * gate is held open
  * for exactly this span (see ELS_DIAG_SETTLE_HOLD_TICKS below), so the window
  * is the measurement rather than a race against the next commanded move.
  *
@@ -134,7 +137,8 @@
  * WHAT THIS DELIBERATELY CHANGES, AND IT MUST NOT BE READ PAST. The gate's
  * verdict is computed LATER than in a release build, so more of the settle
  * tail falls inside elsSlipConfirmed()'s attribution horizon
- * (ELS_SLIP_SETTLE_TICKS = 1000) and is counted as evidence. A diagnostic
+ * (ELS_SLIP_SETTLE_TICKS, 1000 when these captures were taken, 700 since) and
+ * is counted as evidence. A diagnostic
  * build is therefore MORE PERMISSIVE than release on a marginal take-up --
  * partial engagement is the case that can differ. An open half-nut still
  * refuses either way (no motion is attributable at any dwell). NEVER read "the
