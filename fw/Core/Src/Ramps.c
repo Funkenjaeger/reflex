@@ -68,6 +68,13 @@
 #endif
 #define ELS_QUIESCENT_TICKS 200
 
+/* NOTE (2026-08-27): a companion ELS_QUIESCENT_NET_TOL_COUNTS, widening the
+ * tracker above from exact equality to a net-displacement window, was written
+ * and then backed out. The reasoning and the measurements are at the tracker
+ * itself; the short version is that any tolerance above zero contradicts the
+ * >=200-ticks-since-the-last-pulse invariant els_takeup_quiescence_test pins,
+ * and that is Evan's call to make rather than a refactor. */
+
 /* Backstop for a backlash takeup that never reaches its commanded target. ISR
  * runs at ~100 kHz (TIM9, 10 us/tick), so this is ~5 s — far longer than any
  * legitimate takeup (tens to low hundreds of steps) even at a slow maxSpeed, and
@@ -732,6 +739,27 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
      * dwell ends. Any change in Z resets it: the test is "has it stopped", and
      * one count of movement means it has not.
      *
+     * THIS IS PER-TICK EXACT EQUALITY, AND REPLACING IT IS NOT A FREE CHANGE.
+     * Widening it to a net-displacement window (tolerate N counts of drift
+     * across the window) was attempted on 2026-08-27 and BACKED OUT. It works
+     * -- els_takeup_quiescence_window_test T2 shows it makes the gate immune to
+     * +-1 dither, which exact equality is starved by forever -- but it is
+     * logically incompatible with the invariant els_takeup_quiescence_test
+     * pins at its line 419: "the gate waited at least the quiescence window
+     * after the last pulse". That invariant IS exact equality restated; any
+     * tolerance above zero lets the counter mature while the carriage is still
+     * delivering counts, and at a tolerance of 2 the gate released with 1.17 Z
+     * counts still undelivered -- more than the entire settle tail this gate
+     * was built to catch. Tolerance 1 preserved the physical property (0.83
+     * counts owed) but still broke the timing invariant.
+     *
+     * So the choice is Evan's, not a refactor: keeping the invariant means
+     * living with the dither blind spot; taking the window means deciding that
+     * "N counts of net drift" is the definition of stopped and rewriting that
+     * assertion deliberately. Do not quietly widen this while the assertion
+     * stands. See els_takeup_quiescence_window_test T2, which characterises
+     * TODAY's behaviour and must go red the day this changes.
+     *
      * COMPILED OUT ENTIRELY when the flag is off, not merely ignored. The
      * comparison is cheap, but this is the ~100 kHz ISR whose execution time is
      * itself a published register, and a release build should carry no cost at
@@ -923,6 +951,29 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
                  + ELS_TAKEUP_CONFIRM_WINDOW_TICKS)) {
             data->elsStopSettleCount++;
           } else {
+            /* AN ABORT MUST NEVER REPORT SUCCESS. takeupResult is set to
+             * ELS_CAL_OK at initiation, and the UNCONFIRMED branch above is
+             * gated on carriageStopped -- so a take-up whose carriage never
+             * went quiet reaches this abort with OK still standing, and the UI
+             * reads an ABORTED pass as a CONFIRMED one. That is the wrong
+             * direction for a safety gate to fail in: the whole point of the
+             * take-up is to prove the drivetrain is coupled before a cut, and
+             * announcing proof that was never obtained is worse than
+             * announcing nothing.
+             *
+             * Only rewrite an untouched OK. UNCONFIRMED and TIMEOUT are real
+             * verdicts already published with their own takeupSeq bump, and
+             * overwriting one would lose the more specific cause.
+             *
+             * LATENT, NOT LIVE: with ELS_REQUIRE_QUIESCENCE off (the default,
+             * and the flag has never shipped on) carriageStopped is a constant
+             * true, the UNCONFIRMED branch always fires first, and this cannot
+             * be reached. It is fixed now so that turning the flag on is not
+             * also the moment this is discovered. */
+            if (shared->elsStop.takeupResult == ELS_CAL_OK) {
+              shared->elsStop.takeupResult = ELS_TAKEUP_ERR_NOT_QUIESCENT;
+              shared->elsStop.takeupSeq++;  /* an outcome, so it gets a seq */
+            }
             data->elsStopTakeupLatched    = 1;
             shared->elsStop.takeupPending = 0;   /* stop holding the machine */
             shared->elsStop.active        = 1;   /* back to stopped-at-shoulder */

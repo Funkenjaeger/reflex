@@ -366,6 +366,27 @@ target_compile_definitions(els_takeup_quiescence_test PRIVATE ELS_REQUIRE_QUIESC
 target_link_libraries(els_takeup_quiescence_test m pthread)
 add_test(NAME els_takeup_quiescence_test COMMAND els_takeup_quiescence_test)
 
+# The take-up ABORT VERDICT, and a characterisation of the per-tick quiescence
+# test's blind spot (2026-08-27). Also ELS_REQUIRE_QUIESCENCE=1, but on
+# els_takeup_confirm_test's Lash fixture rather than physics.cpp: these cases
+# need carriage motion the servo did NOT command (dither, creep,
+# never-settling), which a driven physics model cannot express.
+#
+# T1 is a FIX: an abort used to report ELS_CAL_OK because the UNCONFIRMED
+# branch is gated on carriageStopped. T2 is a CHARACTERISATION of a limitation
+# deliberately left in place -- replacing exact equality with a net-displacement
+# window contradicts the >=200-ticks-since-last-pulse invariant
+# els_takeup_quiescence_test:419 pins, so it is Evan's decision, and T2 must go
+# red the day it is taken. See the file header for the measurements.
+add_executable(els_takeup_quiescence_window_test
+    ${CMAKE_SOURCE_DIR}/test/els_takeup_quiescence_window_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_compile_definitions(els_takeup_quiescence_window_test PRIVATE ELS_REQUIRE_QUIESCENCE=1)
+target_link_libraries(els_takeup_quiescence_window_test m pthread)
+add_test(NAME els_takeup_quiescence_window_test COMMAND els_takeup_quiescence_window_test)
+
 add_executable(els_phase_offset_command_test
     ${CMAKE_SOURCE_DIR}/test/els_phase_offset_command_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)
