@@ -97,7 +97,14 @@ typedef struct {
  * Fraction before it is pushed, and reduction destroys PPR as an integer (at
  * elspi's 18 TPI, PPR=1000 arrives as 32/45). So the period P above must be
  * recovered from threadPitchSteps, which is an ALREADY-ROUNDED float32:
- * 711.111145 where the true value is 711.111111... .
+ * 711.111084 where the true value is 711.111111... .
+ *
+ * (That figure read 711.111145 until 2026-08-28 and was wrong in the direction
+ * as well as the digit -- the nearest float32 to 64000/90 is BELOW the true
+ * value, not above, so anyone reasoning about which way the residual pushes
+ * from this comment got the sign backwards. Checked against the machine rather
+ * than recomputed: elspi's own phase_live.jsonl captures carry
+ * threadPitchSteps = 711.111083984375.)
  *
  * WHAT THAT COSTS. P itself lands on the right integer with enormous margin
  * (1000.00005 -> 1000; the test asserts this rather than assuming it). The
@@ -109,17 +116,42 @@ typedef struct {
  * stopDirection polarities, elspi geometry:
  *
  *     wrong-groove (>pitch/4) rate at 18 TPI, vs true geometry
- *       20k-revolution job : 0.0454% unreduced -> 0.0010% reduced   (45x)
- *       full int32 span    : 4.7220% unreduced -> 0.0010% reduced (4700x)
+ *       20k-revolution job : 0.0554% unreduced -> 0.0003% reduced  (185x)
+ *       full int32 span    : 0.9977% unreduced -> 0.0000% reduced
  *
- * The number that matters is that the reduced rate is FLAT in job length while
- * the unreduced one grows without bound -- that is the whole point of the fix.
- * The 0.0010% that survives does NOT come from deltaSpindle at all; it comes
- * from the deltaZ term folding against the same rounded pitch, so it is a
- * PRE-EXISTING property of the register set that this patch neither causes nor
- * cures. At 4 TPI, where threadPitchSteps (3200.0) is exactly representable,
- * the residual is exactly zero in both regimes -- which is the control that
- * pins the cause on the rounded register rather than on the reduction.
+ * RE-MEASURED 2026-08-28 AT THE RIGHT MACHINE. Those two rows replace an
+ * earlier pair (0.0454% -> 0.0010%, 45x; 4.7220% -> 0.0010%, 4700x) that was
+ * swept at 1000 PPR -- InputDispatcher.encoder_ppr's class default, not this
+ * lathe. elspi runs a 6144 PPR spindle encoder (ui/AGENTS.md's commissioned
+ * table, and its own diag/phase_live.jsonl captures: syncRatio 25/216,
+ * threadPitchSteps 711.111084). The old sweep was self-consistent -- 1000 *
+ * 32/45 is also 711.111 -- which is precisely why it never went red while
+ * measuring a machine that does not exist.
+ *
+ * The number that matters is unchanged by the correction: the reduced rate
+ * stays flat as the job grows while the unreduced one climbs by more than an
+ * order of magnitude -- that is the whole point of the fix.
+ *
+ * WHAT SURVIVES, AND WHAT IT IS. The residual does NOT come from deltaSpindle;
+ * it comes from the deltaZ term folding against the same rounded pitch, so it
+ * is a PRE-EXISTING property of the register set that this patch neither causes
+ * nor cures. The control that pins that cause is 4 TPI, where threadPitchSteps
+ * (3200.0) is exactly representable -- and correcting the geometry split the
+ * control's result in two, which the old wording had conflated:
+ *
+ *   Wrong-groove errors DO vanish at exact pitch: zero, both regimes, both
+ *   oracles, 2.8M samples. The cause above is confirmed for the errors that
+ *   scrap a thread.
+ *
+ *   One-step differences DO NOT vanish: ~0.30% of samples, worst +/-1 step, at
+ *   4 TPI just as at 18. With an exact pitch there is nothing to round, so
+ *   these cannot be the register's doing -- they are float32 cancellation in
+ *   the advance terms and round-to-nearest landing either side of a half-step,
+ *   and no geometry removes them. One step is 2.0 um here.
+ *
+ * The previous text said the 4 TPI residual was "exactly zero in both regimes",
+ * which was true only of the wrong machine's numbers. els_phase_reduce_test.cpp
+ * now asserts the two claims separately.
  *
  * THE EXACT FIX, when the register-append queue allows it: give the firmware
  * the true integer PPR -- either as its own register, or by pushing the sync
