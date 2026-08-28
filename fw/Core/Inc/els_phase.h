@@ -168,15 +168,67 @@ typedef struct {
  * elsFmodPitch. It is unreachable from THIS caller, which is a different and
  * much weaker property.
  *
- * WHAT THIS FUNCTION DOES NOT CHECK. It trusts that threadPitchSteps and the
- * sync ratio describe the same machine. They always do when reflex-ui writes
- * them, because both come from one spindle_pitch_mm -- but nothing here
- * verifies it, and if they disagree, P is not a machine period and the
- * reduction subtracts multiples of the wrong quantity: whole-pitch errors,
- * where the unreduced code merely degraded. Reproduced and bounded in
- * els_phase_libm_equiv_test.cpp section 2b (640/640 cases wrong, worst 690 of
- * a 711-step pitch). Latent, not live -- reachable only through a config-load
- * ordering failure that lets a class-default ratio meet a real pitch. */
+ * THE CONSISTENCY GUARD (added 2026-08-28). This function used to TRUST that
+ * threadPitchSteps and the sync ratio describe the same machine. They do
+ * whenever reflex-ui writes them, because both come from one spindle_pitch_mm
+ * -- but nothing verified it, and if they disagree, P is not a machine period
+ * at all and the reduction subtracts multiples of the wrong quantity:
+ * whole-pitch errors, where the unreduced code merely degraded. Measured at a
+ * sync ratio of 1 against elspi's pitch, 640 of 640 cases came out wrong, worst
+ * 690 steps of a 711-step pitch.
+ *
+ * WHAT IS CHECKED, AND WHY IT IS CHECKABLE AT ALL. The premise this function
+ * rests on is that PPR * (syncRatioNum/syncRatioDen) == threadPitchSteps in the
+ * rationals, so
+ *   pd = threadPitchSteps * syncRatioDen / syncRatioNum
+ * must land on an INTEGER -- the true PPR -- and the only thing that moves it
+ * off one is the float32 rounding already baked into threadPitchSteps. That
+ * makes the premise self-checking: measure how far pd is from the nearest
+ * integer and compare it against what that rounding can account for. No new
+ * register, no PPR parameter; the inconsistency is visible in the three values
+ * already passed in.
+ *
+ * THE TOLERANCE, DERIVED RATHER THAN PICKED. threadPitchSteps carries at most
+ * one float32 rounding, so its relative error is bounded by 2^-24; pd is formed
+ * from it in double, whose own error is ~2^-52 and negligible beside that.
+ * Hence |pd - PPR| <= pd * 2^-24 for any honest register pair. The bound below
+ * is 2^-18 -- 64x that -- so a host that computes the pitch through a couple of
+ * float steps still passes. Measured margins at both ends, through the function
+ * itself rather than by recomputing the arithmetic beside it:
+ *
+ *   elspi 18 TPI (25/216, tps 711.111084)  dev 2.34e-4  tol 2.34e-2   100x IN
+ *   elspi  4 TPI (25/48,  tps 3200.0)      dev 0        tol 2.34e-2   exact
+ *   lossless test geometry (6000/6000)     dev 0        tol 3.81e-3   exact
+ *   ratio 1 (216/216, tps 711.111084)      dev 1.11e-1  tol 2.71e-3    41x OUT
+ *   class default 360/100                  dev 4.69e-1  tol 7.54e-4   623x OUT
+ *
+ * Two orders of magnitude of daylight on each side, and every geometry a real
+ * machine or an existing test presents lands exactly on its integer.
+ *
+ * WHICH WAY IT FAILS, DELIBERATELY. A refused pair returns deltaSpindle
+ * UNREDUCED -- exactly the pre-04dd1f9 behaviour, which shipped for months and
+ * degrades gracefully -- rather than asserting or clamping. This runs on the
+ * resume edge off the 100 kHz ISR's path; there is nothing useful to trap to,
+ * and reducing by a wrong period is strictly worse than not reducing. So a
+ * tolerance that is slightly too TIGHT costs the fix's benefit on a machine
+ * that deserved it, while one slightly too LOOSE costs a scrapped thread. The
+ * 64x headroom is sized with that asymmetry in mind, not centred.
+ *
+ * NOT SIGNALLED ANYWHERE, and that is a real gap: a machine whose registers
+ * disagree silently loses the reduction with no operator-visible trace. A
+ * refusal counter belongs in the register map beside the other diagnostics,
+ * which is the same congested append queue the exact-PPR fix above waits on.
+ *
+ * els_phase_libm_equiv_test.cpp section 2b asserts BOTH halves -- that the
+ * guard fires on the inconsistent pair, and that it does NOT fire on elspi's
+ * real geometry. The second matters more: a guard that refused everything
+ * would make every divergence test go green while silently deleting the fix. */
+
+/* Bound on |pd - round(pd)| relative to pd, above which the pitch register and
+ * the sync ratio are taken to describe different machines. 2^-18 = 64 float32
+ * ULPs; see the derivation above before changing it. */
+#define ELS_REDUCE_PERIOD_TOL_REL (1.0 / 262144.0)
+
 static inline int32_t elsReduceDeltaSpindle(
     int32_t deltaSpindle, int32_t syncRatioNum, int32_t syncRatioDen,
     float threadPitchSteps)
@@ -189,6 +241,16 @@ static inline int32_t elsReduceDeltaSpindle(
   if (pd < 0.0) pd = -pd;
   int64_t P = (int64_t)(pd + 0.5);   /* round to nearest; P is ~PPR */
   if (P <= 0) {
+    return deltaSpindle;
+  }
+  /* The premise is self-checking: pd must BE an integer but for the float32
+   * rounding in threadPitchSteps. If it is further out than that rounding can
+   * explain, the two registers are not describing one machine and P is not a
+   * period -- fail open to the unreduced path rather than subtract multiples of
+   * a wrong quantity. */
+  double dev = pd - (double)P;
+  if (dev < 0.0) dev = -dev;
+  if (dev > pd * ELS_REDUCE_PERIOD_TOL_REL) {
     return deltaSpindle;
   }
   int64_t d = (int64_t)deltaSpindle;

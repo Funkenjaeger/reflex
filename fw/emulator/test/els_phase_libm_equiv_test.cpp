@@ -201,13 +201,30 @@ int main()
      * config-load ordering failure. It is written down here because a latent
      * hazard with no executable evidence becomes a rediscovery.
      *
-     * IF A GUARD IS EVER ADDED to elsReduceDeltaSpindle -- assert or fail-open
-     * when threadPitchSteps and the ratio disagree -- THIS SECTION IS SUPPOSED
-     * TO GO RED. That is the point: it should force whoever adds the guard to
-     * come here and say what the new behaviour is, rather than letting a fix
-     * land silently against a test that never mentioned the case. Do not soften
-     * the bound to keep it green. */
-    printf("\n-- 2b. an inconsistent sync ratio diverges by whole pitches --\n");
+     * THE GUARD WAS ADDED THE SAME DAY, AND THIS IS THE ANSWER TO IT. The
+     * paragraph that stood here said that adding a guard was SUPPOSED to turn
+     * this section red, so the fix could not land silently against a test that
+     * never mentioned the case. It went red exactly as advertised, within the
+     * hour, and what follows is the required statement of the new behaviour
+     * rather than a softened bound.
+     *
+     * WHAT THE GUARD DOES: it measures how far pd = tps*den/num sits from the
+     * nearest integer and refuses the pair when that exceeds what the float32
+     * rounding in threadPitchSteps can explain (2^-18 relative, 64 ULPs). A
+     * refusal returns deltaSpindle UNREDUCED -- the pre-04dd1f9 path -- which
+     * is why the divergence here does not merely shrink, it disappears: the
+     * reference in this file is unreduced too, so refusing makes production
+     * agree with it bit for bit.
+     *
+     * AND THE SECOND CHECK IS THE ONE THAT MATTERS. "Divergence gone" is
+     * satisfied just as well by a guard that refuses EVERYTHING -- which would
+     * silently delete the reduction from every machine including this one, and
+     * leave every other section in this file green, because they all compare
+     * against an unreduced reference as well. So the guard is probed directly
+     * from both sides: it must pass elspi's real geometry through to the
+     * reduction, and it must refuse the inconsistent pair. Those two are what
+     * stop this section from passing for the wrong reason. */
+    printf("\n-- 2b. an inconsistent sync ratio is refused, a real one is not --\n");
     {
         long before = failures;
         characterizing = true;
@@ -226,18 +243,26 @@ int main()
                (double)ELSPI_PITCH, char_compared, char_differed,
                (int)char_worst, (int)(ELSPI_PITCH + 0.5f));
 
-        /* Both halves matter. The first says the hazard is REAL (it is not a
-         * handful of rounding steps); the second says this section is actually
-         * exercising it, so it cannot pass by sweeping nothing. */
-        /* Three claims, none of which can be satisfied by sweeping nothing.
-         * The last is the strongest and the reason this is worth keeping: on
-         * this geometry it is not that SOME cases go wrong, it is that not one
-         * of the 640 comes out right. */
-        check(char_worst > 1, "the divergence is larger than float noise");
+        /* One full period of the REAL geometry must reduce to zero. That is
+         * only true if the guard accepted the pair and the reduction ran, so it
+         * is the direct probe an over-eager guard cannot survive. */
+        bool realAccepted =
+            elsReduceDeltaSpindle(6144, 25, 216, ELSPI_PITCH) == 0;
+
+        /* The inconsistent pair must come back untouched. Distinguishable from
+         * any reduction: 5000000 mod 711 is 2129, nowhere near the input. */
+        bool badRefused =
+            elsReduceDeltaSpindle(5000000, 216, 216, ELSPI_PITCH) == 5000000;
+
         check(char_compared >= 600, "the bad geometry was actually swept");
-        check(char_differed == char_compared,
-              "every case diverges -- none of it is right by accident");
+        check(char_differed == 0,
+              "refusing the pair makes production match the unreduced reference");
+        check(realAccepted,
+              "the guard still lets elspi's real geometry reduce");
+        check(badRefused,
+              "the guard refuses the inconsistent pair, passing it through");
         (void)before;
+        (void)char_worst;
     }
 
     printf("\n-- 3. with a groove-widening offset applied --\n");
