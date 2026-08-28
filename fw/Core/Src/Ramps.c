@@ -697,11 +697,43 @@ static inline void elsCalUpdate(rampsHandler_t *data) {
   }
 }
 
+/* ---- pin writes: BSRR on hardware, the HAL on the emulator ---------------
+ *
+ * HAL_GPIO_WritePin is a real function call -- prologue, branch, store, return
+ * -- and this ISR made SIX of them per tick at 100 kHz. After the period
+ * arithmetic came out (0d9ceab) they were the only calls left in the ISR apart
+ * from an fmodf that never executes on any real geometry (measured: elspi's
+ * 5027 phase_live captures peak at |phaseErrSteps| 354 against a 2^22 guard).
+ * BSRR is a single atomic store -- write the pin mask to set, the mask shifted
+ * up 16 to clear -- with no read-modify-write and no call.
+ *
+ * THE EMULATOR MUST KEEP THE HAL, and this is not a style preference. Two
+ * separate things depend on that call actually being made:
+ *   - hal_shim.c watches it to drive emu_hw.step_pin / dir_pin / spare2_pin,
+ *     which is the ONLY way the physics model sees a step pulse; and
+ *   - els_isr_peak_test replaces it with a stub that charges emu_dwt.CYCCNT,
+ *     which is the only way that test can make ISR time pass at all.
+ * A BSRR store writes a field in a plain struct that nothing is watching, so
+ * both would stop working silently -- the physics would see no pulses and the
+ * peak test would measure zero. Neither failure announces itself.
+ *
+ * WHAT THE DIVERGENCE COSTS, stated rather than glossed: the emulator no
+ * longer runs the same pin-write path as the hardware. That is acceptable
+ * because it never did -- there is no GPIO peripheral behind the shim, only a
+ * stub -- so what the emulator verifies is WHEN pulses happen and how many,
+ * which this does not touch. It does not, and never did, verify how a pin gets
+ * written. */
+#ifdef EMULATOR_BUILD
+#define ELS_PIN_WRITE(port, pin, set)     HAL_GPIO_WritePin((port), (pin), (set) ? GPIO_PIN_SET : GPIO_PIN_RESET)
+#else
+#define ELS_PIN_WRITE(port, pin, set)     ((port)->BSRR = (set) ? (uint32_t)(pin) : ((uint32_t)(pin) << 16u))
+#endif
+
 void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   uint32_t start = DWT->CYCCNT;
   // Reset the step pin as soon as possible
-  HAL_GPIO_WritePin(STEP_GPIO_PORT, STEP_PIN, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(SPARE_2_GPIO_PORT, SPARE_2_PIN, GPIO_PIN_RESET);
+  ELS_PIN_WRITE(STEP_GPIO_PORT, STEP_PIN, 0);
+  ELS_PIN_WRITE(SPARE_2_GPIO_PORT, SPARE_2_PIN, 0);
   rampsSharedData_t *shared = &(data->shared);
   shared->executionIntervalPrevious = shared->executionIntervalCurrent;
   shared->executionIntervalCurrent = DWT->CYCCNT;
@@ -1351,16 +1383,20 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
 
     if (change > 0) {
       direction = 1;
-      HAL_GPIO_WritePin(DIR_GPIO_PORT, DIR_PIN, shared->servo.servoDir == 1 ? GPIO_PIN_SET : GPIO_PIN_RESET);
+      /* set when servoDir == 1, clear otherwise -- same truth table as the
+       * ternary this replaced, written out rather than inverted. */
+      ELS_PIN_WRITE(DIR_GPIO_PORT, DIR_PIN, shared->servo.servoDir == 1);
     }
     if (change < 0) {
-      HAL_GPIO_WritePin(DIR_GPIO_PORT, DIR_PIN, shared->servo.servoDir == 1 ? GPIO_PIN_RESET : GPIO_PIN_SET);
+      /* The OPPOSITE polarity of the change > 0 branch above: clear when
+       * servoDir == 1, set otherwise. */
+      ELS_PIN_WRITE(DIR_GPIO_PORT, DIR_PIN, shared->servo.servoDir != 1);
       direction = -1;
     }
 
     if (direction == data->servoPreviousDirection && change != 0) {
-      HAL_GPIO_WritePin(STEP_GPIO_PORT, STEP_PIN, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(SPARE_2_GPIO_PORT, SPARE_2_PIN, GPIO_PIN_SET);
+      ELS_PIN_WRITE(STEP_GPIO_PORT, STEP_PIN, 1);
+      ELS_PIN_WRITE(SPARE_2_GPIO_PORT, SPARE_2_PIN, 1);
       /* Pulse born here; its width is measured at the next entry's reset.
        * Fresh DWT read, not `start`: the whole point is how late in the tick
        * this set happened. */
