@@ -20,9 +20,18 @@ instead of leaving bare `TODO:` comments in code.
 ## Modbus communication
 
 ### Modbus RX DMA — shelved, needs on-hardware debugging
-- **Status:** the working fix is the **interrupt-mode overrun recovery** on branch
-  `fix/modbus-uart-overrun-recovery` (commit `dc86a29`). It is validated: zero CRC
-  errors through a real ELS *cutting* pass on the Pi. **This is the one to ship/merge.**
+- **Status: SHIPPED.** The working fix is the **interrupt-mode overrun recovery**, and
+  it is live in this repo at `Core/Src/UARTCallback.c` (the `xTypeHW == USART_HW` arm
+  of `HAL_UART_ErrorCallback`: clear ORE, re-arm the 1-byte receive). Validated before
+  it landed: zero CRC errors through a real ELS *cutting* pass on the Pi.
+  - Commit ref corrected 2026-08-28. This line read `dc86a29`, which **exists nowhere**
+    — not in the monorepo and not in the archived `reflex-fw`. The real commits are
+    `270b041` (the fix) and `fb37960` (an emulator stub for `__HAL_UART_CLEAR_OREFLAG`),
+    both 2026-06-24 and both only in the **archived pre-weld `reflex-fw`** repo, so
+    neither hash resolves here. The CODE came across in the 2026-08-17 monorepo weld;
+    only the reference was stale. Cite the file, not the hash — a hash from before the
+    weld cannot be looked up in this repo.
+  - The old "This is the one to ship/merge" line is removed: it shipped.
 - **Root cause (for context):** Modbus RX ran byte-at-a-time in interrupt mode at the
   lowest NVIC priority (USART1 = 15) and was starved by the 100 kHz step-generation
   ISR (TIM9 → `SynchroRefreshTimerIsr`, NVIC prio 5). Starvation → USART overrun (ORE)
