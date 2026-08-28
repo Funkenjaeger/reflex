@@ -320,6 +320,38 @@ class ElsStopHal:
         self._board.device['elsStop']['calCeilingSteps'] = max(0, int(ceiling_steps))
         self._board.device['elsStop']['calMotionThreshCounts'] = max(0, int(motion_thresh_counts))
 
+    def read_servo_mode(self) -> int:
+        """servoMode as the firmware currently holds it: 0 off, 1 sync/index, 2 jog.
+
+        Returns 0 with no link, which the caller must treat as "unknown, do not
+        restore" rather than as a real mode -- see set_servo_mode.
+        """
+        if not self._board.connected:
+            return self._no_link(0)
+        return int(self._board.servo.servoMode)
+
+    def set_servo_mode(self, mode: int) -> None:
+        """Write servoMode. Ramps.h:173 marks it SW write; jogbar and
+        home_screen already drive it, so this is not a new kind of access.
+
+        WHY CALIBRATION NEEDS IT. The firmware refuses a calibration unless
+        servoMode == 1 (ELS_CAL_ERR_SERVOMODE), and the only AUTOMATIC route to
+        mode 1 is servoEnableTask's promotion, which fires on
+        `anySyncMotionEnabled && !active && mode != 2`. A calibration enables no
+        sync, so that promotion never fires and the operator was left arming
+        spindle-following by hand to satisfy a precondition for an operation
+        that does not use the spindle at all.
+
+        That is backwards on safety, not merely annoying: enabling sync puts the
+        machine in a state where a turning spindle drives the carriage. Writing
+        mode 1 directly is strictly NARROWER -- sync feeds only when
+        servoMode == 1 AND a scale has syncEnable set, so mode 1 on its own
+        commands nothing.
+        """
+        if not self._board.connected:
+            return
+        self._board.servo.servoMode = int(mode)
+
     def read_servo_motion_params(self):
         """(maxSpeed, acceleration) as the firmware currently holds them."""
         if not self._board.connected:

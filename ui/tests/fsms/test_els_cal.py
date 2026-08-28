@@ -52,6 +52,13 @@ class FakeHal:
         # give back.
         self.motion = (250.0, 500.0)
         self.motion_writes = []
+
+        # servoMode: 0 off, 1 sync/index, 2 jog. Start at 0 -- the state an
+        # operator is actually in when they walk up to calibrate, and the whole
+        # reason the FSM has to promote it.
+        self.servo_mode = 0
+        self.mode_writes = []
+        self._fail_next_mode_read = False
         self._measured = list(measured)
         self._result = result
         self._ticks_to_finish = ticks_to_finish
@@ -113,6 +120,17 @@ class FakeHal:
     def set_servo_motion_params(self, max_speed, accel):
         self.motion = (max_speed, accel)
         self.motion_writes.append((max_speed, accel))
+
+    def read_servo_mode(self):
+        if self._fail_next_mode_read:
+            self._fail_next_mode_read = False
+            self.fail_read()
+            return 0   # fabricated -- a failed read returns 0, a REAL mode here
+        return self.servo_mode
+
+    def set_servo_mode(self, mode):
+        self.servo_mode = mode
+        self.mode_writes.append(mode)
 
     # -- reads -------------------------------------------------------
     def read_cal_seq(self):
@@ -620,3 +638,77 @@ def test_commit_stores_the_three_legs_for_reconcile():
     cal.commit()
 
     assert els.els_cal_measured_legs == [365, 373, 366]
+
+
+# ── servoMode promotion: the operator should not have to arm sync ──────────
+#
+# The firmware refuses a calibration unless servoMode == 1
+# (ELS_CAL_ERR_SERVOMODE), and its only automatic route to mode 1 is
+# servoEnableTask's promotion on `anySyncMotionEnabled && !active && mode != 2`.
+# A calibration enables no sync, so that never fires. Before this, the operator
+# had to arm spindle-following by hand -- a state in which a turning spindle
+# drives the carriage -- purely to satisfy a precondition for an operation that
+# does not use the spindle at all.
+
+
+def test_start_promotes_servo_mode_and_finish_restores_it():
+    """MUTATION: drop the set_servo_mode(1) in start() and the first assert
+    fails; drop the restore in _restore_motion() and the last one does."""
+    hal = FakeHal(ticks_to_finish=3, measured=(100, 101, 100))
+    assert hal.servo_mode == 0
+    cal = BacklashCalibration(hal, _els())
+
+    cal.start()
+    assert hal.servo_mode == 1, (
+        "calibration did not put the servo in sync/index mode; the firmware "
+        "would refuse it with ELS_CAL_ERR_SERVOMODE")
+
+    assert _run_to_completion(cal) == CalState.PASSED
+    assert hal.servo_mode == 0, (
+        "servo mode was left promoted after the run -- the operator's machine "
+        "is in a different state than they left it")
+
+
+def test_cancel_restores_servo_mode():
+    """Every terminal path restores, not just the happy one."""
+    hal = FakeHal(ticks_to_finish=50, measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, _els())
+    cal.start()
+    assert hal.servo_mode == 1
+    cal.cancel()
+    assert hal.servo_mode == 0, "cancel left the servo promoted"
+
+
+def test_jog_mode_is_restored_not_clobbered():
+    """An operator in jog gets jog back. Mode 2 is a deliberate state, and
+    silently leaving them in sync/index afterwards would be a surprise."""
+    hal = FakeHal(ticks_to_finish=3, measured=(100, 101, 100))
+    hal.servo_mode = 2
+    cal = BacklashCalibration(hal, _els())
+    cal.start()
+    assert hal.servo_mode == 1, "did not promote out of jog to run"
+    assert _run_to_completion(cal) == CalState.PASSED
+    assert hal.servo_mode == 2, "did not put the operator back in jog"
+
+
+def test_a_fabricated_mode_read_is_not_restored_over_the_real_mode():
+    """A checksum-failed read_servo_mode() fabricates 0, which is a REAL mode
+    here (servo off). Restoring it over a genuine mode 1 would disable the
+    servo after a successful calibration -- the same fabricated-read shape as
+    the calSeq/calResult guards above, applied to the mode.
+
+    MUTATION: drop the reads_fabricated_since() check around the save and this
+    fails -- the fabricated 0 is saved and then written back over the real 1.
+    """
+    hal = FakeHal(ticks_to_finish=3, measured=(100, 101, 100))
+    hal.servo_mode = 1                 # operator was already in sync/index
+    hal._fail_next_mode_read = True    # ...but the read of it is corrupted
+    cal = BacklashCalibration(hal, _els())
+
+    cal.start()
+    assert hal.servo_mode == 1
+    assert _run_to_completion(cal) == CalState.PASSED
+    assert hal.servo_mode == 1, (
+        "a fabricated mode read was restored, disabling the servo after a "
+        "calibration that succeeded")
+    assert hal.read_failures >= 1
