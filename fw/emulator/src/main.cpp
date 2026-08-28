@@ -535,6 +535,24 @@ static void isrThreadFunc(LathePhysics *physics, rampsHandler_t *rampsData, int 
                                   (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
         }
 
+        /* Mirror updateSpeedTask's spindle-period refresh, ~20 ms.
+         *
+         * SAME REASON AS THE LINE ABOVE, and the consequence is sharper here.
+         * On hardware the period is computed off the ISR by updateSpeedTask;
+         * without this mirror the cache would stay 0 in the emulator forever,
+         * applyPhaseCorrection would be handed 0 on every pass, and 0 means
+         * DO NOT REDUCE. Every emulator-backed test would then quietly
+         * exercise the pre-04dd1f9 unreduced path while reporting green on the
+         * reduced one -- a test suite that stops testing the feature and says
+         * nothing. Calls the same header function the task does, so there is
+         * one implementation, not two. */
+        static int period_divider = 0;
+        period_divider++;
+        if (period_divider >= rate_hz / 50) {
+            period_divider = 0;
+            elsRefreshSpindlePeriod(&rampsData->shared);
+        }
+
         /* Sleep until next tick */
         std::this_thread::sleep_until(next_tick);
     }

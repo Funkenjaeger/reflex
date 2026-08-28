@@ -229,33 +229,109 @@ typedef struct {
  * ULPs; see the derivation above before changing it. */
 #define ELS_REDUCE_PERIOD_TOL_REL (1.0 / 262144.0)
 
-static inline int32_t elsReduceDeltaSpindle(
-    int32_t deltaSpindle, int32_t syncRatioNum, int32_t syncRatioDen,
-    float threadPitchSteps)
+/* ======================================================================
+ * NEVER CALL THIS FROM THE ISR. Measured 2026-08-28 on elspi: it cost the
+ * 100 kHz tick 2.6x its entire budget.
+ * ======================================================================
+ *
+ * From 04dd1f9 until 0d0307d this arithmetic lived inside
+ * elsComputePhaseCorrection, which applyPhaseCorrection calls from
+ * SynchroRefreshTimerIsr. Cortex-M4F has NO FP64 hardware, so every `double`
+ * below is a compiler softfp library call. objdump of the flashed image found
+ * 22 of them plus 4 __aeabi_ldivmod inside the ISR symbol, against ZERO in the
+ * previous release. The ISR peak went 1012 -> 2658 cycles against a 1000-cycle
+ * budget: a 2.6x tick overrun, which is exactly the Modbus-starvation condition
+ * that lost the link on 6 of 6 cuts on 2026-08-23.
+ *
+ * The irony is on the record: elsFmodPitch, 100 lines below, already warned
+ * "Cortex-M4F has no FP64 hardware; a double divide -- or even a double
+ * multiply-subtract -- is a compiler softfp call here, trading one library call
+ * for another." That warning and this function shipped on different branches
+ * and met in a merge. Nobody who read either one read them together.
+ *
+ * NOTHING IN THE EMULATOR SUITE COULD SEE IT. Those tests build for x86, where
+ * a double is a hardware instruction and free. 32/32 green says nothing about a
+ * cost that exists only on ARM. The check that DOES see it is a static one on
+ * the ARM binary -- see scripts/check-isr-cost.sh, which fails the build if a
+ * softfp call reappears inside the ISR.
+ *
+ * SO THE PERIOD IS COMPUTED OFF THE HOT PATH AND CACHED. The result depends on
+ * three registers that change at job setup, not per tick, so recomputing it per
+ * pass was always waste as well as hazard. Ramps.c refreshes it from
+ * updateSpeedTask and hands the ISR an integer.
+ *
+ * Returns the spindle-count period of one thread pitch, or 0 meaning
+ * "DO NOT REDUCE" -- degenerate config, or the consistency check below
+ * refusing. 0 is the fail-open sentinel and callers must honour it.
+ *
+ * ---- what the consistency check is, and why it is checkable at all --------
+ * The premise the reduction rests on is that PPR * (num/den) ==
+ * threadPitchSteps in the rationals, so pd must land on an INTEGER -- the true
+ * PPR -- and the only thing that moves it off one is the float32 rounding
+ * already baked into threadPitchSteps. Measure the distance to the nearest
+ * integer, compare against what that rounding can explain.
+ *
+ * TOLERANCE DERIVED, NOT PICKED: threadPitchSteps carries at most one float32
+ * rounding, so |pd - PPR| <= pd * 2^-24 for any honest pair; the bound is
+ * 2^-18, 64x that. Measured through this function:
+ *
+ *   elspi 18 TPI (25/216, tps 711.111084)  dev 2.34e-4  tol 2.34e-2   100x IN
+ *   elspi  4 TPI (25/48,  tps 3200.0)      dev 0        tol 2.34e-2   exact
+ *   lossless test geometry (6000/6000)     dev 0        tol 3.81e-3   exact
+ *   ratio 1 (216/216, tps 711.111084)      dev 1.11e-1  tol 2.71e-3    41x OUT
+ *   class default 360/100                  dev 4.69e-1  tol 7.54e-4   623x OUT
+ *
+ * REFUSAL FAILS OPEN, deliberately: returning 0 leaves the caller on the
+ * pre-04dd1f9 unreduced path, which shipped for months and degrades
+ * gracefully. Reducing by a wrong period does not degrade -- it moves the
+ * answer by whole pitches. A tolerance slightly too TIGHT costs the fix's
+ * benefit on a machine that deserved it; slightly too LOOSE costs a scrapped
+ * thread. The 64x headroom is sized for that asymmetry, not centred.
+ *
+ * STILL NOT SIGNALLED: a machine whose registers disagree loses the reduction
+ * with no operator-visible trace. A refusal counter belongs in the register
+ * map, on the same congested append queue as the exact-PPR fix above. */
+static inline int32_t elsComputeSpindlePeriod(
+    int32_t syncRatioNum, int32_t syncRatioDen, float threadPitchSteps)
 {
   if (syncRatioNum == 0 || threadPitchSteps == 0.0f) {
-    return deltaSpindle;   /* turning, or degenerate config: no reduction */
+    return 0;              /* turning, or degenerate config: do not reduce */
   }
   double pd = (double)threadPitchSteps * (double)syncRatioDen
               / (double)syncRatioNum;
   if (pd < 0.0) pd = -pd;
   int64_t P = (int64_t)(pd + 0.5);   /* round to nearest; P is ~PPR */
-  if (P <= 0) {
-    return deltaSpindle;
+  if (P <= 0 || P > 0x7FFFFFFF) {
+    return 0;
   }
-  /* The premise is self-checking: pd must BE an integer but for the float32
-   * rounding in threadPitchSteps. If it is further out than that rounding can
-   * explain, the two registers are not describing one machine and P is not a
-   * period -- fail open to the unreduced path rather than subtract multiples of
-   * a wrong quantity. */
   double dev = pd - (double)P;
   if (dev < 0.0) dev = -dev;
   if (dev > pd * ELS_REDUCE_PERIOD_TOL_REL) {
+    return 0;              /* registers describe different machines */
+  }
+  return (int32_t)P;
+}
+
+/* The ISR half: integer only, and that is the point.
+ *
+ * int32 rather than the int64 the first version used. deltaSpindle IS an
+ * int32 and a period is ~PPR (6144 on elspi), so the 64-bit form bought
+ * nothing and cost 4 __aeabi_ldivmod calls per pass in the ISR -- Cortex-M4
+ * has a 32-bit hardware divider and no 64-bit one.
+ *
+ * period == 0 means DO NOT REDUCE, and returning deltaSpindle untouched is
+ * exactly the pre-04dd1f9 behaviour. That single sentinel carries three
+ * separate cases: turning, a degenerate register set, and a period the
+ * consistency check refused. */
+static inline int32_t elsReduceDeltaSpindleBy(int32_t deltaSpindle,
+                                              int32_t spindlePeriodCounts)
+{
+  if (spindlePeriodCounts <= 0) {
     return deltaSpindle;
   }
-  int64_t d = (int64_t)deltaSpindle;
-  int64_t r = ((d % P) + P) % P;     /* always non-negative; see 08-26 harness */
-  return (int32_t)r;
+  int32_t r = deltaSpindle % spindlePeriodCounts;
+  if (r < 0) r += spindlePeriodCounts;   /* always non-negative */
+  return r;
 }
 
 /* ---- the 100 kHz ISR's path carries no library calls ------------------
@@ -415,12 +491,17 @@ static inline elsCorrResult_t elsComputePhaseCorrection(
     int32_t syncRatioNum, int32_t syncRatioDen,
     float threadPitchSteps, float zCountsPerPitch,
     int16_t stopDirection,
-    int32_t offsetSteps)   /* phase offset, leadscrew steps; 0 = none (exact pre-feature path) */
+    int32_t offsetSteps,   /* phase offset, leadscrew steps; 0 = none (exact pre-feature path) */
+    /* Spindle counts in one thread pitch, from elsComputeSpindlePeriod OFF the
+     * ISR path. 0 = do not reduce. Passed in rather than derived here because
+     * deriving it costs 26 softfp calls on Cortex-M4F and this function runs
+     * from SynchroRefreshTimerIsr -- see the banner above
+     * elsComputeSpindlePeriod for what that cost measured. */
+    int32_t spindlePeriodCounts)
 {
   elsCorrResult_t r;
 
-  deltaSpindle = elsReduceDeltaSpindle(deltaSpindle, syncRatioNum, syncRatioDen,
-                                        threadPitchSteps);
+  deltaSpindle = elsReduceDeltaSpindleBy(deltaSpindle, spindlePeriodCounts);
 
   r.idealAdvance  = (float)deltaSpindle * (float)syncRatioNum / (float)syncRatioDen;
   r.actualAdvance = (float)deltaZ * threadPitchSteps / zCountsPerPitch;

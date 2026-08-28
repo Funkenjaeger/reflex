@@ -91,8 +91,12 @@ static void compare(int32_t dSp, int32_t dZ, int32_t num, int32_t den,
                     float tps, float zcpp, int16_t sd, int32_t off)
 {
     int32_t want = reference_steps(dSp, dZ, num, den, tps, zcpp, sd, off);
-    elsCorrResult_t got = elsComputePhaseCorrection(dSp, dZ, num, den,
-                                                    tps, zcpp, sd, off);
+    elsCorrResult_t got = elsComputePhaseCorrection(
+        dSp, dZ, num, den, tps, zcpp, sd, off,
+        /* Production computes this off the ISR and caches it; computing it here
+         * per call is the same value by the same function, so the comparison
+         * still exercises the shipping path. */
+        elsComputeSpindlePeriod(num, den, tps));
     int32_t diff = got.stepsToAdd - want;
 
     if (characterizing) {
@@ -247,12 +251,14 @@ int main()
          * only true if the guard accepted the pair and the reduction ran, so it
          * is the direct probe an over-eager guard cannot survive. */
         bool realAccepted =
-            elsReduceDeltaSpindle(6144, 25, 216, ELSPI_PITCH) == 0;
+            elsComputeSpindlePeriod(25, 216, ELSPI_PITCH) == 6144
+            && elsReduceDeltaSpindleBy(6144, 6144) == 0;
 
         /* The inconsistent pair must come back untouched. Distinguishable from
          * any reduction: 5000000 mod 711 is 2129, nowhere near the input. */
         bool badRefused =
-            elsReduceDeltaSpindle(5000000, 216, 216, ELSPI_PITCH) == 5000000;
+            elsComputeSpindlePeriod(216, 216, ELSPI_PITCH) == 0
+            && elsReduceDeltaSpindleBy(5000000, 0) == 5000000;
 
         check(char_compared >= 600, "the bad geometry was actually swept");
         check(char_differed == 0,

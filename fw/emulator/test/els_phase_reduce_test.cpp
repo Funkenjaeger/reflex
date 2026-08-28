@@ -225,7 +225,8 @@ int main(void)
   for (const Geom &g : GEOMS) {
     int64_t bad = 0, negIn = 0;
     for (int64_t d = -5000000; d <= 5000000; d += 997) {
-      int32_t r = elsReduceDeltaSpindle((int32_t)d, g.num, g.den, g.tps);
+      int32_t r = elsReduceDeltaSpindleBy((int32_t)d,
+                                         elsComputeSpindlePeriod(g.num, g.den, g.tps));
       if (d < 0) negIn++;
       /* Must land in [0, PPR) -- the ((d%P)+P)%P form, never C truncating %. */
       if (r < 0 || r >= (int32_t)g.ppr) bad++;
@@ -243,8 +244,14 @@ int main(void)
    * is the residual's own guard: if the rounding ever moved P off the integer,
    * every claim above collapses, so it is asserted rather than assumed. */
   for (const Geom &g : GEOMS) {
-    int32_t r = elsReduceDeltaSpindle((int32_t)g.ppr, g.num, g.den, g.tps);
-    bool ok = (r == 0);   /* exactly one revolution reduces to zero iff P == PPR */
+    int32_t P = elsComputeSpindlePeriod(g.num, g.den, g.tps);
+    int32_t r = elsReduceDeltaSpindleBy((int32_t)g.ppr, P);
+    /* Two claims, not one: the period the double math recovered must BE the
+     * true PPR, and one whole revolution must therefore reduce to zero. The
+     * second alone would also pass if P came back 0 (do-not-reduce) and g.ppr
+     * happened to be 0 -- it is not, but asserting P explicitly means this
+     * cannot start passing for that reason later. */
+    bool ok = (P == (int32_t)g.ppr) && (r == 0);
     printf("  [%s] %-32s recovered period == PPR (%lld)\n",
            ok ? "PASS" : "FAIL", g.name, (long long)g.ppr);
     if (!ok) failures++;
@@ -252,8 +259,12 @@ int main(void)
 
   /* Turning (num == 0) and degenerate pitch must be exact no-ops. */
   {
-    bool ok = (elsReduceDeltaSpindle(123456789, 0, 45, 711.111f) == 123456789)
-           && (elsReduceDeltaSpindle(-123456789, 32, 45, 0.0f)  == -123456789);
+    /* Both degenerate configs must yield a period of 0, and 0 must mean the
+     * reduction is a no-op. Checked as the two separate facts they are. */
+    bool ok = (elsComputeSpindlePeriod(0, 45, 711.111f) == 0)
+           && (elsComputeSpindlePeriod(32, 45, 0.0f) == 0)
+           && (elsReduceDeltaSpindleBy(123456789, 0) == 123456789)
+           && (elsReduceDeltaSpindleBy(-123456789, 0) == -123456789);
     printf("  [%s] turning / degenerate config is a no-op\n", ok ? "PASS" : "FAIL");
     if (!ok) failures++;
   }
@@ -299,8 +310,9 @@ int main(void)
                                        g.tpsTrue, g.zcppTrue, cuttingDir, sd, off);
               int32_t ob = oracleSteps((int32_t)ds, dz, ratio,
                                        (double)g.tps, (double)g.zcpp, cuttingDir, sd, off);
-              elsCorrResult_t p = elsComputePhaseCorrection((int32_t)ds, dz, g.num, g.den,
-                                                            g.tps, g.zcpp, sd, off);
+              elsCorrResult_t p = elsComputePhaseCorrection(
+                  (int32_t)ds, dz, g.num, g.den, g.tps, g.zcpp, sd, off,
+                  elsComputeSpindlePeriod(g.num, g.den, g.tps));
               int32_t u = unpatchedSteps((int32_t)ds, dz, g.num, g.den, g.tps, g.zcpp, sd, off);
 
               tally(pa, (int64_t)p.stepsToAdd - oa, g.tpsTrue);

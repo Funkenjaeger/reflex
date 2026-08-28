@@ -481,6 +481,62 @@ static inline void updateJogPosition(rampsHandler_t *data) {
  * electronic retract, manual jog, half-nut snap, etc.
  *
  * See ARCHITECTURE.md → ELS Shoulder Stop for the conceptual model. */
+/* ---- the spindle period, computed off the ISR and cached -----------------
+ *
+ * elsComputeSpindlePeriod() is double-precision arithmetic, which on this core
+ * is a fistful of softfp library calls (see its banner in els_phase.h -- it
+ * cost the ISR 2.6x its whole tick budget on 2026-08-28 when it ran inline).
+ * It depends only on three registers that change at JOB SETUP, so recomputing
+ * it per pass was waste as well as hazard.
+ *
+ * NOT IN THE REGISTER MAP ON PURPOSE. This is derived firmware-internal state,
+ * not something the host reads, so it stays a file static and costs no
+ * protocolVersion bump -- that append queue is congested with the take-up gate
+ * and the re-sync latch command.
+ *
+ * THE KEY IS CARRIED WITH THE VALUE, and applyPhaseCorrection re-checks it
+ * rather than trusting the refresh to have happened. A cache whose producer
+ * runs on a 50 ms task and whose consumer runs at 100 kHz has a staleness
+ * window by construction; the key check closes it. On a mismatch the ISR
+ * passes 0, which means "do not reduce" -- the pre-04dd1f9 path -- so a stale
+ * cache degrades gracefully instead of reducing by a period from the previous
+ * job. Both compares are integer and the third is a single-precision float
+ * compare (VCMP, hardware); none of this is a library call.
+ *
+ * A torn read is not possible: aligned 32-bit loads and stores are atomic on
+ * Cortex-M4, and the ISR only ever reads. */
+static int32_t elsPeriodCache      = 0;
+static int32_t elsPeriodKeyNum     = 0;
+static int32_t elsPeriodKeyDen     = 0;
+static float   elsPeriodKeyTps     = 0.0f;
+
+/* Called from updateSpeedTask (and mirrored in the emulator's main loop --
+ * the emulator does not run FreeRTOS tasks). Cheap when nothing changed. */
+void elsRefreshSpindlePeriod(rampsSharedData_t *shared) {
+  int32_t num = shared->scales[0].syncRatioNum;
+  int32_t den = shared->scales[0].syncRatioDen;
+  float   tps = shared->elsStop.threadPitchSteps;
+
+  if (num == elsPeriodKeyNum && den == elsPeriodKeyDen && tps == elsPeriodKeyTps) {
+    return;
+  }
+  elsPeriodCache  = elsComputeSpindlePeriod(num, den, tps);
+  elsPeriodKeyNum = num;
+  elsPeriodKeyDen = den;
+  elsPeriodKeyTps = tps;
+}
+
+/* The ISR-side read: returns the cached period only if it was computed for
+ * exactly these registers, else 0 (= do not reduce). */
+static inline int32_t elsCachedSpindlePeriod(const rampsSharedData_t *shared) {
+  if (shared->scales[0].syncRatioNum == elsPeriodKeyNum
+      && shared->scales[0].syncRatioDen == elsPeriodKeyDen
+      && shared->elsStop.threadPitchSteps == elsPeriodKeyTps) {
+    return elsPeriodCache;
+  }
+  return 0;
+}
+
 static inline void applyPhaseCorrection(rampsSharedData_t *shared) {
   int32_t deltaSpindle =
     shared->scales[0].position - shared->elsStop.latchedSpindle;
@@ -498,7 +554,10 @@ static inline void applyPhaseCorrection(rampsSharedData_t *shared) {
       shared->elsStop.stopDirection,
       /* The live cumulative offset. Zero for every job that never sets one,
        * which is bit-for-bit the pre-feature path (els_phase_offset_test T1). */
-      shared->elsStop.phaseOffsetSteps);
+      shared->elsStop.phaseOffsetSteps,
+      /* Precomputed off the ISR; 0 if the cache does not match these exact
+       * registers, which means do not reduce. */
+      elsCachedSpindlePeriod(shared));
 
   shared->servo.stepsToGo += r.stepsToAdd;
 
@@ -1460,6 +1519,11 @@ _Noreturn void updateSpeedTask(void *argument) {
 
     // Update the current speed
     osDelay(updateSpeedTaskTicks);
+
+    /* Keep the spindle period current. Off the ISR deliberately: the
+     * computation is double-precision and there is no FP64 hardware on this
+     * core. Cheap when the geometry has not moved, which is almost always. */
+    elsRefreshSpindlePeriod(&rampsData->shared);
 
     // Update fast access variables
     rampsData->shared.fastData.cycles = rampsData->shared.executionCycles;

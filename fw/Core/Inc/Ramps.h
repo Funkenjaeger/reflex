@@ -496,6 +496,15 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data);
 
 _Noreturn void updateSpeedTask(void *argument);
 
+/* Recompute the cached spindle-count period when the geometry registers move.
+ * Lives in Ramps.c because the cache must be ONE object -- a static-inline
+ * version in a header would give each translation unit its own copy, so the
+ * producer would fill one and the ISR would read another. Called from
+ * updateSpeedTask on hardware and mirrored in the emulator's main loop, which
+ * does not run FreeRTOS tasks. Never call it from the ISR: it is double
+ * arithmetic and this core has no FP64 hardware. */
+void elsRefreshSpindlePeriod(rampsSharedData_t *shared);
+
 _Noreturn void userLedTask(__attribute__((unused)) void *argument);
 
 _Noreturn void servoEnableTask(void *argument);

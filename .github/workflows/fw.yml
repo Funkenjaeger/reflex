@@ -69,3 +69,11 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j
+      # The emulator suite above builds for x86, where a double is a hardware
+      # instruction and free, so it is STRUCTURALLY unable to see the cost of
+      # one on Cortex-M4F. On 2026-08-28 that blind spot let a double divide
+      # into the 100 kHz ISR and took the tick 2.6x over budget with all 32
+      # tests green. This step reads the ARM binary that job just produced.
+      - name: ISR cost guard (no softfp in the 100 kHz ISR)
+        working-directory: fw
+        run: ./scripts/check-isr-cost.sh build/reflex-fw.elf
