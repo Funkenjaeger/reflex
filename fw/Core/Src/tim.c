@@ -231,7 +231,12 @@ void MX_TIM9_Init(void)
   htim9.Instance = TIM9;
   htim9.Init.Prescaler = 100 -1;
   htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim9.Init.Period = 10-1;
+  /* 50 kHz: 100 MHz / (Prescaler+1) / (Period+1) = 100e6 / 100 / 20.
+   * Prescaler left at 100-1 so the counter stays at 1 MHz (1 us resolution).
+   * MUST stay in step with ELS_ISR_TICK_HZ in Core/Inc/els_isr_rate.h -- every
+   * ELS timing constant derives from that define. Changed 2026-08-28 from
+   * 10-1; the 100 kHz it produced was never derived, only inherited. */
+  htim9.Init.Period = 20-1;
   htim9.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim9.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim9) != HAL_OK)

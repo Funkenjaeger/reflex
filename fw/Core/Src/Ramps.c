@@ -18,6 +18,7 @@
 #include <math.h>
 #include "Ramps.h"
 #include "Scales.h"
+#include "els_isr_rate.h"
 #include "els_phase.h"
 
 /* Post-takeup settle dwell: after the backlash takeup reaches its commanded
@@ -30,7 +31,7 @@
  * move during a lash-absorbed takeup, so there is nothing to settle), so this is
  * now a short, behaviour-neutral guard rather than a real settle window. Keep it
  * small so the emulator's bounded-guard scenario loop doesn't time out. */
-#define ELS_SETTLE_TICKS 50
+#define ELS_SETTLE_TICKS            ELS_US_TO_TICKS(500)     /* 0.5 ms */
 
 /* ---- QUIESCENCE: has the carriage actually STOPPED? --------------------
  *
@@ -66,7 +67,7 @@
 #ifndef ELS_REQUIRE_QUIESCENCE
 #define ELS_REQUIRE_QUIESCENCE 0
 #endif
-#define ELS_QUIESCENT_TICKS 200
+#define ELS_QUIESCENT_TICKS         ELS_MS_TO_TICKS(2)       /* 2 ms */
 
 /* NOTE (2026-08-27): a companion ELS_QUIESCENT_NET_TOL_COUNTS, widening the
  * tracker above from exact equality to a net-displacement window, was written
@@ -82,7 +83,7 @@
  * it. It is a DIAGNOSTIC, not a control: it does not release the sync gate (see
  * the takeup block for why), it just names the failure so the UI can. The known
  * way in is servoMode != 1, where stepsToGo is never consumed at all. */
-#define ELS_TAKEUP_TIMEOUT_TICKS 500000
+#define ELS_TAKEUP_TIMEOUT_TICKS    ELS_MS_TO_TICKS(5000)    /* 5 s */
 
 /* How long the Z confirmation gate keeps LOOKING after the commanded take-up
  * motion has finished, before latching its verdict. ISR is ~100 kHz, so this is
@@ -113,7 +114,7 @@
  * late-but-genuine take-up before giving up and aborting the pass. It can stay
  * generous precisely because a hand nudge inside it no longer counts as
  * evidence. Shortening it would only make the machine give up sooner. */
-#define ELS_TAKEUP_CONFIRM_WINDOW_TICKS 25000
+#define ELS_TAKEUP_CONFIRM_WINDOW_TICKS ELS_MS_TO_TICKS(250) /* 250 ms */
 
 /* Mechanical settle allowance for motion attribution: how long after a commanded
  * step pulse Z motion may still be credited to the servo rather than to whatever
@@ -172,7 +173,10 @@
  * els_slip_horizon_commission_test.cpp encodes those seven observations and the
  * gap the current value sits in, so a change made without revisiting them turns
  * that test red. */
-#define ELS_SLIP_SETTLE_TICKS 700
+/* 7 ms. Commissioned as 700 ticks against 18 machine captures when the ISR
+ * ran at 100 kHz; expressed as the DURATION it always was, so the rate
+ * change carries it instead of silently doubling it. */
+#define ELS_SLIP_SETTLE_TICKS       ELS_MS_TO_TICKS(7)
 
 /* Diagnostic probes live in Core/Inc/els_diag_*.h, dispatched by els_diag.h.
  * Their bodies are NOT in this file; their four call sites are, and each one

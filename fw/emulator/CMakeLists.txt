@@ -20,6 +20,23 @@ add_definitions(
     -DSTM32F411xE
     -DUSE_HAL_DRIVER
     -DEMULATOR_BUILD
+
+    # PIN THE TICK RATE THE TIMING CONSTANTS DERIVE FROM, to the rate hardware
+    # ran at before 2026-08-28. This is preserving existing behaviour, not
+    # endorsing it -- read the banner in Core/Inc/els_isr_rate.h.
+    #
+    # The emulator's ISR thread actually runs at 10 kHz (config/lathe.toml,
+    # isr_rate_hz), 10x slower than hardware ever did, so a tick constant has
+    # ALWAYS meant a different wall-clock duration here than on the machine:
+    # ELS_SLIP_SETTLE_TICKS = 700 was 7 ms on hardware and 70 ms here. Every
+    # timing test in this suite was written against those 70 ms.
+    #
+    # Pinning 100000 reproduces exactly the tick values those tests expect, so
+    # the hardware rate change lands WITHOUT silently re-tuning them. Declaring
+    # 10000 instead -- making the emulator model the same DURATIONS as the
+    # machine -- is the right end state and is its own change, with its own
+    # test fallout. Do it deliberately.
+    -DELS_ISR_TICK_HZ=100000
 )
 
 # Compiler warnings
@@ -128,6 +145,15 @@ target_include_directories(els_slip_horizon_commission_test
 target_link_libraries(els_slip_horizon_commission_test m)
 add_test(NAME els_slip_horizon_commission_test
     COMMAND els_slip_horizon_commission_test)
+
+# The tick constants are durations: truncation, ordering invariants, and the
+# proof that expressing them through els_isr_rate.h changed no value at the old
+# 100 kHz rate. Header-only, like the commission test above.
+add_executable(els_isr_rate_test
+    ${CMAKE_SOURCE_DIR}/test/els_isr_rate_test.cpp)
+target_include_directories(els_isr_rate_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/../Core/Inc)
+add_test(NAME els_isr_rate_test COMMAND els_isr_rate_test)
 
 # Half-nut engagement physics tests: exercise LathePhysics directly. Links
 # physics.cpp + config.cpp (EmuConfig ctor); the test file stubs the shim

@@ -59,7 +59,17 @@
 #include "els_slip.h"
 
 /* MIRRORS of the firmware constants. See "THE MIRROR" above. */
-static const int32_t FW_ELS_SLIP_SETTLE_TICKS = 700;   /* Ramps.c, commissioned 2026-08-27 */
+/* Ramps.c, commissioned 2026-08-27. DELIBERATELY A LITERAL, not
+ * ELS_MS_TO_TICKS(7), even though Ramps.c now derives it that way.
+ *
+ * This file's whole argument is that 700 sits in the empty band between the
+ * <=656 and >=1165 observations -- and those observations are TICK COUNTS
+ * measured at ~103.8 kHz. Deriving the constant here would make it follow a
+ * rate change silently while the observations stayed put, which is exactly the
+ * reasoning this test exists to protect. Compiled at a different rate it should
+ * go RED and force someone to rescale the observations with it. The emulator
+ * pins 100 kHz (emulator/CMakeLists.txt), so it matches Ramps.c today. */
+static const int32_t FW_ELS_SLIP_SETTLE_TICKS = 700;
 static const int32_t FW_ELS_SETTLE_TICKS      = 50;    /* gate dwell before its first verdict */
 static const int32_t PREVIOUS_HORIZON_TICKS   = 1000;  /* what 700 replaced */
 

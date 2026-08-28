@@ -24,6 +24,7 @@
 
 extern "C" {
 #include "Ramps.h"
+#include "els_isr_rate.h"
 #include "Scales.h"
 #include "emulator_state.h"
 }
@@ -176,7 +177,12 @@ extern "C" unsigned emu_isr_cost_per_gpio;
 
 /* The real budget, mirrored as a literal so the assertions read against the
  * machine rather than against nothing: 100 MHz core, 10 us tick. */
-static const uint32_t ISR_BUDGET_CYCLES = 1000;
+/* Derived, not written down: one tick at the 100 MHz core clock. Hardware
+ * moved 100 kHz -> 50 kHz on 2026-08-28, which doubles this; the emulator
+ * build pins ELS_ISR_TICK_HZ to the old rate (see emulator/CMakeLists.txt)
+ * so this file still measures against 1000 here. If those two ever
+ * disagree, this is the line that should move, not a literal. */
+static const uint32_t ISR_BUDGET_CYCLES = ELS_ISR_CYCLE_BUDGET;
 
 int main() {
     printf("=== ISR peak-hold (executionCyclesPeak) ===\n");

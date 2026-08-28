@@ -31,6 +31,7 @@
 #define ELS_DIAG_END_WINDOW 2   /* ran out of buckets while still quiet-or-moving */
 
 #include <stdint.h>
+#include "els_isr_rate.h"
 #include <stdbool.h>
 
 /* WHAT THIS PROBE EXISTS TO MEASURE -- the two numbers Ramps.c otherwise GUESSES:
@@ -109,7 +110,12 @@
  * the confirm gate is still invisible here -- the "+5000 ticks" nudge case in
  * els_takeup_confirm_test.cpp shows exactly that. Do not read a zero from this
  * probe as a statement about the confirm window. See DIAG.md. */
-#define ELS_DIAG_BUCKET_TICKS 40
+/* 400 us per bucket. Expressed as a duration so the bucket keeps its
+ * wall-clock width across a tick-rate change -- the 18 commissioning
+ * captures were taken at 400 us and a silently doubled bucket would make
+ * new captures incomparable with them. diagBucketTicks is published to the
+ * host precisely so it never has to assume this. */
+#define ELS_DIAG_BUCKET_TICKS ELS_US_TO_TICKS(400)
 
 /* THE HOLD, AND WHY v2 HAD TO BE RETIRED TO GET IT.
  *
