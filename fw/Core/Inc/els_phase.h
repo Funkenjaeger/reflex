@@ -50,7 +50,7 @@ typedef struct {
   float   actualAdvance;
   float   phaseError;
   float   correction;   /* folded + forward-biased, in leadscrew steps */
-  int32_t stepsToAdd;   /* lroundf(correction) — added to servo.stepsToGo */
+  int32_t stepsToAdd;   /* elsRoundSteps(correction) — added to servo.stepsToGo */
   int32_t cuttingDir;   /* +1/-1, exposed for callers/tests */
   int32_t droSign;      /* stopDirection*cuttingDir, exposed for tests */
 } elsCorrResult_t;
@@ -126,7 +126,25 @@ typedef struct {
  * ratio UNREDUCED so that syncRatioDen carries PPR as a factor. Either one
  * makes P exact by construction and lets the fold use a pitch derived from
  * integers instead of from a rounded float. Both are register-map changes and
- * therefore a coordinated decision, which is why neither is done here. */
+ * therefore a coordinated decision, which is why neither is done here.
+ *
+ * SIDE EFFECT ON elsFmodPitch, measured 2026-08-28 when the two landed
+ * together: by bounding deltaSpindle to about one revolution this also keeps
+ * phaseError far below the magnitude at which that fold's double-rounding
+ * defect appears, so the defect is unreachable through this path today. Do not
+ * read that as the fold being fixed by this function -- see the note above
+ * elsFmodPitch. It is unreachable from THIS caller, which is a different and
+ * much weaker property.
+ *
+ * WHAT THIS FUNCTION DOES NOT CHECK. It trusts that threadPitchSteps and the
+ * sync ratio describe the same machine. They always do when reflex-ui writes
+ * them, because both come from one spindle_pitch_mm -- but nothing here
+ * verifies it, and if they disagree, P is not a machine period and the
+ * reduction subtracts multiples of the wrong quantity: whole-pitch errors,
+ * where the unreduced code merely degraded. Reproduced and bounded in
+ * els_phase_libm_equiv_test.cpp section 2b (640/640 cases wrong, worst 690 of
+ * a 711-step pitch). Latent, not live -- reachable only through a config-load
+ * ordering failure that lets a class-default ratio meet a real pitch. */
 static inline int32_t elsReduceDeltaSpindle(
     int32_t deltaSpindle, int32_t syncRatioNum, int32_t syncRatioDen,
     float threadPitchSteps)
@@ -144,6 +162,158 @@ static inline int32_t elsReduceDeltaSpindle(
   int64_t d = (int64_t)deltaSpindle;
   int64_t r = ((d % P) + P) % P;     /* always non-negative; see 08-26 harness */
   return (int32_t)r;
+}
+
+/* ---- the 100 kHz ISR's path carries no library calls ------------------
+ *
+ * elsComputePhaseCorrection runs from applyPhaseCorrection, on the resume edge
+ * -- which is cut-start, which is when the Modbus link died on 2026-08-23.
+ * fmodf and lroundf were the only libm calls reachable from
+ * SynchroRefreshTimerIsr, and on Cortex-M4F neither is an instruction: both are
+ * software routines.
+ *
+ * WHY fmodf WAS THE WORSE OF THE TWO. Its cost is not constant. newlib reduces
+ * by iterating over the exponent difference between the operands, and the
+ * dividend here is phaseError -- spindle advance accumulated since the latch,
+ * which grows for as long as the job runs (154934 steps against a 711-step
+ * pitch in a sample captured off the machine). So the single most expensive
+ * tick in the ISR got more expensive the longer the machine had been cutting.
+ *
+ * WHY THIS WORK IS MADE CHEAPER IN PLACE RATHER THAN DEFERRED TO A TASK.
+ * todo.md lists applyPhaseCorrection first among things to move OUT of the
+ * ISR. It must not be. The correction it computes is added to servo.stepsToGo
+ * and has to be fully executed BEFORE the pass starts feeding; handing it to a
+ * task means the pass can begin while the correction is still queued, which is
+ * precisely the out-of-phase-cut signature under investigation. The step pulse
+ * is not the only thing here that must happen now.
+ */
+
+/* x mod pitch, truncated toward zero -- fmodf's exact definition, in two FPU
+ * conversions and a multiply-subtract.
+ *
+ * PRECISION. This is deliberate catastrophic cancellation. The absolute error
+ * is bounded by the ULP of the operands (about 0.0156 steps at 154934), and the
+ * result is rounded to whole steps immediately after.
+ *
+ * QUALIFIED 2026-08-27. This comment used to go on to argue that a truncation
+ * landing one integer off is self-correcting, "because one pitch is the same
+ * place on a single-start thread". Measured, that argument survives on its own
+ * terms and is why the defect below stayed invisible -- but it answers the
+ * wrong question. What it establishes is that the THREAD PHASE comes out the
+ * same; what it quietly concedes is that the CORRECTION DOES NOT. In the worst
+ * case found (deltaSpindle=13829522, deltaZ=-4487) the shipped fmodf path
+ * commands +711 steps and the truncating path commands 0 -- a difference of
+ * 0.99984 pitches, so the same groove, but a whole pitch (1/18") difference in
+ * how far the carriage jogs before the pass starts feeding. That is a
+ * behavioral change introduced by a substitution whose entire justification was
+ * that the answer does not change, which is reason enough to not have it.
+ *
+ * RE-MEASURED 2026-08-28, AFTER THE MERGE, AND THE COST ABOVE NO LONGER SHOWS
+ * THROUGH THE FRONT DOOR. elsReduceDeltaSpindle now runs BEFORE this fold and
+ * bounds deltaSpindle to about one revolution, so phaseError never reaches the
+ * magnitude where the double rounding bites. Reverting this hunk and sweeping
+ * elsComputePhaseCorrection over the same job-scale grid the equivalence test
+ * uses: 3288 cases, ZERO differ. The documented worst case (13829522, -4487)
+ * commands 711 steps either way.
+ *
+ * THAT IS NOT A REASON TO DROP IT, and the distinction matters because the two
+ * fixes were each proven with the other absent -- neither test file exercises
+ * the other, so each looked individually decisive and neither was measured in
+ * company. Calling elsFmodPitch DIRECTLY at the phaseError that case produces
+ * (1589333.2, comfortably under the 2^22 guard, so this is the shipping path)
+ * still returns 711.0884 with the fmaf and 0.0000 without -- the whole-pitch
+ * defect, undiminished. What the reduction changed is the REACHABILITY of the
+ * defect from the one caller there is today, not the defect. This fold is a
+ * general-purpose fold; the reduction in front of it is one caller's
+ * precaution, and it is exactly the thing a future caller, a bypass, or a
+ * miscalibrated register set removes.
+ *
+ * SO: do not cite "reverting fmaf costs a whole pitch" as a property of
+ * elsComputePhaseCorrection any more. It is a property of elsFmodPitch, it is
+ * still true there, and that is the claim the mutation supports.
+ *
+ * The narrower and more important point: the fold below can only normalize a
+ * residual it can SEE, and the double-rounded subtraction returned exactly
+ * 0.0f -- an in-range, entirely plausible "phaseError is a whole multiple of
+ * pitch" answer that the fold passes straight through untouched. No range check
+ * placed after it can distinguish that from a legitimate zero. The error has to
+ * be prevented in the residual, not repaired after it.
+ *
+ * The out-of-range fallback needs a spindle advance of 2^31 pitches to reach,
+ * so it is unreachable on any real geometry; it is here because an int32
+ * conversion that overflows is undefined, and a silent wrong answer on this
+ * path moves metal.
+ */
+static inline float elsFmodPitch(float x, float pitch)
+{
+  /* 2^22. Below this a float32 ULP is under half a step, so the
+   * multiply-subtract is sub-step accurate and provably agrees with fmodf
+   * (els_phase_libm_equiv_test). ABOVE it the whole computation has already
+   * lost step resolution -- at 1.4e8 steps the ULP is 16 -- and that is a
+   * separate defect, logged rather than papered over here. Deferring to the
+   * library routine above the threshold keeps this change a pure speed-up
+   * with no behavioural difference anywhere, and costs nothing in practice:
+   * the expensive fmodf case is the one this threshold excludes. */
+  if (x < -4194304.0f || x > 4194304.0f) return fmodf(x, pitch);
+  float q  = x / pitch;
+  int32_t qi = (int32_t)q;
+  /* q = x/pitch is correctly ROUNDED (IEEE754 float division), but
+   * "correctly rounded" is not "correctly truncated". When the true
+   * quotient sits a hair below an integer -- e.g. 2234.99997 -- the
+   * nearest representable float can BE that integer (2235.0f) once the
+   * true value is closer to it than to the next float down, and
+   * truncating 2235.0f is one whole pitch off from truncating 2234.99997.
+   * (Reproduced at deltaSpindle=13829522, deltaZ=-4487, pitch=711.111:
+   * q rounds up to exactly 2235.0f.) This is the same failure the header
+   * above already documents for x's own ULP, just one step removed -- it
+   * lives in q = x/pitch, not in x.
+   *
+   * A PLAIN range check on x - pitch*qi is NOT enough to catch this: that
+   * subtraction rounds TWICE (once forming pitch*qi, once subtracting),
+   * and at this magnitude the second rounding can land EXACTLY on 0.0f --
+   * a perfectly plausible-looking "phaseError is a whole multiple of
+   * pitch" answer -- even though qi is one too many and the true residual
+   * is +711 (measured: naive x - pitch*qi = 0.000000 here, masking the
+   * error completely). fmaf computes x - pitch*qi with a SINGLE rounding
+   * (VFMA is a hardware instruction on Cortex-M4F, not a software
+   * routine -- unlike fmodf/lroundf this is not a libm call), and that
+   * single rounding recovers the true sign: -0.0227, correctly revealing
+   * that qi overshot. The range check below then repairs it exactly as a
+   * truncating division always occasionally needs -- a compare that is
+   * essentially always not-taken, and when it IS taken, one FPU add/sub.
+   * No libm call, no double (Cortex-M4F has no FP64 hardware; a double
+   * divide -- or even a double multiply-subtract -- is a compiler softfp
+   * call here, trading one library call for another).
+   *
+   * PRECONDITION: pitch > 0. The range check below is written for a positive
+   * pitch and would push the result the WRONG WAY for a negative one, which
+   * narrows this function's domain versus the plain multiply-subtract it
+   * replaces. That is safe on every path that reaches here, verified rather
+   * than assumed: the host builds threadPitchSteps as
+   * Fraction(abs(...), abs(...)) (els_fsm.py push_thread_geometry), so it is
+   * never negative, and the only other value it writes is 0.0 for TURNING,
+   * which applyPhaseCorrection is gated out of by the threadPitchSteps != 0
+   * check in Ramps.c. Keep that true: a host that ever writes a signed pitch
+   * needs this fold made sign-agnostic first. */
+  float r = fmaf(-pitch, (float)qi, x);
+  if (x >= 0.0f) {
+    if (r < 0.0f)         r += pitch;
+    else if (r >= pitch)  r -= pitch;
+  } else {
+    if (r > 0.0f)         r -= pitch;
+    else if (r <= -pitch) r += pitch;
+  }
+  return r;
+}
+
+/* lroundf's rounding rule -- nearest, ties AWAY from zero -- without the call.
+ * The FPU's own VCVT rounds ties to even, so this cannot just be a cast; and
+ * gcc will not inline lroundf on this core for exactly that reason. Safe
+ * because correction is already folded to within one pitch, so the addend
+ * cannot push it anywhere near the limits of float precision. */
+static inline int32_t elsRoundSteps(float correction)
+{
+  return (int32_t)(correction + (correction >= 0.0f ? 0.5f : -0.5f));
 }
 
 static inline elsCorrResult_t elsComputePhaseCorrection(
@@ -174,7 +344,7 @@ static inline elsCorrResult_t elsComputePhaseCorrection(
   r.phaseError = r.idealAdvance - (float)droSign * r.actualAdvance + (float)offsetSteps;
 
   float pitch      = threadPitchSteps;
-  float correction = fmodf(r.phaseError, pitch);
+  float correction = elsFmodPitch(r.phaseError, pitch);
   if (correction >  pitch / 2.0f) correction -= pitch;
   if (correction < -pitch / 2.0f) correction += pitch;
 
@@ -185,7 +355,7 @@ static inline elsCorrResult_t elsComputePhaseCorrection(
   }
 
   r.correction  = correction;
-  r.stepsToAdd  = (int32_t)lroundf(correction);
+  r.stepsToAdd  = elsRoundSteps(correction);
   return r;
 }
 

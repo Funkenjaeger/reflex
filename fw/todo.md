@@ -115,6 +115,55 @@ pulse.
 
 ---
 
+**PROGRESS 2026-08-24, branch `perf/els-isr-load`. Three findings, and item 1 above
+is now WRONG in an important way.**
+
+**1. `applyPhaseCorrection` MUST NOT BE MOVED OUT OF THE ISR.** It is listed first
+above as the strongest candidate to defer, and deferring it would be a bug. The
+correction it computes is added to `servo.stepsToGo` and has to be fully executed
+BEFORE the pass starts feeding. Hand it to a task and the pass can begin while the
+correction is still queued — which is exactly the out-of-phase-cut signature currently
+under investigation (Open Loops: thread re-sync lands out of phase). The step pulse is
+not the only thing in this ISR that must happen now. It has to be made CHEAPER IN
+PLACE, which is what was done.
+
+**2. The only library calls on the ISR's path were `fmodf` and `lroundf`, both inside
+`elsComputePhaseCorrection`.** Everything else — including the per-tick scales loop, the
+real baseline cost — is integer work with no libm and no float division. Neither call is
+an instruction on Cortex-M4F; both are software routines. `fmodf` was the worse one
+because its cost is not constant: newlib reduces by iterating over the exponent
+difference between the operands, and the dividend is spindle advance accumulated since
+the latch, so **the single most expensive tick in the ISR got more expensive the longer
+the machine had been cutting**. Both are now off the hot path, verified in the release
+binary with `objdump` rather than assumed — `lroundf` is gone entirely and the two
+remaining `fmodf` branches are untaken out-of-range fallbacks. Flash 38036 → 38084 B.
+Equivalence is proven, not asserted: `els_phase_libm_equiv_test` computes every case
+both ways and compares `stepsToAdd`. 5771 cases, 40 differ, worst difference 1 step.
+
+**3. A REAL DEFECT FELL OUT OF THAT TEST: the phase math loses step resolution as a job
+runs.** Before the fast path was bounded, the two implementations disagreed by up to a
+FULL PITCH — not because the replacement was wrong, but because at those magnitudes
+neither is right. `idealAdvance = deltaSpindle * num / den` grows for the whole job, and
+float32's ULP passes 1 step at 2^23 ≈ 8.4e6 steps. On elspi (ratio 3.6) that is about
+2.3e6 spindle counts — a few hundred revolutions since the latch, well under a minute of
+cutting. Past that the correction is quantized coarser than a step, and it keeps getting
+coarser. The fast path is therefore bounded to |phaseError| <= 2^22, where a ULP is under
+half a step; above it the library routine still runs, so this change is a pure speed-up
+with no behavioural difference anywhere. **The precision cliff itself is untouched and
+logged separately** — it is a candidate contributor to the re-sync phase error and wants
+fixing on its own terms (reduce the spindle delta in integer space so the float never
+gets large), not inside a performance change.
+
+**Still to do, and still to be ranked by measurement rather than assumption:** the
+take-up confirmation gate's one-shot decision (~158 lines, fires on a single tick) and
+`elsCalUpdate`. Note the per-tick cost of the `takeupPending` block is already small — a
+few compares and increments; the 222-line figure above is misleading because the
+expensive part is a one-tick event, not per-tick work. Nothing here has been measured on
+hardware yet; the peak-hold gives a worst tick (1106) but no breakdown of what produced
+it.
+
+---
+
 ## ELS shoulder stop
 
 ### Resume is silently skipped when the carriage hasn't retracted (KNOWN FAILING TEST)
