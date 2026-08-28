@@ -65,6 +65,26 @@ class FakeHal:
         self.cal_measured_written = None
         self._running = 0
 
+        # Read-failure accounting with the PRODUCTION semantics (real int,
+        # real comparison), matching FakeConnectionManager in
+        # test_ui_controller.py -- a MagicMock here would make
+        # reads_fabricated_since() return a truthy Mock unconditionally, so
+        # every guarded poll would discard itself and the guard tests would
+        # pass for the wrong reason.
+        self.read_failures = 0
+        self._fail_next_seq_read = False
+        self._fail_next_outcome_reads = False
+
+    def reads_baseline(self) -> int:
+        return self.read_failures
+
+    def reads_fabricated_since(self, baseline: int) -> bool:
+        return self.read_failures != baseline
+
+    def fail_read(self, n: int = 1):
+        """Simulate n failed Modbus reads (checksum / timeout / short frame)."""
+        self.read_failures += n
+
     # -- writes ------------------------------------------------------
     def set_cal_limits(self, ceiling, thresh):
         self.limits = (ceiling, thresh)
@@ -101,12 +121,23 @@ class FakeHal:
             if self._running == 0:
                 self.cal_result = self._result
                 self.cal_seq += 1
+        if self._fail_next_seq_read:
+            self._fail_next_seq_read = False
+            self.fail_read()
+            return 0   # fabricated -- a checksum failure returns 0, not the real value
         return self.cal_seq
 
     def read_cal_result(self):
+        if self._fail_next_outcome_reads:
+            self.fail_read()
+            return 0
         return self.cal_result
 
     def read_cal_measured(self):
+        if self._fail_next_outcome_reads:
+            self._fail_next_outcome_reads = False
+            self.fail_read()
+            return [0, 0, 0]
         return list(self._measured)
 
 
@@ -217,6 +248,74 @@ def test_does_not_finish_before_the_ack():
     for _ in range(4):
         assert cal.poll() == CalState.RUNNING
     assert cal.poll() == CalState.PASSED
+
+
+def test_a_corrupted_seq_read_is_not_taken_for_a_finished_run():
+    """A checksum-failed read_cal_seq() fabricates 0, which can look like a
+    spurious edge (baseline 7 != fabricated 0) long before the sweep is done.
+
+    Mirrors reflex-ui's take-up outcome guard (947ef4b / e8bbe8c) for the
+    elspi 2026-08-21 mechanism -- a CRC-failed frame of zeros read as a
+    finished outcome -- applied to calSeq instead of takeupSeq.
+
+    MUTATION: drop the `seq_untrustworthy` check in
+    BacklashCalibration.poll() and this fails -- the fabricated 0 (!= the
+    baseline of 7) is taken for an edge, motion is restored mid-sweep, and
+    the run is judged on stale start()-time defaults instead of waiting for
+    the real ack.
+    """
+    hal = FakeHal(ticks_to_finish=5, measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, _els())
+    cal.start()
+    speed_after_start = hal.motion
+
+    hal._fail_next_seq_read = True
+    assert cal.poll() == CalState.RUNNING, (
+        "a fabricated seq read was taken for a finished run")
+    assert hal.motion == speed_after_start, (
+        "motion was restored from a fabricated edge -- mid-sweep speed change"
+    )
+    assert hal.read_failures == 1
+
+    # The real sweep still completes normally once reads are clean again.
+    assert _run_to_completion(cal) == CalState.PASSED
+
+
+def test_a_corrupted_outcome_read_after_a_real_edge_is_deferred():
+    """The edge is genuine (calSeq really did advance); the reads that
+    collect the outcome are not. This is the elspi 2026-08-21 failure shape
+    itself -- a CRC-failed frame of zeros read as a completed outcome --
+    reproduced on calResult/calMeasured, which is not covered by the
+    seq/payload field-order argument (6c00072) because this HAL reads them as
+    separate live exchanges, not one frame.
+
+    MUTATION: drop the fabricated-read check after read_cal_result() /
+    read_cal_measured() and this fails -- a zeroed calMeasured would be
+    caught by cal_is_consistent's `any(v <= 0)` guard and refused as
+    INCONSISTENT rather than accepted, but that is an accident of a different
+    check, not evidence the read was trusted; a fabricated OK result
+    (0 == ELS_CAL_OK) paired with a fabricated non-zero-looking measurement
+    would not be.
+    """
+    hal = FakeHal(ticks_to_finish=1, measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, _els())
+    cal.start()
+
+    hal._fail_next_outcome_reads = True
+    assert cal.poll() == CalState.RUNNING, (
+        "an outcome assembled from fabricated reads was judged instead of deferred"
+    )
+    assert cal.result_code == ELS_CAL_OK, (
+        "self.result_code was overwritten with a fabricated value on a "
+        "deferred poll")
+    assert hal.read_failures >= 1
+
+    # Deferred, not lost: the same edge is re-observed and the real outcome
+    # reported once reads succeed. calSeq does not advance again (the run
+    # already finished on the firmware side), so the SAME poll must resolve
+    # it now that reads are clean.
+    assert cal.poll() == CalState.PASSED
+    assert cal.measured == [100, 101, 100]
 
 
 @pytest.mark.parametrize("code", [ELS_CAL_ERR_ENABLED,

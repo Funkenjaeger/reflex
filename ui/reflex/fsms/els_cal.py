@@ -218,12 +218,51 @@ class BacklashCalibration:
         return True
 
     def poll(self) -> str:
-        """Advance the run. Call from the UI tick; returns the current state."""
+        """Advance the run. Call from the UI tick; returns the current state.
+
+        GUARDED against a fabricated read the same way ui_controller's take-up
+        outcome poller is (reflex-ui 947ef4b / e8bbe8c): BaseDevice.__getitem__
+        is a live per-field Modbus read, and a checksum/timeout/short-frame
+        failure returns 0 rather than raising past this HAL — see
+        communication.py's read_* helpers and ConnectionManager.read_failures.
+        Zero is not neutral in this register map (0 == ELS_CAL_OK, 0 == "no
+        edge"), so two DISTINCT reads here need the guard, not one:
+
+          1. read_cal_seq() itself. A corrupted read fabricates 0, which can
+             misread as either "still running" (if baseline != 0, harmless) or
+             a SPURIOUS EDGE (if baseline == 0, or the fabricated value simply
+             differs from baseline) -- reporting a run "finished" that has not,
+             and restoring the calibration motion speed mid-sweep.
+          2. read_cal_result() / read_cal_measured(), once a genuine edge is
+             seen. This is the exact elspi 2026-08-21 mechanism (takeupSeq 2
+             -> 0 from a CRC-failed frame, read as a finished outcome) applied
+             to calSeq/calResult/calMeasured instead of takeupSeq/takeupResult.
+             calMeasured feeding elsTakeupConfirmThreshold means a poisoned
+             value here lowers the take-up bar for every later cut, not just
+             this one calibration.
+
+        Neither branch needs the two-poll torn-snapshot guard 6c00072 proved
+        unnecessary for calSeq/diagSeq (they are read seq-first, so a torn
+        FRAME cannot pair a new seq with a stale payload) -- this HAL reads
+        calSeq, calResult and each calMeasured element as up to five SEPARATE
+        live Modbus exchanges, not one frame, so that argument does not cover
+        this call site at all. What both branches need, and now have, is the
+        same fabricated-read counter every other action-gating consumer uses.
+
+        No rollback bookkeeping is needed (unlike the take-up poller's
+        _pending_takeup_seq): _baseline_seq is never advanced here, so a
+        deferred poll simply re-observes the same edge next tick once reads
+        are clean again.
+        """
         if self.state != CalState.RUNNING:
             return self.state
 
         self._polls += 1
-        if self._hal.read_cal_seq() == self._baseline_seq:
+        reads_baseline = self._hal.reads_baseline()
+        seq = self._hal.read_cal_seq()
+        seq_untrustworthy = self._hal.reads_fabricated_since(reads_baseline)
+
+        if seq == self._baseline_seq or seq_untrustworthy:
             if self._polls >= self.TIMEOUT_POLLS:
                 self._restore_motion()
                 # start() already proved the firmware has these registers, so a
@@ -239,10 +278,22 @@ class BacklashCalibration:
                 self._reteach_stored_legs()
             return self.state
 
-        # Ack observed — the run finished, for better or worse.
+        # Ack observed, and the read that produced it was clean -- only now is
+        # it safe to stop driving at the calibration speed.
         self._restore_motion()
-        self.result_code = self._hal.read_cal_result()
-        self.measured = self._hal.read_cal_measured()
+        reads_baseline = self._hal.reads_baseline()
+        result_code = self._hal.read_cal_result()
+        measured = self._hal.read_cal_measured()
+        if self._hal.reads_fabricated_since(reads_baseline):
+            # The edge was real; the outcome was not. Defer rather than judge
+            # a result assembled from zeros -- self.result_code/self.measured
+            # are deliberately left untouched (not overwritten with the
+            # fabricated values) and _baseline_seq is untouched, so the same
+            # edge is re-observed and the real outcome reported once reads
+            # succeed.
+            return self.state
+        self.result_code = result_code
+        self.measured = measured
 
         if self.result_code != ELS_CAL_OK:
             self._fail(self.result_code, ELS_CAL_MESSAGES.get(
