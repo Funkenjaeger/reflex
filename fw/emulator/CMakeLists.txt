@@ -311,6 +311,17 @@ target_link_libraries(els_diag_scratch_takeup_settle_v3_test m pthread)
 add_test(NAME els_diag_scratch_takeup_settle_v3_test
     COMMAND els_diag_scratch_takeup_settle_v3_test)
 
+# The stop-overshoot probe, driven through its entry points at tick
+# granularity. Header-only against Ramps.h -- it does not link Ramps.c, because
+# what is under test is the probe's arithmetic, not the ISR that feeds it.
+add_executable(els_diag_stop_overshoot_test
+    ${CMAKE_SOURCE_DIR}/test/els_diag_stop_overshoot_test.cpp)
+target_compile_definitions(els_diag_stop_overshoot_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_STOP_OVERSHOOT)
+target_link_libraries(els_diag_stop_overshoot_test m)
+add_test(NAME els_diag_stop_overshoot_test
+    COMMAND els_diag_stop_overshoot_test)
+
 add_executable(els_diag_scratch_disengage_latch_test
     ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)

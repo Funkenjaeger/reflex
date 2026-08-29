@@ -68,6 +68,7 @@
 #define ELS_DIAG_SCHEMA_MODE_WATCH 4        /* RETIRED -- see v2 */
 #define ELS_DIAG_SCHEMA_MODE_WATCH_V2 5
 #define ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3 6
+#define ELS_DIAG_SCHEMA_STOP_OVERSHOOT 7   /* what the carriage does AFTER the stop fires */
 
 /* WHICH probe is compiled in, selected by the build as
  * -DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_<NAME>. scripts/build.sh --diag=<name> is the
@@ -109,6 +110,8 @@
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH_V2
 /* recognised */
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
+/* recognised */
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_STOP_OVERSHOOT
 /* recognised */
 #else
 #error "unknown ELS_DIAG_PROBE. Register the schema id in Ramps.h and add it to this chain; see DIAG.md."

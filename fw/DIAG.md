@@ -272,6 +272,71 @@ v2 is kept in the registry (retired, id burned) rather than deleted: it is the
 reference implementation for writing another trace probe, and reflex-ui still
 recognises schema 2 so the 148 captures already recorded stay readable.
 
+### `stop-overshoot` — schema 7 — what the carriage does AFTER the stop fires
+
+**The observation.** 2026-08-28, elspi, air passes: the carriage reliably ends up
+~0.0022" (~56 µm, ~28 leadscrew steps, ~11 Z counts) past the programmed stop.
+Two findings from the bench rule out the easy answers — it is **repeatable pass
+after pass**, and **pushing it back by hand recovers nothing**, not even a tenth.
+That second one killed the model assumed until then: if this were servo
+overshoot-and-recover the carriage would be sitting forward of the leadscrew
+inside the 370-step lash and would push back freely. It is rigid.
+
+**Why existing data could not answer it.** `servoBacklog` and `stepsToGo` are
+already published and already recorded — in `phase_live.jsonl`, which samples at
+**0.97 Hz**. The trigger and anything draining after it happen in milliseconds.
+Three orders of magnitude too slow: its zeros describe the steady state and say
+nothing about the trigger instant. That is why this lives in the ISR.
+
+**Capture.** Starts on the `elsStop.active` 0→1 edge — the tick the stop latches,
+so `diagNetCounts` is post-trigger travel by construction with no absolute
+positions to subtract. Ends when Z has been still for 2 ms.
+
+| field | meaning |
+|---|---|
+| `diagNetCounts` | signed Z counts travelled **after** the trigger — the overshoot |
+| `diagReserved[0..1]` | servo steps the firmware **emitted** after the trigger, int32 — **the discriminator** |
+| `diagSettleTicks` | last tick that saw motion |
+| `diagTrace[]` | per-bucket signed dZ, 400 µs buckets — the shape |
+| `diagEndReason` | 1 = SETTLED (complete), 2 = WINDOW (still moving, treat net as a floor) |
+
+**END REASONS INVERT v3's.** Same numbers, opposite readings: here 1 is the
+success case. Nothing may interpret an end reason without checking `diagSchema`
+first — which is what that register is for.
+
+**How to read it.**
+
+- **steps emitted > 0** → the firmware commanded the overshoot. Cause is in this
+  repo and fixable here.
+- **steps emitted == 0** → the firmware sent nothing and the carriage moved anyway.
+  Cause is downstream of the pulse train.
+
+**AND ZERO DOES NOT MEAN "MECHANICAL".** `dServo` counts what the firmware
+*emitted*, not what the drive *did*. A servo drive that fails to honour its
+commanded position when the pulse train cuts off abruptly — ending up somewhere
+and holding it rigidly — is indistinguishable here from drivetrain coast, and is
+fully consistent with the hand-push finding. Step/dir is open loop from this
+side. Separating the two needs the drive's own following-error readout, or the
+companion experiment: **an abrupt jog stop with the ELS out of the picture**,
+which exonerates this code path entirely if the same overshoot appears.
+
+Evan, 2026-08-28: *"It's at least possible that the servo itself is doing
+something wonky, e.g. not honoring position when the steps cut off abruptly. I
+doubt it, but it's not impossible; just wouldn't assume so until proving it
+beyond a reasonable doubt."*
+
+**It captures on every tick.** `elsDiagCapturing()` returns true unconditionally,
+because watching the `active` edge is the only way to see the stop from inside a
+probe — the framework has no stop-trigger hook, and adding one would change the
+entry-point contract for every other probe. The cost is Ramps.c's dZ/dServo
+arithmetic running always, in a diagnostic build, against a budget that doubled
+to 2000 cycles on 2026-08-28.
+
+Tests: `els_diag_stop_overshoot_test` drives the entry points directly. Built so
+that no assertion passes if the probe does nothing — the "not commanded" case
+asserts travel nonzero **and** steps zero together, and only means anything
+because the commanded case proves accumulation works.
+
 ### `disengage-latch` — schema 3 — **INTERVENING probe, for catching a live defect**
 
 Counts `servoEnableTask` re-asserting `servoMode = 1` while `elsStop.enable == 0`

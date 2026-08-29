@@ -53,6 +53,7 @@ from reflex.utils.devices import (
     ELS_DIAG_SCHEMA_MODE_WATCH,
     ELS_DIAG_SCHEMA_MODE_WATCH_V2,
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3,
+    ELS_DIAG_SCHEMA_STOP_OVERSHOOT,
 )
 from reflex.utils.paths import diag_dir
 
@@ -89,6 +90,10 @@ KNOWN_SCHEMAS = frozenset({
     # carries its own schema, and the 148 captures taken under v2 on
     # 2026-08-21 are still evidence -- of what the probe could not see.
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3,
+    # Schema 7 records what the carriage does AFTER the stop fires. Same file,
+    # because every line carries its own schema and the analysis separates them
+    # -- takeup_settle.jsonl is a misnomer now, not a routing decision.
+    ELS_DIAG_SCHEMA_STOP_OVERSHOOT,
 })
 
 # Schemas that publish diagEndReason. Only these can be checked for "did a
@@ -102,6 +107,12 @@ KNOWN_SCHEMAS = frozenset({
 SCHEMAS_WITH_END_REASON = frozenset({
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V2,
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3,
+    # Schema 7 publishes it, and its meanings INVERT v3's: 1 = SETTLED is the
+    # complete measurement here, 2 = WINDOW means the trace ran out while Z was
+    # still moving. Same numbers, opposite readings -- which is exactly what
+    # diagSchema exists for, and why nothing may interpret an end reason
+    # without checking the schema it came from.
+    ELS_DIAG_SCHEMA_STOP_OVERSHOOT,
 })
 
 # Consecutive failures tolerated before the recorder gives up for this

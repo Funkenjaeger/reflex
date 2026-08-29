@@ -643,6 +643,14 @@ class ElsStopHal:
             "capture_ticks": int(els['diagCaptureTicks']),
             "end_reason": int(els['diagEndReason']),
             "trace": [int(v) for v in els['diagTrace']],
+            # The four spare words. Read RAW and schema-agnostically: what
+            # they mean is the probe's business, and a reader that does not
+            # recognise the schema must not interpret them. Added 2026-08-28
+            # for the stop-overshoot probe, which packs an int32 of
+            # post-trigger servo steps into [0..1] -- without this the probe
+            # would publish its whole discriminator into a register nobody
+            # collected, and every analysis would silently find no signal.
+            "reserved": [int(v) for v in els['diagReserved']],
         }
 
     def read_takeup_thresh_counts(self) -> int:
