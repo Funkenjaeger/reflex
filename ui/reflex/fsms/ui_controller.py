@@ -77,16 +77,23 @@ def phase_offset_fraction_text(fraction: float) -> str:
     return f"{fraction:0.3f}"
 
 
-def phase_offset_readout(steps, distance, fraction, formats) -> str:
-    """Operator-facing text for a live thread-phase offset.
+def phase_offset_value_parts(steps, distance, fraction, formats):
+    """The two numbers of a live phase offset as text: ``(widening, bound)``.
+
+    THE ONE PLACE EITHER NUMBER IS FORMATTED. Two readouts show this offset --
+    the long status line and the short gutter chip -- and they differ only in
+    how they are LABELLED and what they join the parts with. Splitting them any
+    further down than this would give the machine two renderings of the same
+    register that could disagree about units, decimals or the pitch fraction
+    while both looked right in isolation; a chip reading "+0.500 mm" beside a
+    line reading "+0.0197 in" is worse than either alone. Callers pick the
+    joiner, never the arithmetic.
 
     BOTH NUMBERS, for the reason ElsFsm.phase_offset_display gives, with the
     distance first. Step-overs all go one way, so the total IS the widening:
     how far the groove has grown past the width of the cutter, measurable on
     the part. The fraction trails it as the aliasing bound — the share of the
-    one pitch an offset may accumulate before it is refused. On this strip the
-    distance already leads by position; the modal, which had them as co-equal
-    halves of one line, separates them by size and weight instead.
+    one pitch an offset may accumulate before it is refused.
     """
     try:
         pos_fmt = formats.position_format or "{:+0.3f}"
@@ -98,16 +105,40 @@ def phase_offset_readout(steps, distance, fraction, formats) -> str:
         # A nonzero step total that converts to nothing: no spindle pitch, no
         # servo ratio, or a zero display factor. Say the raw register value
         # rather than rendering "+0.000 mm", which reads as "no offset" — the
-        # single thing this strip exists to contradict.
-        return (f"THREAD PHASE OFFSET SET  •  {int(steps):+d} leadscrew steps  "
-                f"•  thread geometry unavailable")
+        # single thing these readouts exist to contradict.
+        return (f"{int(steps):+d} leadscrew steps", "thread geometry unavailable")
 
     try:
         distance_text = pos_fmt.format(distance)
     except (ValueError, IndexError, KeyError, AttributeError):
         distance_text = f"{distance:+0.3f}"
-    return (f"THREAD PHASE OFFSET  •  {distance_text} {unit}  "
-            f"•  {phase_offset_fraction_text(fraction)} x pitch")
+    return (f"{distance_text} {unit}",
+            f"{phase_offset_fraction_text(fraction)} x pitch")
+
+
+def phase_offset_readout(steps, distance, fraction, formats) -> str:
+    """The long form: label and both numbers on one line, bullet-separated.
+
+    Its own label carries the un-convertible case ("... OFFSET SET"), because
+    this line has to stand alone -- there is no separate label beside it to
+    qualify. On this line the distance leads by position; the modal, which had
+    them as co-equal halves of one line, separates them by size and weight
+    instead.
+    """
+    widening, bound = phase_offset_value_parts(steps, distance, fraction, formats)
+    label = "THREAD PHASE OFFSET" if distance else "THREAD PHASE OFFSET SET"
+    return f"{label}  •  {widening}  •  {bound}"
+
+
+def phase_offset_chip_readout(steps, distance, fraction, formats) -> str:
+    """The short form: both numbers, NO label — the chip draws that itself.
+
+    A StatusChip renders its label and its value as two type weights, so the
+    label must not be baked into the value here; and inside a chip the bullets
+    are noise, since the pill's own edge already bounds the group.
+    """
+    widening, bound = phase_offset_value_parts(steps, distance, fraction, formats)
+    return f"{widening}  {bound}"
 
 
 class ElsUiController(EventDispatcher):
@@ -162,6 +193,11 @@ class ElsUiController(EventDispatcher):
     # saying so, rather than silently reading as "no offset".
     phase_offset_active = BooleanProperty(False)
     phase_offset_text   = StringProperty("")
+    # The same offset, as the VALUE half of the gutter's phase chip -- both
+    # numbers, no label (the chip draws "PHASE OFFSET" itself, in its own type
+    # weight). Both strings come from phase_offset_value_parts, so the chip and
+    # any long-form readout cannot disagree about units or decimals.
+    phase_offset_chip_value = StringProperty("")
 
     # ── Thread reference latch (elsStop.referenceLatched, gated on enable) ──
     # True while the firmware BOTH holds a thread reference AND is enabled.
@@ -653,6 +689,7 @@ class ElsUiController(EventDispatcher):
                          self._logged_phase_offset_steps)
                 self.phase_offset_active = False
                 self.phase_offset_text = ""
+                self.phase_offset_chip_value = ""
             self._logged_phase_offset_steps = 0
             return
 
@@ -667,10 +704,15 @@ class ElsUiController(EventDispatcher):
             # the total, but the total is real and must still be announced.
             distance, fraction = 0.0, 0.0
 
-        text = phase_offset_readout(steps, distance, fraction,
-                                    getattr(self._board, "formats", None))
+        formats = getattr(self._board, "formats", None)
+        text = phase_offset_readout(steps, distance, fraction, formats)
         if text != self.phase_offset_text:
             self.phase_offset_text = text
+        # Rendered from the same conversion, in the same poll, so the two
+        # readouts can never be a tick out of step with each other.
+        chip_value = phase_offset_chip_readout(steps, distance, fraction, formats)
+        if chip_value != self.phase_offset_chip_value:
+            self.phase_offset_chip_value = chip_value
         if not self.phase_offset_active:
             self.phase_offset_active = True
         if steps != self._logged_phase_offset_steps:

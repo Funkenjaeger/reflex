@@ -3,6 +3,7 @@
 #: import IconButton reflex.components.widgets.icon_button
 #: import TabSelector reflex.components.widgets.tab_selector
 #: import LedCardButton reflex.components.widgets.led_card_button
+#: import StatusChip reflex.components.widgets.status_chip
 
 <ElsAdvancedBar>:
   orientation: "vertical"
@@ -16,14 +17,34 @@
   # one shows up. A new strip belongs in that overlay's height expression,
   # NOT here.
   #
-  # THERE ARE TWO OVERLAYS, and which one a strip belongs in is decided by how
-  # long it stays up, not by what it says. `notice_overlay` carries TRANSIENT
-  # notices (seconds: a take-up refusal, a re-reference confirm) and is pinned
-  # to the bar's top edge. `status_overlay` carries PERSISTENT job state (the
-  # thread-phase offset, up for a whole groove-widening job) and hangs BELOW both
-  # the wizard instruction strip and whatever transient strips are showing --
-  # see its own note. Neither changes any height; both cover.
+  # (The 99 above is the row height that rule was written against. The rows are
+  # 101 px since 2026-08-29, when ElsModeLayout's dro_els_gap went dp(8) ->
+  # dp(3) to even up the margins above and below the DRO stack -- a deliberate
+  # one-time change to a source constant, made on Evan's explicit call, with
+  # the digit size growing 87 -> 90 px as its accepted cost. It does not touch
+  # the rule stated here, which is about resizing in response to TRANSIENT
+  # state. See els_mode_layout._update_row_heights.)
+  #
+  # TRANSIENT NOTICES OVERLAY; PERSISTENT STATE DOES NOT (2026-08-29).
+  # `notice_overlay` carries the strips that are up for seconds -- a take-up
+  # refusal, a re-reference confirm -- pinned over the bar's top edge, because
+  # covering something for three seconds is a fair trade for saying why a pass
+  # was refused.
+  #
+  # Persistent job state used to make the same trade through a second overlay
+  # (`status_overlay`), and it was the wrong one: the thread-phase offset and
+  # the thread-reference latch are up for a WHOLE JOB, so whatever they covered
+  # -- the "Stop Z" and "Major ø" field headers -- they covered for the whole
+  # job. They now live in `status_gutter` below, a permanently reserved dp(26)
+  # band carved out of this same 128 px, and cover nothing at all. The cost is
+  # paid once, in the control row's height (128 -> 102 in every mode, which is
+  # the height wizard mode has always run at), rather than paid in coverage
+  # every time a job sets an offset.
   natural_height: 128
+  # THE value of record for the status gutter's recess inset.
+  # els_advbar.py's property defaults to 0 on purpose -- dp() cannot be
+  # called at class-body time under the mock window; see its comment there.
+  gutter_inset: dp(1)
   # Everything below hangs off ONE FloatLayout so the notice strips can be
   # pinned over the controls rather than stacked above them. A FloatLayout
   # draws later children on top, so the overlays MUST stay last.
@@ -38,14 +59,32 @@
       pos_hint: {'x': 0, 'y': 0}
 
 
-      # ── Wizard instruction bar ─────────────────────────────────────────────────
+      # ── Status gutter ──────────────────────────────────────────────────────────
       # Full-width strip across the top of the bar (over every control column) so
       # the control row below — Engage, Start, the value fields and the mode
-      # selector — all share one aligned top edge. Wizard-only: hidden in stop-only
-      # and stop+retract modes (those rely on action-button labels + validity gating
-      # for operator guidance instead).
+      # selector — all share one aligned top edge.
+      #
+      # PERMANENT, IN EVERY MODE (2026-08-29). It began as the wizard instruction
+      # strip and collapsed to nothing in stop-only and stop+retract, which is why
+      # persistent job state had to be an overlay over the field headers: there was
+      # no reserved space for it in the mode Evan actually runs. Reserving the
+      # 26 px unconditionally buys a place to PRINT that state instead of covering
+      # something with it. The container is unconditional; its CONTENTS are what
+      # switch by mode -- the instruction text is still wizard-only, and each chip
+      # gates itself.
+      #
+      # THE SPACE COMES OUT OF THE CONTROL ROW, NOT OUT OF THE BAR. natural_height
+      # stays 128, so nothing above this bar resizes; the control row's
+      # size_hint_y of 1 takes 102 px in every mode now instead of 128 in two of
+      # them, and 102 is the height wizard mode has always used.
+      #
+      # THREE CHILDREN, NONE AFFECTING THE OTHERS: a FloatLayout, so the two chips
+      # pin to the left and right edges and the centred label keeps the FULL width
+      # to centre in. The label is deliberately NOT re-centred between the chips --
+      # it would then shift sideways whenever the phase chip appeared, which is the
+      # resizing-around-status this bar has spent three revisions removing.
       FloatLayout:
-        id: wizard_strip
+        id: status_gutter
         # HEIGHT, NOT A HINT OF ZERO, and this is load-bearing (2026-08-22).
         #
         # `size_hint_y: 0` does NOT set a widget's height to 0. It removes the
@@ -63,30 +102,63 @@
         # An explicit height keeps the box's arithmetic exact in both modes: every
         # fixed child is subtracted, and the control row's hint takes precisely
         # what is left. dp(26) matches what 0.2 of the 128 px base bar rendered as.
+        #
+        # UNCONDITIONAL, and that is now the load-bearing part. A gate here --
+        # `dp(26) if root.enable_wizard else 0`, which is what this line used to
+        # say -- puts both persistent status chips inside a zero-height container
+        # in stop-only mode, i.e. renders them nowhere while the controller
+        # cheerfully reports them shown. That is the 2026-08-24 invisible-latch
+        # defect arriving by a new route, in the one mode the machine is run in.
+        # Guarded structurally: tests/test_kv_syntax.py.
         size_hint_y: None
-        height: dp(26) if root.enable_wizard else 0
-        opacity: 1 if root.enable_wizard else 0
-        disabled: not root.enable_wizard
+        height: dp(26)
+        # THE INSET IS A HAIRLINE, NOT A MARGIN (2026-08-29, Evan's call). It
+        # was dp(5), which left five painted-nothing pixels between the divider
+        # and the top of the controls -- dead space that read as the gutter
+        # floating above the control row rather than sitting on it. dp(1) puts
+        # the divider on the gutter's own bottom edge, one pixel clear, so the
+        # band ends AT the controls.
+        #
+        # `root.gutter_inset`, declared in els_advbar.py: the recess, the
+        # divider and both chips' vertical centring all read the one number, so
+        # the band and the things sitting in it cannot disagree. It is NOT
+        # declared here as `recess_inset: dp(1)` -- kv will happily create that
+        # property, but as an ObjectProperty defaulting to None, and the canvas
+        # instructions below are evaluated before the rule assigns it, which
+        # threw a TypeError on every frame. Rendering caught it; the kv parses
+        # either way.
         canvas.before:
-          # Recessed instruction strip with a hairline divider below; inset at the
-          # bottom so a small margin separates it from the controls underneath.
+          # Recessed instruction strip with a hairline divider along its bottom.
           Color:
             rgba: app.theme.recess
           Rectangle:
-            pos: self.x, self.y + dp(5)
-            size: self.width, self.height - dp(5)
+            pos: self.x, self.y + root.gutter_inset
+            size: self.width, self.height - root.gutter_inset
           Color:
             rgba: app.theme.border_dim
           Line:
-            points: (self.x, self.y + dp(5) + 0.5, self.right, self.y + dp(5) + 0.5)
+            points: (self.x, self.y + root.gutter_inset + 0.5, self.right, self.y + root.gutter_inset + 0.5)
             width: 1.0
 
+        # ── Centre slot: wizard guidance / the stop-diameter milestone ────────
+        # Both centred on the gutter's FULL width and mutually exclusive in
+        # practice (the depth latch is set inside a cycle, where the instruction
+        # line has nothing left to say). Centring on the full width rather than
+        # on the space between the chips is deliberate: see the note above.
+        #
+        # The container is permanent now, so this label carries the wizard gate
+        # the container used to carry -- the non-wizard modes guide the operator
+        # through the action-button labels and validity gating instead, and
+        # printing wizard prose at them would be a new behaviour, not a
+        # side-effect of reserving space.
         Label:
           id: label_instruction
           text: root.controller.instruction_text
           text_size: self.size
           size_hint: 1, 1
           pos_hint: {'x': 0, 'y': 0}
+          opacity: 1 if root.enable_wizard else 0
+          disabled: not root.enable_wizard
           font_name: app.theme.font_bold
           font_size: dp(15)
           color: app.theme.accent_text
@@ -94,19 +166,76 @@
           halign: 'center'
           valign: 'middle'
 
+        # MOVED TO THE CENTRE SLOT (2026-08-29). This was a 200 px left-aligned
+        # label, which is exactly where the reference chip now pins -- the two
+        # would have drawn on top of each other. Full width and centred, sharing
+        # the slot above; it collapses by TEXT, so an unset latch draws nothing
+        # over the instruction line.
         Label:
           id: label_depth_reached
           text: "Stop ø reached" if root.controller.depth_reached else ""
           text_size: self.size
-          size_hint: None, 1
-          width: 200
+          size_hint: 1, 1
           pos_hint: {'x': 0, 'y': 0}
           font_name: app.theme.font_bold
           font_size: dp(14)
-          halign: 'left'
+          halign: 'center'
           valign: 'middle'
           padding: dp(12), 0
           color: app.theme.success_text
+
+        # ── Thread-reference chip: pinned LEFT, ALWAYS PRESENT ────────────────
+        # It answers a question that has no other answer on this screen -- "does
+        # the machine hold a phase reference?" -- and an indicator that is only
+        # there when the answer is yes cannot be trusted to be there at all. So
+        # both answers are printed, in the same place, in the same shape.
+        #
+        # THREE STATES, NOT TWO, and the third is the reason this is a chip and
+        # not a lamp. In FEED mode the reference is not RELEVANT but it is still
+        # LATCHED: firmware clears referenceLatched only on an elsStop.enable
+        # 0->1 edge, and switching feed/thread never writes enable. The datum
+        # also stays usable, because elsComputePhaseCorrection folds the error
+        # mod one pitch and a single-start helix is one continuous groove. So
+        # feed mode DARKENS the chip (lit: False) rather than hiding it: the
+        # operator's cue is that his latched reference survives a
+        # turn-feed-turn swap, and hiding the chip would say the opposite.
+        #
+        # No latched-Z readout, for the reason the old lamp gave: latchedZ is
+        # raw Z-scale counts in the firmware's frame and nothing on the tick
+        # path converts a bare count to display units. latchedSpindle is
+        # meaningless to a human.
+        StatusChip:
+          id: chip_reference
+          pos_hint: {'x': 0}
+          # Centred in the RECESSED part of the gutter, not in the gutter: the
+          # canvas above insets the recess by dp(5) at the bottom and draws its
+          # hairline there, so centring on the full dp(26) would hang the pill's
+          # bottom edge across that line.
+          y: status_gutter.y + root.gutter_inset + (status_gutter.height - root.gutter_inset - self.height) / 2.0
+          text: "REF LATCHED" if root.controller.thread_ref_latched else "NO REFERENCE"
+          chip_color: app.theme.accent if root.controller.thread_ref_latched else app.theme.text_dim
+          lit: root.controller.is_threading
+
+        # ── Thread-phase offset chip: pinned RIGHT, only while an offset is set ─
+        # A nonzero elsStop.phaseOffsetSteps means the machine is cutting at a
+        # DELIBERATE phase shift and stays that way for the whole job; an
+        # operator who forgets it is set ruins the next thread. Gated on the
+        # controller's flag rather than on the text being non-empty, so an
+        # offset that could not be CONVERTED (missing thread geometry) still
+        # shows, saying so, instead of silently reading as "no offset".
+        #
+        # Gated by opacity, not by width or height: it is pinned to a
+        # FloatLayout edge with nothing beside it, so there is no space to
+        # reclaim and nothing that could move if it did.
+        StatusChip:
+          id: chip_phase
+          pos_hint: {'right': 1}
+          y: status_gutter.y + root.gutter_inset + (status_gutter.height - root.gutter_inset - self.height) / 2.0
+          text: "PHASE OFFSET"
+          value: root.controller.phase_offset_chip_value
+          chip_color: app.theme.accent
+          opacity: 1 if root.controller.phase_offset_active else 0
+          disabled: not root.controller.phase_offset_active
 
       # ── Control row: Engage + Start/values/action + mode selector, all sharing
       #    one top/bottom edge ─────────────────────────────────────────────────
@@ -311,12 +440,28 @@
     #    strip missing from this expression will render outside the overlay,
     #    which is the 2026-08-16 defect one level down. LAST child on purpose:
     #    FloatLayout paints in declaration order.
+    #
+    #    ONE STRIP IS ONE GUTTER (2026-08-29, Evan's call). The strips were
+    #    dp(30) each, a literal chosen before the status gutter existed, and
+    #    the gutter's painted band is 25 px -- so a warning spilled 9 px past
+    #    the divider and down over the top of the controls. Measured off the
+    #    render: red fill to image row 373 against a gutter ending at 369.
+    #    Deriving the height from `status_gutter.height` instead of restating a
+    #    number is the whole fix: a literal here and a literal there is exactly
+    #    how the two drifted apart, and the gutter can now be resized without
+    #    anyone remembering this file has a second copy of its height.
+    #
+    #    STILL A SUM, because the guard above it is right: two notices up at
+    #    once must raise the overlay by both, and a strip missing from this
+    #    expression renders outside it. Two at once is therefore two gutters
+    #    tall and does still reach past the gutter -- unchanged from before
+    #    and not what Evan flagged, but it is not covered by this fix.
     BoxLayout:
       id: notice_overlay
       orientation: 'vertical'
       size_hint_x: 1
       size_hint_y: None
-      height: (dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (dp(30) if root.controller.takeup_warning else 0)
+      height: (status_gutter.height if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (status_gutter.height if root.controller.takeup_warning else 0)
       pos_hint: {'x': 0, 'top': 1}
 
 
@@ -331,7 +476,7 @@
         size_hint_y: None
         spacing: dp(8)
         padding: dp(8), 0
-        height: dp(30) if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0
+        height: status_gutter.height if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0
         opacity: 1 if self.height else 0
         disabled: not self.height
         canvas.before:
@@ -376,7 +521,7 @@
         size_hint_y: None
         spacing: dp(8)
         padding: dp(8), 0
-        height: dp(30) if root.controller.takeup_warning else 0
+        height: status_gutter.height if root.controller.takeup_warning else 0
         opacity: 1 if self.height else 0
         disabled: not self.height
         canvas.before:
@@ -393,145 +538,3 @@
           font_name: app.theme.font_bold
           font_size: dp(13)
           color: app.theme.text
-
-    # ── Status overlay: persistent job state (thread-phase offset + the
-    #    thread-reference latch lamp) ────────────────────────────────────────
-    #    A SECOND overlay, not a third strip in notice_overlay, because what
-    #    lives here is PERSISTENT. A nonzero elsStop.phaseOffsetSteps means the
-    #    machine is cutting at a deliberate phase shift, and it stays that way
-    #    for the whole job -- so whatever this covers, it covers for the length
-    #    of the job, which is a different trade from a strip that is up for
-    #    three seconds.
-    #
-    #    THE LATCH LAMP SHARES THIS BAND, NOT A SECOND ONE BELOW IT
-    #    (2026-08-24 bench feedback: nothing on screen said whether a thread
-    #    reference was latched). It is up for most of every engaged threading
-    #    job -- the latch banks on the first Cut -- and during a widening job
-    #    BOTH would show at once, so a stacked second dp(30) strip would cover
-    #    the field VALUE readouts, not just their headers, for the whole job.
-    #    One band holds both instead: the lamp is a fixed-width left segment
-    #    (next to the Engage card's Armed/Stopped lamp it belongs beside), the
-    #    offset text stays centered in the remainder, and the covering cost
-    #    never exceeds what the offset strip alone already paid for.
-    #
-    #    THE WIDTH FOLLOWS THE TENANTS: full inset while an offset is showing,
-    #    shrunk to just the lamp when the lamp is alone -- so the common case
-    #    (latched, no offset) covers ONE header ("Stop Z"), not four. Nothing
-    #    resizes anywhere else; this band was already the screen's one
-    #    exception, exempted by name in previews/preview_phase_offset.py.
-    #
-    #    WHY IT IS NOT PINNED TO THE TOP LIKE THE NOTICES. The bar's top 26 px is
-    #    the wizard instruction strip, and a transient warning may sit over that
-    #    for a moment; parking a permanent band there would delete the wizard's
-    #    only channel of operator guidance for the entire job. Hanging below the
-    #    lower of {wizard strip, transient notices} instead costs only the field
-    #    HEADER labels ("Stop Z", "Major ø") -- text that names controls whose
-    #    values stay fully readable underneath -- and costs them only while an
-    #    offset is actually set. See the inset note below for the rest.
-    #
-    #    WHY NOT THE BOTTOM EDGE, which was the obvious answer for persistent
-    #    state: measured (previews/preview_phase_offset.py), the bar's bottom
-    #    30 px is the settings cog and the lower third of the value readouts. The
-    #    cog is the only route back into ELS settings -- i.e. the only way to
-    #    CLEAR this offset -- so a permanent band there would cover the control
-    #    that dismisses it.
-    #
-    #    Height tracks the notices rather than duplicating their arithmetic, so a
-    #    fourth strip added to notice_overlay pushes this one down for free.
-    #    NOTHING HERE CHANGES A HEIGHT: this strip only ever relocates.
-    BoxLayout:
-      id: status_overlay
-      orientation: 'horizontal'
-      padding: dp(8), 0
-      size_hint: None, None
-      # EITHER tenant raises the band; each hides its own segment below. A
-      # tenant missing from this expression would leave its segment inside a
-      # zero-height band -- invisible, which for the latch lamp is the exact
-      # defect this strip exists to fix (see test_kv_syntax.py's structural
-      # guard on the status overlay).
-      height: dp(30) if (root.controller.phase_offset_active or root.controller.thread_ref_latched) else 0
-      opacity: 1 if self.height else 0
-      disabled: not self.height
-      # INSET BETWEEN THE ENGAGE CARD AND THE MODE COLUMN rather than spanning
-      # the bar, which is what a full-width version was rendered as first
-      # (previews/out/alt_fullwidth_*.png). Full width covered two things this
-      # must not cover FOR A WHOLE JOB: the Engage card's tri-state ELS-stop
-      # indicator -- the Armed/Stopped lamp an operator watches to see a pass
-      # arrive at the shoulder -- and the top of the mode tabs. Ending short of
-      # the mode column also keeps the settings cog clear, and the cog is the
-      # only route back to the control that CLEARS this offset. What it covers
-      # instead is the four field HEADER labels ("Stop Z", "Major ø") and a
-      # sliver of the action button: text naming controls whose values stay
-      # fully readable underneath.
-      #
-      # Bound to the two widgets' real edges, not to their literal widths, so
-      # the inset cannot drift out of step with them. Full inset only while
-      # the offset text needs the room; the lamp alone gets lamp width.
-      # Lamp-only width is the LAMP'S width plus this band's own horizontal
-      # padding, read from the real properties rather than re-stated as a
-      # literal -- a literal here and a dp() there is how the lamp ends up
-      # half-outside its tint.
-      x: card_engage.right
-      width: max((mode_column.x - card_engage.right) if root.controller.phase_offset_active else ((label_ref_latched.width + self.padding[0] + self.padding[2]) if root.controller.thread_ref_latched else 0), 0)
-      # `y`, NOT `top`. Assigning `top` sets y ONCE (y = top - height), so when
-      # the strip's own height goes 0 -> 30 the stale y is kept and the strip
-      # grows UPWARD out of the bar, over the DRO rows -- the 2026-08-16 defect
-      # arriving by a new route. Measured, then fixed:
-      # previews/preview_phase_offset.py reported
-      # "OUTSIDE THE BAR: y=256 top=286 (bar 128..256)".
-      y: bar_float.top - max(notice_overlay.height, wizard_strip.height) - self.height
-      canvas.before:
-        # OPAQUE, unlike the notice strips' translucent tints. Those wash over
-        # the controls for a few seconds; this one sits over the field headers
-        # for a whole job, and a header ghosting through the readout the whole
-        # time is both unreadable and a permanent visual artifact. Accent-tinted
-        # rather than red/amber so it reads as STATE, not as a fault.
-        Color:
-          rgba: app.theme.background
-        Rectangle:
-          pos: self.pos
-          size: self.size
-        Color:
-          rgba: app.theme.accent_soft
-        Rectangle:
-          pos: self.pos
-          size: self.size
-        Color:
-          rgba: app.theme.accent
-        Line:
-          points: (self.x, self.y + 0.5, self.right, self.y + 0.5)
-          width: 1.0
-      # ── Thread-reference latch lamp ──────────────────────────────────────
-      # LAMP + TEXT ONLY, no latched-Z readout: latchedZ is raw Z-scale counts
-      # in the firmware's frame, and nothing on the tick path converts a bare
-      # count to display units (the axes convert their own live encoders).
-      # Building a conversion just for this line would be a second place for
-      # that arithmetic to rot. latchedSpindle is meaningless to a human and
-      # is deliberately not shown. Success-colored like the Engage card's
-      # "Armed" text -- it is the same kind of answer ("the machine holds what
-      # you think it holds"), and it sits right next to that card.
-      # Width-collapsed (not height) so the offset text keeps the band when
-      # the latch is down: a mid-job disengage takes the lamp away, not the
-      # offset the operator still has to remember.
-      Label:
-        id: label_ref_latched
-        text: "THREAD REF LATCHED"
-        size_hint_x: None
-        width: dp(180) if root.controller.thread_ref_latched else 0
-        opacity: 1 if self.width else 0
-        text_size: self.size
-        halign: 'left'
-        valign: 'middle'
-        font_name: app.theme.font_bold
-        font_size: dp(13)
-        color: app.theme.success_text
-
-      Label:
-        id: label_phase_offset
-        text: root.controller.phase_offset_text
-        text_size: self.size
-        halign: 'center'
-        valign: 'middle'
-        font_name: app.theme.font_bold
-        font_size: dp(13)
-        color: app.theme.accent_text

@@ -44,6 +44,35 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     # it gets it, and neither silently overwrites the other.
     natural_height = NumericProperty(128)
 
+    # How far the status gutter's recessed band is inset from its own bottom
+    # edge, i.e. where the hairline divider sits. ONE NUMBER, FOUR USES: the
+    # recess rectangle, the divider line, and both chips' vertical centring all
+    # read it, so the band and the things sitting in it cannot disagree.
+    #
+    # A REAL PROPERTY RATHER THAN A NAME INVENTED IN THE KV, and that is not
+    # style. Declaring `recess_inset: dp(1)` on the FloatLayout in the kv rule
+    # does create the property -- but as an ObjectProperty defaulting to None,
+    # and the canvas instructions referencing it are evaluated before the rule
+    # assigns it, so every frame started with
+    # "TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'".
+    # Caught by rendering, not by the test suite: the kv parses fine.
+    #
+    # THE VALUE LIVES IN THE KV (`gutter_inset: dp(1)`), not here, and the 0
+    # below is a deliberate non-value. `NumericProperty(dp(1))` was the obvious
+    # way to keep it in one place and it cannot be done: dp() at class-body
+    # time reaches for the display density, which calls
+    # EventLoop.ensure_window(), which under the tests' mock window backend is
+    # a bare sys.exit(1) -- the whole suite died at COLLECTION with
+    # "INTERNALERROR SystemExit: 1". The preview rendered fine, because it has
+    # a real window; only running the suite showed it.
+    #
+    # 0 rather than 1 as the fallback on purpose: if the kv line is ever
+    # deleted the divider lands flush on the gutter's edge, which is visibly
+    # "no inset" rather than a plausible-looking number quietly standing in for
+    # the real one. It was dp(5) until 2026-08-29, which left five
+    # painted-nothing pixels between the divider and the top of the controls.
+    gutter_inset = NumericProperty(0)
+
     # ── One-hot tri-state operating mode (derived from the flags above) ───────
     # The single mode button in the advanced bar cycles through these three:
     #   "wizard"        -> guided multi-step cut (enable_wizard)
