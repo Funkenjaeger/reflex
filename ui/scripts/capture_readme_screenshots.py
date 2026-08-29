@@ -2,9 +2,10 @@
 expanded) for each UI theme, with no hardware connected.
 
 Renders at the fixed target-hardware resolution (1024x600) and writes one PNG
-per theme, composited over a black background (``export_to_png`` produces a
-transparent background, which reads as white in many viewers; the app's real
-``Window.clearcolor`` is black).
+per theme, composited over THAT THEME'S background colour (``export_to_png``
+produces a transparent background because it exports the root widget, not the
+Window -- and the app's backdrop lives on ``Window.canvas.before``, so it is
+never in the export).
 
 Run locally:
     DISPLAY=:0 SDL_AUDIODRIVER=dummy uv run python scripts/capture_readme_screenshots.py
@@ -58,10 +59,22 @@ IDLE_TICKS = 6  # frames to flush before each export (texture/colors must settle
 app = MainApp()
 
 
-def _composite_over_black(path):
-    """Flatten a transparent PNG onto an opaque black background, in place."""
+def _composite_over_theme_bg(path, rgba):
+    """Flatten a transparent PNG onto the THEME's opaque background, in place.
+
+    NOT black. export_to_png() exports the root WIDGET, so it never captures
+    Window.clearcolor or the gradient drawn on Window.canvas.before (app.py) --
+    the app's actual backdrop. Regions that deliberately let that backdrop show
+    (the DRO area, the gaps between advbar controls) therefore export fully
+    TRANSPARENT, and whatever we flatten them onto becomes their apparent color.
+
+    Flattening onto black was harmless in dark (background 0.055) and produced a
+    black hole in light (background 0.851), which reads as a UI defect and is
+    not one. Anything still dark AFTER this fix is a real painting bug.
+    """
     img = Image.open(path).convert("RGBA")
-    bg = Image.new("RGBA", img.size, (0, 0, 0, 255))
+    solid = tuple(int(round(max(0.0, min(1.0, c)) * 255)) for c in rgba[:3]) + (255,)
+    bg = Image.new("RGBA", img.size, solid)
     Image.alpha_composite(bg, img).convert("RGB").save(path)
 
 
@@ -76,7 +89,7 @@ def _capture(_dt):
             # First export under-renders (only one tile); export twice.
             app.root.export_to_png(out)
             app.root.export_to_png(out)
-            _composite_over_black(out)
+            _composite_over_theme_bg(out, app.theme.background)
             print("WROTE", out, "root size", app.root.size)
     except Exception as e:  # noqa: BLE001 - capture script, want the full traceback
         import traceback
