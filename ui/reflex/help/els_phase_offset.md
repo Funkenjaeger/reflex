@@ -21,11 +21,11 @@ the widening**. Not a controller number that stands in for it: the
 distance the groove has actually grown past the width of your cutter,
 which you can go and measure on the part. That is the headline.
 
-Under it, smaller, is the same total as a fraction of one pitch. That is
-not a width — it is the limit gauge. Offsets alias at one pitch, and the
-fraction is what says how much of that budget is spent. On a widening job
-it should stay small; a fraction creeping up toward one means the entries
-are not what you think they are.
+Under it, smaller, is the same total as a share of one pitch, written
+`0.333 x pitch`. That is not a width — it is the limit gauge. Offsets
+alias at one pitch, and this is what says how much of that budget is
+spent. On a widening job it should stay small; a value creeping up toward
+1.000 means the entries are not what you think they are.
 
 ## Applying an Offset Does Not Move Anything
 

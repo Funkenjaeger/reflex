@@ -164,7 +164,7 @@ def test_total_shows_both_the_distance_and_the_fraction(popup, fsm):
     popup._refresh_total()
     assert "0.750" in popup.total_text
     assert "mm" in popup.total_text
-    assert "1/2" in popup.fraction_text
+    assert "0.500 x pitch" in popup.fraction_text
     assert "pitch" in popup.fraction_text
 
 
@@ -184,11 +184,11 @@ def test_the_distance_leads_and_the_fraction_is_subordinate(popup, fsm):
     assert "pitch" in popup.fraction_text
 
 
-def test_the_fraction_is_named_by_the_SAME_rule_the_status_strip_uses(popup, fsm):
+def test_the_pitch_share_uses_the_SAME_rule_the_status_strip_uses(popup, fsm):
     """The modal and the advanced-bar strip show the same number, so they must
-    describe it the same way — an exact division by name, anything else as the
-    raw decimal. Two naming rules on one screen is how they come to disagree,
-    and the operator has no way to tell which one is lying.
+    describe it the same way. Since 2026-08-29 that rule is "always a decimal",
+    which removes the failure this test was written against — two naming rules
+    on one screen, with no way to tell which one was lying.
     """
     from reflex.fsms.ui_controller import phase_offset_fraction_text
 
@@ -200,7 +200,9 @@ def test_the_fraction_is_named_by_the_SAME_rule_the_status_strip_uses(popup, fsm
     # And concretely, so the shared rule cannot quietly become a no-op:
     fsm.phase_offset_display.return_value = (0.1, 1.0 / 3.0)
     popup._refresh_total()
-    assert "1/3" in popup.fraction_text
+    assert "0.333" in popup.fraction_text
+    assert "/" not in popup.fraction_text
+    assert "of a pitch" not in popup.fraction_text
 
     fsm.phase_offset_display.return_value = (0.1, 0.2755)
     popup._refresh_total()

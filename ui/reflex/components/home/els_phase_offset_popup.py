@@ -16,7 +16,7 @@ has grown past the width of the cutter, a distance that can be measured on the
 part. That makes it the headline, and everything else on this screen a
 qualifier of it.
 
-The fraction of a pitch is kept alongside it, subordinated: it is not a width,
+The share of a pitch is kept alongside it, subordinated: it is not a width,
 it is the SAFETY BOUND. Offsets alias at one pitch, so the fraction says how
 much of that budget the total has eaten. On a widening job it stays small; a
 fraction climbing toward one means the entries are not what the operator thinks
@@ -444,7 +444,7 @@ class PhaseOffsetPopup(Popup):
             f"{self.unit_label}"
         )
         self.fraction_text = (
-            f"{phase_offset_fraction_text(fraction)} of a pitch — "
+            f"{phase_offset_fraction_text(fraction)} x pitch — "
             f"the offset is refused at a full one"
         )
 

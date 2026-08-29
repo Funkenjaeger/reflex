@@ -1,4 +1,3 @@
-from fractions import Fraction
 
 from kivy.properties import StringProperty, BooleanProperty, NumericProperty
 from kivy.event import EventDispatcher
@@ -57,47 +56,24 @@ NOTICE_SWEEP_SECONDS = 0.1
 # and decimal places — and devices.py is the register-map module, deliberately
 # free of any dependency on the running app's formatting state.
 
-# Largest denominator the fraction is allowed to be NAMED with. A round
-# fraction is quick to read against the one-pitch bound ("half the budget
-# gone"); past about an eighth the name stops being easier to read than the
-# decimal, and a wider limit just invites Fraction to "explain" an arbitrary
-# groove-widening offset as, say, 7/9 of a pitch.
-#
-# THE OLD JUSTIFICATION FOR THIS NUMBER DOES NOT TRANSFER. It was "multi-start
-# threads in the wild are 2- to 6-start", i.e. the denominator WAS the start
-# count and naming it told the operator which start he was on. Widening offsets
-# are set by cutter width, so they land on no particular fraction and will
-# usually render as the decimal. The naming is kept because it costs nothing
-# and reads well when a total does happen to sit on a half or a quarter of the
-# bound -- not because 8 means anything about the work any more.
-PHASE_OFFSET_MAX_DENOMINATOR = 8
-
-# How close to an exact 1/N the fraction must be before it is named as one.
-# 0.2% of a pitch is far below anything that shows in cut metal, and comfortably
-# above both the once-at-the-end step rounding in apply_phase_offset and the
-# keypad's own precision (an operator dividing a 1.25 mm pitch three ways types
-# 0.417, not 0.4166666). Tighter than this and a genuine 1/3 renders as a
-# decimal; the tolerance exists so that a name, when it is given, is not a
-# rounding accident.
-PHASE_OFFSET_FRACTION_TOL = 0.002
-
-
 def phase_offset_fraction_text(fraction: float) -> str:
-    """"1/3" when the offset really is a third of a pitch, "0.275" otherwise.
+    """The share of one pitch, ALWAYS as a decimal: "0.333", "0.500", "0.275".
 
-    NAMING IS A CLAIM, so it is guarded on both sides: the snapped value has to
-    be a proper fraction (an offset at or past one pitch is refused on entry,
-    so anything >= 1 here means the pitch changed underneath a live offset and
-    the honest answer is the raw number), and it has to be within
-    PHASE_OFFSET_FRACTION_TOL of the real one. A wrong name is not dangerous on
-    its own — the firmware indexes off the step count, not this string — but it
-    would make an arbitrary offset look like a deliberate clean division and
-    rob the operator of the one clue that says otherwise.
+    ONE FORMAT, NO BRANCH. Until 2026-08-29 an exact-ish 1/N was rendered by
+    name ("1/3") and everything else as a decimal, on the theory that a round
+    fraction reads faster against the one-pitch bound. Evan's call, and it is
+    his screen: he reads 0.333 without difficulty, so the naming bought nothing
+    and cost a second format for the same quantity.
+
+    Deleting the branch takes a real hazard with it. Naming was a CLAIM, and it
+    needed a tolerance and a denominator cap to keep from asserting that an
+    arbitrary widening offset was a deliberate clean division. A decimal
+    asserts nothing, so there is no longer anything to get wrong -- and no
+    reason for the modal and the status strip to ever disagree.
+
+    The caller supplies the unit: the wording is "0.333 x pitch", never
+    "of a pitch".
     """
-    approx = Fraction(fraction).limit_denominator(PHASE_OFFSET_MAX_DENOMINATOR)
-    if (0 < approx < 1 and approx.denominator > 1
-            and abs(float(approx) - fraction) <= PHASE_OFFSET_FRACTION_TOL):
-        return f"{approx.numerator}/{approx.denominator}"
     return f"{fraction:0.3f}"
 
 
@@ -131,7 +107,7 @@ def phase_offset_readout(steps, distance, fraction, formats) -> str:
     except (ValueError, IndexError, KeyError, AttributeError):
         distance_text = f"{distance:+0.3f}"
     return (f"THREAD PHASE OFFSET  •  {distance_text} {unit}  "
-            f"•  {phase_offset_fraction_text(fraction)} of a pitch")
+            f"•  {phase_offset_fraction_text(fraction)} x pitch")
 
 
 class ElsUiController(EventDispatcher):

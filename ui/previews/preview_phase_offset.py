@@ -165,7 +165,7 @@ def set_offset(fraction_of_pitch):
         pitch = fsm.thread_pitch_steps()
         steps = int(round(pitch * fraction_of_pitch)) if pitch > 0 else FALLBACK_STEPS
         print(f"  thread pitch = {pitch:.1f} steps -> offset {steps} steps "
-              f"({fraction_of_pitch:.4f} of a pitch)")
+              f"({fraction_of_pitch:.4f} x pitch)")
     uic._hal.tick.phase_offset_steps = lambda: steps
     uic._poll_phase_offset()
     uic._poll_phase_offset()
@@ -315,7 +315,7 @@ def _arm(_dt):
 
     # REAL MACHINE GEOMETRY, because the readout is arithmetic over it and a
     # fresh config's placeholder ratio (400/360, i.e. 1.1 mm per leadscrew
-    # STEP) renders a one-step offset as "+1.111 mm, 0.309 of a pitch" -- a
+    # STEP) renders a one-step offset as "+1.111 mm, 0.309 x pitch" -- a
     # true picture of a machine nobody owns. A 5 mm leadscrew at 2000 steps/rev
     # is an ordinary conversion, and it goes in through the production setter
     # so servo.ratioNum/Den are derived exactly the way the app derives them.

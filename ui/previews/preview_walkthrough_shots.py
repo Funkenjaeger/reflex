@@ -243,7 +243,7 @@ def set_strip_offset(fraction_of_pitch):
         pitch = fsm.thread_pitch_steps()
         steps = int(round(pitch * fraction_of_pitch))
         print(f"  thread pitch = {pitch:.1f} steps -> offset {steps} steps "
-              f"({fraction_of_pitch:.4f} of a pitch)")
+              f"({fraction_of_pitch:.4f} x pitch)")
     uic._hal.read_phase_offset_steps = lambda: steps
     uic._poll_phase_offset()
     uic._poll_phase_offset()
