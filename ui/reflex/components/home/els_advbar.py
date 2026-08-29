@@ -124,6 +124,33 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     minor_diameter_text = StringProperty("")
 
     _skip_save = [
+        # ── LAYOUT CONSTANTS AND PARENT-OWNED STATE, NOT OPERATOR STATE ──────
+        # SavingDispatcher persists every Numeric/String/Boolean property it is
+        # not told to skip and RELOADS it at startup, so anything left off this
+        # list becomes a value the save file can override the source with.
+        #
+        # THIS IS NOT HYPOTHETICAL. elspi holds six per-widget ElsAdvancedBar
+        # YAMLs, and ElsAdvancedBar-2268.yaml still contains
+        # `natural_height: 158.0` -- the pre-2026-08-22 value whose own comment
+        # above documents what it did: children summing to 184 px inside a
+        # 158 px bar, pushing the notice strips out of the top of the bar and
+        # onto the spindle DRO row. Another, ElsAdvancedBar-1735.yaml, carries
+        # `opacity: 0`, which is an invisible advanced bar.
+        #
+        # AND THE ORPHANS ARE REACHABLE. saving_dispatcher.py defaults
+        # `id_override` to f"{self.uid}", a Kivy widget uid, so the file a bar
+        # loads is decided by how many widgets were built before it. Adding the
+        # two StatusChips shifts that count -- which means a change like this
+        # one can land the app on a stale file from a superseded design, and
+        # the symptom presents as a brand-new layout bug in the new work.
+        #
+        # THE SOURCE GUARD IS THE FIX, NOT DELETING THE FILES. The config dir
+        # on elspi is root-owned and the automation's grant covers only the
+        # service restart, so those files stay where they are; skipping the
+        # properties makes them inert instead of merely absent.
+        "natural_height",
+        "opacity",
+        "gutter_inset",
         "is_active",
         "is_running",
         "label_text",
