@@ -150,6 +150,15 @@ class MainApp(App):
         return self.board.get_spindle_axis()
 
     def build(self):
+        # Neutralize Kivy's stock exit_on_escape default app-side. On elspi,
+        # ~/.kivy/config.ini is regenerable machine state (deploy/reflex-ui.service
+        # runs as root, so this is /root/.kivy/config.ini) -- we don't want the
+        # backstop for "the app comes back up after a clean exit" to depend on a
+        # config.ini value surviving a regenerate. This survives regardless.
+        # Escape is checked live against Config on each keypress, so setting it
+        # here (before any window exists yet) is early enough.
+        Config.set('kivy', 'exit_on_escape', '0')
+
         self.formats = FormatsDispatcher(id_override="0")
         # Reactive theme: seed from the persisted selection and keep the two in
         # sync so the formats-menu picker drives a live recolor. Coerce any

@@ -2,7 +2,8 @@
 
 This documents the full manual procedure to deploy **reflex-ui** to a Raspberry Pi
 that ships with the OSPI image running the original **rotary-controller-python (rcp)**.
-The goal: run reflex-ui **from source** out of `/reflex-ui/`, auto-started at boot via
+The goal: run reflex-ui **from source** out of the monorepo checkout's `ui/`
+directory, at `/home/default/projects/reflex/ui/`, auto-started at boot via
 systemd, replacing rcp as the boot application.
 
 > A future task tracks scripting this (bash or, preferably, an Ansible playbook) —
@@ -50,22 +51,26 @@ ssh default@<PI> 'curl -LsSf https://astral.sh/uv/install.sh | sh'
 ### 2. Create the target directory (ROOT — run on the Pi)
 
 ```bash
-sudo mkdir -p /reflex-ui && sudo chown default:default /reflex-ui
+sudo mkdir -p /home/default/projects/reflex && sudo chown default:default /home/default/projects/reflex
 ```
 
 Owning it as `default` lets us push over SSH and run `uv sync` without root.
 (The service still runs as root; root can read default-owned files fine.)
+Note: this now lands inside `default`'s own home directory rather than at the
+filesystem root, so `sudo`/`chown` here may no longer be strictly necessary —
+left as-is (harmless if redundant) rather than guessed at without a live Pi to check.
 
 ### 3. Transfer the source — git over SSH, no GitHub required
 
 We deploy the **committed** state of the working branch via a push-to-deploy git
 remote — no GitHub round-trip.
 
-On the Pi, initialize `/reflex-ui` as a repo whose working tree updates on push:
+On the Pi, initialize `/home/default/projects/reflex` (the monorepo root — `fw/`
+and `ui/` together) as a repo whose working tree updates on push:
 
 ```bash
-ssh default@<PI> 'git init -b <BRANCH> /reflex-ui && \
-  git -C /reflex-ui config receive.denyCurrentBranch updateInstead'
+ssh default@<PI> 'git init -b <BRANCH> /home/default/projects/reflex && \
+  git -C /home/default/projects/reflex config receive.denyCurrentBranch updateInstead'
 ```
 
 `receive.denyCurrentBranch=updateInstead` makes the working tree check out
@@ -76,7 +81,7 @@ push populates the tree.
 From your dev machine:
 
 ```bash
-git remote add pi default@<PI>:/reflex-ui      # one-time
+git remote add pi default@<PI>:/home/default/projects/reflex      # one-time
 git push pi <BRANCH>
 ```
 
@@ -89,33 +94,35 @@ service (step 7). Only committed content transfers — uncommitted/untracked fil
 > rsync -av --delete \
 >   --exclude '.git' --exclude '.venv' --exclude '__pycache__' \
 >   --exclude '*.pyc' --exclude 'previews/' \
->   ./ default@<PI>:/reflex-ui/
+>   ./ default@<PI>:/home/default/projects/reflex/
 > ```
 
 ### 4. Build the venv from source (as `default` — no sudo)
 
+`pyproject.toml` lives in `ui/`, not the monorepo root, so `uv sync` runs there:
+
 ```bash
-ssh default@<PI> 'cd /reflex-ui && ~/.local/bin/uv sync'
-# creates /reflex-ui/.venv with all dependencies
+ssh default@<PI> 'cd /home/default/projects/reflex/ui && ~/.local/bin/uv sync'
+# creates /home/default/projects/reflex/ui/.venv with all dependencies
 ```
 
-### 5. Install the launch wrapper
+### 5. Make the launch wrapper executable
 
 `deploy/start.sh` ships in the repo, so after step 3 it's already at
-`/reflex-ui/deploy/start.sh`. Place it at `/reflex-ui/start.sh` and make it
-executable:
+`/home/default/projects/reflex/ui/deploy/start.sh`. Unlike the old standalone
+`/reflex-ui/` layout, it does **not** need to be copied anywhere — it is
+location-agnostic (resolves its own directory via `readlink -f "$0"`, see the
+header comment in `start.sh`) and the unit below invokes it in place. Just
+make sure it's executable:
 
 ```bash
-ssh default@<PI> 'cp /reflex-ui/deploy/start.sh /reflex-ui/start.sh && chmod +x /reflex-ui/start.sh'
+ssh default@<PI> 'chmod +x /home/default/projects/reflex/ui/deploy/start.sh'
 ```
-
-(If deploying via committed-only push and `deploy/` isn't committed yet, write
-`/reflex-ui/start.sh` directly from the contents of `deploy/start.sh` in this repo.)
 
 ### 6. Install the systemd unit + switch boot app from rcp to reflex-ui (ROOT — on the Pi)
 
 ```bash
-sudo cp /reflex-ui/deploy/reflex-ui.service /etc/systemd/system/reflex-ui.service
+sudo cp /home/default/projects/reflex/ui/deploy/reflex-ui.service /etc/systemd/system/reflex-ui.service
 sudo systemctl daemon-reload
 sudo systemctl disable --now rcp.service       # stop & disable old app (kept on disk)
 sudo systemctl enable reflex-ui.service        # start at boot
@@ -154,8 +161,12 @@ sudo systemctl enable --now rcp.service
 - **Run-user is root**, matching rcp — required for KMS/DRM and `/var/log` writes.
   Don't switch to a non-root user without solving DRM/`video`+`render` group access
   and a writable log dir.
-- **`python -m reflex.main`** relies on `WorkingDirectory=/reflex-ui/` (set in the
-  unit) to put the `reflex` package on `sys.path`.
+- **`python -m reflex.main`** needs the `reflex` package on `sys.path`. In the
+  monorepo layout that is no longer the unit's `WorkingDirectory=` (which now
+  points at `ui/deploy/`, alongside the unit file and `start.sh` — see
+  `reflex-ui.service`) — `start.sh` itself does an explicit `cd` into `ui/`
+  before `exec python -m reflex.main`, overriding whatever the unit sets. See
+  the header comment in `start.sh`.
 - The launch wrapper sets no `DISPLAY` on purpose — Kivy uses KMS/DRM directly.
 - The committed-only push means any in-progress (uncommitted) work is **not** deployed;
   commit it first or use the rsync alternative.
