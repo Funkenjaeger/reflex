@@ -286,23 +286,60 @@ ELS_CAL_MESSAGES = {
     ELS_CAL_ERR_ABORTED: "Calibration aborted — conditions changed mid-run.",
 }
 
+# EVERY TAKE-UP MESSAGE LEADS WITH "Cut aborted" (2026-08-29, Evan's call).
+# The old texts described the FAULT and left the machine's STATE implicit, so
+# an operator who read "Carriage not moving — is the half-nut engaged?" still
+# had to ask "okay, what now?". "Cut aborted" answers that first, and the Cut
+# button reactivating underneath is the confirming cue.
+#
+# AND EVERY ONE FITS 65 CHARACTERS, which is a layout contract, not a style
+# preference. The notice strip is pinned across the top of the advanced bar,
+# i.e. over the status gutter, and it is translucent -- so a message too wide
+# lands ON TOP of the phase-offset chip's text and both become unreadable.
+# Evan accepts the chips being dimmed by the red tint; he does not accept text
+# on text.
+#
+# THE BUDGET IS NOT THE GAP BETWEEN THE CHIPS, and getting that wrong is how
+# this was first measured. The strip's Label is halign 'center' across the
+# FULL bar, and the gap is not centred on the bar: chip_reference ends at
+# x=197, chip_phase starts at x=783, but the bar's own centre is x=566. So a
+# centred string is bounded by TWICE its distance to the NEARER obstruction --
+# 2 x (783 - 566) = 435 px -- not by the 586 px gap. Measuring against the gap
+# passed every string and the render then showed the longest one sitting on
+# the phase chip anyway (previews/preview_phase_offset.py, 2026-08-29).
+#
+# At ChakraPetch-SemiBold dp(13) these run ~6.7 px/char at worst, so 435 px is
+# 65 characters. Every string below was CHOSEN from a measurement, not counted:
+# previews/preview_takeup_text_widths.py renders candidates and reports the
+# margin. Guarded in CI by tests/fsms/test_els_cal.py, whose comment also
+# records the narrow-gap case none of this covers.
 ELS_TAKEUP_MESSAGES = {
     # Shares the calibration code: same physical cause, same remedy. The
     # firmware refuses a take-up commanded in JOG mode outright, because the
     # mode promotion that would rescue it deliberately skips jog.
-    ELS_CAL_ERR_SERVOMODE: (
-        "Take-up refused — the servo is in jog mode. Leave jog and press "
-        "Cut again."
+    ELS_CAL_ERR_SERVOMODE: (              # 63 ch, 400 px of 435
+        "Cut aborted — servo in jog mode. Leave jog and press Cut again."
     ),
-    ELS_TAKEUP_ERR_UNCONFIRMED: (
-        "Carriage not moving — is the half-nut engaged? "
-        "The cut will not start until the backlash take-up is confirmed."
+    ELS_TAKEUP_ERR_UNCONFIRMED: (         # 38 ch, 253 px of 435
+        "Cut aborted — is the half-nut engaged?"
     ),
-    ELS_TAKEUP_ERR_TIMEOUT: (
-        "Backlash take-up did not complete. Disengage and re-engage the "
-        "ELS stop to clear."
+    ELS_TAKEUP_ERR_TIMEOUT: (             # 59 ch, 393 px of 435
+        "Cut aborted — take-up did not complete. Re-engage the stop."
     ),
 }
+
+# Where the WRONG-way branch of takeup_failure_text goes. Kept out of the dict
+# because it is not keyed by a firmware result code -- it is a refinement of
+# ELS_TAKEUP_ERR_UNCONFIRMED chosen by the sign of the observed motion -- but
+# it is subject to the same contract, so it is measured with the others rather
+# than hiding inside the function. WRONG stays shouted: this is a wiring or
+# scale-direction fault, not "the carriage did not move far enough".
+ELS_TAKEUP_WRONG_WAY = (                  # 60 ch, 399 px of 435
+    "Cut aborted — WRONG-way motion. Check the Z scale direction."
+)
+
+# Unknown result code. Still leads with the state, for the same reason.
+ELS_TAKEUP_UNKNOWN = "Cut aborted — backlash take-up failed."
 
 
 class Global(BaseDevice):
@@ -321,25 +358,40 @@ typedef struct {
 """
 
 
-def takeup_failure_text(result_code, z_delta=None, thresh_counts=None):
+def takeup_failure_text(result_code, z_delta=None):
     """Operator-facing text for a take-up failure.
 
-    When the firmware's derived threshold and the observed motion are both
-    available, name them. "Moved 5 counts, needed 11" is a diagnosis an operator
-    can act on — a partially engaged half-nut looks completely different from
-    one that never engaged — whereas the bare sentence leaves them guessing
-    which of the two they have.
+    THE COUNTS ARE NOT ON THE SCREEN ANY MORE (2026-08-29, Evan's call). This
+    used to append "Moved 5 counts, needed 11", on the argument that the ratio
+    distinguishes a partially engaged half-nut from one that never engaged.
+    That argument was wrong about its audience: those are raw Z-scale counts,
+    a unit exposed NOWHERE else in the UI, so the operator at the machine has
+    nothing to judge 5-against-11 by and the sentence cost him the width that
+    now keeps the notice from landing on top of the status chips.
+
+    THEY DID NOT DISAPPEAR — THEY MOVED. ui_controller._poll_takeup_outcome
+    logs every outcome with both numbers, refused and confirmed:
+
+        ELS takeup #25 REFUSED (result=4): moved 0 counts, needed 15
+
+    which is where a diagnostician reads them and where the elspi 2026-08-21
+    phantom-CONFIRMED investigation actually read them from. That line is
+    load-bearing now and is pinned by
+    tests/fsms/test_ui_controller_takeup_outcome.py.
+
+    `thresh_counts` WAS the third parameter and is gone rather than left
+    unused: nothing on this path needs the threshold now that it is not named
+    on screen, and a parameter kept "just in case" is a parameter the next
+    caller passes wrongly. `z_delta` stays because its SIGN still picks a
+    branch, even though its magnitude is no longer printed.
 
     A NEGATIVE delta means the carriage moved the WRONG way, which is a
     different fault entirely (scale direction, or something else driving the
     carriage) and is called out as such rather than folded into "not enough".
     """
-    base = ELS_TAKEUP_MESSAGES.get(result_code, "Backlash take-up failed.")
+    base = ELS_TAKEUP_MESSAGES.get(result_code, ELS_TAKEUP_UNKNOWN)
     if result_code != ELS_TAKEUP_ERR_UNCONFIRMED:
         return base
-    if z_delta is None or thresh_counts is None:
-        return base
-    if z_delta < 0:
-        return (f"{base} The carriage moved {abs(int(z_delta))} counts the WRONG "
-                f"way — check the Z scale direction.")
-    return f"{base} Moved {int(z_delta)} counts, needed {int(thresh_counts)}."
+    if z_delta is not None and z_delta < 0:
+        return ELS_TAKEUP_WRONG_WAY
+    return base

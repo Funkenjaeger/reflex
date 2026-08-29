@@ -465,35 +465,131 @@ def test_timeout_is_sized_against_a_real_sweep():
 # machine simply sat there, indistinguishable from hung. It now drives the
 # inline warning strip in the ELS bar, so it is worth pinning.
 
-def test_takeup_text_names_the_numbers_when_it_has_them():
+def test_takeup_text_keeps_the_counts_OFF_the_screen():
+    """INVERTED 2026-08-29, and the inversion is the point.
+
+    This test used to be `test_takeup_text_names_the_numbers_when_it_has_them`
+    and asserted that "Moved 5 counts, needed 11" reached the operator, on the
+    argument that the ratio distinguishes a partially engaged half-nut from one
+    that never engaged. Its PREMISE was wrong about the audience: those are raw
+    Z-scale counts, a unit this UI exposes nowhere else, so the operator at the
+    machine has nothing to judge 5-against-11 by. Evan's call.
+
+    It is inverted rather than deleted because the numbers coming back is now a
+    LAYOUT defect, not just noise: the notice strip overlays the status gutter,
+    and a longer message lands on top of the phase-offset chip's text. The
+    numbers live in the log instead -- pinned by
+    tests/fsms/test_ui_controller_takeup_outcome.py, so this is a relocation
+    with a guard at each end, not a deletion.
+    """
     from reflex.utils.devices import (ELS_TAKEUP_ERR_UNCONFIRMED,
                                       takeup_failure_text)
-    msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED, z_delta=5, thresh_counts=11)
+    msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED, z_delta=5)
     assert "half-nut" in msg.lower()
-    assert "5" in msg and "11" in msg, "operator needs moved-vs-needed, not just a refusal"
+    assert msg.lower().startswith("cut aborted"), (
+        "the message must lead with the machine's STATE -- an operator who is "
+        "only told the fault is left asking 'okay, what now?'")
+    assert "5" not in msg and "count" not in msg.lower(), (
+        "raw Z-scale counts are for the log, not the screen: nothing else in "
+        "this UI shows that unit, and the width is needed to keep the notice "
+        f"strip off the status chips.\n  {msg}")
 
 
 def test_takeup_text_calls_out_wrong_way_motion_separately():
     """A carriage moving the WRONG way is a different fault (scale direction,
-    or something else driving it) and must not be folded into 'not enough'."""
+    or something else driving it) and must not be folded into 'not enough'.
+
+    Still a separate message; only the count it used to quote is gone. The
+    SIGN of z_delta is what selects it, which is why that parameter survived
+    the 2026-08-29 trim and `thresh_counts` did not.
+    """
     from reflex.utils.devices import (ELS_TAKEUP_ERR_UNCONFIRMED,
                                       takeup_failure_text)
-    msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED, z_delta=-7, thresh_counts=11)
+    msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED, z_delta=-7)
+    plain = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED, z_delta=7)
     assert "wrong" in msg.lower()
-    assert "7" in msg
+    assert msg != plain, "a wrong-way carriage must not read as 'not enough'"
+    assert "7" not in msg, "the count belongs in the log, not on the strip"
 
 
-def test_takeup_text_degrades_without_numbers():
+def test_takeup_text_degrades_without_a_delta():
+    """No motion reading at all -- the plain refusal, never the wrong-way one."""
     from reflex.utils.devices import (ELS_TAKEUP_ERR_UNCONFIRMED,
                                       takeup_failure_text)
     msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED)
     assert "half-nut" in msg.lower()
+    assert "wrong" not in msg.lower()
 
 
 def test_takeup_timeout_has_its_own_text():
     from reflex.utils.devices import ELS_TAKEUP_ERR_TIMEOUT, takeup_failure_text
     msg = takeup_failure_text(ELS_TAKEUP_ERR_TIMEOUT)
     assert "half-nut" not in msg.lower(), "a timeout is not a half-nut diagnosis"
+    assert msg.lower().startswith("cut aborted")
+
+
+# The character budget is a PROXY for a pixel budget, and the proxy is
+# calibrated, not guessed. The notice strip is translucent and pinned across
+# the top of the advanced bar -- i.e. over the status gutter -- so a message
+# wider than the gap between the two status chips renders ON TOP of the
+# phase-offset chip's text.
+#
+# THE BUDGET IS NOT THE GAP, and the first version of this comment had it
+# wrong. The strip's Label is halign 'center' across the FULL bar and the gap
+# is not centred on the bar, so a centred string is bounded by twice its
+# distance to the NEARER chip. Measured 2026-08-29 at 1024x600, stop-only,
+# both chips up (previews/preview_phase_offset.py::measure_takeup_texts):
+#
+#   chip_reference.right = 197, chip_phase.x = 783, bar centre = 566
+#   raw gap                              586 px   <- NOT the constraint
+#   centred budget  2 x (783 - 566)  =   435 px   <- the constraint
+#   worst observed density               ~6.7 px/char
+#
+# 65 chars x 6.7 = 435 px. Checking against the 586 px gap passed every string
+# and the RENDER then showed the longest one sitting on the phase chip's text
+# anyway -- which is why the texts were re-chosen from
+# previews/preview_takeup_text_widths.py rather than from a character count.
+#
+# KNOWN NOT COVERED, and recorded here rather than quietly assumed away: the
+# budget is not constant either. The phase chip sizes to its value, and its
+# longest possible value is the un-convertible fallback ("+500 leadscrew steps
+# thread geometry unavailable"), which pulls chip_phase.x left to ~633 and
+# collapses the centred budget to ~135 px. NOTHING fits that; no character
+# budget can fix it, and the remedy would be to the strip (align it to the
+# gap instead of the bar) or to the fallback text. It needs a
+# missing-thread-geometry fault and a take-up refusal at the same time, so it
+# is a transient double fault -- but do not read this guard as proof there is
+# no collision.
+#
+# It is a proxy because the honest measurement needs a real GL texture, which
+# this suite cannot build (the mock backend segfaults on real textures). The
+# rendering check lives in previews/preview_phase_offset.py, which prints
+# every message's measured width against the real budget; this guard is what
+# fails in CI when someone lengthens a string without running it.
+TAKEUP_TEXT_MAX_CHARS = 65
+
+
+def test_takeup_texts_fit_the_gutter_gap():
+    from reflex.utils.devices import (ELS_TAKEUP_MESSAGES,
+                                      ELS_TAKEUP_WRONG_WAY,
+                                      ELS_TAKEUP_UNKNOWN)
+    texts = dict(ELS_TAKEUP_MESSAGES)
+    texts["WRONG_WAY"] = ELS_TAKEUP_WRONG_WAY
+    texts["UNKNOWN"] = ELS_TAKEUP_UNKNOWN
+    for key, msg in texts.items():
+        assert len(msg) <= TAKEUP_TEXT_MAX_CHARS, (
+            f"take-up message {key} is {len(msg)} characters, over the "
+            f"{TAKEUP_TEXT_MAX_CHARS} a CENTRED string has room for between "
+            f"the status chips. The notice strip is translucent and sits over "
+            f"the gutter, so this one will render on top of the phase-offset "
+            f"chip's text. Measure, do not count: "
+            f"previews/preview_takeup_text_widths.py.\n  {msg}")
+    # And the whole point of the trim: nothing in this set may name a count.
+    for key, msg in texts.items():
+        assert "count" not in msg.lower(), (
+            f"take-up message {key} names a count. Raw Z-scale counts are a "
+            f"unit this UI shows nowhere else; they belong in the REFUSED log "
+            f"line.\n  {msg}")
 
 
 # ── the run owns its scale index (2026-08-25 bench failure) ────────────────

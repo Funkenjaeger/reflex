@@ -63,10 +63,40 @@ def test_torn_snapshot_does_not_clear_the_refusal(ctrl, caplog):
     # Poll 2: the consistent read.
     _polls(ctrl, [(1, 0), (1, ELS_TAKEUP_ERR_UNCONFIRMED)])
 
-    assert ctrl.takeup_warning == takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED, 0, 2)
+    assert ctrl.takeup_warning == takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED, 0)
     assert ctrl._prev_takeup_seq == 1
     assert "CONFIRMED" not in caplog.text
     assert caplog.text.count("REFUSED") == 1
+
+
+def test_the_refused_log_line_carries_the_counts_the_screen_no_longer_shows(
+        ctrl, caplog):
+    """THE OTHER END OF THE 2026-08-29 RELOCATION.
+
+    The operator-facing warning used to append "Moved 0 counts, needed 2" and
+    no longer does: raw Z-scale counts are a unit this UI exposes nowhere else,
+    and the width they cost is what keeps the translucent notice strip from
+    landing on top of the status chips. Evan's call, and he called it a
+    relocation of audience rather than a loss of information -- which is only
+    true while this log line still carries both numbers.
+
+    So the claim gets a guard at the end it moved TO, not just at the end it
+    moved FROM (tests/fsms/test_els_cal.py). This is also the line the elspi
+    2026-08-21 phantom-CONFIRMED investigation was actually read from.
+    """
+    caplog.set_level(logging.INFO)
+    ctrl._hal.tick.last_takeup_z_delta.return_value = 1
+    ctrl._hal.tick.takeup_thresh_counts.return_value = 15
+    _polls(ctrl, [(1, ELS_TAKEUP_ERR_UNCONFIRMED),
+                  (1, ELS_TAKEUP_ERR_UNCONFIRMED)])
+
+    assert "REFUSED" in caplog.text
+    assert "moved 1 counts, needed 15" in caplog.text, (
+        "the counts must survive in the log -- dropping them from the screen "
+        "was only defensible because a diagnostician can still read them "
+        f"here.\n  {caplog.text}")
+    # ...and they are still absent from what the operator sees.
+    assert "15" not in ctrl.takeup_warning and "count" not in ctrl.takeup_warning.lower()
 
 
 def test_a_stable_confirmation_is_reported_exactly_once(ctrl, caplog):

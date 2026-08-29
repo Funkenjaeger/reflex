@@ -631,7 +631,14 @@ class ElsUiController(EventDispatcher):
                 "ELS takeup #%s CONFIRMED: moved %s counts, needed %s (headroom %+d)",
                 seq, moved, needed, int(moved) - int(needed))
         else:
-            self.takeup_warning = takeup_failure_text(result, moved, needed)
+            # `moved` only, and `needed` deliberately not passed: the screen
+            # text uses the SIGN of the motion to pick the wrong-way branch and
+            # names no counts at all. Both numbers still go to the log line
+            # below, which since 2026-08-29 is the only place they exist -- see
+            # takeup_failure_text's docstring. Do not "restore" them to the
+            # warning: it is pinned to 85 characters so the notice strip cannot
+            # land on top of the status chips.
+            self.takeup_warning = takeup_failure_text(result, moved)
             log.warning(
                 "ELS takeup #%s REFUSED (result=%s): moved %s counts, needed %s",
                 seq, result, moved, needed)
