@@ -17,8 +17,9 @@ rows at the bottom of the ELS settings, beside
 ## What it does
 
 The controller carries a **thread-phase offset**: a distance, expressed along
-the thread, that shifts where the tool enters the helix. Set 0.05 mm and the
-next pass cuts 0.05 mm along from the original groove, widening it by that much.
+the thread, that shifts where the tool enters the helix. Set 0.002 in and the
+next pass cuts 0.002 in along from the original groove, widening it by that
+much.
 
 Every step-over goes the same way — you open one side of the groove and keep
 going — so the running total on screen **is the widening**: the distance the

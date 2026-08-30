@@ -102,8 +102,20 @@ AXIS_NAMES = ("Z", "X", "S")
 # 1/2-1/3-1/4 pitch these shots used to render: those are multi-start amounts,
 # most of the way round to the next groove, and the framing they came from was
 # corrected 2026-08-23.
-STEP_OVER_MM = 0.05
-PITCH_MM = 1.5             # the rig's own thread pitch, set in main() below
+# The rig's step-over, AS A FRACTION OF ONE PITCH. Unit-free on purpose: a
+# thread-phase offset is a fraction of a pitch, which is what the firmware holds
+# and what the chip shows, so nothing here has to know whether the machine is
+# displaying millimetres or inches.
+#
+# It used to be STEP_OVER_MM = 0.05 alongside PITCH_MM = 1.5, and both were
+# wrong the moment anything changed. `steps_to_display` returns DISPLAY units,
+# so dividing a millimetre constant by it computed a step count 25.4x too large
+# under inches; and PITCH_MM was pinned to a metric feed table the rig no longer
+# uses. Neither could be noticed while the display happened to be metric.
+#
+# 0.032 of a pitch is 0.002 in at 16 TPI -- an ordinary widening step-over, and
+# small enough that the frames illustrate the normal case rather than the bound.
+STEP_OVER_FRACTION = 0.032
 Z_BASELINE = 12000         # arbitrary but realistic raw encoder counts
 Z_COUNTS_PER_MM = 200      # elspi's Z scale: one count is 5 um
 SPINDLE_BASELINE = 8192
@@ -289,7 +301,7 @@ def section_strip():
     settle()
     shot("wt_gutter_baseline", "before any offset: reference chip only")
 
-    set_strip_offset(2 * STEP_OVER_MM / PITCH_MM)
+    set_strip_offset(2 * STEP_OVER_FRACTION)
     settle()
     record("advanced-bar status gutter",
            phase_offset_text=app.els_uic.phase_offset_text,
@@ -638,11 +650,14 @@ def section_phase_offset():
         print(f"  REFUSED [{tag}] {popup.message!r}")
 
     pitch = fsm.thread_pitch_steps()
-    mm_per_step = fsm.steps_to_display(1)
-    step = int(round(STEP_OVER_MM / mm_per_step)) if mm_per_step else 1
+    # STEPS, from a fraction of the pitch -- no unit conversion, so this cannot
+    # drift when the display units change. The distance is derived FROM the
+    # step count for printing, not the other way round.
+    step = max(1, int(round(pitch * STEP_OVER_FRACTION)))
     print(f"  is_threading={app.els_uic.is_threading}  "
-          f"thread pitch={pitch:.1f} steps  {STEP_OVER_MM} mm step-over = "
-          f"{step} steps")
+          f"thread pitch={pitch:.1f} steps  step-over "
+          f"{STEP_OVER_FRACTION:.3f} x pitch = {step} steps = "
+          f"{fsm.steps_to_display(step):.4f} display units")
 
     pop = PhaseOffsetPopup()
     pop.open()
@@ -671,7 +686,8 @@ def section_phase_offset():
     pop._refresh_total()
     pop.entry = float(fsm.steps_to_display(step))
     settle(6)
-    record(f"offset / entry, groove widened by {STEP_OVER_MM} mm",
+    record(f"offset / entry, groove widened by "
+           f"{STEP_OVER_FRACTION:.3f} x pitch",
            state=pop.state, total=pop.total_text, fraction=pop.fraction_text,
            entry_text=pop.entry_text, message=pop.message)
     shot("wt_offset_entry_total")
@@ -1072,7 +1088,16 @@ def _arm(_dt):
     app.servo.leadScrewPitchSteps = 2000
     # 1.50 mm pitch from the real THREAD_MM table: 600 leadscrew steps to the
     # pitch, so a 0.05 mm step-over is exactly 20 steps.
-    els_bar.set_feed_ratio("Thread MM", 8)
+    # INCHES, matching the machine and the README captures -- the guide uses
+    # frames from both and must not mix units. 16 TPI (Thread IN index 9),
+    # the thread the belt-off verification run cut.
+    #
+    # The rig's step-over is a FRACTION OF PITCH (STEP_OVER_FRACTION), so it
+    # does not care what the display units are -- which is the point, since a
+    # millimetre constant divided by steps_to_display() silently became 25.4x
+    # too large the first time this ran in inches.
+    app.formats.current_format = "IN"
+    els_bar.set_feed_ratio("Thread IN", 9)
 
     def _stoponly(_d):
         # AFTER the mode swap mounts the bar. Stop-only is the mode the machine

@@ -65,9 +65,9 @@ Two conditions have to hold at once before **Confirm** arms:
 - **Z holds** within tolerance of the position you seated it at.
 - **The spindle is still** — shown as a settling percentage while it decays.
 
-The readout gives both live, in your display units. A ±0.015 mm tolerance on a
-200 count/mm scale is three counts: this is a tight check, and it is meant to
-be. From the seat onward, the carriage position *is* the reference.
+The readout gives both live, in your display units. The tolerance shown —
+±0.0006 in here — is **three scale counts**: this is a tight check, and it is
+meant to be. From the seat onward, the carriage position *is* the reference.
 
 ## 3 — If the carriage drifts
 
@@ -79,6 +79,9 @@ cut. If Z leaves tolerance, the screen switches to a re-seat:
 > The carriage has crept off its seated position. Nudge it **back** by hand —
 > the **anti-cutting** direction, the same way you seated it — until it seats
 > firmly, then press Re-seated.
+
+The frame above shows +0.0022 in of drift against a ±0.0006 in tolerance: under
+three thousandths, and already too much.
 
 A re-seat that lands within tolerance returns you to alignment, and it has
 positively proven the Z chain is reading — which is worth something on its own.

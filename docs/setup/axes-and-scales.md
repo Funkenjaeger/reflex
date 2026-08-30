@@ -57,8 +57,8 @@ the label on the scale. A label error and a wrong ratio look identical on
 screen: both give a readout that moves smoothly and reads plausibly, and they
 differ only by a factor you will notice at the part.
 
-A long travel makes the error obvious — over 10 mm a 5% error is 0.5 mm, which
-no dial indicator will hide.
+A long travel makes the error obvious — over half an inch, a 5% error is
+0.025 in, which no dial indicator will hide.
 
 !!! tip "Direction is part of the calibration"
     A scale reading the right magnitude in the wrong direction produces a

@@ -421,7 +421,9 @@ def _capture(_dt):
         # setter so the pitch display, the ratio and is_threading all follow.
         _set_mode(bar, wizard=False, retract=False)
         home = app.manager.get_screen("home")
-        home.els_bar.set_feed_ratio("Feed MM", 6)
+        # 0.005 in/rev -- an ordinary finishing feed. Imperial table,
+        # because an inch DRO over a metric feed rate is nobody's machine.
+        home.els_bar.set_feed_ratio("Feed IN", 4)
         _settle()
         assert not app.els_uic.is_threading, (
             "feed frame is still in a THREADING table -- is_threading gates "
@@ -430,7 +432,9 @@ def _capture(_dt):
 
         # Back to a threading table: later frames and any future step should
         # not inherit feed mode from this one.
-        home.els_bar.set_feed_ratio("Thread MM", 6)
+        # Back to a threading table: 16 TPI, the thread the belt-off
+        # verification run cut on the real machine.
+        home.els_bar.set_feed_ratio("Thread IN", 9)
         _settle()
         assert app.els_uic.is_threading, "failed to return to a threading table"
 
@@ -486,6 +490,10 @@ def _arm(_dt):
     # default True and asserting the button is gone PROVES the use-case gate
     # instead of hiding behind the setting.
     app.formats.show_wizard = True
+
+    # INCHES, matching the machine (elspi: current_format IN). The default is
+    # MM, and a default is not a decision -- see the note above.
+    app.formats.current_format = "IN"
     # Name representative axes (a fresh config seeds 4 unnamed "?" axes).
     for i, name in enumerate(AXIS_NAMES):
         if i < len(app.axes):
@@ -499,6 +507,9 @@ def _arm(_dt):
     # Navigate to home, switch to ELS mode, expand the advanced bar.
     app.manager.goto("home")
     app.set_mode(MODE_ELS)
+    # A pitch every frame can show: 16 TPI. Set before the first capture so the
+    # headline shots do not carry a fresh config's metric default.
+    app.manager.get_screen("home").els_bar.set_feed_ratio("Thread IN", 9)
     app.manager.get_screen("home").els_bar.enable_advanced = True
     # Mode swap is deferred via Clock (see HomePage.change_mode); give it time
     # for the ELS layout to mount before capturing. The modes themselves are
