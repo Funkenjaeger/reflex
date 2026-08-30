@@ -177,8 +177,7 @@
           width: self.height * 3.83
           # centered horizontally in the lower (tall-right) part for even margins
           pos: (self.parent.x + dp(92) + self.parent.right - self.width) / 2, self.parent.y - dp(9)
-          allow_stretch: True
-          keep_ratio: True
+          fit_mode: "contain"
 
     # ── Transient operator notice ────────────────────────────────────────────
     #
