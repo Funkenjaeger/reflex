@@ -232,6 +232,18 @@ def measure_fit(tag, popup, label_id, scroller_id, defect):
 def set_strip_offset(fraction_of_pitch):
     """Drive the REAL poller with a stubbed step read.
 
+    THE STUB IS ON `tick.phase_offset_steps`, the once-per-tick SNAPSHOT the
+    poller actually reads since the Modbus-collapse change (0fb8f13) -- not on
+    `read_phase_offset_steps`, the live reader it made before. This script
+    stubbed the old reader from that commit until 2026-08-30, so the poller went
+    to the real, disconnected HAL, counted a fabricated zero and discarded every
+    poll: the offset never appeared, and every shot below was captured against a
+    state this function had failed to set.
+
+    preview_phase_offset.py carried the identical defect and was fixed on
+    2026-08-25 -- with an assert. This one had no assert, which is exactly why
+    the same bug survived here five days longer. Hence the assert.
+
     Two polls because the poller deliberately renders a total only on its second
     consecutive sighting (torn 32-bit Modbus reads).
     """
@@ -244,9 +256,14 @@ def set_strip_offset(fraction_of_pitch):
         steps = int(round(pitch * fraction_of_pitch))
         print(f"  thread pitch = {pitch:.1f} steps -> offset {steps} steps "
               f"({fraction_of_pitch:.4f} x pitch)")
-    uic._hal.read_phase_offset_steps = lambda: steps
+    uic._hal.tick.phase_offset_steps = lambda: steps
     uic._poll_phase_offset()
     uic._poll_phase_offset()
+    print(f"  active={uic.phase_offset_active!r} text={uic.phase_offset_text!r}")
+    assert uic.phase_offset_active == (fraction_of_pitch is not None), (
+        "the poller did not take the stubbed total -- the subject of these "
+        "shots is not on screen, so every frame below is worthless. Check "
+        "which read the poller makes before trusting this preview again.")
     return steps
 
 
@@ -257,42 +274,47 @@ def section_strip():
     set_strip_offset(None)
     app.els_uic.takeup_warning = ""
     settle()
-    shot("wt_strip_off", "no offset set")
+    shot("wt_gutter_baseline", "before any offset: reference chip only")
 
     set_strip_offset(2 * STEP_OVER_MM / PITCH_MM)
     settle()
-    record("advanced-bar status strip",
+    record("advanced-bar status gutter",
            phase_offset_text=app.els_uic.phase_offset_text,
-           phase_offset_active=app.els_uic.phase_offset_active)
-    strip = bar.ids.status_overlay.__self__
-    print(f"  strip rect: x={round(strip.x)} w={round(strip.width)} "
-          f"y={round(strip.y)} h={round(strip.height)}")
-    shot("wt_strip_on", "groove widened by two 0.05 mm step-overs")
+           phase_offset_active=app.els_uic.phase_offset_active,
+           phase_offset_chip_value=app.els_uic.phase_offset_chip_value)
 
-    # ── The REJECTED full-width variant, rebuilt for the comparison figure.
-    # els_advbar.kv keeps the strip inset between the Engage card and the mode
-    # column and names previews/out/alt_fullwidth_*.png as what full width
-    # looked like; that script was never checked in, so the two bindings are
-    # overridden here instead. Bound rather than assigned once, so a relayout
-    # cannot quietly restore the inset before the frame is captured.
-    float_ = bar.ids.bar_float.__self__
+    # The old full-width status_overlay band was deleted 2026-08-29. Its two
+    # tenants now live in a permanently reserved 26 px gutter: the reference
+    # chip pinned left, the phase-offset chip pinned right, and the wizard
+    # instruction centred on the full width between them. Report the gutter and
+    # both chips, because the property the redesign bought is that NOTHING
+    # PERMANENT COVERS THE FIELD HEADERS any more -- which is only checkable
+    # against real geometry.
+    gutter = bar.ids.status_gutter.__self__
+    print(f"  gutter: x={round(gutter.x)} w={round(gutter.width)} "
+          f"y={round(gutter.y)} h={round(gutter.height)}")
+    if not round(gutter.height):
+        print("  !! GUTTER COLLAPSED -- both chips are rendered nowhere")
+    for name in ("chip_reference", "chip_phase"):
+        chip = bar.ids[name]
+        print(f"  {name:<16} x={round(chip.x)} w={round(chip.width)} "
+              f"opacity={chip.opacity:.0f} text={chip.text!r} "
+              f"value={chip.value!r}")
+        if round(chip.y) < round(gutter.y) - 1 or round(chip.top) > round(gutter.top) + 1:
+            print(f"  !! {name} IS OUTSIDE THE GUTTER")
+    shot("wt_gutter_on", "groove widened by two 0.05 mm step-overs")
 
-    def _full_width(*_a):
-        strip.x = float_.x
-        strip.width = float_.width
+    # THE REJECTED FULL-WIDTH COMPARISON WAS REMOVED 2026-08-30. It rebuilt an
+    # inset-versus-full-width figure for the status_overlay band -- a band that
+    # no longer exists -- against previews/out/alt_fullwidth_*.png, a reference
+    # that was never checked in. Both sides of that comparison are gone, and the
+    # question it settled ("how much may a persistent strip cover?") was answered
+    # differently and permanently by the gutter: nothing permanent covers the
+    # field headers at all.
 
-    strip.bind(pos=_full_width, size=_full_width)
-    float_.bind(pos=_full_width, size=_full_width)
-    _full_width()
-    settle()
-    print(f"  full-width strip rect: x={round(strip.x)} w={round(strip.width)}")
-    shot("wt_strip_fullwidth", "REJECTED full-width variant")
-
-    strip.unbind(pos=_full_width, size=_full_width)
-    float_.unbind(pos=_full_width, size=_full_width)
-    _full_width  # noqa: B018 - kept referenced for clarity
     set_strip_offset(None)
     settle()
+    shot("wt_gutter_off", "no offset set: reference chip only, headers clear")
 
 
 # ── A. the settings popup, the entry point for both features ─────────
@@ -356,6 +378,26 @@ class StubLatchHal:
 
     def read_latched_spindle(self):
         return self.latched_spindle
+
+    # ADDED 2026-08-30. _poll_latch_ack() calls both of these before it will
+    # believe a latch ack, and this stub had neither -- so the wizard's
+    # LATCH_REQUESTED path raised AttributeError, section_resync() died
+    # partway, and the try/except in _capture() then abandoned
+    # section_phase_offset() entirely. The phase-offset modal shots had been
+    # silently stale ever since.
+    #
+    # THE CONTRACT THIS RESTORES: this stub stands in for the hardware boundary
+    # and must cover every ElsStopHal method the exercised code path touches.
+    # Production grew these two; the stub did not follow. There is no check
+    # that keeps them in step, which is why it went unnoticed.
+    #
+    # Both answers are the honest ones for a preview: there is no connection
+    # manager here, so no read is ever fabricated and the baseline never moves.
+    def reads_baseline(self):
+        return 0
+
+    def reads_fabricated_since(self, baseline):
+        return False
 
 
 def new_resync_popup(hal, counts):
@@ -698,7 +740,13 @@ def section_phase_offset():
     for tag, pop_, text_attr, long_text, label_id, sv_id, cue_id in (
         ("resync", probe_pop, "body_text", rmod.JOG_TEXT * 3,
          "lbl_body", "sv_body", "more_body"),
-        ("offset", pop, None, REFUSAL_TEXT[ElsFsm.PHASE_OFFSET_AT_PITCH] * 3,
+        # x8, not x3. The refusal messages were TRIMMED on 2026-08-23 (four of
+        # eight had been truncating mid-sentence), and x3 of the shortened text
+        # renders 180 px into a 182 px viewport -- it stopped overflowing, so
+        # the overflow path it exists to exercise was no longer being reached.
+        # Caught 2026-08-30, the first run after the stub break below was
+        # repaired and section C could execute again at all.
+        ("offset", pop, None, REFUSAL_TEXT[ElsFsm.PHASE_OFFSET_AT_PITCH] * 8,
          "lbl_message", "sv_message", "more_message"),
     ):
         if text_attr is None:
@@ -712,9 +760,21 @@ def section_phase_offset():
               f"a {round(lbl.height)} px body in a {round(sv.height)} px "
               f"viewport stays inside the popup instead of climbing over the "
               f"title")
+        # SPLIT 2026-08-30 into premise and behaviour. As one conjunction, a
+        # probe text that had quietly stopped overflowing failed as though the
+        # CUE were broken -- the report said "more_message lit ... with -2 px
+        # below the fold", which reads as a UI defect and is not one. The
+        # premise now fails under its own name, so a shortened message says
+        # "this probe no longer probes" instead of accusing the widget.
+        overflows = lbl.height > sv.height + 2
+        check("D3" if tag == "offset" else "D1", f"{tag}/probe-actually-overflows",
+              overflows,
+              f"a {round(lbl.height)} px body in a {round(sv.height)} px "
+              f"viewport: {round(lbl.height - sv.height):+d} px below the fold "
+              f"(needs > +2, else raise the repeat count)")
         check("D3" if tag == "offset" else "D1", f"{tag}/overflow-is-announced",
-              lbl.height > sv.height + 2 and cue.opacity == 1,
-              f"{cue_id} lit ({cue.text!r}) with "
+              overflows and cue.opacity == 1,
+              f"{cue_id} {'lit' if cue.opacity else 'DARK'} ({cue.text!r}) with "
               f"{round(lbl.height - sv.height)} px below the fold")
     probe_pop.body_text = rmod.JOG_TEXT
     pop._show(REFUSAL_TEXT[ElsFsm.PHASE_OFFSET_NO_JOB], state="refused")
