@@ -123,6 +123,114 @@ def _composite_over_theme_bg(path, rgba):
     out.save(path)
 
 
+# Regions named on the guide's "The screen" page, in reading order. Each entry
+# resolves to a WIDGET, so the boxes are measured rather than typed: a layout
+# change moves the annotation with it.
+#
+# The two bars are separate widgets and the guide had conflated them. ElsBar is
+# the always-present row (Sync Enable, DIR, ADV, pitch); ElsAdvancedBar is what
+# ADV reveals, and it carries the status gutter as well as the Engage/value/
+# action row -- so collapsing ADV hides the reference and phase chips too.
+REGIONS = [
+    (1, "Sidebar", "toolbar"),
+    (2, "Status bar", "statusbar"),
+    (3, "DRO", "dro"),
+    (4, "Status gutter", "gutter"),
+    (5, "Advanced ELS bar", "advbar"),
+    (6, "ELS bar", "elsbar"),
+]
+
+
+def _region_rects():
+    """Locate each region by widget. Returns {key: (x, y, w, h)} in Kivy coords.
+
+    Raises rather than skipping a region it cannot find: an annotation missing
+    a box is worse than no annotation, because the numbers in the prose would
+    then point at nothing.
+    """
+    home = app.manager.get_screen("home")
+    layout = home.current_layout
+    adv = _find(lambda w: type(w).__name__ == "ElsAdvancedBar")
+    els = _find(lambda w: type(w).__name__ == "ElsBar")
+    toolbar = _find(lambda w: type(w).__name__ == "HomeToolbar")
+    statusbar = _find(lambda w: type(w).__name__ == "StatusBar")
+    for name, w in (("ElsAdvancedBar", adv), ("ElsBar", els),
+                    ("HomeToolbar", toolbar), ("StatusBar", statusbar)):
+        assert w is not None, f"cannot annotate: no {name} in the tree"
+
+    gutter = adv.ids.status_gutter.__self__
+
+    # The DRO is not one widget: it is the axis rows plus the spindle row.
+    # Take their bounding box rather than naming one of them.
+    rows = list(layout.axis_bars) + [layout.spindle_info]
+    x0 = min(r.x for r in rows)
+    x1 = max(r.right for r in rows)
+    y0 = min(r.y for r in rows)
+    y1 = max(r.top for r in rows)
+
+    # The advanced bar minus its gutter: the gutter gets its own number, and a
+    # box drawn around both would put two numbers on one rectangle.
+    adv_y = adv.y
+    adv_h = gutter.y - adv.y
+
+    return {
+        "toolbar": (toolbar.x, toolbar.y, toolbar.width, toolbar.height),
+        "statusbar": (statusbar.x, statusbar.y, statusbar.width, statusbar.height),
+        "dro": (x0, y0, x1 - x0, y1 - y0),
+        "gutter": (gutter.x, gutter.y, gutter.width, gutter.height),
+        "advbar": (adv.x, adv_y, adv.width, adv_h),
+        "elsbar": (els.x, els.y, els.width, els.height),
+    }
+
+
+def _annotate(src, dst):
+    """Draw numbered boxes on an exported frame."""
+    from PIL import ImageDraw, ImageFont
+
+    rects = _region_rects()
+    img = Image.open(src).convert("RGB")
+    W, H = img.size
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    font_path = os.path.join(os.path.dirname(reflex.__file__),
+                             "fonts", "ChakraPetch-Bold.ttf")
+    if not os.path.exists(font_path):
+        font_path = os.path.join(os.path.dirname(reflex.__file__),
+                                 "fonts", "ChakraPetch-SemiBold.ttf")
+    badge_font = ImageFont.truetype(font_path, 17)
+
+    # Amber: the one hue the UI itself does not use for state, so an annotation
+    # can never be mistaken for something the screen is saying.
+    INK = (255, 176, 32)
+    SHADE = (0, 0, 0, 150)
+
+    for num, label, key in REGIONS:
+        x, y, w, h = rects[key]
+        # Kivy y is bottom-up; PIL is top-down.
+        left, top = round(x), round(H - (y + h))
+        right, bottom = round(x + w), round(H - y)
+        draw.rectangle([left + 1, top + 1, right - 2, bottom - 2],
+                       outline=INK, width=2)
+
+        # NUMBER ONLY. `label` stays in REGIONS as the caption the guide uses
+        # and as documentation of what each box is, but drawing it here covered
+        # the UI the box exists to point at.
+        r = 12
+        cx = left + r + 4
+        cy = top + r + 4
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=SHADE, outline=INK,
+                     width=2)
+        t = str(num)
+        tb = draw.textbbox((0, 0), t, font=badge_font)
+        draw.text((cx - (tb[2] - tb[0]) / 2 - tb[0],
+                   cy - (tb[3] - tb[1]) / 2 - tb[1]), t, font=badge_font,
+                  fill=INK)
+
+    img.save(dst)
+    print("WROTE", dst, "  %d regions" % len(REGIONS))
+    return rects
+
+
 def _settle():
     for _ in range(IDLE_TICKS):
         EventLoop.idle()
@@ -259,6 +367,17 @@ def _capture(_dt):
             _settle()
             _shot(f"home_els_{theme}")
 
+        # ── The annotated region map for the guide's "The screen" page.
+        # Dark, stop-only: the same frame the page already shows, with its
+        # regions numbered from the widgets' own geometry.
+        app.formats.theme = "dark"
+        _settle()
+        annotated = os.path.join(OUT_DIR, "the_screen_regions.png")
+        _region_rects()          # fail here, before a frame is exported
+        _shot("home_els_dark")   # re-export the base at this theme
+        _annotate(os.path.join(OUT_DIR, "home_els_dark.png"), annotated)
+        WROTE.append(annotated)
+
         # ── Stop + retract, and the wizard walk. Dark only: these illustrate
         # controls and workflow, and a second theme of each would double the
         # README's images without adding anything.
@@ -280,6 +399,17 @@ def _arm(_dt):
     # Lathe use case is what exposes ELS mode (set_mode silently falls back to
     # DRO otherwise — see app.allowed_modes / USE_CASE_MODES).
     app.use_case = "lathe"
+
+    # THIS CAPTURE REPRESENTS A PROVISIONED LATHE, NOT A FRESH INSTALL. The
+    # isolated HOME above is for determinism, and its cost is that every
+    # setting not overridden here comes out at its class default -- which is
+    # how these shots shipped in wizard mode until 2026-08-30.
+    #
+    # The pattern screen (hole circles, lines, rectangles) is a rotary-table
+    # feature, and its wand sits in the sidebar above ELS/DRO. elspi has
+    # show_wizard false, so the wand is not on the machine's screen; leaving it
+    # on here put a control in every screenshot that the machine does not show.
+    app.formats.show_wizard = False
     # Name representative axes (a fresh config seeds 4 unnamed "?" axes).
     for i, name in enumerate(AXIS_NAMES):
         if i < len(app.axes):
@@ -310,8 +440,8 @@ app.run()
 # also swallow the exit code.
 if FAILED:
     raise SystemExit(f"capture_readme_screenshots failed: {FAILED[0]!r}")
-if len(WROTE) != 2 + 1 + len(WIZARD_STEPS):
+if len(WROTE) != 2 + 1 + 1 + 1 + len(WIZARD_STEPS):
     raise SystemExit(
-        f"wrote {len(WROTE)} images, expected {2 + 1 + len(WIZARD_STEPS)}: "
+        f"wrote {len(WROTE)} images, expected {2 + 1 + 1 + 1 + len(WIZARD_STEPS)}: "
         f"{[os.path.basename(w) for w in WROTE]}")
 print(f"OK: {len(WROTE)} images")
