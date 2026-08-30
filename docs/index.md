@@ -11,7 +11,7 @@ The UI owns operator workflow, configuration and display.
 !!! warning "This drives a machine tool"
     Reflex can start the carriage moving under power. A refusal is the
     controller declining to cut something it cannot verify, not a fault to work
-    around — see [Messages and what to do](guide/when-it-refuses.md).
+    around — see [When it refuses](guide/when-it-refuses.md).
 
 ---
 
@@ -171,7 +171,7 @@ rows move from planned to released as tags are cut.
 | power feeding to a shoulder | [Feeding to a shoulder](guide/feeding-to-a-shoulder.md) |
 | cutting a thread | [Cutting a thread](guide/cutting-a-thread.md) |
 | setting up a new machine | [Setup](setup/index.md) — axes, scales, servo, backlash |
-| looking at a message | [Messages and what to do](guide/when-it-refuses.md) |
+| looking at a message | [When it refuses](guide/when-it-refuses.md) |
 | after the meaning of one field | [Reference](reference/index.md) — the in-app help index |
 
 ---

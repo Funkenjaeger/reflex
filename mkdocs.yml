@@ -85,7 +85,7 @@ nav:
       - Servo and leadscrew: setup/servo-and-leadscrew.md
       - Backlash calibration: setup/backlash-calibration.md
   - Troubleshooting:
-      - Messages and what to do: guide/when-it-refuses.md
+      - When it refuses: guide/when-it-refuses.md
   - Reference:
       - reference/index.md
   - Design notes:
