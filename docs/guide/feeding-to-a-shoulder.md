@@ -23,10 +23,22 @@ the UI noticing and reacting — it is not subject to how busy the touchscreen i
 2. **Set the direction** with the **DIR** arrows. This is the direction the
    carriage will travel when the feed starts.
 
-3. **Run the carriage to the shoulder** by hand, and press **Stop Z** to capture
-   it. The field shows `--` until it holds a real value — a never-set stop reads
-   as `--` rather than `0.000`, so it can never be mistaken for a target at the
-   chuck.
+3. **Set Stop Z.** Pressing the field opens a keypad, which gives you two ways
+   in:
+
+    - **Type the position**, if you know it from the drawing.
+    - **Run the carriage to the shoulder by hand first**, then press
+      **USE CURRENT** on the keypad to take the position it is at.
+
+    The field shows `--` until it holds a real value — a never-set stop reads as
+    `--` rather than `0.000`, so it can never be mistaken for a target at the
+    chuck.
+
+    !!! tip "A shortcut, once you know it is there"
+        **Long-pressing** the field captures the live position directly,
+        skipping the keypad. Handy, but nothing else in this UI works that way,
+        so it is not something to rely on remembering — the USE CURRENT button
+        does the same job in plain sight.
 
 4. **Back the carriage off** to where you want the feed to start.
 
