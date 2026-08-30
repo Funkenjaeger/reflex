@@ -84,7 +84,13 @@ from reflex.fsms.els_fsm import ElsFsm  # noqa: E402
 from reflex.fsms.els_resync import ThreadResync  # noqa: E402
 from reflex.utils.devices import ELS_PROTOCOL_VERSION  # noqa: E402
 
-OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
+# previews/out by default -- gitignored scratch for a developer reading the
+# render. Set OUT_DIR to publish the same frames into the docs tree instead;
+# they are the user guide's flow illustrations, and generating them twice or
+# copying them after the fact is how the guide would come to show a screen
+# the app no longer draws.
+OUT_DIR = os.environ.get("OUT_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "out")
 os.makedirs(OUT_DIR, exist_ok=True)
 SCRATCH = os.path.join(OUT_DIR, "_wt_scratch.png")
 

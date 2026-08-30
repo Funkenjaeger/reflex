@@ -551,7 +551,9 @@ Works-as-specified (note, not bugs):
 ## README auto-updating screenshots
 
 - **Approach: committed images, not release assets.** README screenshots live in
-  `docs/screenshots/` and are referenced by relative path. CI regenerates them and
+  `docs/screenshots/` at the REPO ROOT (moved there 2026-08-30 so MkDocs, whose
+  docs_dir cannot reach outside itself, can reference them) and are referenced by
+  relative path. Nothing regenerates them automatically -- and
   semantic-release commits them as part of the release commit (via its `assets` config
   in `pyproject.toml`). Chosen over release assets because (a) the repo is private and
   GitHub's Camo proxy can't fetch private release assets, so asset URLs wouldn't render,

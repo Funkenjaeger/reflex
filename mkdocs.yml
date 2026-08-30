@@ -1,0 +1,87 @@
+site_name: Reflex
+site_description: DRO and electronic leadscrew for manual lathes — user guide
+site_url: https://funkenjaeger.github.io/reflex/
+repo_url: https://github.com/Funkenjaeger/reflex
+repo_name: Funkenjaeger/reflex
+edit_uri: edit/main/docs/
+copyright: MIT licensed. Reflex controls a machine tool; read the safety notes.
+
+# The docs_dir is the REPO ROOT docs/, and the generated screenshots live
+# inside it (docs/screenshots/) rather than under ui/. MkDocs cannot reference
+# a file outside its docs_dir, and the alternative -- copying the images in at
+# build time -- is exactly the step where a guide and its generator drift.
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  palette:
+    # Reflex's own accent is cyan; the light scheme uses the darker teal the
+    # app's light theme uses, so the site and the machine agree.
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.keys
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - User guide:
+      - guide/index.md
+      - The screen: guide/the-screen.md
+      - The three operator modes: guide/operator-modes.md
+      - Feeding to a shoulder: guide/feeding-to-a-shoulder.md
+      - Cutting a thread: guide/cutting-a-thread.md
+      - Picking up an existing thread: guide/picking-up-a-thread.md
+      - Widening a groove: guide/widening-a-groove.md
+      - When it refuses: guide/when-it-refuses.md
+  - Commissioning: guide/commissioning.md
+  - Reference:
+      - reference/index.md
+  - Design notes:
+      - decisions/repo-structure-monorepo.md
+      - design/els-command-channel.md

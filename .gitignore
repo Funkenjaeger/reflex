@@ -1,0 +1,3 @@
+# MkDocs build output. The site is built by .github/workflows/docs.yml and
+# deployed to Pages; nothing here belongs in the repo.
+/site/

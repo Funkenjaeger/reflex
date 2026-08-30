@@ -4,6 +4,10 @@ A **Digital Read-Out (DRO) and Electronic Leadscrew (ELS) system for manual
 lathes**: an STM32-based real-time motion controller and a Kivy touchscreen UI,
 talking RS-485 Modbus RTU. One system, one repository.
 
+**📖 [Read the user guide](https://funkenjaeger.github.io/reflex/)** —
+the screen explained, a walkthrough per job, and every refusal the controller
+can give you with what to do about it.
+
 | Path | What it is |
 |---|---|
 | [`fw/`](fw/) | STM32F411 firmware — 100 kHz motion ISR, FreeRTOS, Modbus RTU slave. Includes a native Linux emulator that compiles the real firmware sources against simulated lathe physics. |
@@ -18,7 +22,7 @@ Home screen in ELS mode with the advanced bar expanded, in **stop-only** mode
 
 | Dark | Light |
 |------|-------|
-| ![ELS mode — dark theme](ui/docs/screenshots/home_els_dark.png) | ![ELS mode — light theme](ui/docs/screenshots/home_els_light.png) |
+| ![ELS mode — dark theme](docs/screenshots/home_els_dark.png) | ![ELS mode — light theme](docs/screenshots/home_els_light.png) |
 
 [![Reflex UI demo video](https://img.youtube.com/vi/38qAaq2tOGU/maxresdefault.jpg)](https://www.youtube.com/watch?v=38qAaq2tOGU)
 
@@ -45,7 +49,7 @@ hand between passes.
 
 ### Stop-only
 
-![Stop-only](ui/docs/screenshots/home_els_dark.png)
+![Stop-only](docs/screenshots/home_els_dark.png)
 
 One field: **Stop Z**. Set the shoulder, engage, press **Cut**, and the carriage
 feeds to the stop and holds. Everything else — backing the tool out, returning
@@ -59,7 +63,7 @@ is not something you trade away by staying here.
 
 ### Stop + retract
 
-![Stop and retract](ui/docs/screenshots/home_els_stopretract.png)
+![Stop and retract](docs/screenshots/home_els_stopretract.png)
 
 Adds **Start Z** and an automatic retract. At the end of a pass the tool comes
 out and the carriage returns to the start position on its own, so the cycle is
@@ -78,9 +82,9 @@ first cut.
 
 | | | |
 |---|---|---|
-| ![Set stop Z](ui/docs/screenshots/wizard_1_stop_z.png) | ![Set start Z](ui/docs/screenshots/wizard_2_retract_z.png) | ![Set start diameter](ui/docs/screenshots/wizard_3_start_dia.png) |
+| ![Set stop Z](docs/screenshots/wizard_1_stop_z.png) | ![Set start Z](docs/screenshots/wizard_2_retract_z.png) | ![Set start diameter](docs/screenshots/wizard_3_start_dia.png) |
 | **1. Stop Z** — run the carriage to the shoulder and press Set. This is the one value every mode needs. | **2. Start Z** — run back to where each pass should begin. The retract returns here. | **3. Start ø** — bring the tool to the work and press Set. The field being captured is outlined. |
-| ![Set stop diameter](ui/docs/screenshots/wizard_4_stop_dia.png) | ![Confirm](ui/docs/screenshots/wizard_5_confirm.png) | ![Ready to cut](ui/docs/screenshots/wizard_6_ready.png) |
+| ![Set stop diameter](docs/screenshots/wizard_4_stop_dia.png) | ![Confirm](docs/screenshots/wizard_5_confirm.png) | ![Ready to cut](docs/screenshots/wizard_6_ready.png) |
 | **4. Stop ø** — the finished diameter. Drive to it, or type it in. | **5. Confirm** — the one thing the controller cannot check for you is the half nut. It asks. | **6. Ready** — the button becomes **Cut**, and the cycle runs Cut → Retract → Cut. |
 
 The prompt above the fields is the wizard's whole interface: it names the next
@@ -92,6 +96,10 @@ past a position and come back.
 machinery between you and the cut; stop-only is the least. Neither is safer than
 the other in the part that matters — the take-up confirmation, the electronic
 stop and the thread datum are the same code in all three.
+
+For the jobs themselves — feeding to a shoulder, cutting a thread, picking up
+an existing one, widening a groove, and commissioning a new machine — see the
+**[user guide](https://funkenjaeger.github.io/reflex/guide/)**.
 
 ---
 

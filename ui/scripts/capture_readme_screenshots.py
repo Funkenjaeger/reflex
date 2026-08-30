@@ -17,7 +17,7 @@ and the app's backdrop lives on ``Window.canvas.before``, so it is never in the
 export).
 
 Run (WSL):
-    cd ui && OUT_DIR=docs/screenshots SDL_AUDIODRIVER=dummy KIVY_NO_ARGS=1 \
+    cd ui && OUT_DIR=../docs/screenshots SDL_AUDIODRIVER=dummy KIVY_NO_ARGS=1 \
         xvfb-run -a -s "-screen 0 1024x600x24" \
         ./.venv/bin/python scripts/capture_readme_screenshots.py
 
