@@ -78,10 +78,11 @@ the advanced bar.
 
     **Stop + retract**
 
-    Adds **Start Z** and an automatic return. The cycle becomes
-    Cut → Retract → Cut instead of Cut → *four things by hand* → Cut.
+    Adds **Start Z** and a **Retract** action: command the carriage back to
+    the start under power instead of winding it.
 
-    Fewer things to get wrong per pass, at the cost of one more value to set.
+    Nothing moves on its own, and **you must get the tool clear in X first** —
+    this mode has no gate to stop you.
 
     [Cutting a thread →](guide/cutting-a-thread.md) ·
     [the modes compared →](guide/operator-modes.md#stop-retract)

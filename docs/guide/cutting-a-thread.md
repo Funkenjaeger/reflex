@@ -27,9 +27,16 @@ floor without it, which is a much weaker check.
 2. **Close the half nut** and start the spindle.
 3. **Press Cut.** The controller takes up the backlash, confirms the carriage
    moved, and feeds in sync with the spindle to the stop.
-4. **Back the tool out** in X and **Retract** (or wind back by hand in
-   stop-only).
-5. **Feed in** for the next depth of cut and press **Cut** again.
+4. **Back the tool out in X.** Always, and by hand — X is never driven.
+5. **Retract**, or wind the carriage back by hand in stop-only.
+6. **Feed in** for the next depth of cut and press **Cut** again.
+
+!!! danger "Step 4 comes before step 5, and only the wizard enforces it"
+    Retract feeds the carriage back under power. With the tool still in the
+    groove it is dragged along the thread.
+
+    The wizard gates the button on the committed **Start ø**; stop + retract has
+    no committed diameter, so there the order is yours to keep.
 
 ## Thread phase, and why you may open the half nut
 

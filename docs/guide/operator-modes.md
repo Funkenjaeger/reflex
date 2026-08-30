@@ -49,9 +49,26 @@ his own machine.
 
 ![Stop and retract](../screenshots/home_els_stopretract.png)
 
-Adds **Start Z** and an automatic retract. At the end of a pass the tool comes
-out and the carriage returns to the start position on its own, so the cycle is
-Cut → Retract → Cut rather than Cut → *four things by hand* → Cut.
+Adds **Start Z**, and a **Retract** action on the same button that says `Cut`.
+
+**Nothing moves on its own.** There is one servo and it drives the leadscrew, so
+the tool never comes out by itself — backing off in X is your hand, in every
+mode. And the carriage does not return until you press **Retract**. What the
+mode adds is the ability to *command* that return under power instead of winding
+the carriage back.
+
+!!! danger "Get the tool clear before you press Retract"
+    Retract feeds the carriage back to Start Z under power. If the tool is still
+    in the groove it is dragged back along the thread, and you will have a bad
+    time.
+
+    In **wizard** mode the machine helps: the committed **Start ø** gates the
+    button, which stays disabled reading *"Move X clear of start diameter, then
+    retract"*. In stop + retract there is no committed diameter to compare
+    against, so that gate is vacuous and **nothing catches this mistake for
+    you.**
+
+    It is the main reason the author does not often use this mode.
 
 ### Wizard
 
