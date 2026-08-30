@@ -88,7 +88,14 @@ class ElsModeLayout(ModeLayout):
         self.els_bar = els_bar
         self.spindle_info = ElsSpindleInfo()
         self.spacer = Widget()
-        self.els_adv_bar = ElsAdvancedBar(els_bar=els_bar)
+        # id_override="0" like ElsBar above it. Without it SavingDispatcher
+        # falls back to the Kivy widget uid, so the settings file was named by
+        # how many widgets happened to be built first -- elspi accumulated six
+        # ElsAdvancedBar-<uid>.yaml, disagreeing with each other about
+        # enable_retract, i.e. about which stop mode the operator had chosen.
+        # Any change to the widget tree moved the bar to a different file, or
+        # to none, silently reverting the mode selection to defaults.
+        self.els_adv_bar = ElsAdvancedBar(els_bar=els_bar, id_override="0")
         self.els_adv_bar.size_hint_y = None
 
         self.build_axis_bars()
