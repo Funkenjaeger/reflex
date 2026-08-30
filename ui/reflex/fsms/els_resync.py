@@ -104,15 +104,26 @@ class ThreadResync:
     # enabled) or the link died, never that the latch is still "in progress".
     LATCH_TIMEOUT_POLLS = 30 * 2
 
-    def __init__(self, hal, els, read_z_counts, read_spindle_counts):
+    def __init__(self, hal, els, read_z_counts, read_spindle_counts,
+                 format_z=None):
         """``read_z_counts`` / ``read_spindle_counts`` are zero-arg callables
         returning live raw encoder counts (firmware ``scales[i].position`` as
         mirrored into ``fastData.scaleCurrent``) — injected so this class can
-        be driven in tests without a running app."""
+        be driven in tests without a running app.
+
+        ``format_z`` renders a Z distance IN COUNTS as operator-facing text.
+        Injected for the same reason the readers are: the scale ratio and the
+        display units live on the app, and this class is driven headless. When
+        it is absent every message falls back to naming counts, which is what
+        they all did until 2026-08-30 — counts are a unit that appears nowhere
+        else in the UI, so the operator nulling this by hand had nothing to
+        judge "+11, tolerance ±3" by.
+        """
         self._hal = hal
         self._els = els
         self._read_z = read_z_counts
         self._read_spindle = read_spindle_counts
+        self._format_z = format_z
 
         self.state = ResyncState.IDLE
         self.message = ""
@@ -217,8 +228,9 @@ class ThreadResync:
             return True
         self.state = ResyncState.RED_FLAG
         self.message = (
-            f"Carriage re-seated {self.z_delta_counts:+d} counts from the "
-            f"baseline (tolerance ±{self.tolerance_counts}). A re-seat "
+            f"Carriage re-seated {self.fmt_z(self.z_delta_counts)} from the "
+            f"baseline (tolerance ±{self.fmt_z(self.tolerance_counts, False)}). "
+            "A re-seat "
             "against the drive flank must return the Z reading almost "
             "exactly — missing it means the Z scale chain has lost custody "
             "of the position, and the same fault would corrupt every ELS "
@@ -256,6 +268,17 @@ class ThreadResync:
         self.message = ""
 
     # ── UI-facing readouts ───────────────────────────────────────────
+    def fmt_z(self, counts, signed=True) -> str:
+        """A Z distance, in the operator's units when they are available.
+
+        Falls back to counts rather than raising: a headless driver has no
+        formats, and a diagnostic that says "+11 counts" is still better than
+        a message that fails to render at all.
+        """
+        if self._format_z is None:
+            return f"{int(counts):+d} counts" if signed else f"{int(counts)} counts"
+        return self._format_z(counts, signed)
+
     @property
     def tolerance_counts(self) -> int:
         return int(self._els.els_resync_z_tol_counts)
@@ -344,20 +367,23 @@ class ThreadResync:
         if not z_held(self.baseline_z, self.latched_z, self.tolerance_counts):
             self.state = ResyncState.RED_FLAG
             self.message = (
-                f"The controller latched Z = {self.latched_z} counts, but this "
-                f"screen was watching {self.baseline_z} ±"
-                f"{self.tolerance_counts}. The UI and controller do not agree "
-                "on the carriage position. Do not cut. Check the Z scale "
-                "connection and re-engage the ELS stop."
+                f"The controller latched the reference "
+                f"{self.fmt_z(self.latched_z - self.baseline_z)} from where "
+                f"this screen was watching (tolerance ±"
+                f"{self.fmt_z(self.tolerance_counts, False)}). The UI and "
+                "controller do not agree on the carriage position. Do not "
+                "cut. Check the Z scale connection and re-engage the ELS "
+                "stop."
             )
             log.error("els_resync: RED FLAG — latched Z %d vs baseline %d",
                       self.latched_z, self.baseline_z)
             return
         self.state = ResyncState.LATCHED
-        self.message = (
-            f"Thread reference latched (spindle {self.latched_spindle}, "
-            f"Z {self.latched_z})."
-        )
+        # THE RAW COUNTS ARE GONE FROM THE CONFIRMATION (2026-08-30). They
+        # read as a receipt but there is nothing to do with them: the operator
+        # cannot check a spindle count against anything, and both numbers are
+        # in the log line below, which is where a diagnostician reads them.
+        self.message = "Thread reference latched."
         log.info("els_resync: latched spindle=%d z=%d",
                  self.latched_spindle, self.latched_z)
 

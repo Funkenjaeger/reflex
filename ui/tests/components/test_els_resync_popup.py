@@ -279,6 +279,40 @@ class _StubResync:
     def poll(self):
         return self._state
 
+    def fmt_z(self, counts, signed=True):
+        """Mirrors ThreadResync.fmt_z with no formatter injected.
+
+        Added 2026-08-30 with the real method, and the assertions below still
+        read "+11" because that IS what the real one renders when it has no
+        formats to convert with -- a headless caller gets counts. If this stub
+        ever starts returning millimetres, the popup tests stop covering the
+        fallback path that a driver without an app actually takes.
+        """
+        return f"{int(counts):+d} counts" if signed else f"{int(counts)} counts"
+
+
+def test_the_stub_covers_the_surface_the_popup_reaches_for():
+    """A stub silently narrower than the real class is a test that passes
+    against a screen nobody will ever see.
+
+    ThreadResync.fmt_z was added on 2026-08-30 and this stub did not follow;
+    the popup then raised AttributeError inside _tick. That is the SAME shape
+    as the preview-harness break journalled the same morning -- a stub drifted
+    from the surface it stands in for -- and nothing was watching for it.
+    Now something is.
+    """
+    from reflex.fsms.els_resync import ThreadResync
+
+    used = ("poll", "z_delta_counts", "tolerance_counts", "spindle_still",
+            "stillness_fraction", "confirm_allowed", "fmt_z")
+    stub = _StubResync("aligning")
+    missing = [n for n in used if not hasattr(stub, n)]
+    assert not missing, f"_StubResync is missing {missing}"
+    absent = [n for n in used if not hasattr(ThreadResync, n)]
+    assert not absent, (
+        f"the stub models {absent}, which ThreadResync no longer has -- the "
+        f"tests are pinning a surface that is gone")
+
 
 def test_the_live_readout_is_pre_broken_into_lines(popup):
     """It is rendered a fifth larger than the body prose now, and one line of

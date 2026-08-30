@@ -212,6 +212,16 @@ class PhaseOffsetPopup(Popup):
     message = StringProperty(ENTRY_HINT)
     busy = BooleanProperty(False)
 
+    # Where the pitch share stops being a readout and starts being a warning.
+    # Below this it is just the number; at or above it the line says what
+    # happens at one full pitch. 0.75 rather than something tighter because a
+    # widening job that has deliberately walked most of a pitch is a real
+    # workflow -- the operator meets the bound as the END of that walk, not as
+    # a surprise -- and a warning that starts at, say, a third would be lit for
+    # most of every job, which is the cry-wolf failure this same release fixed
+    # in the calibration drift notice.
+    APPROACHING_PITCH = 0.75
+
     POLL_HZ = 10
 
     # Ack liveness. Consumption is a single ISR pass (~10 us), so this bounds
@@ -427,10 +437,13 @@ class PhaseOffsetPopup(Popup):
         the next pass cuts the neighboring groove instead of this one.
 
         The fraction is NAMED through the same helper the advanced-bar status
-        strip uses -- "1/3" when it really is a third, the raw decimal when it
-        is not. Sharing it is the point: two naming rules for one number on one
-        screen is how the modal and the bar come to describe the same offset
-        differently, and the operator has no way to tell which is lying.
+        strip uses -- always three decimals, "0.333", never "1/3". (The helper
+        did pick fractions where they were exact until 2026-08-29; Evan's call
+        was one consistent format, and this docstring described the old rule
+        for a day after it was gone.) Sharing the helper is the point: two
+        naming rules for one number on one screen is how the modal and the bar
+        come to describe the same offset differently, and the operator has no
+        way to tell which is lying.
         """
         try:
             distance, fraction = self._fsm.phase_offset_display()
@@ -443,10 +456,16 @@ class PhaseOffsetPopup(Popup):
             f"Widened by:  {self._format_distance(distance)} "
             f"{self.unit_label}"
         )
-        self.fraction_text = (
-            f"{phase_offset_fraction_text(fraction)} x pitch — "
-            f"the offset is refused at a full one"
-        )
+        # THE BOUND IS NAMED ONLY WHEN IT IS NEAR (2026-08-30). This used to
+        # append "— the offset is refused at a full one" unconditionally, so a
+        # successful apply rendered the word "refused" directly under the
+        # distance it had just accepted, three lines above "Applied."
+        share = phase_offset_fraction_text(fraction)
+        if fraction >= self.APPROACHING_PITCH:
+            self.fraction_text = (f"{share} x pitch — nearly a full one, "
+                                  f"where it is refused")
+        else:
+            self.fraction_text = f"{share} x pitch"
 
     def _refusal_text(self, code) -> str:
         text = REFUSAL_TEXT.get(code)

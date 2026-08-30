@@ -157,12 +157,42 @@ STATE_SEVERITY = {
 FALLBACK_SEVERITY = (SEVERITY_FAULT, "UNEXPECTED STATE — DO NOT CUT")
 
 
+def z_distance_formatter(z_input, formats, unit_label):
+    """Build the callable ThreadResync renders Z distances with.
+
+    MODULE-LEVEL ON PURPOSE. It was a closure inside _build_controller for
+    exactly one morning, and in that time previews/preview_walkthrough_shots.py
+    -- which constructs its own ThreadResync rather than going through the
+    popup -- kept rendering raw counts into every shipped re-sync screenshot
+    while the machine rendered millimetres. Anything that stands this screen up
+    outside the app calls this, and there is one definition to drift from.
+
+    A DELTA, so no offsets and no absolute frame: counts x the input's ratio x
+    the unit factor. Axis.scaled_from_encoder would add abs_offset and the
+    active work offset, which is right for a position and wrong for the gap
+    between two of them.
+    """
+    def format_z(counts, signed=True):
+        mm = (float(counts) * z_input.ratioNum / z_input.ratioDen
+              * float(formats.factor))
+        text = formats.position_format.format(mm)
+        if not signed:
+            text = text.lstrip("+")
+        return f"{text} {unit_label}"
+
+    return format_z
+
+
 class ThreadResyncPopup(Popup):
 
     # "jog" | "align" | "drifted" | "latched" | "red_flag" | "refused"
     state = StringProperty("jog")
     body_text = StringProperty(JOG_TEXT)
     live_text = StringProperty("")
+    # Read at capture time rather than bound: this popup is opened for one
+    # alignment and dismissed, so a units switch mid-alignment is not a case,
+    # and a stale label on a live readout would be worse than a static one.
+    unit_label = StringProperty("mm")
     confirm_enabled = BooleanProperty(False)
     # The on-demand half of the base/help split; the kv hands both to the
     # HelpButton in the button row.
@@ -204,11 +234,18 @@ class ThreadResyncPopup(Popup):
                     if spindle_axis is not None else None)
         if z_input is None or sp_input is None:
             return None
+
+        self.unit_label = "mm" if self.app.formats.current_format == "MM" else "in"
+
+        format_z = z_distance_formatter(z_input, self.app.formats,
+                                        self.unit_label)
+        self._format_z = format_z
         return ThreadResync(
             self.app.els_uic.hal,
             els,
             read_z_counts=lambda: int(z_input.encoderCurrent),
             read_spindle_counts=lambda: int(sp_input.encoderCurrent),
+            format_z=format_z,
         )
 
     # ── actions ──────────────────────────────────────────────────────
@@ -280,8 +317,8 @@ class ThreadResyncPopup(Popup):
             # and a single line of it wraps at this modal's width — where it
             # breaks would then be decided by the length of the spindle word.
             self.live_text = (
-                f"Z hold: {self._resync.z_delta_counts:+d} counts "
-                f"(tolerance ±{tol})\n"
+                f"Z hold: {self._resync.fmt_z(self._resync.z_delta_counts)} "
+                f"(tolerance ±{self._resync.fmt_z(tol, False)})\n"
                 f"Spindle: {spindle}"
             )
             self.confirm_enabled = self._resync.confirm_allowed
@@ -292,8 +329,9 @@ class ThreadResyncPopup(Popup):
                 self.body_text = DRIFTED_TEXT
             self.live_text = (
                 f"Z offset from baseline: "
-                f"{self._resync.z_delta_counts:+d} counts\n"
-                f"Tolerance: ±{self._resync.tolerance_counts} counts"
+                f"{self._resync.fmt_z(self._resync.z_delta_counts)}\n"
+                f"Tolerance: ±"
+                f"{self._resync.fmt_z(self._resync.tolerance_counts, False)}"
             )
             self.confirm_enabled = False
             return

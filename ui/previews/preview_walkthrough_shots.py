@@ -99,6 +99,7 @@ AXIS_NAMES = ("Z", "X", "S")
 STEP_OVER_MM = 0.05
 PITCH_MM = 1.5             # the rig's own thread pitch, set in main() below
 Z_BASELINE = 12000         # arbitrary but realistic raw encoder counts
+Z_COUNTS_PER_MM = 200      # elspi's Z scale: one count is 5 um
 SPINDLE_BASELINE = 8192
 
 FAILED = []
@@ -409,11 +410,32 @@ class StubLatchHal:
 def new_resync_popup(hal, counts):
     from reflex.components.home.els_resync_popup import ThreadResyncPopup
 
+    from reflex.components.home.els_resync_popup import z_distance_formatter
+
+    # THE FORMATTER, or every re-sync shot renders raw counts while the machine
+    # renders millimetres. This function builds its own ThreadResync instead of
+    # going through ThreadResyncPopup._build_controller -- deliberately, so the
+    # counts are drivable -- and that means anything _build_controller injects
+    # has to be injected here too. Found 2026-08-30 by regenerating the doc set
+    # and reading it.
+    z_axis = app.els.get_z_axis()
+    z_input = z_axis._primary_input() if z_axis is not None else None
+    assert z_input is not None, (
+        "no Z input, so these shots would carry the counts fallback under a "
+        "filename that claims to be the machine")
+
+    # THE MACHINE'S REAL Z SCALE, because the numbers are now in millimetres
+    # and a preview default of 1 count/mm rendered the phase tolerance as
+    # "+/-3.000 mm". elspi's Z scale is 200 counts/mm, so a count is 5 um, the
+    # tolerance is 15 um and the drifted case below is 55 um.
+    z_input.ratioNum, z_input.ratioDen = 1, Z_COUNTS_PER_MM
     pop = ThreadResyncPopup()
+    pop.unit_label = "mm" if app.formats.current_format == "MM" else "in"
     pop._resync = ThreadResync(
         hal, app.els,
         read_z_counts=lambda: counts["z"],
         read_spindle_counts=lambda: counts["spindle"],
+        format_z=z_distance_formatter(z_input, app.formats, pop.unit_label),
     )
     pop.open()
     settle(18)
