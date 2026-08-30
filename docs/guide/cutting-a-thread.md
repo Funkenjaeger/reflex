@@ -17,7 +17,7 @@ You need four things set, whichever mode you use to set them:
 | **Start Z** | Where each pass begins (retract and wizard modes). |
 
 And one thing calibrated: the **backlash take-up**. If you have not run
-[the calibration](commissioning.md#4-backlash-calibration) on this machine, do it
+[the calibration](../setup/backlash-calibration.md) on this machine, do it
 before you cut a thread — the take-up confirmation falls back to a bare motion
 floor without it, which is a much weaker check.
 

@@ -70,16 +70,22 @@ plugins:
 
 nav:
   - Home: index.md
-  - User guide:
-      - guide/index.md
+  - Getting started:
       - The screen: guide/the-screen.md
-      - The three operator modes: guide/operator-modes.md
+      - The three ELS modes: guide/operator-modes.md
+  - Everyday work:
       - Feeding to a shoulder: guide/feeding-to-a-shoulder.md
       - Cutting a thread: guide/cutting-a-thread.md
+  - Advanced features:
       - Picking up an existing thread: guide/picking-up-a-thread.md
       - Widening a groove: guide/widening-a-groove.md
-      - When it refuses: guide/when-it-refuses.md
-  - Commissioning: guide/commissioning.md
+  - Setup:
+      - setup/index.md
+      - Axes and scales: setup/axes-and-scales.md
+      - Servo and leadscrew: setup/servo-and-leadscrew.md
+      - Backlash calibration: setup/backlash-calibration.md
+  - Troubleshooting:
+      - Messages and what to do: guide/when-it-refuses.md
   - Reference:
       - reference/index.md
   - Design notes:

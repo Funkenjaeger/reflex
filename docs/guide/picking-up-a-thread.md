@@ -99,4 +99,4 @@ problem, and it would quietly ruin ordinary feeding too.
 ![Refused](../screenshots/flow/wt_resync_refused.png)
 
 And if no Z or spindle axis is mapped, the procedure refuses before it starts.
-That is a [commissioning](commissioning.md) gap, not a fault.
+That is a [commissioning](../setup/index.md) gap, not a fault.
