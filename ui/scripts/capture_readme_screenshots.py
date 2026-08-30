@@ -1,22 +1,34 @@
-"""Capture README screenshots of the home screen in ELS mode (advanced bar
-expanded) for each UI theme, with no hardware connected.
+"""Capture the README's screenshots: the home screen in each operator mode,
+and a frame per step of the wizard.
 
-Renders at the fixed target-hardware resolution (1024x600) and writes one PNG
-per theme, composited over THAT THEME'S background colour (``export_to_png``
-produces a transparent background because it exports the root widget, not the
-Window -- and the app's backdrop lives on ``Window.canvas.before``, so it is
-never in the export).
+STOP-ONLY IS THE HEADLINE, and getting that wrong is why this file was
+rewritten on 2026-08-30. `ElsAdvancedBar.enable_wizard` and `enable_retract`
+both default True, this script never set them, and so every screenshot the
+project has ever shipped showed WIZARD mode -- complete with a Start button,
+Start Z / Major o / Minor o fields and an "Engage to begin" instruction that
+the machine's own operator never sees. Every preview harness under previews/
+deliberately switches to stop-only and says why; the one script whose output
+is the project's public face did not.
 
-Run locally:
-    DISPLAY=:0 SDL_AUDIODRIVER=dummy uv run python scripts/capture_readme_screenshots.py
+Renders at the fixed target-hardware resolution (1024x600) and composites each
+PNG over THAT THEME'S background colour (``export_to_png`` produces a
+transparent background because it exports the root widget, not the Window --
+and the app's backdrop lives on ``Window.canvas.before``, so it is never in the
+export).
 
-Headless (as CI does):
-    xvfb-run -a -s "-screen 0 1024x600x24" SDL_AUDIODRIVER=dummy \
-        uv run python scripts/capture_readme_screenshots.py
+Run (WSL):
+    cd ui && OUT_DIR=docs/screenshots SDL_AUDIODRIVER=dummy KIVY_NO_ARGS=1 \
+        xvfb-run -a -s "-screen 0 1024x600x24" \
+        ./.venv/bin/python scripts/capture_readme_screenshots.py
+
+NOTHING REGENERATES THESE AUTOMATICALLY. The README claimed CI did until
+2026-08-30; no workflow has ever referenced this script. Run it by hand after
+a UI change that alters the home screen, and commit what it writes.
 
 Output files (in OUT_DIR, default current directory):
-    home_els_light.png
-    home_els_dark.png
+    home_els_dark.png / home_els_light.png    stop-only -- the headline pair
+    home_els_stopretract.png                  stop + retract
+    wizard_1_stop_z.png ... wizard_6_ready.png  one frame per wizard step
 """
 import os
 import tempfile
@@ -49,12 +61,17 @@ from kivy.clock import Clock  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from reflex.app import MainApp  # noqa: E402
+from reflex.fsms.ui_controller import UI_POLICY  # noqa: E402
 
 OUT_DIR = os.environ.get("OUT_DIR", ".")
 THEMES = ("light", "dark")
 MODE_ELS = 2
 AXIS_NAMES = ("Z", "X", "S")  # representative lathe axes (S = spindle) for the showcase
 IDLE_TICKS = 6  # frames to flush before each export (texture/colors must settle)
+TARGET_SIZE = [1024, 600]
+
+FAILED = []
+WROTE = []
 
 app = MainApp()
 
@@ -78,23 +95,156 @@ def _composite_over_theme_bg(path, rgba):
     Image.alpha_composite(bg, img).convert("RGB").save(path)
 
 
+def _settle():
+    for _ in range(IDLE_TICKS):
+        EventLoop.idle()
+
+
+def _bar():
+    return app.manager.get_screen("home").els_bar.ids.get("advanced_bar") \
+        or _find(lambda w: type(w).__name__ == "ElsAdvancedBar")
+
+
+def _find(pred, root=None):
+    root = root or app.root
+    if pred(root):
+        return root
+    for child in root.children:
+        got = _find(pred, child)
+        if got is not None:
+            return got
+    return None
+
+
+def _shot(name):
+    out = os.path.join(OUT_DIR, f"{name}.png")
+    _settle()
+    # First export under-renders (only one tile); export twice.
+    app.root.export_to_png(out)
+    app.root.export_to_png(out)
+    assert list(app.root.size) == TARGET_SIZE, (
+        f"{name}: rendered at {list(app.root.size)}, not the machine's "
+        f"{TARGET_SIZE}")
+    _composite_over_theme_bg(out, app.theme.background)
+    WROTE.append(out)
+    print("WROTE", out)
+
+
+def _set_mode(bar, wizard, retract):
+    """Set an operator mode and DEMAND that it took.
+
+    The flags propagate to ElsUiController through ElsAdvancedBar's setters, so
+    a silently-ignored write here would mislabel every frame below -- which is
+    exactly what happened to previews/preview_takeup_banner.py, whose
+    stop-only pair was captured in wizard mode for as long as it existed.
+    """
+    bar.enable_wizard = wizard
+    bar.enable_retract = retract
+    _settle()
+    uic = app.els_uic
+    assert bar.enable_wizard is wizard and bar.enable_retract is retract, (
+        f"bar did not take wizard={wizard} retract={retract}")
+    assert uic.wizard_enabled is wizard and uic.retract_enabled is retract, (
+        f"the controller disagrees with the bar: wizard="
+        f"{uic.wizard_enabled} retract={uic.retract_enabled}")
+    print(f"  mode: wizard={wizard} retract={retract} "
+          f"(bar h={round(bar.height)})")
+
+
+# One frame per wizard step. The captions are not written here: the third
+# element is the UI_STATE_POLICY state whose OWN instruction_text is asserted
+# against the screen, so the README cannot describe a step the app does not.
+WIZARD_STEPS = [
+    ("wizard_1_stop_z",     "set_stop_z",     "stop_z_valid"),
+    ("wizard_2_retract_z",  "set_retract_z",  "retract_z_valid"),
+    ("wizard_3_start_dia",  "set_start_dia",  "start_dia_valid"),
+    ("wizard_4_stop_dia",   "set_stop_dia",   "stop_dia_valid"),
+    ("wizard_5_confirm",    "confirm",        None),
+    ("wizard_6_ready",      "in_cycle.waiting_to_cut", None),
+]
+
+
+def _capture_wizard(bar):
+    """Walk the wizard and photograph each step.
+
+    Driven through the real UI FSM triggers, with each step's validity flag set
+    the way committing a value would set it -- so the instruction text and the
+    action button in every frame are produced by production code rather than
+    posed.
+    """
+    uic = app.els_uic
+    _set_mode(bar, wizard=True, retract=True)
+
+    # ENGAGED, or every frame says "Engage to begin". _apply_policy overrides
+    # the state's own instruction text while the domain FSM is disabled
+    # (ui_controller.py:1004), so without this the six frames below carry six
+    # copies of one sentence -- the wizard's actual prompts, the whole point of
+    # the sequence, never appear. Caught by reading the captured text, not the
+    # captured state: the ACTION BUTTON followed the FSM correctly the whole
+    # time, so the frames looked like they were working.
+    uic.engaged = True
+
+    fsm = uic._ui_fsm
+    fsm.start()
+    _settle()
+
+    for name, want_state, gate in WIZARD_STEPS:
+        assert fsm.state == want_state, (
+            f"{name}: wizard is in {fsm.state!r}, not {want_state!r} -- the "
+            f"frame would carry another step's instruction under this "
+            f"filename")
+        # THE STATE IS NOT THE SCREEN. _apply_policy can replace a state's
+        # instruction with a global one (not engaged, alarm), and it did:
+        # every frame in the first run of this sequence read "Engage to
+        # begin" while the FSM walked the six states correctly underneath.
+        want_text = UI_POLICY[want_state]["instruction_text"]
+        assert uic.instruction_text == want_text, (
+            f"{name}: screen reads {uic.instruction_text!r}, but "
+            f"{want_state!r} prompts {want_text!r}. Something is overriding "
+            f"the step's own instruction and this frame does not show the "
+            f"wizard.")
+        print(f"  [{want_state}] button={uic.action_button_text!r} "
+              f"instruction={uic.instruction_text!r}")
+        _shot(name)
+        if gate is not None:
+            # What committing the value does. Set here rather than driven
+            # through the axis so the walk does not depend on fabricated
+            # scale positions.
+            setattr(uic, gate, True)
+        if want_state != WIZARD_STEPS[-1][1]:
+            fsm.action()
+            _settle()
+
+
 def _capture(_dt):
     os.makedirs(OUT_DIR, exist_ok=True)
     try:
+        bar = _bar()
+        assert bar is not None, (
+            "ElsAdvancedBar is not mounted; every mode below would be "
+            "whatever a fresh config booted into. Raise the delay.")
+
+        # ── The headline pair: STOP-ONLY, the mode the machine is run in.
+        _set_mode(bar, wizard=False, retract=False)
         for theme in THEMES:
             app.formats.theme = theme
-            out = os.path.join(OUT_DIR, f"home_els_{theme}.png")
-            for _ in range(IDLE_TICKS):
-                EventLoop.idle()
-            # First export under-renders (only one tile); export twice.
-            app.root.export_to_png(out)
-            app.root.export_to_png(out)
-            _composite_over_theme_bg(out, app.theme.background)
-            print("WROTE", out, "root size", app.root.size)
+            _settle()
+            _shot(f"home_els_{theme}")
+
+        # ── Stop + retract, and the wizard walk. Dark only: these illustrate
+        # controls and workflow, and a second theme of each would double the
+        # README's images without adding anything.
+        app.formats.theme = "dark"
+        _settle()
+        _set_mode(bar, wizard=False, retract=True)
+        _shot("home_els_stopretract")
+
+        _capture_wizard(bar)
     except Exception as e:  # noqa: BLE001 - capture script, want the full traceback
         import traceback
         traceback.print_exc()
         print("CAPTURE FAILED", e)
+        FAILED.append(e)
     app.stop()
 
 
@@ -117,9 +267,23 @@ def _arm(_dt):
     app.set_mode(MODE_ELS)
     app.manager.get_screen("home").els_bar.enable_advanced = True
     # Mode swap is deferred via Clock (see HomePage.change_mode); give it time
-    # for the ELS layout to mount before capturing.
+    # for the ELS layout to mount before capturing. The modes themselves are
+    # set INSIDE _capture, after the bar exists -- setting them here would be
+    # silently dropped, which is the bug that made preview_takeup_banner.py
+    # photograph the wrong mode for its whole life.
     Clock.schedule_once(_capture, 1.5)
 
 
 Clock.schedule_once(_arm, 2.0)
 app.run()
+
+# A CAPTURE SCRIPT THAT WRITES FILES AND EXITS 0 IS NOT EVIDENCE IT WORKED.
+# The except above exists so the traceback survives Kivy's clock; it must not
+# also swallow the exit code.
+if FAILED:
+    raise SystemExit(f"capture_readme_screenshots failed: {FAILED[0]!r}")
+if len(WROTE) != 2 + 1 + len(WIZARD_STEPS):
+    raise SystemExit(
+        f"wrote {len(WROTE)} images, expected {2 + 1 + len(WIZARD_STEPS)}: "
+        f"{[os.path.basename(w) for w in WROTE]}")
+print(f"OK: {len(WROTE)} images")
