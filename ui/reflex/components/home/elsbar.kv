@@ -129,7 +129,17 @@
         rounded_rectangle: (self.x + dp(4), self.y + dp(6), self.width - dp(8), self.height - dp(12), dp(7))
         width: 1.0
     Image:
-      source: "pictures/" + root.move_type + ".png"
+      # THEMED BY BACKGROUND LUMINANCE, not by theme name. The RH/LH label is
+      # baked into this illustration, and it was pure yellow in both themes --
+      # the one element in the frame that ignored the theme, and unreadable on
+      # the light one. The variants recolour ONLY the glyph pixels (the amber
+      # tool holder and everything else is byte-identical); scripts/
+      # gen_thread_variants.py regenerates them from the untouched originals.
+      #
+      # Keyed on luminance because palettes.py loads user themes from
+      # ~/.config/reflex/themes/*.ini, so a filename built from the theme's
+      # NAME would 404 on any theme but the two shipped ones.
+      source: "pictures/" + root.move_type + ("_light" if app.theme.background[0] > 0.5 else "_dark") + ".png"
       x: self.parent.x + self.parent.width * 0.1
       y: self.parent.y + self.parent.height * 0.1
       width: self.parent.width * 0.8
