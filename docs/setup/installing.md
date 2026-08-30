@@ -83,7 +83,8 @@ IP. Everything below is run **on the Pi** unless it says otherwise.
 ## Step 3 — Put the source on the Pi
 
 ```bash
-mkdir -p ~/projects && git clone https://github.com/Funkenjaeger/reflex.git ~/projects/reflex
+mkdir -p ~/projects
+git clone https://github.com/Funkenjaeger/reflex.git ~/projects/reflex
 ```
 
 This lands the monorepo — the UI in `ui/` and the controller firmware in `fw/`
@@ -95,8 +96,9 @@ Cloning gives you the default branch, which is the current tested state. To pin
 a specific release instead:
 
 ```bash
-git tag -l 'v*'          # monorepo releases; ui-* and fw-* tags are pre-weld archives
-git checkout v1.1.0      # for example
+# monorepo releases; ui-* and fw-* tags are pre-weld archives
+git tag -l 'v*'
+git checkout v1.1.0
 ```
 
 The tree is owned by `default`, not root, so you can pull and edit without
@@ -110,8 +112,9 @@ Reflex uses [uv](https://docs.astral.sh/uv/) to build a virtual environment
 from the lockfile.
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh      # lands in ~/.local/bin/uv
-cd ~/projects/reflex/ui && ~/.local/bin/uv sync
+curl -LsSf https://astral.sh/uv/install.sh | sh   # lands in ~/.local/bin/uv
+cd ~/projects/reflex/ui
+~/.local/bin/uv sync
 ```
 
 `pyproject.toml` lives in `ui/`, not at the repo root, which is why the `cd`
@@ -132,7 +135,8 @@ installation, not authoring.
 chmod +x ~/projects/reflex/ui/deploy/start.sh
 sudo cp ~/projects/reflex/ui/deploy/reflex-ui.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl disable --now rcp.service        # stop upstream RCP, leave it installed
+# stop upstream RCP -- this leaves it installed, it does not remove it
+sudo systemctl disable --now rcp.service
 sudo systemctl enable --now reflex-ui.service
 ```
 
@@ -253,7 +257,7 @@ checkout.
 
 ```bash
 cd ~/projects/reflex && git pull
-cd ui && ~/.local/bin/uv sync                    # only if dependencies changed
+cd ui && ~/.local/bin/uv sync   # only if dependencies changed
 sudo systemctl restart reflex-ui.service
 ```
 
