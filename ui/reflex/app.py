@@ -1,6 +1,5 @@
 import os
 
-import sentry_sdk
 from kivy.app import App
 from kivy.config import Config
 from kivy.core.audio import SoundLoader
@@ -8,6 +7,8 @@ from kivy.properties import (ObjectProperty, ConfigParserProperty, NumericProper
                              ListProperty, StringProperty, BooleanProperty,
                              AliasProperty)
 from kivy.logger import Logger
+
+from reflex.utils import telemetry
 log = Logger.getChild(__name__)
 
 from reflex.utils.log_levels import apply_log_levels
@@ -242,13 +243,11 @@ class MainApp(App):
         if self.sound is None:
             log.warning(f"Failed to load sound from {sound_path}")
 
-        if not self.formats.disable_error_reporting:
-            log.info("Error reporting is enabled, configuring Sentry")
-            sentry_sdk.init(
-                dsn="https://8fd20c0607e9c930a16d51a4b1eacc94@o4509625403506688.ingest.us.sentry.io/4509625405014016",
-                send_default_pii=False,
-                traces_sample_rate=0.2,
-            )
+        # Destination comes from REFLEX_SENTRY_DSN, never from source -- the
+        # literal that used to sit here was the UPSTREAM author's, inherited
+        # through the fork, so this application reported to an organisation
+        # none of its users could read. See utils/telemetry.py.
+        log.info(telemetry.configure(self.formats.disable_error_reporting))
 
         # Backward compat aliases — most KV files use app.servo / app.inputs / app.axes
         self.servo = self.board.servo

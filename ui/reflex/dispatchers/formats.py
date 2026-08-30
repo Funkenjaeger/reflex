@@ -51,7 +51,10 @@ class FormatsDispatcher(SavingDispatcher):
 
     volume = NumericProperty(0.2)
 
-    disable_error_reporting = BooleanProperty(False)
+    # Default OFF. Reporting used to default ON against a DSN inherited
+    # from upstream, so a fresh install shipped its crashes to a stranger --
+    # and this repository is public. Opt in, with your own destination.
+    disable_error_reporting = BooleanProperty(True)
 
     position_tolerance = NumericProperty(0.05)
 
