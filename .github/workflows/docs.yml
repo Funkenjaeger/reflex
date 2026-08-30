@@ -2,16 +2,32 @@ name: docs
 
 # The user guide. Builds on every push and PR so a broken link or a stale
 # generated page fails there rather than on the published site; deploys to
-# GitHub Pages only from main.
+# GitHub Pages from whichever branch the block below names.
 #
 # THE GENERATED PAGES ARE VERIFIED, NOT REGENERATED HERE. `--check` fails the
 # build when docs/guide/when-it-refuses.md or docs/reference/index.md disagrees
 # with the code they are generated from. Regenerating in CI instead would let a
 # reworded refusal reach the site without anyone reading the new wording.
 
+# PUBLISHES FROM `integration`, ON PURPOSE (2026-08-30, Evan's call).
+#
+# Not a stopgap. These docs are new and half of them are machine-generated, and
+# their first contact with the internet should not be a real release -- not on
+# main, and not on dev either. Publishing from integration is how they get
+# exercised in public, by readers who are not their author, BEFORE anything
+# depends on them being right.
+#
+# The cost is accepted with open eyes: the public site describes unreleased
+# work, and can be ahead of or wrong about any tagged version.
+#
+# WHEN TO REVISIT: not on a date and not at a tag. When the guide has survived
+# contact -- when a stranger has followed it and the corrections have stopped
+# arriving -- move both `branches:` and both `if:` conditions to the branch
+# that should own it then. Doing it at 1.1.0 out of tidiness would undo the
+# argument at exactly the moment it applies.
 on:
   push:
-    branches: [main]
+    branches: [integration]
     paths:
       - "docs/**"
       - "mkdocs.yml"
@@ -61,12 +77,12 @@ jobs:
         run: mkdocs build --strict
 
       - uses: actions/upload-pages-artifact@v3
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/integration'
         with:
           path: site
 
   deploy:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/integration'
     needs: build
     runs-on: ubuntu-latest
     permissions:
