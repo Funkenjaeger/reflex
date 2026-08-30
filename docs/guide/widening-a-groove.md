@@ -1,8 +1,12 @@
 # Widening a groove
 
-Shifting thread phase deliberately, so the tool cuts a groove wider than the
-insert that cuts it — for an O-ring groove, a clearance thread, or a fit that
-needs opening up after measurement.
+Cutting a thread groove **wider than the tool that cuts it**.
+
+Cut the groove with the cutter you have, tell the controller to advance the
+thread phase by a small step-over, and cut again — the tool re-enters the same
+groove a fraction further along and takes the side off it. Repeat until the
+groove is as wide as you want. The workpiece is never re-indexed and the thread
+datum is never re-established.
 
 ![The offset modal, nothing entered](../screenshots/flow/wt_offset_entry_zero.png)
 
@@ -12,8 +16,23 @@ The controller carries a **thread-phase offset**: a distance, expressed along
 the thread, that shifts where the tool enters the helix. Set 0.05 mm and the
 next pass cuts 0.05 mm along from the original groove, widening it by that much.
 
+Every step-over goes the same way — you open one side of the groove and keep
+going — so the running total on screen **is the widening**: the distance the
+groove has actually grown past the width of your cutter, which you can measure
+on the part.
+
+**How big a step to take is your decision, not the machine's.** It depends on
+the width of the cutter in the toolpost, which nothing in this controller knows.
+That is why there are no preset amounts on the screen.
+
 It takes effect **where the tool next re-enters the thread** — not immediately,
-and not mid-pass.
+and not mid-pass. Applying an offset moves nothing, so it is safe at any point
+in a job, mid-pass included.
+
+!!! info "Threading only"
+    Turning has no thread phase to shift, so the controller refuses an offset
+    in feed mode: *"No thread pitch is set — turning has no thread phase to
+    shift. Choose a threading mode and a pitch first."*
 
 ## The entry field is absolute
 

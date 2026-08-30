@@ -5,6 +5,15 @@ part, a thread cut elsewhere, a damaged thread being chased. The controller
 cannot know where the existing helix is, so you show it, and it latches a datum
 at that instant. From then on every pass follows the existing groove.
 
+!!! info "Threading only"
+    A thread reference means nothing without a thread pitch, so the wizard
+    refuses in feed mode before you touch anything: *"No thread pitch is set —
+    turning has no thread phase to pick up. Choose a threading mode and a pitch,
+    then engage the ELS stop."*
+
+    That gate was added 2026-08-30. Until then the wizard would walk its whole
+    procedure in feed mode and latch a reference the machine had no use for.
+
 ## 1 — Seat the carriage
 
 ![The jog step](../screenshots/flow/wt_resync_jog.png)

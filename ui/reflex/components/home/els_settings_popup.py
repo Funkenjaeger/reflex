@@ -112,8 +112,15 @@ class ElsSettingsPopup(Popup):
         """Open the pick-up-existing-thread (manual reference latch) wizard.
 
         Lazily imported like the calibration popup. The wizard itself refuses
-        with a clear message when no job is armed, so this button does not need
-        its own gating.
+        with a clear message when no job is armed, when the machine is not in a
+        threading mode, or when the link is down -- so this button does not need
+        its own gating, and a greyed-out button could not say which of the three
+        it was.
+
+        THE MODE REFUSAL WAS ADDED 2026-08-30. Until then this docstring was
+        true about the job and silent about the mode, and the wizard would walk
+        its whole procedure in feed mode to latch a reference against
+        threadPitchSteps = 0.
         """
         from reflex.components.home.els_resync_popup import ThreadResyncPopup
         ThreadResyncPopup().open()

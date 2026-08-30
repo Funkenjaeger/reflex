@@ -441,6 +441,10 @@ def new_resync_popup(hal, counts):
         hal, app.els,
         read_z_counts=lambda: counts["z"],
         read_spindle_counts=lambda: counts["spindle"],
+        # These shots are of a THREADING job by construction -- the rig sets a
+        # thread pitch above. Passed explicitly because ThreadResync requires
+        # it: a mode gate with a default is a mode gate that can go missing.
+        is_threading=lambda: True,
         format_z=z_distance_formatter(z_input, app.formats, pop.unit_label),
     )
     pop.open()
@@ -553,7 +557,8 @@ def section_resync():
             setup(probe)
             p._resync = ThreadResync(probe, app.els,
                                      read_z_counts=lambda: cnt["z"],
-                                     read_spindle_counts=lambda: cnt["spindle"])
+                                     read_spindle_counts=lambda: cnt["spindle"],
+                                     is_threading=lambda: True)
         p.begin()
         record(f"resync / refused ({label}) [not rendered]",
                state=p.state, body=p.body_text)
@@ -565,7 +570,8 @@ def section_resync():
     p = mod.ThreadResyncPopup()
     p._resync = ThreadResync(probe, app.els,
                              read_z_counts=lambda: cnt["z"],
-                             read_spindle_counts=lambda: cnt["spindle"])
+                             read_spindle_counts=lambda: cnt["spindle"],
+                             is_threading=lambda: True)
     p.begin()
     record("resync / refused (firmware too old) [not rendered]",
            state=p.state, body=p.body_text)
@@ -925,7 +931,8 @@ def section_phase_offset():
     p_off = rmod.ThreadResyncPopup()
     p_off._resync = ThreadResync(offline, app.els,
                                  read_z_counts=lambda: Z_BASELINE,
-                                 read_spindle_counts=lambda: SPINDLE_BASELINE)
+                                 read_spindle_counts=lambda: SPINDLE_BASELINE,
+                                 is_threading=lambda: True)
     p_off.begin()
     siblings = [
         "No threading job is armed", "This job already has a thread reference",

@@ -19,6 +19,10 @@ Everything below adds an electronic stop on top of that.
 
 ## The three stop modes
 
+All three work for **plain turning** as well as threading — pick a feed rate
+instead of a pitch and the stop behaves the same way. Threading is simply where
+the machine earns its keep, so that is what the rest of this guide is about.
+
 They cut the same thread. What changes is how much you set up first and how much
 you do by hand between passes. Cycle between them with the tri-state tab at the
 right of the advanced bar.
@@ -110,6 +114,13 @@ puts the next pass in the same groove.
 This is a different thing from
 [picking up an existing thread](picking-up-a-thread.md), which is a manual
 procedure for work this job did not cut.
+
+!!! info "The two advanced features are threading-only"
+    Picking up a thread and widening a groove both need a thread pitch, so
+    neither has any meaning in feed mode. Both refuse there rather than walking
+    a procedure that could not succeed — the offset always has, and the pick-up
+    wizard was given the same gate on 2026-08-30 after it turned out to be
+    missing.
 
 ## Choosing
 

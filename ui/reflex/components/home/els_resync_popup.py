@@ -245,6 +245,10 @@ class ThreadResyncPopup(Popup):
             els,
             read_z_counts=lambda: int(z_input.encoderCurrent),
             read_spindle_counts=lambda: int(sp_input.encoderCurrent),
+            # READ LIVE, not captured: the operator can change the feed table
+            # while this modal is open, and the answer that matters is the one
+            # at the moment they press Begin.
+            is_threading=lambda: bool(self.app.els_uic.is_threading),
             format_z=format_z,
         )
 

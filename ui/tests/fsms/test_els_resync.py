@@ -130,12 +130,17 @@ def _els(tol=3):
     return SimpleNamespace(els_resync_z_tol_counts=tol)
 
 
-def _controller(machine=None, hal=None, tol=3):
+def _controller(machine=None, hal=None, tol=3, threading=True):
     machine = machine or Machine()
     hal = hal or FakeHal(machine)
     rc = ThreadResync(hal, _els(tol),
                       read_z_counts=lambda: machine.z,
-                      read_spindle_counts=lambda: machine.spindle)
+                      read_spindle_counts=lambda: machine.spindle,
+                      # Threading unless a test says otherwise: every case in
+                      # this file except the mode gate itself is about what
+                      # happens DURING a pick-up, which only exists in a
+                      # threading mode.
+                      is_threading=lambda: threading)
     return rc, machine, hal
 
 
@@ -464,3 +469,45 @@ def test_a_link_that_never_recovers_still_times_out():
 
     assert rc.state == ResyncState.REFUSED
     assert "nothing was latched" in rc.message.lower()
+
+
+def test_feed_mode_is_refused_before_the_operator_touches_anything():
+    """THE DEFECT, 2026-08-30. The wizard had no mode check at all.
+
+    ElsFsm has refused a phase offset outside a threading mode since it was
+    written (PHASE_OFFSET_NO_PITCH) because turning has no thread phase to
+    shift. The pick-up wizard shares that premise exactly -- a thread reference
+    is meaningless without a pitch, and the UI sends threadPitchSteps = 0
+    outside a threading feed table -- but checked only the link, the protocol
+    version and whether a job was armed.
+
+    So in feed mode with a stop engaged it walked its whole procedure: seat the
+    carriage, close the half nut, nest the tool in a groove, watch Z hold, and
+    latch a reference into a register nothing reads.
+    """
+    rc, machine, hal = _controller(threading=False)
+    assert rc.begin_alignment() is False
+    assert rc.state == ResyncState.REFUSED
+    assert "thread phase to pick up" in rc.message, rc.message
+    assert "threading mode" in rc.message
+
+
+def test_the_mode_gate_comes_before_the_job_gate():
+    """Both conditions at once should name the mode, not the stop.
+
+    Telling an operator in feed mode to "engage the ELS stop" sends them to do
+    something that will not help -- the wizard would refuse again the moment
+    they came back.
+    """
+    rc, machine, hal = _controller(threading=False)
+    hal.enable = False
+    rc.begin_alignment()
+    assert "thread phase to pick up" in rc.message, rc.message
+    assert "Engage the ELS stop first" not in rc.message
+
+
+def test_a_threading_job_is_not_refused_by_the_new_gate():
+    """The guard must not break the feature it guards."""
+    rc, machine, hal = _controller(threading=True)
+    assert rc.begin_alignment() is True
+    assert rc.state != ResyncState.REFUSED

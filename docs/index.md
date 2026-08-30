@@ -15,6 +15,17 @@ The UI owns operator workflow, configuration and display.
 
 ---
 
+## Threading is the point
+
+Reflex will power-feed and stop for plain turning, and all three stop modes do
+that perfectly well. But **threading is where it earns its keep** — holding
+thread phase across passes is the hard problem, and it is why almost everything
+below is written about threading.
+
+If you only ever feed to a shoulder, most of this guide is optional: read
+[The screen](guide/the-screen.md) and
+[Feeding to a shoulder](guide/feeding-to-a-shoulder.md) and you are done.
+
 ## The one idea to read first
 
 **Reflex will not start a pass it cannot verify.**
@@ -100,8 +111,9 @@ the advanced bar.
 
 ### Two advanced features
 
-Neither is needed for ordinary threading. Both exist for jobs the basic cycle
-cannot express.
+Neither is needed for ordinary threading, and **neither has any meaning outside
+it** — both need a thread pitch, and the controller refuses them in feed mode
+rather than pretending. They exist for jobs the basic cycle cannot express.
 
 <div class="grid cards" markdown>
 
@@ -121,15 +133,31 @@ cannot express.
 
     **Thread phase offset** — widen a groove
 
-    Shift where the tool enters the helix, so the groove comes out wider than
-    the insert cutting it. For an O-ring groove, a clearance thread, or opening
-    up a fit after measurement.
+    Cut a thread groove **wider than the tool that cuts it**: cut, step the
+    phase along by a fraction of a turn, cut again, and the tool takes the side
+    off the same groove. Repeat until it is as wide as you want.
 
     Not a multi-start mechanism — the page says why.
 
     [Read the procedure →](guide/widening-a-groove.md)
 
 </div>
+
+---
+
+## What this version does not do yet
+
+Reflex is under active development and the list below is a plan, not a promise
+of dates. The [version table in the README][versions] is the living record —
+rows move from planned to released as tags are cut.
+
+| Not yet | Coming in | What you do instead today |
+|---|---|---|
+| **Auto-start** — begin the pass when the half nut closes | 1.2.0 | Close the half nut, then press **Cut**. |
+| **Auto-advance / virtual compound** — next depth of cut by advancing thread phase from X depth | 1.3.0 | Feed in with the compound slide between passes, as on any manual lathe. |
+| **Multi-start threading** | 2.0.0 | Nothing safe. The phase offset is **not** a substitute — see [Widening a groove](guide/widening-a-groove.md#what-it-is-not-for). |
+
+[versions]: https://github.com/Funkenjaeger/reflex#-versions
 
 ---
 

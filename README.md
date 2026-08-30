@@ -119,6 +119,31 @@ an existing one, widening a groove, and commissioning a new machine — see the
 
 ---
 
+## 🗺 Versions
+
+One table for what shipped and what is planned, so the two cannot drift apart.
+Rows move from **planned** to **released** as tags are cut, and the plan below
+the line is revised as often as reality requires.
+
+| Version | Status | What it is |
+|---|---|---|
+| **1.0.0** | released 2026-06-19 | The UI, pre-monorepo. DRO, the electronic leadscrew, and the electronic stop. |
+| **1.1.0** | `rc.1` tagged 2026-08-22 | First release of the welded monorepo. Take-up confirmation before every pass, thread phase re-sync from the Z scale, the manual thread pick-up, the phase offset, and the status gutter. A user guide and a generated screenshot set. |
+| **1.2.0** | planned | **Auto-start** — begin the pass when the half nut closes, rather than on a button. Sensorless first. |
+| **1.3.0** | planned | **Auto-advance / virtual compound** — take the next depth of cut by advancing thread phase from X depth, so a flank-infeed thread needs no compound slide. |
+| **2.0.0** | planned | **Control-board respin** — differential encoder signalling, and the firmware changes that ride with it: an integrity checksum, index-anchored phase correction, and proper **multi-start** threading. |
+
+> [!NOTE]
+> **Multi-start is not supported before 2.0.0**, and the phase offset is not a
+> substitute for it — its correction folds within one pitch and biases into the
+> cutting direction, which is exactly wrong for indexing a second start.
+> See [Widening a groove](https://funkenjaeger.github.io/reflex/guide/widening-a-groove/).
+
+The long form — reasoning, sequencing, risks — lives in the project roadmap
+rather than here.
+
+---
+
 ## 🔩 Hardware
 
 * STM32F411 controller board — compatible with the

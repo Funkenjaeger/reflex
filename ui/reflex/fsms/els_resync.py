@@ -105,11 +105,17 @@ class ThreadResync:
     LATCH_TIMEOUT_POLLS = 30 * 2
 
     def __init__(self, hal, els, read_z_counts, read_spindle_counts,
-                 format_z=None):
+                 is_threading, format_z=None):
         """``read_z_counts`` / ``read_spindle_counts`` are zero-arg callables
         returning live raw encoder counts (firmware ``scales[i].position`` as
         mirrored into ``fastData.scaleCurrent``) — injected so this class can
         be driven in tests without a running app.
+
+        ``is_threading`` is a zero-arg callable: is the machine set to a
+        THREADING feed table rather than a turning one? REQUIRED, and
+        deliberately not defaulted -- a thread reference has no meaning without
+        a thread pitch, and a gate with a safe-looking default is a gate that
+        can go missing. See begin_alignment.
 
         ``format_z`` renders a Z distance IN COUNTS as operator-facing text.
         Injected for the same reason the readers are: the scale ratio and the
@@ -123,6 +129,7 @@ class ThreadResync:
         self._els = els
         self._read_z = read_z_counts
         self._read_spindle = read_spindle_counts
+        self._is_threading = is_threading
         self._format_z = format_z
 
         self.state = ResyncState.IDLE
@@ -160,6 +167,24 @@ class ThreadResync:
                 f"Controller firmware does not support thread re-sync "
                 f"(reports register version {version}, this UI needs "
                 f"{ELS_PROTOCOL_VERSION}). Flash the firmware to match this UI."
+            )
+
+        if not self._is_threading():
+            # TURNING HAS NO PHASE TO PICK UP. The UI sends
+            # threadPitchSteps = 0 outside a threading feed table, so a latched
+            # reference would sit in a register nothing reads -- and the wizard
+            # would walk its entire procedure, ask the operator to seat the
+            # carriage and nest the tool in a groove, and succeed at nothing.
+            #
+            # Checked BEFORE the enable gate below, and worded to match
+            # ElsFsm.PHASE_OFFSET_NO_PITCH, which has refused this same
+            # condition since it was written. The two features now decline for
+            # the same reason in the same words; until 2026-08-30 only one of
+            # them declined at all.
+            return self._refuse(
+                "No thread pitch is set — turning has no thread phase to pick "
+                "up. Choose a threading mode and a pitch, then engage the ELS "
+                "stop."
             )
 
         if not self._hal.read_enable():
