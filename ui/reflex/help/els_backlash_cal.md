@@ -68,7 +68,10 @@ operation. Look for a loose leadscrew coupling, a worn or slipping
 half-nut, or a Z scale mounting problem.
 
 **"Disengage the ELS stop before calibrating."**
-A threading job is armed. Disengage first.
+A threading job is armed. Disengage first — but note what that
+costs: **re-engaging afterwards starts a new job, which clears the
+thread reference and any phase offset you have dialed in.** If you
+are part-way through a thread, finish it before calibrating.
 
 ## During Cutting
 
@@ -80,8 +83,15 @@ If the carriage doesn't respond, the pass does not start and you'll see:
 This is the failure the calibration exists to prevent. Previously the
 controller had no way to know, so it would proceed and cut the next
 pass in the wrong place. If you see this message, check the half-nut
-before anything else. To clear a stuck take-up, disengage and re-engage
-the ELS stop.
+before anything else.
+
+**Clearing a stuck take-up costs you the thread reference.** A
+take-up that never reaches its target holds the controller's motion
+gate shut, and the only thing that releases it is disengaging and
+re-engaging the ELS stop — pressing Cut again will not. That
+re-engage starts a new job, so the thread reference and any phase
+offset go with it. There is no way around this; the warning on screen
+says so when a reference is actually at stake.
 
 ## Sizing the sweep limit
 

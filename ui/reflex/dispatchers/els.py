@@ -86,6 +86,22 @@ class ElsDispatcher(SavingDispatcher):
     # take-up — keeping them separate is what lets a later run notice drift.
     els_cal_last_measured_steps = NumericProperty(0)
 
+    # How much run-to-run change is worth an operator's ATTENTION, in servo
+    # steps. Until 2026-08-30 there was no such number: els_backlash_cal_popup
+    # called ANY nonzero difference "a large change worth investigating", so
+    # one step -- 1.984 mm/1000 on elspi -- cried wolf, and ElsCalFsm.drift_steps'
+    # own docstring says the opposite in as many words ("Non-zero is normal ...
+    # a LARGE change ... is worth an operator's attention").
+    #
+    # DEFAULTED TO THE SPREAD LIMIT, and it is the same 12 for a reason rather
+    # than by copy: els_cal_max_spread_steps is the disagreement this machine
+    # is allowed WITHIN one run, so a change smaller than that is not
+    # distinguishable from the measurement's own noise. It is a separate
+    # property because it is a separate question -- within-run repeatability
+    # versus between-run change -- and tying them would make raising one
+    # silently raise the other.
+    els_cal_drift_notice_steps = NumericProperty(12)
+
     # ── Thread re-sync (manual reference latch) ───────────────────────
     # Z counts the carriage may sit from its post-jog baseline during fine
     # alignment, and how closely a hand re-seat against the drive flank must

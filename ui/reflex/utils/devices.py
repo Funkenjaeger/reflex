@@ -277,7 +277,23 @@ ELS_TAKEUP_ERR_TIMEOUT = 6      # take-up never reached its commanded target
 # check rather than the firmware state — an operator at the machine can act on
 # "is the half-nut engaged?" and cannot act on "takeupResult == 4".
 ELS_CAL_MESSAGES = {
-    ELS_CAL_ERR_ENABLED: "Disengage the ELS stop before calibrating.",
+    # NAMES WHAT THE REMEDY COSTS (2026-08-30, Gate 1). Re-engaging fires the
+    # elsStop.enable 0->1 edge, and Ramps.c:766 clears referenceLatched AND
+    # phaseOffsetSteps on it -- deliberately, because a new job needs a new
+    # reference. The old text stopped at "disengage first", so an operator who
+    # read it as a trivial precondition lost their thread datum and any groove
+    # widening to a message that gave no hint of it. els_cal.py:223 argues
+    # that refusing beats tearing down a live job; the refusal's own remedy
+    # tears it down anyway, which is exactly why it has to say so.
+    #
+    # ROOM TO EXPLAIN, unlike the take-up twin: this renders as the modal's
+    # body_text, not in the 435 px notice strip.
+    ELS_CAL_ERR_ENABLED: (
+        "Disengage the ELS stop before calibrating.\n\n"
+        "Re-engaging afterwards starts a new job, which clears the thread "
+        "reference and any phase offset. Finish the thread first if you "
+        "still need them."
+    ),
     ELS_CAL_ERR_SERVOMODE: "Servo is not in sync/index mode.",
     ELS_CAL_ERR_CONFIG: "Calibration limits are not configured.",
     ELS_CAL_ERR_NO_MOTION: (
@@ -338,6 +354,24 @@ ELS_TAKEUP_WRONG_WAY = (                  # 60 ch, 399 px of 435
     "Cut aborted — WRONG-way motion. Check the Z scale direction."
 )
 
+# The TIMEOUT message when a thread reference is actually at stake. Kept out of
+# the dict for the same reason as WRONG_WAY: it is not keyed by a firmware
+# result code, it is a refinement of ELS_TAKEUP_ERR_TIMEOUT chosen by UI state.
+#
+# THE REMEDY IS FORCED, WHICH IS WHY THE COST HAS TO BE NAMED. Ramps.c:1110 is
+# explicit that the timeout backstop "does NOT release the gate ... recovery is
+# the enable 1->0 escape hatch": takeupPending stays set, so pressing Cut again
+# cannot clear it. And the enable 0->1 edge back clears referenceLatched and
+# phaseOffsetSteps (Ramps.c:766). The operator cannot route around paying, so
+# the only thing left for the message to do is say what they are paying.
+#
+# CHOSEN FROM A MEASUREMENT, like every string above it: six candidates were
+# rendered by previews/preview_takeup_text_widths.py and this one won on
+# reading, not on width -- fault, imperative, cost, in that order.
+ELS_TAKEUP_TIMEOUT_LATCHED = (            # 62 ch, 398 px of 435
+    "Cut aborted — take-up stuck. Re-engage; the reference is lost."
+)
+
 # Unknown result code. Still leads with the state, for the same reason.
 ELS_TAKEUP_UNKNOWN = "Cut aborted — backlash take-up failed."
 
@@ -358,7 +392,7 @@ typedef struct {
 """
 
 
-def takeup_failure_text(result_code, z_delta=None):
+def takeup_failure_text(result_code, z_delta=None, reference_latched=False):
     """Operator-facing text for a take-up failure.
 
     THE COUNTS ARE NOT ON THE SCREEN ANY MORE (2026-08-29, Evan's call). This
@@ -388,8 +422,18 @@ def takeup_failure_text(result_code, z_delta=None):
     A NEGATIVE delta means the carriage moved the WRONG way, which is a
     different fault entirely (scale direction, or something else driving the
     carriage) and is called out as such rather than folded into "not enough".
+
+    `reference_latched` picks the TIMEOUT variant that names what the remedy
+    costs. IT IS GATED RATHER THAN ALWAYS SHOWN, deliberately: the operator who
+    has no reference latched loses nothing by re-engaging, and telling them
+    otherwise is the same cry-wolf defect Gate 1 item 2 fixes elsewhere. It is
+    gated on the reference alone and NOT on the phase offset, because an offset
+    cannot exist without an engaged job (PHASE_OFFSET_NO_JOB) and "the
+    reference is lost" is the wrong noun for an offset anyway.
     """
     base = ELS_TAKEUP_MESSAGES.get(result_code, ELS_TAKEUP_UNKNOWN)
+    if result_code == ELS_TAKEUP_ERR_TIMEOUT and reference_latched:
+        return ELS_TAKEUP_TIMEOUT_LATCHED
     if result_code != ELS_TAKEUP_ERR_UNCONFIRMED:
         return base
     if z_delta is not None and z_delta < 0:

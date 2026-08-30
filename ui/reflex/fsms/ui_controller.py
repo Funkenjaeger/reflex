@@ -638,7 +638,14 @@ class ElsUiController(EventDispatcher):
             # takeup_failure_text's docstring. Do not "restore" them to the
             # warning: it is pinned to 85 characters so the notice strip cannot
             # land on top of the status chips.
-            self.takeup_warning = takeup_failure_text(result, moved)
+            # `thread_ref_latched` is passed because the TIMEOUT remedy is
+            # forced and destructive: only the enable 1->0 edge clears a
+            # timed-out take-up, and the edge back clears the datum. The
+            # operator with a reference at stake gets told; the one without
+            # gets the plain text, because a warning that always fires is the
+            # warning nobody reads.
+            self.takeup_warning = takeup_failure_text(
+                result, moved, reference_latched=self.thread_ref_latched)
             log.warning(
                 "ELS takeup #%s REFUSED (result=%s): moved %s counts, needed %s",
                 seq, result, moved, needed)
@@ -1235,6 +1242,29 @@ class ElsUiController(EventDispatcher):
             # press that did nothing. Names the fix, not the fault.
             self.notify("No ELS Z axis assigned — map it in ELS settings",
                         NOTICE_WARNING)
+        elif not self._els_z_is_single_input():
+            # THE DRO AND THE FIRMWARE WOULD DISAGREE ABOUT WHERE THE CARRIAGE
+            # IS. axis_screen.apply_transform() will build AxisTransform.sum()
+            # from two dropdowns, and Axis.compute() adds both contributors
+            # into the displayed position -- but ElsFsm.set_scale_index()
+            # pushes _primary_input(), i.e. contributions[0] ALONE, so the
+            # firmware would track one scale while the screen showed the sum.
+            # Every stop position, every take-up confirmation and the thread
+            # datum itself would be measured against a different number than
+            # the operator is reading.
+            #
+            # REACHABLE, not hypothetical: elspi has four axes over four
+            # inputs, three of them non-spindle, so the second dropdown has
+            # real options today. Refusing at engage rather than guarding
+            # inside set_scale_index because this is the last moment the
+            # operator can be told anything -- past here it is silent.
+            log.warning(
+                "Cannot engage ELS: Z axis transform is %r over %d inputs; "
+                "the firmware can only track one scale",
+                self._els.get_z_axis().transform.transform_type,
+                len(self._els.get_z_axis().transform.contributions))
+            self.notify("ELS Z axis adds two scales — use a single input",
+                        NOTICE_WARNING)
         elif self._els_fsm.may_enable():
             self._els_fsm.enable()
         else:
@@ -1684,6 +1714,23 @@ class ElsUiController(EventDispatcher):
             return False
         servo.toggle_enable()
         return True
+
+    def _els_z_is_single_input(self):
+        """Is the ELS Z axis derived from exactly one scale?
+
+        The firmware is told ONE scale index (ElsFsm.set_scale_index ->
+        elsStop scaleIndex), so anything else is a screen that disagrees with
+        the machine. Written as "is it single-input" rather than "is it not a
+        SUM" on purpose: a transform type added later is refused by default
+        instead of silently inheriting the ELS's trust.
+
+        No axis is not this check's business -- toggle_engage tests that first
+        and has its own message -- so it answers True and lets that branch win.
+        """
+        axis = self._els.get_z_axis()
+        if axis is None:
+            return True
+        return len(axis.transform.contributions) == 1
 
     def start_cut(self):
         self.clear_reframe_notice()   # starting the cut clears a re-reference flag

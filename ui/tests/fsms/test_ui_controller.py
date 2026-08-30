@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 from kivy.clock import Clock
 
+from reflex.dispatchers.axis_transform import AxisTransform
 from reflex.fsms.ui_controller import ElsUiController
 
 
@@ -42,9 +43,14 @@ def _engage(ctrl):
     _pump()
 
 
-def _make_z_axis(scaled_position=0.0, encoder_offset=0):
+def _make_z_axis(scaled_position=0.0, encoder_offset=0, transform=None):
     axis = MagicMock()
     axis.scaledPosition = scaled_position
+    # A REAL transform, not a MagicMock attribute. ElsUiController refuses to
+    # engage unless the ELS Z axis derives from exactly one scale, and a bare
+    # MagicMock reports len(contributions) == 0 -- so every engage in this
+    # suite would refuse, for a reason that has nothing to do with the test.
+    axis.transform = transform or AxisTransform.identity(2)
     # Scale by 1000 so the display↔encoder round-trip preserves sub-mm decimals
     # (a real leadscrew has finer resolution than 1 count/mm).
     axis.position_to_encoder.side_effect = lambda mm: round(mm * 1000) + encoder_offset
@@ -59,6 +65,7 @@ def _make_z_axis(scaled_position=0.0, encoder_offset=0):
 def _make_x_axis(scaled_position=0.0, encoder_offset=0):
     axis = MagicMock()
     axis.scaledPosition = scaled_position
+    axis.transform = AxisTransform.identity(3)
     axis.position_to_encoder.side_effect = lambda mm: round(mm * 1000) + encoder_offset
     axis.scaled_from_encoder.side_effect = lambda enc: (enc - encoder_offset) / 1000.0
     axis._primary_input.return_value = SimpleNamespace(

@@ -572,10 +572,15 @@ TAKEUP_TEXT_MAX_CHARS = 65
 def test_takeup_texts_fit_the_gutter_gap():
     from reflex.utils.devices import (ELS_TAKEUP_MESSAGES,
                                       ELS_TAKEUP_WRONG_WAY,
-                                      ELS_TAKEUP_UNKNOWN)
+                                      ELS_TAKEUP_UNKNOWN,
+                                      ELS_TAKEUP_TIMEOUT_LATCHED)
     texts = dict(ELS_TAKEUP_MESSAGES)
     texts["WRONG_WAY"] = ELS_TAKEUP_WRONG_WAY
     texts["UNKNOWN"] = ELS_TAKEUP_UNKNOWN
+    # Added 2026-08-30 with the string itself. Every message that can reach
+    # the notice strip has to be in this dict or it has no width guard at
+    # all, and the one added outside it is the one that lands on the chip.
+    texts["TIMEOUT_LATCHED"] = ELS_TAKEUP_TIMEOUT_LATCHED
     for key, msg in texts.items():
         assert len(msg) <= TAKEUP_TEXT_MAX_CHARS, (
             f"take-up message {key} is {len(msg)} characters, over the "
