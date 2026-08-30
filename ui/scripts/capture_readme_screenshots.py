@@ -369,6 +369,20 @@ def _capture_wizard(bar):
 def _capture(_dt):
     os.makedirs(OUT_DIR, exist_ok=True)
     try:
+        # The wand must be gone on a lathe even with the setting ON.
+        wand = _find(lambda w: type(w).__name__ == "IconButton"
+                     and getattr(w, "icon", "") == "\ue2ca")
+        assert wand is not None, (
+            "cannot find the pattern-screen button to check it is hidden -- "
+            "if the icon changed, this check has stopped checking anything")
+        assert app.formats.show_wizard is True, "the setting must be ON here"
+        assert round(wand.height) == 0 and wand.disabled, (
+            f"the pattern wand is showing on a LATHE: height="
+            f"{round(wand.height)} disabled={wand.disabled}. USE_CASE_PATTERNS "
+            f"says a lathe has no pattern screen, so the button must be gone "
+            f"regardless of the Show Patterns setting.")
+        print("  pattern wand hidden by use case, with the setting ON")
+
         bar = _bar()
         assert bar is not None, (
             "ElsAdvancedBar is not mounted; every mode below would be "
@@ -464,11 +478,14 @@ def _arm(_dt):
     # setting not overridden here comes out at its class default -- which is
     # how these shots shipped in wizard mode until 2026-08-30.
     #
-    # The pattern screen (hole circles, lines, rectangles) is a rotary-table
-    # feature, and its wand sits in the sidebar above ELS/DRO. elspi has
-    # show_wizard false, so the wand is not on the machine's screen; leaving it
-    # on here put a control in every screenshot that the machine does not show.
-    app.formats.show_wizard = False
+    # THE PATTERN WAND IS LEFT SWITCHED ON, DELIBERATELY. It sits in the
+    # sidebar above ELS/DRO and opens the pattern screen -- a rotary-table
+    # feature. This capture used to force `show_wizard = False` to keep it out
+    # of the shots; since 2026-08-30 a lathe does not expose the pattern screen
+    # at all (USE_CASE_PATTERNS in app.py), so leaving the setting at its
+    # default True and asserting the button is gone PROVES the use-case gate
+    # instead of hiding behind the setting.
+    app.formats.show_wizard = True
     # Name representative axes (a fresh config seeds 4 unnamed "?" axes).
     for i, name in enumerate(AXIS_NAMES):
         if i < len(app.axes):

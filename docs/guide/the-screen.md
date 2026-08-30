@@ -31,10 +31,12 @@ screen:
 
 ![DRO mode](../screenshots/home_dro.png)
 
-!!! note "A wand icon may sit above ELS / DRO"
-    It opens the pattern screen — hole circles, lines, rectangles — which is a
-    rotary-table feature with little to offer a lathe. It is off on the machine
-    this guide is written from, via **Show Wizard** in Formats settings:
+!!! note "No pattern wand on a lathe"
+    A wand above ELS/DRO opens the pattern screen — hole circles, lines,
+    rectangles — which lays holes out on a face. That is a rotary-table job, so
+    **a lathe does not offer it at all**, whatever the *Show Patterns* setting
+    says. You will see the button on a rotary table, and the setting alongside
+    it:
 
     ![Formats settings](../screenshots/setup_formats.png)
 

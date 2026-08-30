@@ -4,7 +4,9 @@ import sentry_sdk
 from kivy.app import App
 from kivy.config import Config
 from kivy.core.audio import SoundLoader
-from kivy.properties import ObjectProperty, ConfigParserProperty, NumericProperty, ListProperty, StringProperty, BooleanProperty
+from kivy.properties import (ObjectProperty, ConfigParserProperty, NumericProperty,
+                             ListProperty, StringProperty, BooleanProperty,
+                             AliasProperty)
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
 
@@ -35,6 +37,18 @@ USE_CASE_MODES = {
     "rotary_table": [MODE_INDEX, MODE_JOG, MODE_DRO],
     "lathe": [MODE_ELS, MODE_DRO],
     "all_features": [MODE_INDEX, MODE_ELS, MODE_JOG, MODE_DRO],
+}
+# Which use cases expose the PATTERN screen (hole circles, lines, rectangles),
+# reached from the wand in the sidebar. A rotary-table feature: it lays holes
+# out on a face. A lathe has nothing to point it at, so the button is not shown
+# there at all -- the same way USE_CASE_MODES keeps ELS off a rotary table.
+#
+# This is a separate table because the pattern screen is not a MODE. Folding it
+# into USE_CASE_MODES would have made it selectable by the mode one-hot.
+USE_CASE_PATTERNS = {
+    "rotary_table": True,
+    "lathe": False,
+    "all_features": True,
 }
 USE_CASE_LABELS = {
     "rotary_table": "Rotary Table",
@@ -74,6 +88,19 @@ class MainApp(App):
     use_case = ConfigParserProperty(
         defaultvalue=DEFAULT_USE_CASE, section="device", key="use_case", config=config, val_type=str
     )
+
+    def _get_patterns_available(self):
+        """Does this use case expose the pattern screen at all?
+
+        An AliasProperty rather than a method so kv rebinds when `use_case`
+        changes: the sidebar button has to appear and disappear with the
+        setting, not only at startup.
+        """
+        return USE_CASE_PATTERNS.get(self.use_case,
+                                     USE_CASE_PATTERNS[DEFAULT_USE_CASE])
+
+    patterns_available = AliasProperty(_get_patterns_available,
+                                       bind=["use_case"], cache=True)
 
     manager = ObjectProperty()
 
