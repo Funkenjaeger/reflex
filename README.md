@@ -121,17 +121,83 @@ an existing one, widening a groove, and commissioning a new machine — see the
 
 ## 🗺 Versions
 
-One table for what shipped and what is planned, so the two cannot drift apart.
-Rows move from **planned** to **released** as tags are cut, and the plan below
-the line is revised as often as reality requires.
+The living record: what shipped and what is planned, in one place so the two
+cannot drift apart. Entries move from **planned** to **released** as tags are
+cut, and the plan is revised as often as reality requires.
 
-| Version | Status | What it is |
-|---|---|---|
-| **1.0.0** | released 2026-06-19 | The UI, pre-monorepo. DRO, the electronic leadscrew, and the electronic stop. |
-| **1.1.0** | `rc.1` tagged 2026-08-22 | First release of the welded monorepo. Take-up confirmation before every pass, thread phase re-sync from the Z scale, the manual thread pick-up, the phase offset, and the status gutter. A user guide and a generated screenshot set. |
-| **1.2.0** | planned | **Auto-start** — begin the pass when the half nut closes, rather than on a button. Sensorless first. |
-| **1.3.0** | planned | **Auto-advance / virtual compound** — take the next depth of cut by advancing thread phase from X depth, so a flank-infeed thread needs no compound slide. |
-| **2.0.0** | planned | **Control-board respin** — differential encoder signalling, and the firmware changes that ride with it: an integrity checksum, index-anchored phase correction, and proper **multi-start** threading. |
+### 1.0.0 · released 2026-07-15
+
+The first release, as two separately versioned repositories (`reflex-fw` and
+`reflex-ui`). A working DRO with an electronic leadscrew behind it.
+
+- **Multi-axis DRO** — configurable axes over hardware scale inputs, with
+  transforms, work offsets and absolute/incremental readout.
+- **Electronic leadscrew** — spindle-synchronised carriage feed for power
+  feeding and for threading.
+- **Electronic stop** — feed or thread up to a shoulder and stop, hands off.
+- **Electronic retract** and the advanced ELS bar.
+- Jogging with a trapezoidal velocity profile.
+
+### 1.1.0 · `rc.1` tagged 2026-08-22 — **current**
+
+The release where the controller stops trusting and starts **verifying**. Every
+headline feature below exists because some way of getting a thread wrong had no
+detection before it.
+
+- **Backlash calibration and take-up confirmation.** Before every pass the
+  controller drives the leadscrew through its backlash and watches the Z scale
+  to confirm the carriage actually moved — and refuses the pass if it did not.
+  An open half nut used to cut the next pass in the wrong place.
+- **Thread phase re-sync from the Z scale**, after every pass, in every stop
+  mode. Stopping decouples spindle sync, so this is what puts the next pass in
+  the same groove — and what lets you open the half nut between passes.
+- **Pick up an existing thread** — a guided procedure that latches a thread
+  reference on work this job did not cut: a re-chucked part, a thread cut
+  elsewhere, a damaged thread being chased.
+- **Thread phase offset** — cut a groove wider than the tool that cuts it, by
+  stepping the phase along between passes.
+- **A status gutter** that reserves its own space, so the thread reference and
+  the phase offset are always visible and never cover the field headers.
+- **Operator messages rewritten** to lead with the state of the machine
+  (*"Cut aborted — …"*) rather than the name of the fault, and every refusal
+  now says what to do about it.
+- **One repository, one version.** `fw/` and `ui/` welded with full history
+  preserved on both sides; releases are cut for both halves together.
+- **This user guide**, and a generated screenshot set that doubles as the
+  regression check for the screens it photographs.
+
+### 1.2.0 · planned — auto-start
+
+Take the last button press out of the cycle.
+
+- **Begin the pass when the half nut closes**, rather than on **Cut**.
+- **Sensorless first** — infer engagement from motion the controller already
+  measures for the take-up confirmation, rather than adding a switch to the
+  apron.
+- Developed desk-first against the firmware emulator, with a machine window for
+  live verification.
+
+### 1.3.0 · planned — auto-advance, the virtual compound
+
+Take the depth of cut out of your hands as well.
+
+- **Advance thread phase from X depth**, so each pass enters the thread offset
+  along the helix in proportion to how deep it is cutting — a flank infeed
+  without a compound slide set over.
+- Threading illustrations re-tooled as programmatic SVG, so the diagrams
+  regenerate the way the screenshots already do.
+
+### 2.0.0 · planned — the respin
+
+The first release that needs **new hardware**, which is why it is a major
+version rather than 1.4.
+
+- **Control-board respin for differential encoder signalling.** The spindle
+  encoder is open-collector today, which is the weakest link in the chain the
+  thread datum depends on.
+- Firmware changes that ride with the new board rather than being cut twice: a
+  **register-block integrity checksum**, **index-anchored phase correction**,
+  and the mod-lead fix that makes real **multi-start threading** possible.
 
 > [!NOTE]
 > **Multi-start is not supported before 2.0.0**, and the phase offset is not a
