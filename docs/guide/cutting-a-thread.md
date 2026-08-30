@@ -37,10 +37,17 @@ The thing that normally forces you to leave the half nut closed for an entire
 thread is phase: reopening it loses your place on the leadscrew, and the next
 pass cuts a new helix beside the old one.
 
-Reflex does not depend on the half nut for phase. It re-derives thread phase
-from the **Z scale** — the carriage's actual position, which does not care what
-the half nut is doing. That is what makes the retract cycle possible, and it is
-why the reference chip in the gutter matters more than the half nut does.
+**Stopping decouples sync anyway.** The firmware pauses spindle sync while the
+stop is active, so at the end of every pass the leadscrew is no longer
+phase-locked to the spindle — in every stop mode, and whether or not you move
+the carriage afterwards. A re-sync is not an occasional recovery; it is what
+happens between every pair of passes.
+
+Reflex does not depend on the half nut for it. It re-derives thread phase from
+the **Z scale** — the carriage's actual position, which does not care what the
+half nut has been doing. That is what makes the retract cycle possible, what
+makes a hand-wound return in stop-only work just as well, and why the reference
+chip in the gutter matters more than the half nut does.
 
 !!! warning "It still has to be the same reference"
     Phase survives a retract, a stop, and a mode switch. It does **not** survive

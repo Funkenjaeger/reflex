@@ -72,7 +72,7 @@ nav:
   - Home: index.md
   - Getting started:
       - The screen: guide/the-screen.md
-      - The three ELS modes: guide/operator-modes.md
+      - The three stop modes: guide/operator-modes.md
   - Everyday work:
       - Feeding to a shoulder: guide/feeding-to-a-shoulder.md
       - Cutting a thread: guide/cutting-a-thread.md

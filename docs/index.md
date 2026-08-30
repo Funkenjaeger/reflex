@@ -31,14 +31,23 @@ place.
 
 ## What it does
 
-Five things, and most people use two of them. Each links to its own page; you do
-not need to read them in order.
+### Underneath everything: a plain ELS
 
-### Three ELS modes
+Spindle-synchronised feed is its own layer, independent of everything that
+follows.
+Pick a pitch, enable sync, disengage the stop, and Reflex is a traditional
+electronic leadscrew — cut with the half nut and your own eyes. Collapse the
+advanced bar with **ADV** and the screen is a DRO with a leadscrew behind it.
 
-How much of the job the controller takes over. They cut the same thread — what
-changes is how much you set up first and how much you do by hand between passes.
-Cycle between them with the tri-state tab at the right of the advanced bar.
+The electronic stop is what the rest of this guide is about. It is the point of
+the project, and it is not mandatory.
+
+### Three stop modes
+
+How much of the job the controller takes over once a stop is armed. They cut the
+same thread — what changes is how much you set up first and how much you do by
+hand between passes. Cycle between them with the tri-state tab at the right of
+the advanced bar.
 
 <div class="grid cards" markdown>
 
@@ -61,8 +70,7 @@ Cycle between them with the tri-state tab at the right of the advanced bar.
     Adds **Start Z** and an automatic return. The cycle becomes
     Cut → Retract → Cut instead of Cut → *four things by hand* → Cut.
 
-    This is where phase re-sync earns its keep: you may open the half nut
-    between passes.
+    Fewer things to get wrong per pass, at the cost of one more value to set.
 
     [Cutting a thread →](guide/cutting-a-thread.md) ·
     [the modes compared →](guide/operator-modes.md#stop-retract)
@@ -80,6 +88,16 @@ Cycle between them with the tri-state tab at the right of the advanced bar.
 
 </div>
 
+!!! tip "Phase re-sync is not one of the modes — it is under all of them"
+    Stopping **decouples sync**: the firmware pauses it while the stop is
+    active, so after every pass the leadscrew is no longer phase-locked to the
+    spindle, whether or not you moved the carriage afterwards.
+
+    So the controller re-derives thread phase from the **Z scale** after every
+    pass, in every mode. That is what lets you open the half nut. If anything it
+    matters most in **stop-only**, where the carriage comes back entirely by
+    hand.
+
 ### Two advanced features
 
 Neither is needed for ordinary threading. Both exist for jobs the basic cycle
@@ -89,13 +107,13 @@ cannot express.
 
 - ![Picking up an existing thread](screenshots/flow/wt_resync_align.png)
 
-    **Thread phase re-sync** — pick up an existing thread
+    **Pick up an existing thread**
 
     Re-establish the thread datum on work this job did not cut: a re-chucked
     part, a thread cut elsewhere, a damaged thread being chased. You show the
     controller where the helix is and it latches a reference at that instant.
 
-    The same mechanism is what lets you open the half nut mid-thread.
+    A manual procedure — distinct from the automatic per-pass re-sync above.
 
     [Read the procedure →](guide/picking-up-a-thread.md)
 
@@ -120,7 +138,7 @@ cannot express.
 | If you are… | Go to |
 |---|---|
 | new to the screen | [The screen](guide/the-screen.md) — every region named |
-| choosing how to work | [The three ELS modes](guide/operator-modes.md) |
+| choosing how to work | [The three stop modes](guide/operator-modes.md) |
 | power feeding to a shoulder | [Feeding to a shoulder](guide/feeding-to-a-shoulder.md) |
 | cutting a thread | [Cutting a thread](guide/cutting-a-thread.md) |
 | setting up a new machine | [Setup](setup/index.md) — axes, scales, servo, backlash |

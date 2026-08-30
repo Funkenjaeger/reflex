@@ -18,7 +18,7 @@ can give you with what to do about it.
 ## 📸 What it does
 
 Home screen in ELS mode with the advanced bar expanded, in **stop-only** mode
-(see [Operator modes](#-operator-modes) below):
+(see [Stop modes](#-stop-modes) below):
 
 | Dark | Light |
 |------|-------|
@@ -40,12 +40,19 @@ them is a memory-mapped register contract guarded by `protocolVersion`.
 
 ---
 
-## 🎛 Operator modes
+## 🎛 Stop modes
 
-The advanced bar has three modes, and they are not difficulty levels — they are
-three different amounts of the job the controller takes over. All three cut the
-same thread; they differ in how much you set up first and how much you do by
-hand between passes.
+These are modes of the electronic **stop**, not of the ELS. Spindle-synchronised
+feed is a separate, lower layer — `syncEnable` is independent of the stop
+feature, so a turning spindle drives the leadscrew whether or not a threading
+job is armed. Disengage the stop and collapse the advanced bar and Reflex is a
+traditional electronic leadscrew.
+
+The stop is what makes this project what it is, and it is not mandatory.
+
+Its three modes are not difficulty levels — they are three different amounts of
+the job the controller takes over. All three cut the same thread; they differ in
+how much you set up first and how much you do by hand between passes.
 
 ### Stop-only
 
@@ -69,9 +76,7 @@ Adds **Start Z** and an automatic retract. At the end of a pass the tool comes
 out and the carriage returns to the start position on its own, so the cycle is
 Cut → Retract → Cut rather than Cut → *four things by hand* → Cut.
 
-This is where the **phase re-sync** earns its keep: the controller re-derives
-thread phase from the Z scale between passes, so you are free to open the half
-nut and the next pass still lands in the same groove.
+Fewer things to get wrong per pass, at the cost of one more value to set.
 
 ### Wizard
 
@@ -91,6 +96,17 @@ The prompt above the fields is the wizard's whole interface: it names the next
 value, the field it will land in is outlined, and the action button reads what
 pressing it will do. Nothing is captured until you press Set, so you can drive
 past a position and come back.
+
+### Phase re-sync is under all three
+
+**Stopping decouples sync.** The firmware pauses spindle sync while the stop is
+active, so at the end of every pass the leadscrew is no longer phase-locked to
+the spindle — in every mode, and whether or not you move the carriage
+afterwards.
+
+So the controller re-derives thread phase from the **Z scale** after every pass.
+That is what lets you open the half nut between passes, and if anything it
+matters most in **stop-only**, where the carriage comes back entirely by hand.
 
 **On choosing a mode.** The wizard is the most guided and puts the most
 machinery between you and the cut; stop-only is the least. Neither is safer than

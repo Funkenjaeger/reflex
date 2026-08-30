@@ -1,17 +1,33 @@
-# The three operator modes
+# The three stop modes
 
-They are not difficulty levels. They are three different amounts of the job the
-controller takes over, and all three cut the same thread. What changes is how
-much you set up first and how much you do by hand between passes.
+These are modes of the **electronic stop**, not of the ELS. They are the point
+of the project — but they are not mandatory, and it is worth knowing what sits
+underneath them.
 
-Cycle between them with the tri-state tab at the right of the advanced bar.
+## Underneath: a plain ELS
+
+Spindle-synchronised feed is a separate, lower layer. `syncEnable` on a scale
+input is **independent of the ELS stop feature**: a turning spindle drives the
+leadscrew through sync whether or not a threading job is armed.
+
+So you can run Reflex as a traditional electronic leadscrew — pick a pitch,
+enable sync, and cut with the half nut and your own eyes, disengaging the stop
+entirely. Collapse the advanced bar with **ADV** and the screen is a DRO with a
+leadscrew behind it.
+
+Everything below adds an electronic stop on top of that.
+
+## The three stop modes
+
+They cut the same thread. What changes is how much you set up first and how much
+you do by hand between passes. Cycle between them with the tri-state tab at the
+right of the advanced bar.
 
 !!! info "None of them is safer than the others"
-    The take-up confirmation, the electronic stop and the thread datum are the
-    same code in all three. What differs is how much of the *handling* is
-    automated.
+    The take-up confirmation, the stop itself and the thread datum are the same
+    code in all three. What differs is how much of the *handling* is automated.
 
-## Stop-only
+### Stop-only
 
 ![Stop-only](../screenshots/home_els_dark.png)
 
@@ -23,10 +39,9 @@ the next depth of cut — is yours, exactly as on a manual lathe fitted with a
 carriage stop.
 
 This is the mode with the least to get wrong, and it is what the author runs on
-his own machine. The controller still confirms the backlash take-up before every
-pass and refuses to start one it cannot confirm.
+his own machine.
 
-## Stop + retract
+### Stop + retract
 
 ![Stop and retract](../screenshots/home_els_stopretract.png)
 
@@ -34,11 +49,7 @@ Adds **Start Z** and an automatic retract. At the end of a pass the tool comes
 out and the carriage returns to the start position on its own, so the cycle is
 Cut → Retract → Cut rather than Cut → *four things by hand* → Cut.
 
-This is where **phase re-sync** earns its keep. Between passes the controller
-re-derives thread phase from the Z scale, so you are free to open the half nut
-and the next pass still lands in the same groove.
-
-## Wizard
+### Wizard
 
 The guided setup. Instead of typing values into fields you drive the machine to
 each position and press **Set**, and the bar tells you what it wants next.
@@ -81,9 +92,29 @@ value, the field it will land in is outlined, and the action button reads what
 pressing it will do. **Nothing is captured until you press Set**, so you can
 drive past a position and come back.
 
+## Phase re-sync applies to all three
+
+A point worth making here rather than under one mode: **stopping decouples
+sync.** The firmware pauses spindle sync while the stop is active, so after
+every pass the leadscrew is no longer phase-locked to the spindle — whether or
+not you moved the carriage afterwards.
+
+That means a re-sync is required in **every** stop mode, and it happens
+automatically: the controller re-derives thread phase from the **Z scale**, which
+does not care what the half nut has been doing.
+
+If anything it matters most in **stop-only**, where there is no electronic
+retract at all and the carriage returns entirely by hand. The controller still
+puts the next pass in the same groove.
+
+This is a different thing from
+[picking up an existing thread](picking-up-a-thread.md), which is a manual
+procedure for work this job did not cut.
+
 ## Choosing
 
-The wizard puts the most machinery between you and the cut; stop-only the least.
-If you already know your numbers, typing them into stop + retract is faster than
-walking the wizard. If you are setting up a part you have not cut before, the
-wizard stops you forgetting a value.
+The wizard puts the most machinery between you and the cut; stop-only the least,
+and a plain ELS with the stop disengaged is less still. If you already know your
+numbers, typing them into stop + retract is faster than walking the wizard. If
+you are setting up a part you have not cut before, the wizard stops you
+forgetting a value.

@@ -64,9 +64,14 @@ The control row, and its contents depend on the mode
   available, and lights up when there is.
 - **Mode selector and settings** on the right.
 
-Below that: **Sync Enable**, the **DIR** direction pair, **ADV** (expands the
-bar), the thread-hand illustration, and the feed/thread selector with the
-current pitch.
+Below that: **Sync Enable**, the **DIR** direction pair, **ADV**, the
+thread-hand illustration, and the feed/thread selector with the current
+pitch.
+
+**ADV** collapses and expands the stop controls. Collapsed, with the stop
+disengaged, what is left is a DRO with a spindle-synchronised leadscrew
+behind it — a traditional ELS. Sync is independent of the stop feature, so a
+turning spindle drives the leadscrew either way.
 
 !!! tip "The action button always says what it will do"
     It reads `Cut`, `Retract`, `Set` or `Confirm` depending on where you are.
