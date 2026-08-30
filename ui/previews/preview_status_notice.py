@@ -67,6 +67,8 @@ IDLE_TICKS = 8
 LONG_INFO = ("Carriage retracted past the start position and the cycle is "
              "ready for another pass at the current depth of cut")
 
+FAILED = []
+
 app = MainApp()
 
 
@@ -266,9 +268,10 @@ def _capture(_dt):
         dump("cleared")
         assert_nothing_moved(before, _sizes(), "after clearing", exempt)
         shot("cleared")
-    except Exception:
+    except Exception as exc:
         import traceback
         traceback.print_exc()
+        FAILED.append(exc)
     app.stop()
 
 
@@ -286,8 +289,9 @@ def _arm(_dt):
     els_bar.enable_advanced = True
 
     def _stoponly(_d):
-        # AFTER the mode swap mounts the bar -- setting it in _arm silently does
-        # nothing (preview_banner_placements.py learned this the hard way).
+        # AFTER the mode swap mounts the bar -- setting it in _arm silently
+        # does nothing. preview_takeup_banner.py was still doing it that way
+        # until 2026-08-30 and captured four shots in the wrong mode.
         adv = _find(lambda w: type(w).__name__ == "ElsAdvancedBar")
         if adv is not None:
             adv.enable_wizard = False
@@ -299,3 +303,14 @@ def _arm(_dt):
 
 Clock.schedule_once(_arm, 2.0)
 app.run()
+
+
+# A HARNESS THAT WRITES FILES AND EXITS 0 IS NOT EVIDENCE IT WORKED.
+# The try/except above exists so Kivy's clock cannot swallow the traceback --
+# it must not also swallow the exit code. Added 2026-08-30, after a sibling
+# preview wrote 2 of its 5 shots and still reported rc=0: the same shape that
+# let preview_walkthrough_shots.py abandon a whole section unnoticed for a
+# week. (That sibling, preview_banner_placements.py, was deleted the same day
+# -- it rendered proposals for a banner the status gutter made impossible.)
+if FAILED:
+    raise SystemExit(f"{__file__}: capture failed: {FAILED[0]!r}")

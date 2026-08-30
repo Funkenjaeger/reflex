@@ -12,8 +12,9 @@ arithmetic the app did over the app's own live geometry.
 WHY Window.screenshot AND NOT export_to_png. A Popup is a ModalView parented
 to Window, not to app.root, so `app.root.export_to_png()` -- the capture the
 three previews above use -- renders the screen with the modal MISSING.
-previews/preview_widgets.py records that "Window.screenshot returns black on
-this headless GL"; re-probed 2026-08-23 under the same
+An older preview (preview_widgets.py, deleted 2026-08-30) recorded that
+"Window.screenshot returns black on this headless GL"; re-probed 2026-08-23
+under the same
 `xvfb-run -s "-screen 0 1024x600x24"` the other previews run in, it is not
 black, and it is the only path that captures the dimmed backdrop and the modal
 in one frame. Window.screenshot() inserts a counter into the filename, so each
@@ -100,6 +101,8 @@ PITCH_MM = 1.5             # the rig's own thread pitch, set in main() below
 Z_BASELINE = 12000         # arbitrary but realistic raw encoder counts
 SPINDLE_BASELINE = 8192
 
+FAILED = []
+
 app = MainApp()
 
 # Everything printed for the write-up, collected as it is rendered rather than
@@ -175,6 +178,9 @@ def record(title, **fields):
 # needing someone to notice it in a PNG.
 MEASUREMENTS = []
 CHECKS = []
+# Refusal codes this run PROVED it put on screen, appended by refused() at the
+# moment of capture. Never a list typed by hand -- see the note at the print.
+RENDERED_REFUSALS = []
 
 
 def check(defect, tag, ok, detail):
@@ -575,6 +581,28 @@ def section_phase_offset():
         assert popup.message != REFUSAL_TEXT[ElsFsm.PHASE_OFFSET_OFFLINE], (
             "the link dropped again before apply() read it")
 
+    def refused(tag, popup, code):
+        """The shot about to be taken really is the refusal it is named for.
+
+        ADDED 2026-08-30, because for a week it was not. `apply_linked` only
+        ever checked that the refusal was not OFFLINE; nothing checked that a
+        refusal happened AT ALL, so three shots named AT_PITCH / NEGATIVE /
+        NO_JOB were captured on the WAITING frame and written out with
+        confident filenames. The state and the exact message are both demanded
+        here -- the state alone would still pass on a refusal for the wrong
+        reason, which is the failure this whole set exists to make visible.
+        """
+        want = REFUSAL_TEXT[code]
+        assert popup.state == "refused", (
+            f"offset/{tag}: modal is in state {popup.state!r}, not 'refused' "
+            f"-- the message on screen is {popup.message!r}. The shot would be "
+            f"a picture of some other state under a refusal's filename.")
+        assert popup.message == want, (
+            f"offset/{tag}: refused with {popup.message!r}, wanted {want!r} "
+            f"-- a refusal for the wrong reason is still the wrong picture.")
+        RENDERED_REFUSALS.append(tag)
+        print(f"  REFUSED [{tag}] {popup.message!r}")
+
     pitch = fsm.thread_pitch_steps()
     mm_per_step = fsm.steps_to_display(1)
     step = int(round(STEP_OVER_MM / mm_per_step)) if mm_per_step else 1
@@ -640,20 +668,39 @@ def section_phase_offset():
 
     # ── 12. AT_PITCH. A widening job never gets near this bound in normal use,
     # which is exactly why it has to be rendered: the operator meets it only
-    # when the arithmetic has already gone wrong. The total is walked to within
-    # half a step-over of a full pitch and one more step-over is applied.
-    # Refused by ElsFsm.apply_phase_offset for real, not selected from the
-    # table.
+    # when the arithmetic has already gone wrong. Refused by
+    # ElsFsm.apply_phase_offset for real, not selected from the table.
+    #
+    # THE ENTRY IS ABSOLUTE, AND ASSUMING IT WAS ADDITIVE BROKE ALL THREE
+    # REFUSAL SHOTS (found 2026-08-30, by reading the rendered PNG rather than
+    # the code). This walked the FIRMWARE's total to within half a step-over of
+    # a pitch (590 of 600 steps) and then applied ONE MORE step-over, expecting
+    # 590 + 20 to cross the bound. But apply_phase_offset "SETS, DOES NOT
+    # ACCUMULATE" since 2026-08-23 -- the field says so on screen, "The whole
+    # offset, not an amount to add" -- so the 0.050 mm entry set the total to
+    # 20 steps, a perfectly legal value, and the modal went to WAITING.
+    #
+    # It then cascaded, which is why one wrong assumption cost three pictures:
+    # `_command()` early-returns while `busy` is set, so the NEGATIVE and
+    # NO_JOB applies below were silent no-ops and BOTH of their shots were the
+    # same leftover "Waiting for the controller to acknowledge…" frame. Three
+    # files named for refusals, none of which contained one, and the run
+    # printed "REFUSAL_TEXT codes covered by a rendered shot: AT_PITCH,
+    # NEGATIVE, NO_JOB" underneath -- a hardcoded sentence, not a measurement.
+    #
+    # The bound is `offset_steps >= pitch` on the ENTRY alone, so the way to
+    # meet it is to ask for a whole pitch.
     ctl["steps"] = int(round(pitch)) - step // 2
     pop._refresh_total()
-    pop.entry = float(fsm.steps_to_display(step))
+    pop.entry = float(fsm.steps_to_display(int(round(pitch))))
     apply_linked(pop)
     settle(6)
-    print(f"  apply {pop.entry} on a total of {ctl['steps']}/{pitch:.0f} "
-          f"steps -> {pop.state}")
+    print(f"  apply {pop.entry} (a full pitch) against a firmware total of "
+          f"{ctl['steps']}/{pitch:.0f} steps -> {pop.state}")
     record("offset / refused AT_PITCH", state=pop.state,
            total=pop.total_text, fraction=pop.fraction_text,
            entry_text=pop.entry_text, message=pop.message)
+    refused("AT_PITCH", pop, ElsFsm.PHASE_OFFSET_AT_PITCH)
     measure_fit("offset/AT_PITCH", pop, "lbl_message", "sv_message", "D3")
     shot("wt_offset_refused_at_pitch")
 
@@ -667,6 +714,7 @@ def section_phase_offset():
     record("offset / refused NEGATIVE", state=pop.state,
            total=pop.total_text, entry_text=pop.entry_text,
            message=pop.message)
+    refused("NEGATIVE", pop, ElsFsm.PHASE_OFFSET_NEGATIVE)
     measure_fit("offset/NEGATIVE", pop, "lbl_message", "sv_message", "D3")
     shot("wt_offset_refused_negative")
 
@@ -682,6 +730,7 @@ def section_phase_offset():
     record("offset / refused NO_JOB", state=pop.state,
            total=pop.total_text, entry_text=pop.entry_text,
            message=pop.message)
+    refused("NO_JOB", pop, ElsFsm.PHASE_OFFSET_NO_JOB)
     measure_fit("offset/NO_JOB", pop, "lbl_message", "sv_message", "D3")
     shot("wt_offset_refused_no_job")
 
@@ -880,8 +929,12 @@ def section_phase_offset():
            message=pop.message)
     app.els_uic.is_threading = saved
 
-    print("\n  REFUSAL_TEXT codes covered by a rendered shot: "
-          "AT_PITCH, NEGATIVE, NO_JOB")
+    # DERIVED, NOT DECLARED. This was a hardcoded sentence naming the three
+    # codes the author intended to render, printed directly underneath three
+    # shots that in fact contained none of them. A summary line that cannot be
+    # wrong about the run it summarises is worth exactly nothing.
+    print("\n  REFUSAL_TEXT codes actually rendered, verified at capture: "
+          + (", ".join(RENDERED_REFUSALS) or "NONE"))
     print(f"  ElsFsm outcome codes: "
           f"{[v for k, v in vars(ElsFsm).items() if k.startswith('PHASE_OFFSET_')]}")
 
@@ -922,9 +975,10 @@ def _capture(_dt):
         section_settings()
         section_resync()
         section_phase_offset()
-    except Exception:
+    except Exception as exc:
         import traceback
         traceback.print_exc()
+        FAILED.append(exc)
     if os.path.exists(SCRATCH):
         os.remove(SCRATCH)
     print("\n########## fit measurements ##########")
@@ -999,3 +1053,14 @@ def _arm(_dt):
 
 Clock.schedule_once(_arm, 2.0)
 app.run()
+
+
+# A HARNESS THAT WRITES FILES AND EXITS 0 IS NOT EVIDENCE IT WORKED.
+# The try/except above exists so Kivy's clock cannot swallow the traceback --
+# it must not also swallow the exit code. Added 2026-08-30, after a sibling
+# preview wrote 2 of its 5 shots and still reported rc=0: the same shape that
+# let preview_walkthrough_shots.py abandon a whole section unnoticed for a
+# week. (That sibling, preview_banner_placements.py, was deleted the same day
+# -- it rendered proposals for a banner the status gutter made impossible.)
+if FAILED:
+    raise SystemExit(f"{__file__}: capture failed: {FAILED[0]!r}")

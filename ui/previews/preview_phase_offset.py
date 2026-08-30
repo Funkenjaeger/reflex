@@ -48,7 +48,11 @@ from kivy.base import EventLoop  # noqa: E402
 from kivy.clock import Clock  # noqa: E402
 
 from reflex.app import MainApp  # noqa: E402
-from reflex.utils.devices import ELS_TAKEUP_MESSAGES, ELS_TAKEUP_ERR_UNCONFIRMED  # noqa: E402
+from reflex.utils.devices import (ELS_TAKEUP_MESSAGES,  # noqa: E402
+                                  ELS_TAKEUP_ERR_UNCONFIRMED,
+                                  ELS_TAKEUP_WRONG_WAY,
+                                  ELS_TAKEUP_UNKNOWN,
+                                  ELS_TAKEUP_TIMEOUT_LATCHED)
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -59,10 +63,41 @@ FRACTION_DENOM = 3  # render the strip at an exact 1/3, to exercise the naming
 FALLBACK_STEPS = 500
 
 WARNING = ELS_TAKEUP_MESSAGES[ELS_TAKEUP_ERR_UNCONFIRMED]
-# By character count, not named by key: the point is to render whichever
-# message is currently the longest, and a key pinned here would go stale the
-# moment the texts are edited again.
-WIDEST_WARNING = max(ELS_TAKEUP_MESSAGES.values(), key=len)
+
+# EVERY string that can reach the notice strip, not just the dict. WRONG_WAY,
+# UNKNOWN and TIMEOUT_LATCHED live outside ELS_TAKEUP_MESSAGES because they
+# are not keyed by a firmware result code -- and until 2026-08-30 that meant
+# the "widest warning" shot was picking the widest of three out of five.
+STRIP_TEXTS = dict(ELS_TAKEUP_MESSAGES)
+STRIP_TEXTS["WRONG_WAY"] = ELS_TAKEUP_WRONG_WAY
+STRIP_TEXTS["UNKNOWN"] = ELS_TAKEUP_UNKNOWN
+STRIP_TEXTS["TIMEOUT_LATCHED"] = ELS_TAKEUP_TIMEOUT_LATCHED
+
+
+def widest_warning():
+    """The widest strip text BY RENDERED WIDTH, not by character count.
+
+    This file's entire argument is that a character count is not the contract,
+    and it then chose which string to photograph with `max(..., key=len)`.
+    Character count and pixels happen to agree on today's set, which is
+    exactly how that survives unnoticed until they do not. Measured with the
+    same CoreLabel the check below uses, so the shot and the numbers under it
+    can never name different strings.
+
+    Deferred into a function because it needs the theme's font, which does not
+    exist at import time.
+    """
+    from kivy.core.text import Label as CoreLabel
+    from kivy.metrics import dp
+
+    def w(msg):
+        cl = CoreLabel(text=msg, font_name=app.theme.font_bold, font_size=dp(13))
+        cl.refresh()
+        return cl.texture.size[0]
+
+    return max(STRIP_TEXTS.values(), key=w)
+
+FAILED = []
 
 app = MainApp()
 
@@ -236,10 +271,6 @@ def measure_takeup_texts():
     """
     from kivy.core.text import Label as CoreLabel
     from kivy.metrics import dp
-    from reflex.utils.devices import (ELS_TAKEUP_MESSAGES,
-                                      ELS_TAKEUP_WRONG_WAY,
-                                      ELS_TAKEUP_UNKNOWN)
-
     from reflex.fsms.ui_controller import phase_offset_chip_readout
 
     bar = _bar()
@@ -276,9 +307,7 @@ def measure_takeup_texts():
     app.els_uic.phase_offset_chip_value = saved
     settle()
 
-    texts = {str(k): v for k, v in ELS_TAKEUP_MESSAGES.items()}
-    texts["WRONG_WAY"] = ELS_TAKEUP_WRONG_WAY
-    texts["UNKNOWN"] = ELS_TAKEUP_UNKNOWN
+    texts = {str(k): v for k, v in STRIP_TEXTS.items()}
 
     print("\n===== take-up warning widths vs the space a CENTRED string has =====")
     print(f"  chip_reference.right={round(left)}  chip_phase.x="
@@ -402,7 +431,7 @@ def _capture(_dt):
         # for. The notice strip is translucent and sits over the gutter, so
         # the question is not "does the common message fit" but "does the
         # worst one land on the phase chip's text".
-        app.els_uic.takeup_warning = WIDEST_WARNING
+        app.els_uic.takeup_warning = widest_warning()
         settle()
         shot(f"{tag}_on_plus_widest_warning")
         app.els_uic.takeup_warning = ""
@@ -449,9 +478,10 @@ def _capture(_dt):
         bar.enable_retract = True
         settle()
         variants("wizard")
-    except Exception:
+    except Exception as exc:
         import traceback
         traceback.print_exc()
+        FAILED.append(exc)
     app.stop()
 
 
@@ -488,8 +518,9 @@ def _arm(_dt):
     els_bar.set_feed_ratio("Thread MM", 8)
 
     def _stoponly(_d):
-        # AFTER the mode swap mounts the bar -- setting it in _arm silently does
-        # nothing (preview_banner_placements.py learned this the hard way).
+        # AFTER the mode swap mounts the bar -- setting it in _arm silently
+        # does nothing. preview_takeup_banner.py was still doing it that way
+        # until 2026-08-30 and captured four shots in the wrong mode.
         adv = _bar()
         if adv is not None:
             adv.enable_wizard = False
@@ -501,3 +532,14 @@ def _arm(_dt):
 
 Clock.schedule_once(_arm, 2.0)
 app.run()
+
+
+# A HARNESS THAT WRITES FILES AND EXITS 0 IS NOT EVIDENCE IT WORKED.
+# The try/except above exists so Kivy's clock cannot swallow the traceback --
+# it must not also swallow the exit code. Added 2026-08-30, after a sibling
+# preview wrote 2 of its 5 shots and still reported rc=0: the same shape that
+# let preview_walkthrough_shots.py abandon a whole section unnoticed for a
+# week. (That sibling, preview_banner_placements.py, was deleted the same day
+# -- it rendered proposals for a banner the status gutter made impossible.)
+if FAILED:
+    raise SystemExit(f"{__file__}: capture failed: {FAILED[0]!r}")

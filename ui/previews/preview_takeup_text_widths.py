@@ -39,7 +39,8 @@ from kivy.metrics import dp  # noqa: E402
 from reflex.components.widgets.palettes import PALETTES  # noqa: E402
 from reflex.utils.devices import (ELS_TAKEUP_MESSAGES,  # noqa: E402
                                   ELS_TAKEUP_WRONG_WAY,
-                                  ELS_TAKEUP_UNKNOWN)
+                                  ELS_TAKEUP_UNKNOWN,
+                                  ELS_TAKEUP_TIMEOUT_LATCHED)
 
 # Measured off the live layout by previews/preview_phase_offset.py, stop-only
 # with both chips up at 1024x600. RESTATED, not read live: this script exists
@@ -77,6 +78,21 @@ CANDIDATES = {
     "WRONG_WAY alt F": "Cut aborted — carriage ran the WRONG way. Check Z scale direction.",
     "TIMEOUT alt E": "Cut aborted — take-up did not complete. Re-engage the stop.",
     "SERVOMODE alt D": "Cut aborted — the servo is in jog mode. Leave jog, then Cut.",
+    # ── Reference-aware TIMEOUT (Gate 1 item 1, 2026-08-30). The remedy is
+    # forced -- only the enable 1->0 edge clears a timed-out take-up
+    # (Ramps.c:1110) -- and the 0->1 edge back clears referenceLatched and
+    # phaseOffsetSteps (Ramps.c:766). The operator cannot avoid paying, so
+    # the message's job is to say what it costs, in the same budget.
+    # The one that SHIPPED, read from the constant rather than retyped --
+    # a candidate list that does not include the live string measures
+    # everything except the thing on screen.
+    "TIMEOUT_LATCHED (current)": ELS_TAKEUP_TIMEOUT_LATCHED,
+    "TIMEOUT latched A": "Cut aborted — re-engage the stop. That clears your reference.",
+    "TIMEOUT latched B": "Cut aborted — take-up stuck. Re-engaging clears the reference.",
+    "TIMEOUT latched C": "Cut aborted — take-up stuck. Re-engage; the reference is lost.",
+    "TIMEOUT latched D": "Cut aborted — re-engage the stop; this clears your reference.",
+    "TIMEOUT latched E": "Cut aborted — take-up stuck. Re-engage (clears the reference).",
+    "TIMEOUT latched F": "Cut aborted — re-engage the stop. The reference will clear.",
     "UNKNOWN (current)": ELS_TAKEUP_UNKNOWN,
 }
 

@@ -435,9 +435,15 @@ app sets no `Window.clearcolor`, so Kivy's default pure-black shows through at r
 in light-themed image viewers. Composite previews over black before judging.
 
 ### Preview scripts (not for production)
-- `previews/preview_widgets.py`, `previews/preview_probe.py`, `previews/preview_home_live.py`
-  render widgets via `export_to_png` (needs `EventLoop.idle()` ticks + a double export, else
-  only one tile renders). Consider deleting these or moving under `tests/` before release.
+- **DONE 2026-08-30.** `preview_widgets.py` and `preview_probe.py` were deleted (both died at
+  import on `facelift_theme`, removed at the theme refactor), along with
+  `preview_banner_placements.py` (it rendered proposals for a banner that grows the advanced
+  bar, a question the status gutter answered differently). `preview_home_live.py` was repaired
+  instead: it had rendered at 800x600 its whole life, because it set the size through `sys.argv`
+  while the run recipe exports `KIVY_NO_ARGS=1`.
+- The surviving previews are documentation generators, not scratch scripts, and the doc set they
+  produce is the release's Gate 2 scope. They still need generalizing and sequencing into demo
+  stills; that work is tracked on the roadmap, not here.
 
 ### Mockup fonts (Chakra Petch / Share Tech Mono / DSEG7) — DONE + follow-ups (2026-06-21)
 - Bundled all three (SIL OFL 1.1) under `reflex/fonts/` with their OFL license files.
