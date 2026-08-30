@@ -87,12 +87,40 @@ def _composite_over_theme_bg(path, rgba):
 
     Flattening onto black was harmless in dark (background 0.055) and produced a
     black hole in light (background 0.851), which reads as a UI defect and is
-    not one. Anything still dark AFTER this fix is a real painting bug.
+    not one.
+
+    AND THE ALPHA IS PREMULTIPLIED. Image.alpha_composite assumes STRAIGHT
+    alpha, so using it here multiplied every translucent pixel by its own
+    opacity a second time -- every disabled control, every dimmed panel, in
+    every screenshot this script has ever produced, rendered darker than the
+    machine shows. Proven rather than guessed: exporting the home screen
+    without compositing and reading the disabled "Cut" card gives RGB (4, 5, 6)
+    at alpha 102, against a theme recess of (10, 12, 14) and a widget opacity
+    of 0.4 -- and 10 x 0.4 = 4.
+
+    It cost a wrong finding before it was caught. "Disabled controls are
+    unreadable on the light theme", measured at 1.03:1 and written into the
+    Gate 2 list on 2026-08-30, was this, not a UI defect.
+
+    For a premultiplied source the source's own alpha term is already applied,
+    so the composite is just:
+
+        out = src_rgb + (1 - src_a) * bg_rgb
     """
     img = Image.open(path).convert("RGBA")
-    solid = tuple(int(round(max(0.0, min(1.0, c)) * 255)) for c in rgba[:3]) + (255,)
-    bg = Image.new("RGBA", img.size, solid)
-    Image.alpha_composite(bg, img).convert("RGB").save(path)
+    src = img.load()
+    w, h = img.size
+    br, bg_, bb = (int(round(max(0.0, min(1.0, c)) * 255)) for c in rgba[:3])
+    out = Image.new("RGB", (w, h))
+    dst = out.load()
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = src[x, y]
+            inv = (255 - a) / 255.0
+            dst[x, y] = (min(255, int(round(r + inv * br))),
+                         min(255, int(round(g + inv * bg_))),
+                         min(255, int(round(b + inv * bb))))
+    out.save(path)
 
 
 def _settle():
