@@ -70,13 +70,27 @@ page puts it back in one command if you want to return to it.
 
 ## Step 2 — Reach the Pi over SSH
 
+Everything from here on is run **on the Pi**, over SSH. You need three things
+first, and none of them are Reflex-specific:
+
+- **The Pi on your network.** Ethernet needs nothing. For WiFi, the easiest
+  route is to set it when you write the card — Raspberry Pi Imager's advanced
+  options will preseed the network, the hostname and SSH into the image.
+- **SSH enabled.** If it is not, an empty file named `ssh` in the boot
+  partition turns it on at the next boot; you can create that from the machine
+  you wrote the card with.
+- **The login.** The account is `default`. The **password is the OSPI image's,
+  not something Reflex sets** — check the [OSPI
+  project](https://github.com/bartei/ospi) for the image you wrote, and change
+  it with `passwd` once you are in.
+
 ```bash
 ssh default@raspberrypi.local
 ```
 
 If mDNS does not resolve — it often will not from WSL — find the address from
 your router or with `ping raspberrypi.local` on the host machine, and use the
-IP. Everything below is run **on the Pi** unless it says otherwise.
+IP instead.
 
 ---
 
