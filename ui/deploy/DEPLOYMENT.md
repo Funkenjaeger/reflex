@@ -6,6 +6,17 @@ The goal: run reflex-ui **from source** out of the monorepo checkout's `ui/`
 directory, at `/home/default/projects/reflex/ui/`, auto-started at boot via
 systemd, replacing rcp as the boot application.
 
+> **Installing Reflex for the first time?** Read
+> [Installing on a Pi](https://funkenjaeger.github.io/reflex/setup/installing/)
+> in the user guide instead. It covers the same ground plus the firmware flash,
+> and it takes the source from a plain `git clone`.
+>
+> This file is the **developer's** copy. The end state is identical; the one
+> real difference is **step 3** — a push-to-deploy git remote, so the branch in
+> front of you reaches the Pi without a GitHub round-trip. Everything else here
+> (the unit, the venv, the config directory, rollback) is the same procedure,
+> in more detail than an operator needs.
+
 > A future task tracks scripting this (bash or, preferably, an Ansible playbook) —
 > see `todo.md`. The companion files in this directory are the source of truth for
 > that automation:
@@ -48,17 +59,22 @@ ssh default@<PI> 'curl -LsSf https://astral.sh/uv/install.sh | sh'
 # uv lands in ~/.local/bin/uv
 ```
 
-### 2. Create the target directory (ROOT — run on the Pi)
+### 2. Create the target directory (no root needed)
 
 ```bash
-sudo mkdir -p /home/default/projects/reflex && sudo chown default:default /home/default/projects/reflex
+ssh default@<PI> 'mkdir -p /home/default/projects'
 ```
 
-Owning it as `default` lets us push over SSH and run `uv sync` without root.
-(The service still runs as root; root can read default-owned files fine.)
-Note: this now lands inside `default`'s own home directory rather than at the
-filesystem root, so `sudo`/`chown` here may no longer be strictly necessary —
-left as-is (harmless if redundant) rather than guessed at without a live Pi to check.
+**No `sudo`, and no `chown`.** This lands inside `default`'s own home
+directory, so it is already owned correctly — verified on elspi 2026-08-30,
+where `/home/default/projects/reflex` is `default:default`. The earlier form
+here used `sudo mkdir` + `sudo chown` (a leftover from the old `/reflex-ui`
+layout at the filesystem root) and carried a note saying it might be redundant
+but had not been checked. It is redundant.
+
+The tree must be owned by `default` so we can push over SSH and run `uv sync`
+without root. The service still runs as root, which reads default-owned files
+fine.
 
 ### 3. Transfer the source — git over SSH, no GitHub required
 
@@ -75,7 +91,7 @@ ssh default@<PI> 'git init -b <BRANCH> /home/default/projects/reflex && \
 
 `receive.denyCurrentBranch=updateInstead` makes the working tree check out
 automatically when you push to the branch it has checked out. Initializing with
-`-b <BRANCH>` (e.g. `ui-facelift`) ensures HEAD matches what you push, so the first
+`-b <BRANCH>` (e.g. `integration`) ensures HEAD matches what you push, so the first
 push populates the tree.
 
 From your dev machine:

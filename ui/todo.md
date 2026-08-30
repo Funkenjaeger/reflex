@@ -97,19 +97,26 @@ operator to ignore it.
 
 ## Deployment
 
-## Deployment
+### ~~OSPI migration: service unit, install path, service name~~ DONE (2026-08-30)
 
-### OSPI Service Unit Migration
-- **Issue:** OSPI ships with a systemd service unit pointing to `/root/rotary-controller-python` and `rcp.main`. Reflex UI lives in a different path and uses `reflex.main`.
-- **Action:** Document the exact changes needed to the systemd service unit (ExecStart, WorkingDirectory, etc.) and test the full migration path on a Pi.
+Three items — documenting the systemd unit changes, replacing the README's
+hand-wave snippet, and reconciling the service name — closed together by
+`docs/setup/installing.md`, the operator-facing install procedure.
 
-### Document Systemd Service Unit Changes
-- **Issue:** The README includes a bash snippet for replacing RCP with reflex-ui on OSPI but doesn't specify the exact systemd service unit changes.
-- **Action:** Once deployment is tested on a Pi, document the exact changes (ExecStart, WorkingDirectory, etc.) and update the README with complete instructions.
+The unit is no longer *described*: `deploy/reflex-ui.service` and
+`deploy/start.sh` ship in the repo and are copied into place, so there is
+nothing to hand-edit. All three README defects are gone, each of which would
+have stopped a first-time installer:
 
-### Reconcile Systemd Service Name in README
-- **Issue:** The README's `journalctl` commands reference a service named `reflex`, but the original OSPI service is `rotary-controller`. The correct service name depends on what the migrated service unit is named.
-- **Action:** Reconcile the service name as part of updating the Pi migration instructions.
+| README said | Actually |
+|---|---|
+| RCP in `/root/rotary-controller-python/` | `/rotary-controller-python` |
+| `systemctl stop rotary-controller` | `rcp.service` — `rotary-controller` does not exist |
+| clone into `/root` | `/home/default/projects/reflex`, the path the shipped unit names |
+| `journalctl -u reflex` | `reflex-ui.service` |
+
+Verified against elspi 2026-08-30. **Still open:** scripting it — see
+*Deployment automation* below.
 
 ---
 

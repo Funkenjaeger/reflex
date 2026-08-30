@@ -4,6 +4,10 @@ First provisioning on a new machine. The order matters — each step depends on
 the one before it, and the last one only means anything once the first three are
 right.
 
+This page is about teaching Reflex *your lathe*. If the software is not on the
+machine yet, start with [Installing on a Pi](installing.md) and come back
+here.
+
 ![The setup screen](../screenshots/setup_hub.png)
 
 Everything below lives behind the **gear** in the sidebar.

@@ -81,6 +81,7 @@ nav:
       - Widening a groove: guide/widening-a-groove.md
   - Setup:
       - setup/index.md
+      - Installing on a Pi: setup/installing.md
       - Axes and scales: setup/axes-and-scales.md
       - Servo and leadscrew: setup/servo-and-leadscrew.md
       - Backlash calibration: setup/backlash-calibration.md
