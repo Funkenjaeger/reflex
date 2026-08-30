@@ -11,9 +11,17 @@ whose ELS is missing.
 
 ## Axis roles
 
-Name your axes and point each at a scale input, then set the **ELS axis roles**:
-which axis is **Z** (the saddle), which is **X** (the cross slide), and which is
-the **spindle**.
+Name your axes and point each at a scale input under **Axes**, and give each
+input its resolution under **Inputs**:
+
+![Axes setup](../screenshots/setup_axes.png)
+
+![Inputs setup](../screenshots/setup_inputs.png)
+
+Then set the **ELS axis roles**: which axis is **Z** (the saddle), which is
+**X** (the cross slide), and which is the **spindle**.
+
+![ELS setup](../screenshots/setup_els.png)
 
 These are roles, not names. Calling an axis `Z` does not make the ELS use it —
 the roles are a separate setting, and until they are assigned the ELS refuses

@@ -26,11 +26,17 @@ The mode selector only offers what the machine's *use case* allows — a lathe
 exposes ELS, other use cases do not, and asking for a mode that is not allowed
 silently falls back to DRO rather than half-starting one.
 
+In `DRO` the leadscrew rows go away entirely and the readouts get the whole
+screen:
+
+![DRO mode](../screenshots/home_dro.png)
+
 !!! note "A wand icon may sit above ELS / DRO"
     It opens the pattern screen — hole circles, lines, rectangles — which is a
-    rotary-table feature with little to offer a lathe. It is hidden when
-    patterns are switched off in settings, and it is off on the machine this
-    guide is written from.
+    rotary-table feature with little to offer a lathe. It is off on the machine
+    this guide is written from, via **Show Wizard** in Formats settings:
+
+    ![Formats settings](../screenshots/setup_formats.png)
 
 ## 2 — The status bar
 

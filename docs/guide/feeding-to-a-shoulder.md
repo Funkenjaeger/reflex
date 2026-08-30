@@ -3,7 +3,11 @@
 Power feeding onto an electronic stop. This is the simplest useful thing the
 machine does, and it is worth doing once before you thread anything.
 
-![Stop-only, ready](../screenshots/home_els_dark.png)
+![Stop-only in FEED mode](../screenshots/home_els_feed.png)
+
+`FEED` is selected rather than `THREAD`, the rate reads in mm per revolution,
+and the illustration shows a turning tool rather than a thread. Everything else
+behaves the same way.
 
 ## What you are asking for
 

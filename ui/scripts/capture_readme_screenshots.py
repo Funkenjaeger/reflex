@@ -66,6 +66,7 @@ from reflex.fsms.ui_controller import UI_POLICY  # noqa: E402
 OUT_DIR = os.environ.get("OUT_DIR", ".")
 THEMES = ("light", "dark")
 MODE_ELS = 2
+MODE_DRO = 4
 AXIS_NAMES = ("Z", "X", "S")  # representative lathe axes (S = spindle) for the showcase
 IDLE_TICKS = 6  # frames to flush before each export (texture/colors must settle)
 TARGET_SIZE = [1024, 600]
@@ -122,6 +123,19 @@ def _composite_over_theme_bg(path, rgba):
                          min(255, int(round(b + inv * bb))))
     out.save(path)
 
+
+
+# The setup screens, by the name they are registered under in the manager.
+# Rendered so the commissioning pages can show what they describe; the guide
+# does not walk every field, which is what the machine's own `?` help is for.
+SETUP_SCREENS = [
+    ("setup_screen", "setup_hub"),
+    ("els_setup", "setup_els"),
+    ("axes_setup", "setup_axes"),
+    ("inputs_setup", "setup_inputs"),
+    ("servo", "setup_servo"),
+    ("formats", "setup_formats"),
+]
 
 # Regions named on the guide's "The screen" page, in reading order. Each entry
 # resolves to a WIDGET, so the boxes are measured rather than typed: a layout
@@ -387,6 +401,51 @@ def _capture(_dt):
         _shot("home_els_stopretract")
 
         _capture_wizard(bar)
+
+        # ── FEED mode. Every stop mode supports plain turning, and the guide
+        # says so repeatedly without ever showing it. Set through the real
+        # setter so the pitch display, the ratio and is_threading all follow.
+        _set_mode(bar, wizard=False, retract=False)
+        home = app.manager.get_screen("home")
+        home.els_bar.set_feed_ratio("Feed MM", 6)
+        _settle()
+        assert not app.els_uic.is_threading, (
+            "feed frame is still in a THREADING table -- is_threading gates "
+            "the phase features, so this frame would misrepresent the mode")
+        _shot("home_els_feed")
+
+        # Back to a threading table: later frames and any future step should
+        # not inherit feed mode from this one.
+        home.els_bar.set_feed_ratio("Thread MM", 6)
+        _settle()
+        assert app.els_uic.is_threading, "failed to return to a threading table"
+
+        # ── DRO mode: the plain read-out, no leadscrew row at all.
+        app.set_mode(MODE_DRO)
+        _settle()
+        for _ in range(30):          # the mode swap is Clock-deferred
+            EventLoop.idle()
+        assert app.current_mode == MODE_DRO, (
+            f"still in mode {app.current_mode}, not DRO")
+        _shot("home_dro")
+        app.set_mode(MODE_ELS)
+        for _ in range(30):
+            EventLoop.idle()
+        assert app.current_mode == MODE_ELS
+
+        # ── The setup screens.
+        for name, out in SETUP_SCREENS:
+            app.manager.goto(name)
+            for _ in range(30):
+                EventLoop.idle()
+            assert app.manager.current == name, (
+                f"asked for screen {name!r} and landed on "
+                f"{app.manager.current!r} -- {out}.png would be a picture of "
+                f"the wrong screen")
+            _shot(out)
+        app.manager.goto("home")
+        for _ in range(30):
+            EventLoop.idle()
     except Exception as e:  # noqa: BLE001 - capture script, want the full traceback
         import traceback
         traceback.print_exc()
@@ -440,8 +499,9 @@ app.run()
 # also swallow the exit code.
 if FAILED:
     raise SystemExit(f"capture_readme_screenshots failed: {FAILED[0]!r}")
-if len(WROTE) != 2 + 1 + 1 + 1 + len(WIZARD_STEPS):
+EXPECTED = 2 + 1 + 1 + 1 + len(WIZARD_STEPS) + 2 + len(SETUP_SCREENS)
+if len(WROTE) != EXPECTED:
     raise SystemExit(
-        f"wrote {len(WROTE)} images, expected {2 + 1 + 1 + 1 + len(WIZARD_STEPS)}: "
+        f"wrote {len(WROTE)} images, expected {EXPECTED}: "
         f"{[os.path.basename(w) for w in WROTE]}")
 print(f"OK: {len(WROTE)} images")

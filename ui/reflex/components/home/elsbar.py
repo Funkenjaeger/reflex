@@ -17,6 +17,39 @@ log = Logger.getChild(__name__)
 load_kv(__file__)
 
 
+def move_image(move_type: str, background=None) -> str:
+    """Resource path for the ELS bar's move illustration.
+
+    ONLY THE THREADING PAIR IS THEMED. thread_rh/thread_lh carry a baked-in
+    RH/LH label that has to follow the theme (it was pure yellow in both, and
+    unreadable on the light one); turn_in/turn_out carry no text and are used
+    as-is.
+
+    This is a function rather than a kv expression because the kv version
+    appended a theme suffix to EVERY move_type, so feed mode asked for
+    `turn_in_dark.png` and the widget drew a white rectangle where the
+    illustration belongs. Nothing rendered feed mode, so nothing caught it;
+    tests/components/test_move_image.py now does.
+
+    `background` is the theme's background colour, used only for its luminance,
+    so a user theme works without being named. None means dark.
+    """
+    if move_type.startswith("thread_"):
+        light = bool(background) and background[0] > 0.5
+        return "pictures/%s%s.png" % (move_type, "_light" if light else "_dark")
+    return "pictures/%s.png" % move_type
+
+
+class _ElsBarMoveTypes:
+    """Every value :meth:`ElsBar._get_move_type` can return.
+
+    Named so the test can enumerate them without reaching into the method, and
+    so adding a fifth illustration has one obvious place to register it.
+    """
+
+    ALL = ("thread_rh", "thread_lh", "turn_in", "turn_out")
+
+
 class ElsBar(BoxLayout, SavingDispatcher):
     feed_button = ObjectProperty(None)
     feed_ratio = ObjectProperty(None)
@@ -26,6 +59,17 @@ class ElsBar(BoxLayout, SavingDispatcher):
     current_feeds_index = NumericProperty(0)
     els_forward = BooleanProperty(True)
     enable_advanced = BooleanProperty(False)
+
+    @staticmethod
+    def image_for(move_type, background=None):
+        """kv's route to :func:`move_image`.
+
+        Called as `root.image_for(root.move_type, app.theme.background)` so the
+        expression names both dependencies and kv rebinds on either. A kv-level
+        `#: import` of this module cannot work: elsbar.py loads elsbar.kv while
+        it is still initialising, so the directive hits a circular import.
+        """
+        return move_image(move_type, background)
 
     def _get_move_type(self):
         # Classify via the feeds table's structured mode field, not the display

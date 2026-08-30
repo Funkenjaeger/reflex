@@ -3,6 +3,8 @@
 Step 2 of [setup](index.md). Nothing here moves the machine, and getting it
 wrong is the least visible mistake in the whole system.
 
+![Servo settings](../screenshots/setup_servo.png)
+
 ## What you are setting
 
 Three numbers that together convert **a distance** into **leadscrew steps**:

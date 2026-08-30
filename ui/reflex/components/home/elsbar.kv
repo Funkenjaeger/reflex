@@ -139,7 +139,7 @@
       # Keyed on luminance because palettes.py loads user themes from
       # ~/.config/reflex/themes/*.ini, so a filename built from the theme's
       # NAME would 404 on any theme but the two shipped ones.
-      source: "pictures/" + root.move_type + ("_light" if app.theme.background[0] > 0.5 else "_dark") + ".png"
+      source: root.image_for(root.move_type, app.theme.background)
       x: self.parent.x + self.parent.width * 0.1
       y: self.parent.y + self.parent.height * 0.1
       width: self.parent.width * 0.8

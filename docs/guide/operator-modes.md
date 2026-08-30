@@ -23,6 +23,8 @@ All three work for **plain turning** as well as threading — pick a feed rate
 instead of a pitch and the stop behaves the same way. Threading is simply where
 the machine earns its keep, so that is what the rest of this guide is about.
 
+![Stop-only in FEED mode](../screenshots/home_els_feed.png)
+
 They cut the same thread. What changes is how much you set up first and how much
 you do by hand between passes. Cycle between them with the tri-state tab at the
 right of the advanced bar.

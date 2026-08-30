@@ -4,6 +4,10 @@ First provisioning on a new machine. The order matters — each step depends on
 the one before it, and the last one only means anything once the first three are
 right.
 
+![The setup screen](../screenshots/setup_hub.png)
+
+Everything below lives behind the **gear** in the sidebar.
+
 !!! danger "The last step moves the machine"
     [Backlash calibration](backlash-calibration.md) drives the carriage under
     power. Nothing before it does. Do not run it with a tool at the work.

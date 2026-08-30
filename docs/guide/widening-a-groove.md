@@ -8,6 +8,10 @@ groove a fraction further along and takes the side off it. Repeat until the
 groove is as wide as you want. The workpiece is never re-indexed and the thread
 datum is never re-established.
 
+Open it from the **gear** on the advanced ELS bar — it is the second of the two
+rows at the bottom of the ELS settings, beside
+[Pick up an existing thread](picking-up-a-thread.md#where-to-find-it).
+
 ![The offset modal, nothing entered](../screenshots/flow/wt_offset_entry_zero.png)
 
 ## What it does

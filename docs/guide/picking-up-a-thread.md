@@ -14,6 +14,13 @@ at that instant. From then on every pass follows the existing groove.
     That gate was added 2026-08-30. Until then the wizard would walk its whole
     procedure in feed mode and latch a reference the machine had no use for.
 
+## Where to find it
+
+Both advanced features live behind the **gear** on the advanced ELS bar, at the
+bottom of the ELS settings:
+
+![The ELS settings popup](../screenshots/flow/wt_settings_popup.png)
+
 ## 1 — Seat the carriage
 
 ![The jog step](../screenshots/flow/wt_resync_jog.png)
