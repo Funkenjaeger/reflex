@@ -9,6 +9,7 @@ from kivy.properties import StringProperty, NumericProperty, BooleanProperty
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
 from reflex.utils.ctype_calc import uint32_subtract_to_int32
 from reflex.utils.notices import NOTICE_WARNING
+from reflex.utils.operator_notice import notify_operator
 
 log = Logger.getChild(__name__)
 
@@ -305,35 +306,14 @@ class ServoDispatcher(SavingDispatcher):
             self._notify_operator(self.DIVERGENCE_NOTICE, NOTICE_WARNING)
 
     def _notify_operator(self, message, severity) -> bool:
-        """Post to the top status bar, if there is an app to post through.
+        """Thin delegate to the shared operator-notice route.
 
-        Lazily imported and defensively guarded, matching els_resync_popup and
-        els_settings_popup: this module is a plain dispatcher holding no app
-        reference, and importing MainApp at module scope would close an import
-        cycle.
-
-        Called from the board polling thread. That is safe by els_uic.notify's
-        own contract -- the notice queue is locked and a Kivy property
-        assignment is atomic enough for a string.
-
-        Returns True iff the operator will actually see it, which is what lets
-        a test tell "posted" apart from "silently swallowed".
+        Kept as a method rather than calling notify_operator directly at the
+        call site: it is the seam the watchdog tests patch, and patching a
+        method on this class is what lets them assert the watchdog's OWN
+        behaviour without standing up an app.
         """
-        try:
-            from reflex.app import MainApp
-            app = MainApp.get_running_app()
-            uic = getattr(app, "els_uic", None) if app is not None else None
-            if uic is None:
-                # Previews, tests and early startup have no controller. Not an
-                # error: the log line is the fallback channel and it has
-                # already been written by the time we get here.
-                return False
-            return bool(uic.notify(message, severity))
-        except Exception as e:
-            # A watchdog that can take the app down at the lathe is worse than
-            # one that cannot speak.
-            log.error(f"servoMode divergence notice failed: {e}")
-            return False
+        return notify_operator(message, severity)
 
     def update_scaledPosition(self, instance, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)
