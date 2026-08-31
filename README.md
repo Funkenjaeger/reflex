@@ -42,89 +42,44 @@ them is a memory-mapped register contract guarded by `protocolVersion`.
 
 ## 🎛 Stop modes
 
-These are modes of the electronic **stop**, not of the ELS. Spindle-synchronised
-feed is a separate, lower layer — `syncEnable` is independent of the stop
-feature, so a turning spindle drives the leadscrew whether or not a threading
-job is armed. Disengage the stop and collapse the advanced bar and Reflex is a
-traditional electronic leadscrew.
+The electronic **stop** is what makes this more than a leadscrew — and it is
+optional. Disengage it and Reflex is a traditional ELS. The three modes are not
+difficulty levels; they are three different amounts of the job the controller
+takes over, over the same take-up confirmation and the same thread datum.
 
-The stop is what makes this project what it is, and it is not mandatory.
+| Mode | What you set | Between passes |
+|---|---|---|
+| **Stop-only** | Stop Z | Nothing. The return and the depth of cut are yours, as with a carriage stop. |
+| **Stop + retract** | Stop Z, Start Z | **Retract** returns the carriage under power, when you press it. |
+| **Wizard** | Nothing typed — drive to each position and press **Set** | Runs the cycle Cut → Retract → Cut. |
 
-Its three modes are not difficulty levels — they are three different amounts of
-the job the controller takes over. All three cut the same thread; they differ in
-how much you set up first and how much you do by hand between passes.
-
-### Stop-only
-
-![Stop-only](docs/screenshots/home_els_dark.png)
-
-One field: **Stop Z**. Set the shoulder, engage, press **Cut**, and the carriage
-feeds to the stop and holds. Everything else — backing the tool out, returning
-the carriage, taking the next depth of cut — is yours, exactly as on a manual
-lathe with a carriage stop.
-
-This is the mode with the least to get wrong, and it is what the author runs on
-his own machine. The controller still confirms the backlash take-up before every
-pass and refuses to start one it cannot confirm, so the protection that matters
-is not something you trade away by staying here.
-
-### Stop + retract
-
-![Stop and retract](docs/screenshots/home_els_stopretract.png)
-
-Adds **Start Z**, and a **Retract** action on the same button that says `Cut`.
-
-Nothing moves on its own. There is one servo and it drives the leadscrew, so the
-tool never comes out by itself — backing off in X is your hand, in every mode.
-The carriage does not return until you press **Retract**. What the mode adds is
-the ability to *command* that return under power instead of winding it back.
+Backing off in X is your hand in every mode: there is one servo, and it drives
+the leadscrew.
 
 > [!CAUTION]
-> **Get the tool clear in X before pressing Retract.** It feeds the carriage
+> **Get the tool clear in X before pressing Retract** — it feeds the carriage
 > back under power, and a tool still in the groove is dragged along the thread.
->
-> Wizard mode gates the button on the committed **Start ø** and disables it
-> until X is clear. Stop + retract has no committed diameter to compare against,
-> so nothing catches this for you.
+> Wizard mode gates the button on a committed diameter; stop + retract has none
+> to compare against.
 
-### Wizard
+**[The three stop modes, in full →](https://funkenjaeger.github.io/reflex/guide/operator-modes/)**
 
-The guided setup. Instead of typing values into fields, you drive the machine to
-each position and press **Set**, and the bar tells you what it wants next. It
-collects the same four values the other modes use, then confirms before the
-first cut.
+### Past the stop
 
-| | | |
-|---|---|---|
-| ![Set stop Z](docs/screenshots/wizard_1_stop_z.png) | ![Set start Z](docs/screenshots/wizard_2_retract_z.png) | ![Set start diameter](docs/screenshots/wizard_3_start_dia.png) |
-| **1. Stop Z** — run the carriage to the shoulder and press Set. This is the one value every mode needs. | **2. Start Z** — run back to where each pass should begin. The retract returns here. | **3. Start ø** — bring the tool to the work and press Set. The field being captured is outlined. |
-| ![Set stop diameter](docs/screenshots/wizard_4_stop_dia.png) | ![Confirm](docs/screenshots/wizard_5_confirm.png) | ![Ready to cut](docs/screenshots/wizard_6_ready.png) |
-| **4. Stop ø** — the finished diameter. Drive to it, or type it in. | **5. Confirm** — the one thing the controller cannot check for you is the half nut. It asks. | **6. Ready** — the button becomes **Cut**, and the cycle runs Cut → Retract → Cut. |
+Two things most ELS projects do not do:
 
-The prompt above the fields is the wizard's whole interface: it names the next
-value, the field it will land in is outlined, and the action button reads what
-pressing it will do. Nothing is captured until you press Set, so you can drive
-past a position and come back.
+**[Pick up an existing thread](https://funkenjaeger.github.io/reflex/guide/picking-up-a-thread/)**
+— a guided procedure that latches a thread reference on work this job did not
+cut: a re-chucked part, a thread cut elsewhere, a damaged thread being chased.
 
-### Phase re-sync is under all three
+**[Widen a groove past the tool that cuts it](https://funkenjaeger.github.io/reflex/guide/widening-a-groove/)**
+— a thread phase offset, stepped along between passes, so a narrow tool cuts a
+wide groove.
 
-**Stopping decouples sync.** The firmware pauses spindle sync while the stop is
-active, so at the end of every pass the leadscrew is no longer phase-locked to
-the spindle — in every mode, and whether or not you move the carriage
-afterwards.
-
-So the controller re-derives thread phase from the **Z scale** after every pass.
-That is what lets you open the half nut between passes, and if anything it
-matters most in **stop-only**, where the carriage comes back entirely by hand.
-
-**On choosing a mode.** The wizard is the most guided and puts the most
-machinery between you and the cut; stop-only is the least. Neither is safer than
-the other in the part that matters — the take-up confirmation, the electronic
-stop and the thread datum are the same code in all three.
-
-For the jobs themselves — feeding to a shoulder, cutting a thread, picking up
-an existing one, widening a groove, and commissioning a new machine — see the
-**[user guide](https://funkenjaeger.github.io/reflex/guide/)**.
+Underneath both, in every mode: **thread phase is re-derived from the Z scale
+after every pass.** Stopping decouples spindle sync, so re-deriving phase from
+the scale is what puts the next pass in the same groove — and what lets you
+open the half nut between passes.
 
 ---
 
@@ -139,85 +94,51 @@ cut, and the plan is revised as often as reality requires.
 The first release, as two separately versioned repositories (`reflex-fw` and
 `reflex-ui`). A working DRO with an electronic leadscrew behind it.
 
-- **Multi-axis DRO** — configurable axes over hardware scale inputs, with
-  transforms, work offsets and absolute/incremental readout.
-- **Electronic leadscrew** — spindle-synchronised carriage feed for power
-  feeding and for threading.
+- **Multi-axis DRO** — configurable axes over hardware scale inputs, with transforms and offsets.
+- **Electronic leadscrew** — spindle-synchronised carriage feed for power feed and threading.
 - **Electronic stop** — feed or thread up to a shoulder and stop, hands off.
-- **Electronic retract** and the advanced ELS bar.
+- **Electronic retract**, and the advanced ELS bar.
 - Jogging with a trapezoidal velocity profile.
 
 ### 1.1.0 · released 2026-08-31 — **current**
 
-The release where the controller stops trusting and starts **verifying**. Every
-headline feature below exists because some way of getting a thread wrong had no
-detection before it.
+The release where the controller stops trusting and starts **verifying**.
 
-- **Backlash calibration and take-up confirmation.** Before every pass the
-  controller drives the leadscrew through its backlash and watches the Z scale
-  to confirm the carriage actually moved — and refuses the pass if it did not.
-  An open half nut used to cut the next pass in the wrong place.
-- **Thread phase re-sync from the Z scale**, after every pass, in every stop
-  mode. Stopping decouples spindle sync, so this is what puts the next pass in
-  the same groove — and what lets you open the half nut between passes.
-- **Pick up an existing thread** — a guided procedure that latches a thread
-  reference on work this job did not cut: a re-chucked part, a thread cut
-  elsewhere, a damaged thread being chased.
-- **Thread phase offset** — cut a groove wider than the tool that cuts it, by
-  stepping the phase along between passes.
-- **A status gutter** that reserves its own space, so the thread reference and
-  the phase offset are always visible and never cover the field headers.
-- **Operator messages rewritten** to lead with the state of the machine
-  (*"Cut aborted — …"*) rather than the name of the fault, and every refusal
-  now says what to do about it.
-- **One repository, one version.** `fw/` and `ui/` welded with full history
-  preserved on both sides; releases are cut for both halves together.
-- **This user guide**, covering installation on a Pi through to picking up an
-  existing thread — with a generated screenshot set that doubles as the
-  regression check for the screens it photographs.
-- **Error reporting is opt-in, and goes where you tell it.** There is no
-  built-in destination: set `REFLEX_SENTRY_DSN` to your own Sentry project, or
-  leave it off, which is the default. Nothing leaves the machine otherwise.
-- **Half the interrupt budget back.** Step generation runs at 50 kHz rather
-  than 100, taking sustained ISR load from ~40% to ~20% — the headroom the
-  next two releases are going to spend.
-- **The in-app update screen is withdrawn.** It queried a repository that no
-  longer publishes releases and installed to a path that no longer exists.
-  Updating is a `git pull` and, when the firmware moves, a flash; both are in
-  the guide.
+- **Take-up confirmation** — checks the carriage really moved before every pass, or refuses it.
+- **Backlash calibration** — measures take-up on the machine instead of taking a guess.
+- **Thread phase re-sync from the Z scale** — open the half nut between passes.
+- **Pick up an existing thread** — latch a reference on work this job did not cut.
+- **Thread phase offset** — cut a groove wider than the tool, stepping phase between passes.
+- **Opt-in error reporting** — no built-in destination; set `REFLEX_SENTRY_DSN`, or leave it off.
+- **Half the interrupt budget back** — 50 kHz step generation, sustained ISR load 40% to 20%.
+- **One repository, one version** — `fw/` and `ui/` released together, history preserved.
+- **A user guide**, from installing on a Pi through to picking up an existing thread.
+- Improved status indication and operator-facing messages.
+- In-app update screen withdrawn; updating is a `git pull` and, when firmware moves, a flash.
 
 ### 1.2.0 · planned — auto-start
 
 Take the last button press out of the cycle.
 
 - **Begin the pass when the half nut closes**, rather than on **Cut**.
-- **Sensorless first** — infer engagement from motion the controller already
-  measures for the take-up confirmation, rather than adding a switch to the
-  apron.
-- Developed desk-first against the firmware emulator, with a machine window for
-  live verification.
+- **Sensorless** — infers engagement from motion already measured for the take-up.
+- Developed desk-first against the firmware emulator, with a machine window to verify.
 
 ### 1.3.0 · planned — auto-advance, the virtual compound
 
 Take the depth of cut out of your hands as well.
 
-- **Advance thread phase from X depth**, so each pass enters the thread offset
-  along the helix in proportion to how deep it is cutting — a flank infeed
-  without a compound slide set over.
-- Threading illustrations re-tooled as programmatic SVG, so the diagrams
-  regenerate the way the screenshots already do.
+- **Advance thread phase from X depth** — a flank infeed with no compound set over.
+- Threading illustrations re-tooled as programmatic SVG, regenerated like the screenshots.
 
 ### 2.0.0 · planned — the respin
 
 The first release that needs **new hardware**, which is why it is a major
 version rather than 1.4.
 
-- **Control-board respin for differential encoder signalling.** The spindle
-  encoder is open-collector today, which is the weakest link in the chain the
-  thread datum depends on.
-- Firmware changes that ride with the new board rather than being cut twice: a
-  **register-block integrity checksum**, **index-anchored phase correction**,
-  and the mod-lead fix that makes real **multi-start threading** possible.
+- **Control-board respin for differential encoder signalling.**
+- **Register-block integrity checksum** and **index-anchored phase correction**.
+- **Multi-start threading** — the mod-lead fix that finally makes it possible.
 
 > [!NOTE]
 > **Multi-start is not supported before 2.0.0**, and the phase offset is not a
