@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from rcp.utils.kv_loader import load_kv, get_loaded_kv_files, _loaded_kv_files
+from reflex.utils.kv_loader import load_kv, get_loaded_kv_files, _loaded_kv_files
 
 
 class TestLoadKv:
@@ -16,7 +16,7 @@ class TestLoadKv:
         with open(kv_file, "w") as f:
             f.write("<Widget>:\n    pass\n")
 
-        with patch("rcp.utils.kv_loader.Builder") as mock_builder:
+        with patch("reflex.utils.kv_loader.Builder") as mock_builder:
             result = load_kv(py_file)
 
         assert result == kv_file
@@ -26,7 +26,7 @@ class TestLoadKv:
         """load_kv should return None when no .kv file exists."""
         py_file = str(tmp_path / "widget.py")
 
-        with patch("rcp.utils.kv_loader.Builder") as mock_builder:
+        with patch("reflex.utils.kv_loader.Builder") as mock_builder:
             result = load_kv(py_file)
 
         assert result is None
@@ -40,7 +40,7 @@ class TestLoadKv:
         with open(kv_file, "w") as f:
             f.write("<Widget>:\n    pass\n")
 
-        with patch("rcp.utils.kv_loader.Builder") as mock_builder:
+        with patch("reflex.utils.kv_loader.Builder") as mock_builder:
             first = load_kv(py_file)
             second = load_kv(py_file)
 
@@ -56,7 +56,7 @@ class TestLoadKv:
         with open(kv_file, "w") as f:
             f.write("<Widget>:\n    pass\n")
 
-        with patch("rcp.utils.kv_loader.Builder"):
+        with patch("reflex.utils.kv_loader.Builder"):
             load_kv(py_file)
 
         loaded = get_loaded_kv_files()
@@ -71,7 +71,7 @@ class TestLoadKv:
             with open(tmp_path / f"{name}.kv", "w") as f:
                 f.write(f"<{name}>:\n    pass\n")
 
-        with patch("rcp.utils.kv_loader.Builder") as mock_builder:
+        with patch("reflex.utils.kv_loader.Builder") as mock_builder:
             for name in ["alpha", "beta", "gamma"]:
                 load_kv(str(tmp_path / f"{name}.py"))
 

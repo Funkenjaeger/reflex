@@ -1,30 +1,178 @@
-# Reflex UI
+# Reflex UI (`ui/`)
 
-A **Kivy-based Digital Read-Out (DRO) and Electronic Leadscrew (ELS) controller UI** for lathes, designed to run on Raspberry Pi or desktop environments (Windows, macOS, Linux). Interfaces via RS-485/Modbus RTU with a dedicated STM32-based control board running the associated [Reflex firmware](https://github.com/Funkenjaeger/reflex-fw).
+The **operator half** of [Reflex](../README.md): a Kivy touchscreen DRO/ELS
+app that runs on a Raspberry Pi at the machine (or any desktop for
+development) and drives the STM32 controller in [`../fw/`](../fw/) as an
+RS-485 Modbus RTU master. Workflow, configuration, validation, and display
+live here; everything real-time lives in the firmware.
 
-This software is based on the [rotary-controller-python (RCP)](https://github.com/bartei/rotary-controller-python) project. It — along with the corresponding firmware project — was hard-forked from the original primarily due to natural divergence that followed from a focus on lathe use cases, where the original rotary-controller was designed for CNC-style rotary table use cases.
+Screenshots and a demo video are in the [top-level README](../README.md).
 
-> ### About this branch
->
-> `main` holds the **`v1.0.0` release snapshot** (2026-06-19). Development continued on
-> **[`dev`](../../tree/dev)**, this repository's default branch, which carries the later work —
-> ELS safety fixes, the UI facelift, Raspberry Pi deployment, and CI-generated screenshots.
->
-> **`dev` is the authoritative branch. Read it for current documentation and the full feature
-> list:** [README on `dev`](../../blob/dev/README.md).
->
-> Note that `main` is not an ancestor of `dev`: it branched at `488ff75` (2026-06-16) and received
-> only the `1.0.0` version stamp, while `dev` went on to `1.0.0-rc.1` and `1.0.0-rc.2`. The two
-> histories were never reconciled.
+---
 
-## Related repositories
+## 🚀 UI features
 
-| Repository | Role |
-|---|---|
-| [reflex-fw](https://github.com/Funkenjaeger/reflex-fw) | STM32 firmware — the other half of this system |
-| [rotary-controller-python](https://github.com/Funkenjaeger/rotary-controller-python) | Deprecated pre-fork ancestor of this project |
-| [rotary-controller-f4](https://github.com/Funkenjaeger/rotary-controller-f4) | Deprecated pre-fork ancestor of the firmware |
+* Responsive touch-capable UI built with **Kivy**
+* **Configurable axes** — add/remove axes, assign hardware scale inputs, apply
+  transforms (identity, scaling, weighted sum, angle cos/sin)
+* ELS operator flows: threading wizard, electronic stop and retract targets,
+  feeds/threads table
+* Customizable display: fonts, colors, digit formats (metric/imperial/angle)
+* **Contextual help** — info button on every setting field with documentation
+  and examples
+* Works on Raspberry Pi 3/4/5, Windows, macOS, and Linux
 
-## License
+---
 
-This branch predates the `LICENSE` file; see [LICENSE on `dev`](../../blob/dev/LICENSE).
+## 🎯 Software requirements
+
+* Python 3.10+
+* [`uv`](https://docs.astral.sh/uv/) package manager
+
+---
+
+## ⚙️ Installation & Setup
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/Funkenjaeger/reflex.git
+cd reflex/ui
+```
+
+### 2. Install `uv`
+
+Linux/macOS:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+For Windows, see the [uv installation docs](https://docs.astral.sh/uv/getting-started/installation/).
+
+### 3. Install dependencies
+
+```bash
+uv sync
+```
+
+### 4. Run the app
+
+```bash
+uv run python -m reflex.main
+```
+
+### 5. Run tests
+
+```bash
+uv run pytest
+```
+
+(The default suite includes the cross-half register-map contract test against
+`../fw/Core/Inc/Ramps.h`; the emulator-backed system suite runs with
+`uv run pytest -m system tests/system`.)
+
+---
+
+## 💻 Platform-specific Notes
+
+### Windows/macOS/Linux
+
+* Python >= 3.10
+* Virtual environment managed automatically by `uv`
+* Ensure your RS-485 adapter is accessible (check serial port permissions on Linux/macOS)
+* On headless Linux (e.g. WSL), you may need environment variables and flags: `DISPLAY=:0 SDL_AUDIODRIVER=dummy KIVY_INPUT=mouse uv run python -m reflex.main --size=1024x600`
+
+### Raspberry Pi & OSPI
+
+Deploying to the Pi at the machine — from a blank SD card through firmware —
+is documented as a single procedure in the user guide:
+
+**[Installing on a Pi](https://funkenjaeger.github.io/reflex/setup/installing/)**
+
+In short: write an SD image from the [OSPI project](https://github.com/bartei/ospi),
+clone this repo to `/home/default/projects/reflex`, `uv sync` in `ui/`, then
+install `deploy/reflex-ui.service` and swap the boot application from upstream's
+`rcp.service` to `reflex-ui.service`. The unit and launch wrapper ship in
+[`deploy/`](deploy/) — do not hand-write them.
+
+```bash
+journalctl -u reflex-ui.service -b     # application log
+tail -n +1 /var/log/kivy*              # Kivy log
+```
+
+For deploying *uncommitted* work from a dev machine — push-to-deploy over SSH,
+rsync, iterating on a branch — see [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md).
+
+---
+
+## 📂 Project Structure
+
+```
+reflex/
+├── main.py                    # Entry point (asyncio + Kivy event loop)
+├── app.py                     # MainApp class
+├── feeds.py                   # Feed/thread pitch configurations
+├── help/                      # Contextual help documents (markdown)
+├── fonts/                     # Font files
+├── pictures/                  # Image assets
+├── sounds/                    # Audio assets (beep, snap, stop)
+├── components/                # UI layer
+│   ├── manager.py             # ScreenManager (navigation)
+│   ├── appsettings.py         # ConfigParser setup
+│   ├── home/                  # Home screen (coordbar, servobar, elsbar, jogbar, statusbar, mode layouts)
+│   ├── screens/               # Full-screen views (home, setup, scale, servo, formats, axes, ELS, etc.)
+│   ├── widgets/               # Reusable form widgets (number_item, boolean_item, dropdown_item, etc.)
+│   ├── popups/                # Modal dialogs (keypad, help, feeds table, mode, etc.)
+│   ├── toolbars/              # Toolbar buttons (led_button, toolbar_button, etc.)
+│   ├── plot/                  # Plot/visualization (scene, popups, overlays)
+│   └── setup/                 # Setup panels (logs, profiling)
+├── dispatchers/               # Event dispatchers and state management
+│   ├── saving_dispatcher.py   # Auto-persisting properties to YAML
+│   ├── formats.py             # Display format settings
+│   ├── circle_pattern.py      # Circle pattern calculator
+│   ├── line_pattern.py        # Line pattern calculator
+│   ├── rect_pattern.py        # Rectangle pattern calculator
+│   ├── axis.py                # Axis configuration
+│   ├── axis_transform.py      # Axis transform settings
+│   ├── els.py                 # ELS configuration
+│   ├── input.py               # Input configuration
+│   ├── servo.py               # Servo configuration
+│   └── board.py               # Board/device event dispatcher
+├── fsms/                      # State machines
+│   ├── els_fsm.py             # ELS state machine
+│   ├── els_stop_hal.py        # ELS stop hardware abstraction
+│   ├── els_mode_watch.py      # Firmware-mode census/divergence sampler
+│   ├── fsm_event_bus.py       # Event bus for FSM communication
+│   ├── ui_controller.py       # UI controller (mediates UI and FSM)
+│   └── ui_fsm.py              # UI state machine
+└── utils/                     # Hardware communication layer
+    ├── communication.py       # ConnectionManager (Modbus RTU)
+    ├── base_device.py         # C typedef parser and register I/O
+    ├── devices.py             # Device type definitions
+    ├── ctype_calc.py          # C-type arithmetic helpers
+    ├── kv_loader.py           # KV file loading utility
+    └── platform.py            # Platform detection utilities
+```
+
+---
+
+## 🛠️ Troubleshooting
+
+* **Serial issues**: Verify RS-485 wiring, correct serial port, and permissions
+* **Service failures (Pi)**: Check `journalctl` logs and Kivy log files under `/var/log/`
+* **Display issues**: Adjust font size and display format in the Formats setup screen
+
+---
+
+## 📚 Internal docs
+
+* **FSM architecture pattern:** [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md)
+* **ELS shoulder-stop orchestration:** [`ELS_STOP.md`](ELS_STOP.md)
+* **Repo structure ADR:** [`docs/decisions/repo-structure-monorepo.md`](docs/decisions/repo-structure-monorepo.md)
+
+---
+
+## 📄 License
+
+MIT — see `LICENSE`.

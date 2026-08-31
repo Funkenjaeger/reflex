@@ -140,3 +140,7 @@ cython_debug/
 /.idea/
 config.ini
 /rcp/settings/
+previews/banner_*.png
+
+# Personal Claude Code overrides -- machine-specific paths, never shared.
+.claude/settings.local.json

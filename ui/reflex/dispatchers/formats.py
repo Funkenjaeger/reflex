@@ -1,0 +1,89 @@
+from fractions import Fraction
+
+from kivy.logger import Logger
+from kivy.properties import (
+    NumericProperty,
+    StringProperty, ListProperty, ObjectProperty, ColorProperty, BooleanProperty,
+)
+
+from reflex.dispatchers.saving_dispatcher import SavingDispatcher
+
+log = Logger.getChild(__name__)
+
+
+class FormatsDispatcher(SavingDispatcher):
+    _force_save = [
+        'display_color',
+        'accept_color',
+        'cancel_color',
+        'color_on',
+        'color_off'
+    ]
+
+    MM_FRACTION = Fraction(1, 1)
+    INCHES_FRACTION = Fraction(10, 254)
+
+    metric_position = StringProperty("{:+0.3f}")
+    metric_speed = StringProperty("{:+0.3f}")
+
+    imperial_position = StringProperty("{:+0.4f}")
+    imperial_speed = StringProperty("{:+0.4f}")
+
+    angle_format = StringProperty("{:+0.1f}")
+    angle_speed_format = StringProperty("{:+0.1f}")
+
+    font_size = NumericProperty(24)
+    font_name = StringProperty("fonts/iosevka-regular.ttf")
+
+    current_format = StringProperty("MM")
+    speed_format = StringProperty()
+    position_format = StringProperty()
+    factor = ObjectProperty(Fraction(1, 1))
+
+    # Active UI color theme (drives app.theme). Auto-persisted as a string.
+    theme = StringProperty("dark")
+
+    display_color = ColorProperty("#40e0edff")  # facelift cyan (was amber #ffcc35)
+    accept_color = ColorProperty("#32ff32ff")
+    cancel_color = ColorProperty("#ff3232ff")
+    color_on = ColorProperty([0.16, 0.82, 0.88, 1])
+    color_off = ColorProperty([0.25, 0.30, 0.36, 1])
+
+    volume = NumericProperty(0.2)
+
+    # Default OFF. Reporting used to default ON against a DSN inherited
+    # from upstream, so a fresh install shipped its crashes to a stranger --
+    # and this repository is public. Opt in, with your own destination.
+    disable_error_reporting = BooleanProperty(True)
+
+    position_tolerance = NumericProperty(0.05)
+
+    hide_mouse_cursor = BooleanProperty(False)
+
+    max_row_height = NumericProperty(150)
+
+    show_speeds = BooleanProperty(True)
+
+    show_wizard = BooleanProperty(True)
+
+    def __init__(self, **kv):
+        super().__init__(**kv)
+        self.angle_speed_format = self.angle_speed_format.replace("RPM", "").replace(" ", "")
+        self.bind(current_format=self.update_format)
+        self.update_format()
+
+    def update_format(self, *args, **kv):
+        if self.current_format == "MM":
+            self.speed_format = f"{self.metric_speed} M/min"
+            self.position_format = self.metric_position
+            self.factor = Fraction(1, 1)
+        else:
+            self.speed_format = f"{self.imperial_speed} Ft/min"
+            self.position_format = self.imperial_position
+            self.factor = Fraction(10, 254)
+
+    def toggle(self, *_):
+        if self.current_format == "MM":
+            self.current_format = "IN"
+        else:
+            self.current_format = "MM"

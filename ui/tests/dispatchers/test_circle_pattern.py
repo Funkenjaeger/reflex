@@ -2,15 +2,12 @@ import math
 
 import pytest
 
-from rcp.dispatchers.circle_pattern import CirclePatternDispatcher
+from reflex.dispatchers.circle_pattern import CirclePatternDispatcher
 
 
 @pytest.fixture
 def pattern(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "rcp.dispatchers.saving_dispatcher.Path.home",
-        lambda: tmp_path,
-    )
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path / ".config" / "reflex"))
     p = CirclePatternDispatcher(id_override="test_circle")
     p.recalculate()
     return p

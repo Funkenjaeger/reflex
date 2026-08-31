@@ -1,7 +1,7 @@
 import subprocess
 from unittest.mock import patch, mock_open
 
-from rcp.utils.platform import (
+from reflex.utils.platform import (
     is_raspberry_pi,
     parse_disk_and_partition,
     get_root_device,
@@ -60,7 +60,7 @@ class TestParseDiskAndPartition:
 class TestGetRootDevice:
     def test_success(self):
         result = subprocess.CompletedProcess(args=[], returncode=0, stdout="/dev/mmcblk0p2\n")
-        with patch("rcp.utils.platform.subprocess.run", return_value=result) as mock_run:
+        with patch("reflex.utils.platform.subprocess.run", return_value=result) as mock_run:
             assert get_root_device() == "/dev/mmcblk0p2"
             mock_run.assert_called_once_with(
                 ["findmnt", "-n", "-o", "SOURCE", "/"],
@@ -69,27 +69,27 @@ class TestGetRootDevice:
 
     def test_failure(self):
         result = subprocess.CompletedProcess(args=[], returncode=1, stdout="")
-        with patch("rcp.utils.platform.subprocess.run", return_value=result):
+        with patch("reflex.utils.platform.subprocess.run", return_value=result):
             assert get_root_device() is None
 
     def test_timeout(self):
-        with patch("rcp.utils.platform.subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 5)):
+        with patch("reflex.utils.platform.subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 5)):
             assert get_root_device() is None
 
     def test_command_not_found(self):
-        with patch("rcp.utils.platform.subprocess.run", side_effect=FileNotFoundError):
+        with patch("reflex.utils.platform.subprocess.run", side_effect=FileNotFoundError):
             assert get_root_device() is None
 
 
 class TestGetBlockSizeBytes:
     def test_success(self):
         result = subprocess.CompletedProcess(args=[], returncode=0, stdout="31914983424\n")
-        with patch("rcp.utils.platform.subprocess.run", return_value=result):
+        with patch("reflex.utils.platform.subprocess.run", return_value=result):
             assert get_block_size_bytes("/dev/mmcblk0") == 31914983424
 
     def test_failure(self):
         result = subprocess.CompletedProcess(args=[], returncode=1, stdout="")
-        with patch("rcp.utils.platform.subprocess.run", return_value=result):
+        with patch("reflex.utils.platform.subprocess.run", return_value=result):
             assert get_block_size_bytes("/dev/mmcblk0") is None
 
 
@@ -97,7 +97,7 @@ class TestGetFilesystemUsage:
     def test_success(self):
         stdout = "     1B-blocks         Used        Avail\n 15720333312   3456789504  11448750080\n"
         result = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout)
-        with patch("rcp.utils.platform.subprocess.run", return_value=result):
+        with patch("reflex.utils.platform.subprocess.run", return_value=result):
             usage = get_filesystem_usage("/dev/mmcblk0p2")
             assert usage == {
                 "total": 15720333312,
@@ -107,7 +107,7 @@ class TestGetFilesystemUsage:
 
     def test_failure(self):
         result = subprocess.CompletedProcess(args=[], returncode=1, stdout="")
-        with patch("rcp.utils.platform.subprocess.run", return_value=result):
+        with patch("reflex.utils.platform.subprocess.run", return_value=result):
             assert get_filesystem_usage("/dev/mmcblk0p2") is None
 
 

@@ -1,0 +1,272 @@
+#: import LedButton reflex.components.toolbars.led_button
+<StatusBar>:
+  size_hint: 1, None
+  height: 38
+  orientation: "horizontal"
+  padding: dp(8), dp(4), dp(8), dp(4)
+
+  # ── ONE FloatLayout child, so a transient notice can be pinned OVER the
+  #    telemetry gutter instead of laid out beside it. ────────────────────────
+  #
+  # THE RULE THIS SHAPE EXISTS TO OBEY (Evan, 2026-08-22, on the ELS bar's
+  # notice strips): "having things resize around a temporary warning is
+  # distracting." A transient message must not resize or move ANYTHING else on
+  # screen. In a horizontal BoxLayout a third child is a resize by definition --
+  # the telemetry gutter would shrink for four seconds and grow back -- so the
+  # bar's two real children move into an inner BoxLayout that fills this
+  # FloatLayout, and the notice becomes a later sibling drawn on top of them.
+  # Identical rectangles either way: the FloatLayout takes the whole padded
+  # content area and the inner box lays out the same two children in it with
+  # the same spacing.
+  #
+  # The overlay MUST stay the last child -- FloatLayout paints in declaration
+  # order, and a notice drawn under the gutter is a notice nobody sees.
+  FloatLayout:
+    id: bar_float
+    size_hint: 1, 1
+
+    # ── Content: what the status bar actually is, always at full size ────────
+    BoxLayout:
+      orientation: "horizontal"
+      size_hint: 1, 1
+      pos_hint: {'x': 0, 'y': 0}
+      spacing: dp(6)
+
+      # ── Telemetry gutter: its own recessed, rounded box; the four items ride
+      #    inside it (flat: True) instead of drawing their own pills. ──
+      BoxLayout:
+        id: telemetry
+        orientation: "horizontal"
+        padding: dp(4), 0
+        spacing: dp(4)
+        canvas.before:
+          Color:
+            rgba: app.theme.recess
+          RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(7)]
+          # Carved-in: soft top inner shadow + 1px bottom inner highlight.
+          Color:
+            rgba: 1, 1, 1, 1
+          Rectangle:
+            texture: app.theme.recess_shadow
+            pos: self.x + dp(4), self.top - 1 - dp(7)
+            size: max(self.width - dp(8), 0), dp(7)
+          Color:
+            rgba: app.theme.edge_light
+          Rectangle:
+            pos: self.x + dp(4), self.y + 1
+            size: max(self.width - dp(8), 0), 1
+          Color:
+            rgba: app.theme.border_dim
+          Line:
+            rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(7))
+            width: 1.0
+
+        LedButton:
+          # Named because the notice overlay starts at this lamp's RIGHT edge —
+          # see the placement note on notice_overlay below.
+          id: led_com
+          flat: True
+          font_name: app.theme.font_mono
+          label: "COM"
+          checkbox_value: app.board.connected or app.board.blink
+
+        LedButton:
+          flat: True
+          font_name: app.theme.font_mono
+          label: "{:0.0f}".format(0 if root.interval == 0 else (100000000 / root.interval))
+
+        LedButton:
+          flat: True
+          font_name: app.theme.font_mono
+          label: "{:0.0f}".format(root.fps)
+
+        LedButton:
+          flat: True
+          font_name: app.theme.font_mono
+          # Current tick / worst tick since reset, against a 1000-cycle
+          # budget. The peak is the number that matters: a spot reading of
+          # the current tick essentially never catches cut-start, which is
+          # where take-up, phase correction and diagnostics land together.
+          label: "{:0.0f}/{:0.0f}".format(root.cycles, root.cycles_peak)
+
+      # ── Reflex logo + version: their own recessed box at the right end, with the
+      #    logo filling the box height (per the mockup). ──
+      # Dogleg box: the version sits up in the short LEFT part (over the tall DRO
+      # digits); the larger logo sits in the RIGHT part, which drops down (dp(20))
+      # into the dead space above the shorter units/Zero. Drawn from the status bar
+      # but extends below it -- the DRO leaves that area transparent so it shows.
+      FloatLayout:
+        size_hint_x: None
+        width: dp(248)
+        # Dogleg drawn as two rounded rects (rounded outer corners, matching the
+        # other boxes). The step (jog_x) is kept right of the DRO value background.
+        # A slightly larger BORDER_DIM pair behind makes the 1px outline.
+        canvas.before:
+          Color:
+            rgba: app.theme.border_dim
+          RoundedRectangle:
+            pos: self.x - 1, self.y - 1
+            size: dp(92) + 2, self.height + 2
+            radius: [dp(7), 0, 0, dp(7)]
+          RoundedRectangle:
+            pos: self.x + dp(92) - 1, self.y - dp(16) - 1
+            size: self.width - dp(92) + 2, self.height + dp(16) + 2
+            radius: [0, dp(7), dp(7), dp(7)]
+          Color:
+            rgba: app.theme.recess
+          RoundedRectangle:
+            pos: self.x, self.y
+            size: dp(92), self.height
+            radius: [dp(7), 0, 0, dp(7)]
+          RoundedRectangle:
+            pos: self.x + dp(92), self.y - dp(16)
+            size: self.width - dp(92), self.height + dp(16)
+            radius: [0, dp(7), dp(7), dp(7)]
+
+          # Concave fillet at the inner (step) corner: add a wedge of RECESS into
+          # the notch, carve a disc so the reentrant corner reads as a smooth
+          # concave curve, then redraw the two straight borders + the arc ON TOP.
+          # (The carve disc reaches past the tangent points and nicks the straight
+          # borders, so they must be repainted to stay continuous.)
+          Color:
+            rgba: app.theme.recess
+          Rectangle:
+            pos: self.x + dp(92) - dp(7), self.y - dp(7)
+            size: dp(8), dp(8)
+          Color:
+            rgba: app.theme.background
+          Ellipse:
+            pos: self.x + dp(92) - dp(14), self.y - dp(14)
+            size: dp(14), dp(14)
+          # Repaint borders on top, half-pixel aligned to the filled-rect outline.
+          Color:
+            rgba: app.theme.border_dim
+          Line:
+            points: (self.x + dp(60), self.y - 0.5, self.x + dp(92) - dp(7), self.y - 0.5)
+            width: 1.0
+          Line:
+            points: (self.x + dp(92) - 0.5, self.y - dp(7), self.x + dp(92) - 0.5, self.y - dp(16) + dp(2))
+            width: 1.0
+          Line:
+            circle: (self.x + dp(92) - dp(7) - 0.5, self.y - dp(7) - 0.5, dp(7), 0, 90)
+            width: 1.0
+
+        Label:
+          text: app.version
+          font_name: app.theme.font_mono
+          font_size: 16
+          # `text` (not `text_dim`): the version sits on the recessed dogleg, where
+          # text_dim only reaches ~3.8:1 in the light theme. text reads cleanly on
+          # both themes.
+          color: app.theme.text
+          size_hint: None, None
+          size: dp(92), self.parent.height
+          pos: self.parent.x, self.parent.y
+          halign: 'center'
+          valign: 'middle'
+          text_size: self.size
+
+        Image:
+          source: app.theme.logo
+          mipmap: True
+          size_hint: None, None
+          height: dp(37)
+          width: self.height * 3.83
+          # centered horizontally in the lower (tall-right) part for even margins
+          pos: (self.parent.x + dp(92) + self.parent.right - self.width) / 2, self.parent.y - dp(9)
+          fit_mode: "contain"
+
+    # ── Transient operator notice ────────────────────────────────────────────
+    #
+    # WHAT IT COVERS, AND WHY THOSE PIXELS. It fills the telemetry gutter from
+    # the COM lamp's right edge to the gutter's right edge — i.e. it borrows the
+    # three developer counters (firmware execution rate, UI frame rate, firmware
+    # cycle count) and nothing else. Those are the cheapest pixels on this
+    # screen: an operator never acts on them, and they are unchanged a second
+    # later. The COM lamp is deliberately LEFT SHOWING, because it is the one
+    # item in the gutter an operator does act on — it says whether the
+    # controller is talking — and the first message migrated onto this surface
+    # ("No ELS Z axis assigned") is one whose most common cause is a controller
+    # that is NOT talking. Covering the answer with the question would be a
+    # spectacular own goal.
+    #
+    # NOT the logo/version dogleg to the right: that is a hand-drawn concave
+    # fillet, and a rectangle laid across it reads as a rendering fault rather
+    # than a message.
+    #
+    # NOTHING HERE CHANGES A HEIGHT OR A WIDTH. The strip's rectangle is bound
+    # to the gutter's own edges and it toggles OPACITY, never size — so the
+    # widgets underneath keep their exact rectangles whether a notice is up or
+    # not (asserted by previews/preview_status_notice.py, which compares every
+    # widget on screen off vs on). A future maintainer adding a second line here
+    # should add a second SURFACE somewhere, not grow this one.
+    BoxLayout:
+      id: notice_overlay
+      orientation: 'horizontal'
+      size_hint: None, None
+      spacing: dp(6)
+      padding: dp(9), 0
+      # Bound to the two widgets' REAL edges rather than to a copy of their
+      # arithmetic, so the strip cannot drift out of step with the gutter if the
+      # bar's padding or the lamp's share of it ever changes.
+      x: led_com.right
+      width: max(telemetry.right - 1 - led_com.right, 0)
+      # Inset 1px top and bottom so the gutter's own 1px carved border stays
+      # visible around the notice: the strip should read as something laid INTO
+      # the well, not as a slab bolted over it.
+      y: telemetry.y + 1
+      height: max(telemetry.height - 2, 0)
+      opacity: 1 if root.notice_text else 0
+      disabled: not root.notice_text
+      canvas.before:
+        # OPAQUE, unlike the ELS bar's translucent notice tints. Those wash over
+        # CONTROLS, which the operator may still need to see; this one covers
+        # digits, and a four-digit cycle count ghosting through a sentence just
+        # makes the sentence harder to read. Right corners take the well's
+        # radius so the fill ends flush with it; the left edge is barely
+        # rounded, because that end butts against the COM lamp rather than
+        # against the well's own corner.
+        Color:
+          rgba: app.theme.warning if root.notice_severity == "warning" else app.theme.accent
+        RoundedRectangle:
+          pos: self.pos
+          size: self.size
+          radius: [dp(3), dp(6), dp(6), dp(3)]
+
+      Label:
+        id: label_notice_icon
+        # SEVERITY IS NOT CARRIED BY COLOUR ALONE. Amber vs cyan is the fast
+        # channel, but it is the one an operator loses to a dirty screen, low
+        # light, or their own colour vision — so the glyph says it too:
+        # circle-exclamation for a warning, circle-info for an info.
+        text: "" if root.notice_severity == "warning" else ""
+        font_name: app.theme.font_icon
+        font_size: dp(14)
+        color: app.theme.background
+        size_hint_x: None
+        width: dp(16)
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.size
+
+      Label:
+        id: label_notice
+        text: root.notice_text
+        text_size: self.size
+        font_name: app.theme.font_bold
+        font_size: dp(14)
+        # The fill is a saturated accent/warning in both themes (bright on dark,
+        # deep on light) and `background` is its opposite in both, so this one
+        # binding stays legible without a per-theme special case.
+        color: app.theme.background
+        halign: 'left'
+        valign: 'middle'
+        # ELLIPSIS, NOT WRAP. The strip is a fixed 30-ish px tall and must not
+        # grow, so a second line would be silently CLIPPED — a message that
+        # trails off with "..." at least tells the operator it did. Notices are
+        # expected to be one short sentence; anything that needs two is a popup.
+        shorten: True
+        shorten_from: 'right'

@@ -2,13 +2,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rcp.utils.base_device import BaseDevice, TypeDefinition, VariableDefinition
-from rcp.utils.devices import (
+from reflex.utils.base_device import BaseDevice, TypeDefinition, VariableDefinition
+from reflex.utils.devices import (
     Int16, UInt16, Int32, Uint32T, Float, Bool,
     TimHandleTypeDef, Scale, Servo, FastData, Global,
     SCALES_COUNT,
 )
-from rcp.utils import communication
+from reflex.utils import communication
 
 
 @pytest.fixture
@@ -122,8 +122,40 @@ class TestBaseDeviceParsing:
 
         device = Servo(mock_cm, base_address=0)
         assert device.size > 0
-        # Servo: 4 floats (2 each) + 1 int32 (2) + 3 uint32 (2 each) = 16
-        assert device.size == 16
+        # Servo: 4 floats (2 each) + 1 int32 (2) + 3 uint32 (2 each)
+        #        + 2 int16 (servoDir, _pad; 1 each) = 18
+        assert device.size == 18
+
+    def test_size_includes_a_trailing_array(self, mock_cm):
+        """A struct whose LAST member is an array must report its full size.
+
+        Regression, 2026-08-14. `register_type` updated `size` only in the
+        scalar branch; the array branch advanced `current_address` and fell
+        through, so `size` froze at the last scalar. Every struct in this file
+        happened to end on a scalar, so the bug was invisible until elsStop_t
+        gained a diagnostic block ending in two arrays -- which reported
+        rampsSharedData_t as 320 bytes instead of 432 and would have truncated
+        the Modbus map by 112 bytes.
+
+        Deliberately checks a trailing array specifically. A struct with an
+        array in the MIDDLE gets the right answer either way, because a later
+        scalar sets `size` to the correct running total on the way past -- so a
+        mid-struct array cannot fail and is worthless as a regression pin.
+        """
+        class TrailingArray(BaseDevice):
+            definition = """
+typedef struct {
+  int32_t  head;
+  int16_t  tail[10];
+} trailing_t;
+"""
+
+        t = TrailingArray.register_type(mock_cm.definitions)
+        # head (2 registers) + tail[10] (1 register each) = 12
+        assert t.length == 12, (
+            f"trailing array dropped from the size: got {t.length}, want 12"
+        )
+        assert t.struct_unpack_string == "l" + "h" * 10
 
 
 class TestRegisterType:
@@ -152,12 +184,13 @@ class TestSetFastData:
         mock_cm.definitions.append(servo_type)
 
         device = Servo(mock_cm, base_address=0)
-        # Servo has 8 fields; provide matching values
-        values = [1.0, 2.0, 3.0, 4.0, 5, 6, 7, 8]
+        # Servo has 10 fields (incl. servoDir + _pad); provide one value per field
+        values = [1.0, 2.0, 3.0, 4.0, 5, 6, 7, 8, 9, 10]
         result = device.set_fast_data(values)
         assert result["maxSpeed"] == 1.0
         assert result["currentSpeed"] == 2.0
         assert result["stepsToGo"] == 5
+        assert result["servoDir"] == 9
 
     def test_array_field(self, mock_cm):
         """Array fields should produce lists in fast_data."""

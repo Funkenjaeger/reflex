@@ -1,0 +1,201 @@
+# Lockstep release: ONE version, ONE tag, ONE release carrying BOTH halves.
+#
+# This is the flow docs/decisions/repo-structure-monorepo.md specifies and the
+# monorepo has been missing since the 2026-08-17 weld. Its whole point is that
+# `v1.4.0` names a known-good FIRMWARE + UI PAIR, so "which firmware does this
+# UI expect?" is answered by the version number instead of tribal knowledge.
+# Both halves therefore carry the same version even when only one changed; a
+# byte-identical binary simply does not get re-deployed.
+#
+# DELIBERATE, NOT AUTOMATIC, and that is a change from the split era. The old
+# reflex-fw/reflex-ui release workflows fired on every push to main/dev, which
+# is where the habit of writing `[skip ci]` came from -- a marker that on every
+# other branch silently deleted the test run instead (see ui/AGENTS.md). Here a
+# release happens when someone asks for one, so no push needs a marker to
+# suppress it and the test workflows are never in the firing line.
+#
+# The version is passed in rather than derived. python-semantic-release was
+# retired with the split repos: its config had accumulated v7 keys that PSR 10
+# silently ignores, so options read like live settings while doing nothing, and
+# nobody could say from the file what a push would do. An explicit input cannot
+# drift like that -- and the release notes are generated from the conventional
+# commits either way, so the log still does the describing.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version WITHOUT the leading v (e.g. 1.1.0 or 1.1.0-rc.1). A hyphen makes it a pre-release.'
+        required: true
+        type: string
+      dry_run:
+        description: 'Build and check everything, then stop before tagging or publishing.'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0        # release notes need the history since the last tag
+
+      # ── Guards, before anything is built ──────────────────────────────────
+      # A release is a promise about a branch that has been through the ladder.
+      # integration and feature branches have not.
+      - name: Check the branch is releasable
+        run: |
+          case "${{ github.ref_name }}" in
+            main) echo "main: full release" ;;
+            dev)  echo "dev: pre-release" ;;
+            *)    echo "::error::release can only run from main or dev; got '${{ github.ref_name }}'. Promote through the ladder first." ; exit 1 ;;
+          esac
+
+      - name: Check the version and match it to the branch
+        id: v
+        run: |
+          V='${{ inputs.version }}'
+          echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' \
+            || { echo "::error::'$V' is not a semver version (no leading v)."; exit 1; }
+          if echo "$V" | grep -q -- '-'; then PRE=true; else PRE=false; fi
+          # dev ships pre-releases, main ships finals. Crossing them is how a
+          # release-candidate ends up looking like a release.
+          if [ "${{ github.ref_name }}" = "main" ] && [ "$PRE" = "true" ]; then
+            echo "::error::main takes a final version; '$V' is a pre-release."; exit 1
+          fi
+          if [ "${{ github.ref_name }}" = "dev" ] && [ "$PRE" = "false" ]; then
+            echo "::error::dev takes a pre-release (e.g. $V-rc.1); '$V' is final."; exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
+            echo "::error::tag v$V already exists."; exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+
+      # ── Build both halves ─────────────────────────────────────────────────
+      # Package list mirrors fw.yml's arm-build; the two must stay in step so
+      # the CI guard actually reproduces what ships.
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true install -y \
+            coreutils procps make cmake \
+            build-essential gcc-arm-none-eabi \
+            libstdc++-arm-none-eabi-dev libstdc++-arm-none-eabi-newlib \
+            libnewlib-arm-none-eabi
+
+      - name: Stamp the version
+        run: |
+          echo "${{ steps.v.outputs.version }}" > VERSION
+          # ui is a Python package and carries its own version field; keep it
+          # equal to the repo's rather than letting the two drift.
+          sed -i -E '0,/^version = ".*"$/s//version = "${{ steps.v.outputs.version }}"/' ui/pyproject.toml
+          grep -m1 '^version = ' ui/pyproject.toml
+
+      - name: Cross-build the release firmware
+        working-directory: fw
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+          test -f build/reflex-fw.bin && test -f build/reflex-fw.elf
+
+      # A diagnostic probe must never ship. It is compile-time selected, so a
+      # release build cannot contain one -- but "cannot" is worth checking on
+      # the thing that actually shipped rather than asserting in a comment.
+      #
+      # THE OBVIOUS CHECK CANNOT FAIL, and this step shipped it once before
+      # anyone noticed (v1.1.0-rc.1). Grepping the ELF for `elsDiagCaptureStart`
+      # / `elsDiagTick` finds nothing in a DIAGNOSTIC image either: the probe
+      # entry points are `static inline`, so neither build emits a symbol for
+      # them. Proven 2026-08-22 by building a real takeup-settle-v3 image and
+      # running that exact grep against it -- zero hits, identical to a release
+      # build. A guard that returns the same answer for both cases is not a
+      # guard.
+      #
+      # The build CONFIGURATION is where the probe is genuinely selected, and it
+      # does distinguish: 1 occurrence for a probe build, 0 for a release build,
+      # both measured.
+      - name: Refuse to ship a diagnostic build
+        working-directory: fw
+        run: |
+          if grep -q 'ELS_DIAG_PROBE' build/CMakeCache.txt; then
+            echo "::error::the shipped firmware was configured with a diagnostic probe."
+            grep 'ELS_DIAG_PROBE' build/CMakeCache.txt
+            exit 1
+          fi
+          echo "build configuration carries no ELS_DIAG_PROBE"
+
+      - name: Install uv and sync the UI
+        working-directory: ui
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv venv
+          uv sync
+
+      # The gate. A release that has not run the suites is a guess, and the
+      # system suite already ran on this commit's push, so this is the fast
+      # pair: firmware emulator + the UI default suite.
+      - name: Firmware emulator suite
+        working-directory: fw/emulator
+        run: |
+          cmake -B build
+          cmake --build build -j
+          cd build && ctest --output-on-failure
+
+      - name: UI default suite
+        working-directory: ui
+        env:
+          REFLEX_FW_REQUIRED: "1"
+        run: uv run pytest -q
+
+      - name: Build the UI distribution
+        working-directory: ui
+        run: uv build
+
+      - name: Collect the artifacts
+        run: |
+          mkdir -p dist
+          V=${{ steps.v.outputs.version }}
+          cp fw/build/reflex-fw.bin "dist/reflex-fw-$V.bin"
+          cp fw/build/reflex-fw.elf "dist/reflex-fw-$V.elf"
+          cp ui/dist/* dist/
+          (cd dist && sha256sum * > SHA256SUMS)
+          ls -la dist
+
+      # ── Publish ───────────────────────────────────────────────────────────
+      - name: Stop here (dry run)
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "dry run — built and checked v${{ steps.v.outputs.version }}, publishing nothing"
+
+      - name: Commit the version, tag it, push
+        if: ${{ !inputs.dry_run }}
+        run: |
+          # NOT the inherited identity. reflex-fw's split-era release workflow
+          # tagged as bartei81@gmail.com, carried over from the upstream fork --
+          # releases signed by someone who has never worked on this project.
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION ui/pyproject.toml
+          git commit -m "chore(release): v${{ steps.v.outputs.version }} [skip ci]"
+          git tag -a "v${{ steps.v.outputs.version }}" -m "reflex v${{ steps.v.outputs.version }}"
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin "v${{ steps.v.outputs.version }}"
+
+      - name: Publish the release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=${{ steps.v.outputs.version }}
+          FLAGS="--generate-notes --target ${{ github.ref_name }}"
+          [ "${{ steps.v.outputs.prerelease }}" = "true" ] && FLAGS="$FLAGS --prerelease"
+          gh release create "v$V" dist/* --title "reflex v$V" $FLAGS
+          echo "published v$V from ${{ github.ref_name }}"

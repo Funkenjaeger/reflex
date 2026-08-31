@@ -1,0 +1,110 @@
+# Styling for StyledButton (see styled_button.py).
+# Pure-KV canvas drawing so it works on the project's current Kivy version
+# without LinearGradient. The "slate" sheen and the "highlight" glow are both
+# faked with stacked RoundedRectangle / Line instructions.
+
+<StyledButton>:
+    # Single source of truth for opacity: hidden wins, then the disabled dim.
+    # Do NOT add a second `opacity:` rule on an instance -- collapse via `hidden`
+    # instead, or the two bindings fight and the dim can leave a faint ghost.
+    #
+    # DISABLED IS DIMMED BY COLOUR, NOT BY OPACITY (2026-08-30).
+    #
+    # It used to be `opacity: 0.4`, and that is the wrong axis: compositing the
+    # whole widget pulls its label and its fill toward the page behind them
+    # FROM OPPOSITE SIDES, so past a certain point they meet. Measured on the
+    # regenerated screenshots, the disabled "Cut" label scored 1.28:1 against
+    # its own card in light and about the same in dark, where enabled text
+    # scores 8.5:1 and WCAG's floor for large text is 3:1. No opacity value
+    # fixes it -- going from 0.4 to 0.72 moved 1.2 to 1.28.
+    #
+    # A disabled control still has to be READABLE: it is on screen precisely to
+    # say what the button WOULD do. Use `hidden` when it should not be.
+    #
+    # A little opacity is kept so a disabled control still recedes; the
+    # contrast now comes from `text_disabled`, the theme token that exists for
+    # exactly this and that this widget never used.
+    opacity: 0 if self.hidden else (0.85 if self.disabled else 1)
+    # Theme-driven defaults (per-instance overrides still win, e.g. the
+    # Start/Stop button swaps in the danger palette).
+    font_name: app.theme.font_bold
+    slate_fill: app.theme.surface
+    slate_sheen: app.theme.surface_sheen
+    standard_border_color: app.theme.border
+    standard_text_color: app.theme.text
+    disabled_text_color: app.theme.text_disabled
+    # Active fill is the translucent accent tint (flat) -- e.g. Cut reads as a
+    # quiet accent_soft panel + accent border, not a saturated block.
+    highlight_bg_color: app.theme.accent_soft
+    highlight_border_color: app.theme.accent
+    highlight_text_color: app.theme.accent_text
+    glow_color: app.theme.glow
+
+    # The drawn box is inset by margin_x/margin_y so a StyledButton can share a
+    # uniform gutter with neighbouring inset cards.
+    canvas.before:
+        # ── Soft outer glow (highlighted + enabled only; a disabled/blank
+        #    action button like an unavailable "Cut" should not glow) ────────
+        Color:
+            rgba: root.glow_color if (root.is_highlighted and not root.disabled) else [0, 0, 0, 0]
+        RoundedRectangle:
+            pos: (self.x + self.margin_x - 3, self.y + self.margin_y - 3)
+            size: (self.width - 2 * self.margin_x + 6, self.height - 2 * self.margin_y + 6)
+            radius: [root.radius + 3]
+
+        # ── Drop shadow (raised lift; ~0 alpha in dark, visible in light) ──
+        # Skip when the slate is a recessed well (a blank action panel sits IN
+        # the surface, not on it -- its slate_fill is then the recess color).
+        Color:
+            rgba: app.theme.shadow if root.slate_fill != app.theme.recess else [0, 0, 0, 0]
+        RoundedRectangle:
+            pos: self.x + self.margin_x, self.y + self.margin_y - dp(2)
+            size: self.width - 2 * self.margin_x, self.height - 2 * self.margin_y
+            radius: [root.radius]
+
+        # ── Body fill (FLAT) ──────────────────────────────────────────────
+        # Slate state is a flat surface (disabled action buttons read as a
+        # quiet box, dimmed via opacity); active is a flat accent_soft tint.
+        Color:
+            rgba: root.highlight_bg_color if root.is_highlighted else root.slate_fill
+        RoundedRectangle:
+            pos: self.x + self.margin_x, self.y + self.margin_y
+            size: self.width - 2 * self.margin_x, self.height - 2 * self.margin_y
+            radius: [root.radius]
+
+        # ── 1px top inner highlight line (slate/raised state only) ─────────
+        Color:
+            rgba: root.slate_sheen if not root.is_highlighted else [0, 0, 0, 0]
+        Line:
+            points: (self.x + self.margin_x + root.radius, self.y + self.height - self.margin_y - 1, self.x + self.width - self.margin_x - root.radius, self.y + self.height - self.margin_y - 1)
+            width: 1.0
+
+        # ── Border (2px when active, e.g. Cut) ─────────────────────────────
+        Color:
+            rgba: root.highlight_border_color if root.is_highlighted else root.standard_border_color
+        Line:
+            rounded_rectangle: (self.x + self.margin_x + 0.5, self.y + self.margin_y + 0.5, self.width - 2 * self.margin_x - 1, self.height - 2 * self.margin_y - 1, root.radius)
+            width: 2.0 if root.is_highlighted else 1.0
+
+    Label:
+        text: root.text
+        font_size: root.font_size
+        font_name: root.font_name
+        bold: True
+        # Disabled wins over highlighted: a highlighted-but-disabled button is
+        # a real state (the action button between an operator's press and the
+        # controller's ack) and it must not keep the accent's full contrast.
+        #
+        # BOTH PROPERTIES, and the second is the one that actually renders.
+        # Kivy's Label draws `disabled_color` instead of `color` while it is
+        # disabled, and `disabled` propagates from this button down to the
+        # Label -- so setting `color` alone changed nothing in precisely the
+        # state being fixed. Its default is a translucent white, which on a
+        # light theme washes the label into the fill.
+        color: root.disabled_text_color if root.disabled else (root.highlight_text_color if root.is_highlighted else root.standard_text_color)
+        disabled_color: root.disabled_text_color
+        size_hint: 1, 1
+        pos_hint: {'x': 0, 'y': 0}
+        text_size: self.size
+        halign: 'center'
+        valign: 'middle'

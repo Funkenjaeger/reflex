@@ -1,0 +1,109 @@
+# Styling for LedCardButton (see led_card_button.py). Shared slate card with a
+# square-inset domed-lens status LED, optional status text on that LED's
+# baseline, optional centred image, and a main label.
+#: import LedDot reflex.components.widgets.led_dot.LedDot
+
+<LedCardButton>:
+    opacity: 0.5 if self.disabled else 1
+    status_color: app.theme.text_dim
+
+    canvas.before:
+        # Drop shadow: a soft rounded rect offset 2px down behind the face so
+        # the card lifts off the surface (visible in light; ~0 alpha in dark).
+        Color:
+            rgba: app.theme.shadow
+        RoundedRectangle:
+            pos: self.x + dp(4), self.y + dp(6) - dp(2)
+            size: self.width - dp(8), self.height - dp(12)
+            radius: [root.radius]
+        # Card face. ON = flat translucent accent_soft tint; OFF = a GENTLE
+        # vertical gradient painted on a stencil-clipped flat Rectangle so it
+        # stays planar top->bottom (a textured RoundedRectangle maps radially
+        # and pillows). The rounded mask is the stencil.
+        StencilPush
+        RoundedRectangle:
+            pos: self.x + dp(4), self.y + dp(6)
+            size: self.width - dp(8), self.height - dp(12)
+            radius: [root.radius]
+        StencilUse
+        Color:
+            rgba: app.theme.accent_soft if root.highlighted else [1, 1, 1, 1]
+        Rectangle:
+            texture: None if root.highlighted else app.theme.surface_texture
+            pos: self.x + dp(4), self.y + dp(6)
+            size: self.width - dp(8), self.height - dp(12)
+        StencilUnUse
+        RoundedRectangle:
+            pos: self.x + dp(4), self.y + dp(6)
+            size: self.width - dp(8), self.height - dp(12)
+            radius: [root.radius]
+        StencilPop
+        # 1px top inner highlight line (raised state only).
+        Color:
+            rgba: app.theme.surface_sheen if not root.highlighted else [0, 0, 0, 0]
+        Line:
+            points: (self.x + dp(4) + root.radius, self.top - dp(6) - 1, self.right - dp(4) - root.radius, self.top - dp(6) - 1)
+            width: 1.0
+        # Border. A toggle's ON state reads from its LED + face tint, not a
+        # bright accent outline -- so keep the border quiet (border_dim) in both
+        # states rather than switching to a heavy accent ring when highlighted.
+        Color:
+            rgba: app.theme.border_dim
+        Line:
+            rounded_rectangle: (self.x + dp(4), self.y + dp(6), self.width - dp(8), self.height - dp(12), root.radius)
+            width: 1.2
+        # Soft glow halo behind the status LED (tinted by the LED color), only
+        # when the LED is lit -- a grey halo on an off LED makes no sense.
+        Color:
+            rgba: (root.led_color[0], root.led_color[1], root.led_color[2], 0.65) if root.led_on else [0, 0, 0, 0]
+        Rectangle:
+            texture: app.theme.glow_texture
+            pos: self.x + dp(16.5) - dp(16), self.top - dp(18.5) - dp(16)
+            size: dp(32), dp(32)
+        # (Domed-lens LED itself is the LedDot child below, drawn over the glow.)
+
+    LedDot:
+        # Domed-lens LED, inset a square dp(8) from the card's top-left corner
+        # (matches the old flat dot's box: pos dp(12)/top-dp(23), size dp(9)).
+        size_hint: None, None
+        size: dp(9), dp(9)
+        pos: root.x + dp(12), root.top - dp(23)
+        diameter: dp(9)
+        led_color: root.led_color
+        lit: root.led_on
+
+    Label:
+        # Status text, vertically centred on the LED, just to its right.
+        text: root.status_text
+        font_name: app.theme.font_bold
+        font_size: dp(11)
+        color: root.status_color
+        halign: 'left'
+        valign: 'middle'
+        size_hint: None, None
+        size: root.width - dp(30), dp(16)
+        x: root.x + dp(27)
+        center_y: root.top - dp(18)
+        text_size: self.size
+
+    Image:
+        # Optional centred image (upper area, above the main label). White
+        # source art is tinted to the card's text color so it follows the theme.
+        source: root.image_source
+        fit_mode: "contain"
+        color: app.theme.accent_text if root.highlighted else app.theme.text
+        opacity: 1 if root.image_source else 0
+        size_hint: 0.5, 0.4
+        pos_hint: {'center_x': 0.5, 'center_y': 0.56}
+
+    Label:
+        # Main label (lower when an image sits above it, else centred).
+        text: root.text
+        font_name: app.theme.font_bold
+        font_size: root.font_size
+        color: app.theme.accent_text if root.highlighted else app.theme.text
+        halign: 'center'
+        valign: 'middle'
+        size_hint: 1, (0.3 if root.image_source else 0.5)
+        pos_hint: {'center_x': 0.5, 'center_y': (0.18 if root.image_source else 0.4)}
+        text_size: self.size

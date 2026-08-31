@@ -1,0 +1,79 @@
+# Firmware checks: the host-side emulator suite (real firmware C against the
+# shim) and the ARM cross-build — the latter is the only place the actual
+# STM32 image gets compiled off the bench, so ISR-adjacent changes can't sail
+# through on host gcc alone.
+#
+# checkout is pinned @v7 to match the OLD repos' workflows — they were bumped
+# off @v4 weeks before the monorepo weld (Node 20 deprecation), and the
+# weld-era rewrite of these workflows silently regressed that. Keep action
+# pins in step with what the split-era CI had already fixed.
+#
+# apt runs with retries + forced IPv4, and every job carries timeout-minutes:
+# on 2026-08-18 the dev-staging arm-build wedged twice in a row inside
+# "Install ARM toolchain" (runner-side apt mirror hang, jobs alive 15+ min on
+# a 90-second step) and sat there until killed by hand. A wedge should fail
+# loudly in minutes, not hold a green-looking "in progress" forever.
+name: fw
+
+on:
+  push:
+    paths:
+      - "fw/**"
+      - ".github/workflows/fw.yml"
+  pull_request:
+    paths:
+      - "fw/**"
+      - ".github/workflows/fw.yml"
+
+jobs:
+  emulator-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build deps
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true install -y cmake build-essential
+      - name: Build emulator + tests
+        working-directory: fw/emulator
+        run: |
+          cmake -B build
+          cmake --build build -j
+      - name: Run firmware emulator suite
+        working-directory: fw/emulator/build
+        run: ctest --output-on-failure
+      - name: Probe registry scripts resolve every listed probe
+        working-directory: fw
+        run: bash scripts/lib/diag-test.sh
+
+  arm-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      # Package list mirrors the split-era test.yaml/release.yaml pair, which
+      # kept the two in step so the guard job reproduced the release build.
+      # The release workflow is not yet ported to the monorepo (transition
+      # task); when it is, its install list must match this one.
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::ForceIPv4=true install -y \
+            coreutils procps make cmake \
+            build-essential gcc-arm-none-eabi \
+            libstdc++-arm-none-eabi-dev libstdc++-arm-none-eabi-newlib \
+            libnewlib-arm-none-eabi
+      - name: Cross-build the release image
+        working-directory: fw
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+      # The emulator suite above builds for x86, where a double is a hardware
+      # instruction and free, so it is STRUCTURALLY unable to see the cost of
+      # one on Cortex-M4F. On 2026-08-28 that blind spot let a double divide
+      # into the 100 kHz ISR and took the tick 2.6x over budget with all 32
+      # tests green. This step reads the ARM binary that job just produced.
+      - name: ISR cost guard (no softfp in the 100 kHz ISR)
+        working-directory: fw
+        run: ./scripts/check-isr-cost.sh build/reflex-fw.elf

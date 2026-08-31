@@ -1,0 +1,164 @@
+# ── Popup chrome ───────────────────────────────────────────────────────────
+# Restyle every stock Kivy Popup into the facelift look: dark-steel frame,
+# cyan Chakra-Petch title, and a crisp cyan separator under it.
+<Popup>:
+    title_color: app.theme.accent_text
+    title_font: app.theme.font_bold
+    title_size: '18sp'
+    separator_color: app.theme.accent
+    separator_height: dp(2)
+    background: ''
+    background_color: 0, 0, 0, 0
+    canvas.before:
+        Color:
+            rgba: app.theme.border
+        RoundedRectangle:
+            pos: self.x - dp(1), self.y - dp(1)
+            size: self.width + dp(2), self.height + dp(2)
+            radius: [dp(9)]
+        Color:
+            rgba: app.theme.background
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(8)]
+
+# ── Shared settings-row controls ───────────────────────────────────────────
+# Subtle info/help button (the "i" icon at the left of each settings row).
+<FormHelpButton@ButtonBehavior+FloatLayout>:
+    # Circle-question help affordance (Font Awesome "circle-question", \uf059).
+    # The glyph lives in a CHILD Label whose font is set here in the parent rule,
+    # so it applies after -- and wins over -- the global <Label>/<Button> font
+    # rules in home_screen.kv (which force iosevka/Manrope and would otherwise
+    # clobber the icon font and render the glyph as tofu). Same pattern as
+    # IconButton; a dynamic class based directly on Label/Button loses that race.
+    size_hint_x: None
+    width: self.height
+    Label:
+        text: "\uf059"
+        font_name: app.theme.font_icon
+        font_size: dp(19)
+        color: app.theme.text_dim
+        size_hint: 1, 1
+        pos_hint: {'x': 0, 'y': 0}
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.size
+
+# Row caption: left-aligned, Chakra Petch, light blue-grey.
+<FormLabel@Label>:
+    color: app.theme.text
+    font_name: app.theme.font_bold
+    font_size: app.formats.font_size
+    halign: 'left'
+    valign: 'middle'
+    text_size: self.size
+    padding: dp(16), 0
+
+# Themed value control on the right side of a settings row (a recessed slate
+# pill with a border; cyan-tinted while pressed/active).
+<FormValueButton@Button>:
+    background_normal: ''
+    background_down: ''
+    background_color: 0, 0, 0, 0
+    font_name: app.theme.font_bold
+    font_size: app.formats.font_size
+    color: app.theme.accent_text
+    canvas.before:
+        Color:
+            rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
+        RoundedRectangle:
+            pos: self.x + dp(4), self.y + dp(5)
+            size: self.width - dp(8), self.height - dp(10)
+            radius: [dp(5)]
+        Color:
+            rgba: app.theme.accent if self.state == 'down' else app.theme.border
+        Line:
+            rounded_rectangle: (self.x + dp(4) + 0.5, self.y + dp(5) + 0.5, self.width - dp(8) - 1, self.height - dp(10) - 1, dp(5))
+            width: 1.0
+
+# ON/OFF toggle: green-cyan accent fill when on, quiet slate when off.
+<FormToggle@ToggleButton>:
+    background_normal: ''
+    background_down: ''
+    background_color: 0, 0, 0, 0
+    font_name: app.theme.font_bold
+    font_size: app.formats.font_size
+    color: app.theme.accent_text if self.state == 'down' else app.theme.text_dim
+    canvas.before:
+        Color:
+            rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
+        RoundedRectangle:
+            pos: self.x + dp(4), self.y + dp(5)
+            size: self.width - dp(8), self.height - dp(10)
+            radius: [dp(5)]
+        Color:
+            rgba: app.theme.accent if self.state == 'down' else app.theme.border
+        Line:
+            rounded_rectangle: (self.x + dp(4) + 0.5, self.y + dp(5) + 0.5, self.width - dp(8) - 1, self.height - dp(10) - 1, dp(5))
+            width: 1.0
+
+# Themed single-line text entry for string settings.
+<FormTextInput@TextInput>:
+    background_normal: ''
+    background_active: ''
+    background_color: app.theme.recess
+    foreground_color: app.theme.text
+    cursor_color: app.theme.accent
+    font_name: app.theme.font_bold
+    padding: [dp(12), (self.height - self.line_height) / 2 if self.height > self.line_height else dp(6)]
+
+# ── Feeds selector (TabbedPanel + grid of FeedButton) ──────────────────────
+# Only the feed/thread picker uses TabbedPanel, so theming these globally is
+# safe and keeps the picker consistent with the rest of the facelift.
+<TabbedPanel>:
+    background_color: app.theme.background
+    border: [0, 0, 0, 0]
+
+<TabbedPanelStrip>:
+    canvas.before:
+        Color:
+            rgba: app.theme.recess
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+<TabbedPanelHeader>:
+    background_normal: ''
+    background_down: ''
+    background_disabled_normal: ''
+    background_disabled_down: ''
+    background_color: 0, 0, 0, 0
+    font_name: app.theme.font_bold
+    color: app.theme.accent_text if self.state == 'down' else app.theme.text_dim
+    canvas.before:
+        Color:
+            rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
+        Rectangle:
+            pos: self.x + dp(2), self.y + dp(2)
+            size: self.width - dp(4), self.height - dp(4)
+        Color:
+            rgba: app.theme.accent if self.state == 'down' else [0, 0, 0, 0]
+        Rectangle:
+            pos: self.x + dp(2), self.y + dp(2)
+            size: self.width - dp(4), dp(2)
+
+# Feed/pitch value tile in the picker grid.
+<FeedButton>:
+    background_normal: ''
+    background_down: ''
+    background_color: 0, 0, 0, 0
+    color: app.theme.accent_text if self.state == 'down' else app.theme.text
+    font_name: app.theme.font_bold
+    canvas.before:
+        Color:
+            rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
+        RoundedRectangle:
+            pos: self.x + dp(3), self.y + dp(3)
+            size: self.width - dp(6), self.height - dp(6)
+            radius: [dp(5)]
+        Color:
+            rgba: app.theme.accent if self.state == 'down' else app.theme.border
+        Line:
+            rounded_rectangle: (self.x + dp(3) + 0.5, self.y + dp(3) + 0.5, self.width - dp(6) - 1, self.height - dp(6) - 1, dp(5))
+            width: 1.0

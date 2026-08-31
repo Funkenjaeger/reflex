@@ -20,6 +20,13 @@ mm_per_step = 0.00396875       # Leadscrew travel per stepper step (3.175 mm/rev
 [z_axis]
 encoder_counts_per_mm = 400    # Z-axis DRO resolution
 backlash_mm = 0.02             # Mechanical backlash
+# Carriage settle time constant for SERVO-DRIVEN motion (seconds). The step/dir
+# drivetrain does not stop dead with the last pulse; this is the first-order lag
+# over which commanded motion actually reaches the carriage. 0 = instantaneous
+# (the pre-2026-08-22 model). NOT A MEASUREMENT -- see the z_settle_tau_s note
+# in src/physics.h and the commissioning item in ../todo.md. 0.001 s is 10 ticks
+# at isr_rate_hz = 10000.
+settle_tau_s = 0.001
 max_position_mm = 300.0
 min_position_mm = -5.0
 initial_position_mm = 0.0
@@ -35,6 +42,7 @@ manual_step_mm = 0.01          # (unused, kept for reference)
 jog_max_velocity_mm_s = 10.0   # Max manual jog speed (mm/s)
 jog_acceleration_mm_s2 = 50.0  # Manual jog acceleration (mm/s^2)
 x_up_is_negative = true        # true: Up arrow = -X (away from operator)
+scale_dir = 1                  # +1 or -1: PHYSICAL encoder wiring for cross-slide/X scale
 manual_move_timeout_s = 2.0    # seconds of inactivity before auto-disabling manual move; 0 = no timeout (pure toggle)
 
 [servo]

@@ -1,0 +1,72 @@
+#: import ScreenHeader reflex.components.widgets.screen_header
+#: import MODE_ELS reflex.app.MODE_ELS
+#: import USE_CASE_MODES reflex.app.USE_CASE_MODES
+
+<SetupButton@Button>:
+  font_name: app.theme.font_bold
+  font_size: app.formats.font_size
+  color: app.theme.accent_text if self.state == 'down' else app.theme.text
+  background_normal: ''
+  background_down: ''
+  background_color: 0, 0, 0, 0
+  on_press: app.beep()
+  canvas.before:
+    Color:
+      rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
+    RoundedRectangle:
+      pos: self.pos
+      size: self.size
+      radius: [dp(8)]
+    Color:
+      rgba: app.theme.accent if self.state == 'down' else app.theme.border
+    Line:
+      rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(8))
+      width: 1.0
+
+<SetupScreen>:
+  BoxLayout:
+    title: "Setup"
+    orientation: "vertical"
+    padding: 10
+    ScreenHeader:
+      text: "Setup"
+
+    GridLayout:
+      spacing: 20
+      padding: 20
+      cols: 4
+      row_force_default: True
+      row_default_height: (self.height - self.padding[1] - self.padding[3] - self.spacing[1] * 2) / 3
+      SetupButton:
+        text: "Machine"
+        on_release: app.manager.goto("machine")
+      SetupButton:
+        text: "Inputs"
+        on_release: app.manager.goto("inputs_setup")
+      SetupButton:
+        text: "Axes"
+        on_release: app.manager.goto("axes_setup")
+      SetupButton:
+        text: "Servo"
+        on_release: app.manager.goto("servo")
+      SetupButton:
+        text: "Network"
+        on_release: app.manager.goto("network")
+      SetupButton:
+        text: "Formats"
+        on_release: app.manager.goto("formats")
+      SetupButton:
+        text: "System"
+        on_release: app.manager.goto("system")
+      SetupButton:
+        text: "Logs"
+        on_release: app.manager.goto("logs")
+      SetupButton:
+        text: "Profiling"
+        on_release: app.manager.goto("profiling")
+      # ELS setup is shown only for use cases that expose ELS mode.
+      SetupButton:
+        text: "ELS"
+        opacity: 1 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
+        disabled: MODE_ELS not in USE_CASE_MODES.get(app.use_case, [])
+        on_release: app.manager.goto("els_setup")

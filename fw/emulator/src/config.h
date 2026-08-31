@@ -25,6 +25,13 @@ struct EmuConfig {
     /* [z_axis] */
     double z_encoder_counts_per_mm;
     double z_backlash_mm;
+    /* First-order settle time constant (seconds) for SERVO-DRIVEN carriage
+     * motion only — the lash-wall push in LathePhysics::onStepPulse. See the
+     * long note on z_settle_tau_s in physics.h for why this exists, why manual
+     * jog and move-to-position deliberately do NOT use it, and why the default
+     * below is a structural placeholder rather than a measurement. 0 disables
+     * the model exactly (the pre-2026-08-22 instantaneous behaviour). */
+    double z_settle_tau_s;
     double z_max_mm;
     double z_min_mm;
     double z_initial_mm;
@@ -40,6 +47,7 @@ struct EmuConfig {
     double jog_max_velocity_mm_s;  /* max manual jog speed (mm/s) */
     double jog_acceleration_mm_s2; /* manual jog acceleration (mm/s^2) */
     bool   x_up_is_negative;      /* true: Up arrow = -X (away from operator) */
+    int    x_scale_dir;           /* +1 or -1: PHYSICAL encoder wiring for cross-slide/X scale */
     double manual_move_timeout_s;  /* seconds of inactivity before auto-disabling manual move; 0 = no timeout (pure toggle) */
 
     /* [servo] */

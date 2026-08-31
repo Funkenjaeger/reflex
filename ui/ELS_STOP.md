@@ -1,6 +1,6 @@
 # ELS Shoulder Stop — Python orchestration
 
-The position-based shoulder-stop and phase-preserving re-sync logic live in firmware. See [`rotary-controller-f4/ARCHITECTURE.md` → ELS Shoulder Stop](https://github.com/bartei/rotary-controller-f4/blob/main/ARCHITECTURE.md) for the conceptual model: the cut/trigger/resume phases, the latched reference pair, and the modular-correction re-sync.
+The position-based shoulder-stop and phase-preserving re-sync logic live in firmware. See [`reflex-fw/ARCHITECTURE.md` → ELS Shoulder Stop](https://github.com/Funkenjaeger/reflex-fw/blob/main/ARCHITECTURE.md) for the conceptual model: the cut/trigger/resume phases, the latched reference pair, and the modular-correction re-sync.
 
 This document covers the **Python side** — what the GUI does to drive the firmware through a threading job.
 
@@ -25,14 +25,107 @@ The firmware's re-sync correction depends on three configured quantities being m
 
 | Concern | File |
 |---|---|
-| FSM states (`disabled`, `stopped`, `cutting`, `retracting`, `alarm`) and their `on_enter_*` register writes | [`rcp/fsms/els_fsm.py`](rcp/fsms/els_fsm.py) |
-| Hardware-abstracted register access (`set_active`, `set_enable`, `set_stop_position`, etc.) | [`rcp/fsms/els_stop_hal.py`](rcp/fsms/els_stop_hal.py) |
-| Wizard state machine (configuration sequence → cycle loop) | [`rcp/fsms/ui_fsm.py`](rcp/fsms/ui_fsm.py) |
-| User-facing controller that wires the wizard, the ELS FSM, and the UI together | [`rcp/fsms/ui_controller.py`](rcp/fsms/ui_controller.py) |
-| Thread-geometry computation and unit conversions | [`rcp/dispatchers/els.py`](rcp/dispatchers/els.py) |
-| Advanced settings (backlash, hysteresis, direction modes) | [`rcp/components/home/els_advbar.py`](rcp/components/home/els_advbar.py), [`els_settings_popup.py`](rcp/components/home/els_settings_popup.py) |
+| FSM states (`disabled`, `stopped`, `cutting`, `retracting`, `alarm`) and their `on_enter_*` register writes | [`reflex/fsms/els_fsm.py`](reflex/fsms/els_fsm.py) |
+| Hardware-abstracted register access (`set_active`, `set_enable`, `set_stop_position`, etc.) | [`reflex/fsms/els_stop_hal.py`](reflex/fsms/els_stop_hal.py) |
+| Wizard state machine (configuration sequence → cycle loop) | [`reflex/fsms/ui_fsm.py`](reflex/fsms/ui_fsm.py) |
+| User-facing controller that wires the wizard, the ELS FSM, and the UI together | [`reflex/fsms/ui_controller.py`](reflex/fsms/ui_controller.py) |
+| Thread-geometry computation and unit conversions | [`reflex/dispatchers/els.py`](reflex/dispatchers/els.py) |
+| Advanced settings (backlash, hysteresis, direction modes) | [`reflex/components/home/els_advbar.py`](reflex/components/home/els_advbar.py), [`els_settings_popup.py`](reflex/components/home/els_settings_popup.py) |
 
 The layered architecture these files implement (UI → Controller → FSM → HAL → firmware registers) is documented separately in [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md); the ELS stop is a faithful instance of that pattern.
+
+## Backlash calibration (Python side)
+
+The firmware measures; Python decides what to do with the measurement.
+
+The wizard (`reflex/components/home/els_backlash_cal_popup.py`, opened from the
+ELS settings popup) walks the operator through the safety preconditions, sets
+`calCommand`, and then **edge-detects `calSeq`** — never `calCommand`, which the
+firmware clears the instant the ISR consumes it, long before the run finishes.
+Polling the command would report success immediately and read a stale result.
+
+The run controller (`reflex/fsms/els_cal.py`) owns the policy the firmware
+deliberately does not:
+
+- **Consistency.** The three measurements must agree within
+  `els_cal_max_spread_steps`. A wide spread is refused, and there is no "use it
+  anyway" — a drivetrain that doesn't repeat is the finding, and the same fault
+  would quietly corrupt every other ELS operation.
+- **Margin.** The stored take-up is `measured + max(20%, floor)`. The floor
+  matters because at a small lash a flat percentage collapses into the
+  measurement's own quantization uncertainty and stops being margin at all.
+
+Two properties elsewhere depend on this and are easy to break:
+
+1. `els_backlash_steps` holds the **commanded** take-up, and
+   `els_cal_last_measured_steps` holds the **raw measurement**. Only the command
+   is written to the firmware. `ElsStopFsm._safety_margin_display` budgets
+   against `els_backlash_steps`, so storing the raw measurement there would
+   under-budget the cut-start safety margin by exactly the margin.
+2. Calibration policy lives as module-level functions, not methods on
+   `ElsDispatcher` — that class needs a running `MainApp`, so logic on it can
+   only be tested by mirroring it in a stub, and mirrored rules drift.
+
+## Take-up failures are now operator-visible
+
+The firmware refuses to start a pass whose backlash take-up it could not
+confirm. `takeupResult` / `takeupSeq` carry the outcome, and the UI renders the
+physical check rather than the register value: *"Carriage not moving — is the
+half-nut engaged?"* Recovery is disengaging and re-engaging the ELS stop.
+
+This replaces the "no software interlock" caveat below for the take-up case
+specifically. Pressing Cut with the half-nut open no longer produces a silent
+wrong-phase pass; it produces a refusal that names the likely cause.
+
+## Picking up an existing thread (manual reference latch)
+
+Normally the job's thread reference auto-latches at the first stop trigger.
+The "Pick up existing thread" wizard (ELS settings → Sync) instead latches it
+at an operator-verified point on an existing thread: coarse jog in the cutting
+direction only (loads the lash on the correct side), then hand-rotate the
+spindle and work the cross-slide to seat the tool in the groove — Z held and
+watched the whole time — then Confirm, which fires the firmware's atomic
+`latchCommand`. The run controller (`reflex/fsms/els_resync.py`) enforces the
+procedure's safety properties: a 1–3 count Z-hold tolerance whose violation is
+recoverable only by a hand re-seat that must return the reading almost exactly
+(a miss is surfaced as a Z-chain custody fault, never widened away), a spindle
+stillness dwell gating Confirm, and a readback cross-check that the firmware
+latched the Z this screen was watching. `latchSeq` is edge-detected exactly
+like `calSeq` — never poll `latchCommand`. Operator doc:
+[`reflex/help/els_thread_resync.md`](reflex/help/els_thread_resync.md);
+emulator proof: `tests/system/test_els_thread_resync.py`.
+
+## Widening a groove past the cutter (thread-phase offset)
+
+Cutting a thread groove wider than the tool that cuts it: cut the groove, advance the controller's idea of thread phase by a step-over smaller than the cutter, cut again, repeat until the groove is the width you want. The workpiece is never re-indexed and the datum is never re-established. The firmware side is `elsStop.phaseOffsetSteps` (see `fw/ARCHITECTURE.md` → *Thread-phase offset*); Python owns three things it deliberately does not.
+
+The primitive is general — it displaces thread phase by a distance, and says nothing about why. Multi-start threading is a *different* feature that will be built semantically (pitch plus a number of starts) rather than on raw fractions of a pitch, and the operator-entered offset here is only the first of two sources named in `fw/Core/Inc/els_phase.h`; the second is the X-depth-derived compound infeed (6a77c598), which will feed the same `Pending` path.
+
+**Unit conversion.** The operator enters a distance in display units; the register wants leadscrew steps. `ElsFsm._leadscrew_steps_per_display_unit()` composes `servo.ratioNum/Den` (mm per step) with `formats.factor` (display units per mm), both exact `Fraction`s, and rounds **once** at the end.
+
+**Accumulation.** The firmware holds one absolute total and replaces it on every apply, so the running total is built here — read `phaseOffsetSteps`, add the entry, write the sum back. It is read from the firmware and never from a UI-side copy, because the firmware clears the total on the `enable` 0→1 edge and a local copy would happily carry a shift into the next job. Since every step-over goes the same way, that total *is* the widening: how far the groove has grown past the width of the cutter, measurable on the part. It is the headline of both readouts for that reason, with fraction-of-a-pitch demoted beside it to the aliasing bound.
+
+**The refusals**, all in `ElsFsm.apply_phase_offset()`, each returning its own `PHASE_OFFSET_*` code so the UI can state a reason rather than fail silently:
+
+- **At one pitch — refused, not clamped.** This is the ALIASING bound, independent of what the offset is for: one pitch of offset is a no-op and 1.5 pitches is indistinguishable from 0.5. Clamping would put the cut somewhere other than where the operator asked, in metal, before anything looks wrong.
+- **Negative entries — refused.** Entry is advance-only because the work is: widening runs one way, opening a single side of the groove until it is wide enough, so there is no signed workflow to support and a negative entry is a slip. Refused by name rather than absoluted, because the math is asymmetric — the forward bias turns `−X` into a forward jog of `pitch − X` (`els_phase.h`, T5), a real cut in the same groove taking the flank the operator was *not* opening.
+- **Turning, or a zero pitch** — there is no thread phase to shift, and the firmware is sent `threadPitchSteps = 0`.
+- **Outside a job** — the firmware consumes the command *without* acking when `enable == 0`, and an absent ack is indistinguishable from a dropped frame. Refusing here is what turns that silence into a sentence on screen.
+
+Proof: `tests/fsms/test_els_phase_offset.py` (25 cases, nine mutations applied and killed) and `fw/emulator/test/els_phase_offset_command_test.cpp` (eight killed).
+
+**Not yet verified on hardware,** including the frame caveat in the firmware doc — on a `cuttingDir == −1` machine a given entry opens up the *opposite flank* of the groove from the one the operator pictured.
+
+## Protocol version
+
+`Board._check_protocol_version()` reads `elsStop.protocolVersion` on each new
+connection and compares it against `ELS_PROTOCOL_VERSION` in `devices.py`. The
+whole shared struct is memory-mapped onto Modbus registers with no translation
+layer, so a firmware whose `elsStop_t` differs reinterprets every register past
+the point of divergence — which presents as plausible-looking garbage and gets
+diagnosed as a hardware fault. The check is non-fatal: it flags and logs, since
+the UI stays useful for everything that doesn't touch the moved registers, and
+refusing to start would make reflashing harder than the fault warrants.
 
 ## Operator-visible expectations
 

@@ -1,0 +1,76 @@
+# HelpButton (see help_button.py): the circle-question glyph, pressable, plus
+# the popup it opens.
+#
+# The glyph is Font Awesome "circle-question" (\uf059) -- already a question
+# mark in a circle, so nothing else is drawn. It lives in a CHILD Label whose
+# font is set here so it applies after -- and wins over -- the global <Label>
+# font rules in home_screen.kv, which would otherwise clobber the icon font
+# and render the glyph as tofu. Same race FormHelpButton and IconButton
+# document in their own kv.
+
+<HelpButton>:
+    size_hint: None, None
+    size: dp(44), dp(44)
+    opacity: 0.4 if self.disabled else 1
+
+    Label:
+        text: "\uf059"
+        font_name: app.theme.font_icon
+        font_size: min(root.width, root.height) * 0.62
+        color: app.theme.accent_text if root.state == "down" else app.theme.text_dim
+        size_hint: 1, 1
+        pos_hint: {"x": 0, "y": 0}
+        halign: "center"
+        valign: "middle"
+        text_size: self.size
+
+# Title + scrollable text + Close. auto_dismiss is fine HERE, unlike on the
+# modals this button fronts: help carries no in-flight state, so a stray tap
+# outside can only close words.
+#
+# The height is derived the way els_resync_popup.kv derives its own -- grow
+# with the text, clamp to the WINDOW (a Popup's parent once opened, never a
+# `#:import` of kivy.core.window.Window, which would construct a real window
+# at kv-load time). dp(70) is Kivy's <Popup> chrome at this theme's 18sp
+# title; then this box's padding (2 x dp(16)), one inter-row gap (dp(10)),
+# the Close row (dp(56)), and the text itself.
+<HelpTextPopup>:
+    size_hint_x: 0.7
+    size_hint_y: None
+    auto_dismiss: True
+    height: min((self.parent.height if self.parent else 600) - dp(16), dp(70) + dp(32) + dp(10) + dp(56) + lbl_help.height)
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: dp(16)
+        spacing: dp(10)
+
+        ScrollView:
+            id: sv_help
+            do_scroll_x: False
+            do_scroll_y: True
+            # The same visible-bar treatment as the modals: a ~2 px hairline
+            # is not an affordance at arm's length on a lathe.
+            bar_width: dp(9)
+            bar_margin: dp(1)
+            bar_color: app.theme.accent
+            bar_inactive_color: app.theme.accent
+            scroll_type: ["bars", "content"]
+
+            Label:
+                id: lbl_help
+                text: root.help_text
+                halign: "left"
+                valign: "top"
+                text_size: self.width - dp(12), None
+                size_hint_y: None
+                height: self.texture_size[1]
+                color: app.theme.text
+                font_size: app.formats.font_size
+
+        FormValueButton:
+            text: "Close"
+            size_hint_y: None
+            height: dp(56)
+            on_press: app.beep()
+            on_release: root.dismiss()

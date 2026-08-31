@@ -1,61 +1,110 @@
-# Rotary Controller (F4)
+# Reflex firmware (`fw/`)
 
-[![Discord](https://img.shields.io/discord/1386014070632878100?style=social)](https://discord.gg/EDtgj7Yayr) [![Shop at Provvedo](https://img.shields.io/badge/Shop-Provvedo-blue?logo=shopify&style=flat-square)](https://www.provvedo.com/shop)
-
-
-This repository contains the **firmware** for a rotary controller board based on the **STM32F411** microcontroller ([github.com][1]). It provides Digital Read Out (DRO) and single-axis control for CNC-style rotary tables.
-
-🛒 **Purchase all boards from our shop:** [Provvedo Shop](https://www.provvedo.com/shop)
+The **real-time half** of [Reflex](../README.md): STM32F411 firmware providing
+encoder capture, step generation, and all motion control the UI must never be
+trusted with — spindle-synchronized feed, the electronic stop, retract, jog
+profiles, and thread-phase re-sync all execute here, in a 100 kHz ISR with
+FreeRTOS tasks alongside. The UI talks to it as a Modbus RTU master over
+RS-485; the register contract is defined in `Core/Inc/Ramps.h` and mirrored by
+`../ui/reflex/utils/devices.py`, guarded by `protocolVersion`.
 
 ---
 
-## ⚙️ Features
+## ⚙️ Structure
 
-* Utilizes **STM32CubeMX** for hardware configuration (.ioc file included)
-* Modular firmware structure with FreeRTOS support
-* Supports ST‑Link V2 and Raspberry Pi + OpenOCD programming
-* Optimized for high-speed encoder + stepper motor control
-* Includes a native lathe emulator for hardware-free testing with the Python GUI
+* **STM32CubeMX** hardware configuration (`.ioc` included)
+* Modular firmware with FreeRTOS support
+* Programmed over SWD with an ST-Link V2
+* Optimized for high-speed encoder + stepper/servo motor control
+* Native FW+lathe **emulator** for hardware-free testing (below)
 
 ---
 
 ## 🛠️ Build & Flash
 
+Build and flash on **the machine with the ST-Link plugged into it**. For this
+project that is the Pi that also runs the UI, which is perfectly capable of
+compiling the firmware — and doing both in one place means the binary on the
+target cannot be a different revision from the checkout in front of you.
+`git rev-parse HEAD` there *is* what is flashed.
+
 ### Requirements
 
-* CMake & C/C++ toolchain (e.g. `arm-none-eabi-gcc`, `make`)
-* ST-Link v2 or Raspberry Pi with OpenOCD
-
-### Build
-
 ```bash
-git clone https://github.com/bartei/rotary-controller-f4.git
-cd rotary-controller-f4
-cmake -DCMAKE_BUILD_TYPE=Release .
-make -j$(nproc)
+sudo apt install gcc-arm-none-eabi cmake build-essential openocd
 ```
 
-### Clean
+Plus an ST-Link v2 on USB. The `openocd` package installs udev rules granting
+the `plugdev` group access, so flashing needs no `sudo`.
+
+### Build and flash
 
 ```bash
-make clean
+./scripts/flash.sh
 ```
 
-### Flash
+That builds, flashes over SWD, and records what it did.
 
-* **ST‑Link V2**:
+> **Power-cycle the controller after flashing.** A reset alone does not reliably
+> start the new firmware on this board. openocd's `Verified OK` confirms the
+> flash *contents*, not what the core is *executing* — so programming and
+> verification both report success while the machine keeps running the previous
+> firmware, silently and with no error anywhere. Confirm from the UI log
+> that `Firmware register protocol version N (expected N)` matches what you
+> flashed before believing it took.
 
-  ```bash
-  st-flash --format ihex write rotary-controller-f4.hex
-  ```
+```bash
+./scripts/flash.sh --diag=NAME   # with a diagnostic probe compiled in
+./scripts/flash.sh --dry-run     # everything except the write
+./scripts/build.sh               # build only, no flashing
+./scripts/build.sh --diag        # lists the available probes
+```
 
-* **Raspberry Pi + OpenOCD**:
+**It rebuilds every time by default.** `--no-build` opts out. A stale binary is
+the easiest mistake to make and the hardest to notice; rebuilding costs seconds.
 
-  ```bash
-  openocd -f ./raspberry.cfg
-  ```
+**`--host NAME` builds here and flashes there** over SSH, for the case where the
+probe host genuinely cannot build. It adds a copy and a checksum — a transfer
+that can silently truncate is worth verifying before it is written to the
+controller of a machine with moving parts. Prefer the local path: it makes that
+whole failure mode, and the version ambiguity that comes with it, not exist.
 
-  The default `raspberry.cfg` configures SWD over GPIO pins 24/25 + GND. Ensure GND wiring is the **same length** as SWCLK/SWDIO for reliability. Modify the GPIO pins in `raspberry.cfg` if needed.
+**Release and diagnostic builds live in separate directories.** `build/` is the
+release firmware; each `--diag=NAME` build gets its own directory, so the flag
+can never depend on what the last `cmake` invocation happened to say. A
+diagnostic build compiles in **one** measurement probe and must **never** reach
+`dev-staging`, `dev` or `main`. At runtime the `elsStop.diagSchema` register says
+which probe is running (`0` = none), and the UI logs it at connect.
+
+Which probes exist, what they measure, how to add or retire one, and why only one
+can be compiled in at a time: **[DIAG.md](DIAG.md)**. `./scripts/build.sh --diag`
+with no name lists them.
+
+**Every flash is recorded** in `~/firmware/flashed.json` on the probe host: UTC
+timestamp, variant, git revision, whether the tree was dirty, and the ELF's MD5.
+Working out what firmware was on this lathe once took an afternoon of forensics
+across build-artifact timestamps; this makes it a lookup.
+
+### Underneath
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
+openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
+        -c 'transport select swd' -c 'program build/reflex-fw.elf verify reset exit'
+```
+
+OpenOCD rather than `st-flash`: it takes the ELF directly (load addresses come
+from the headers, so there is no `--format`/base-address to get wrong), it is
+markedly more tolerant of ST-Link **clones**, and it is the same tool that would
+drive a GPIO-bitbanged probe if the boards are ever respun without a dongle.
+
+> Bitbanging SWD from a Raspberry Pi's GPIO used to be documented here via
+> `raspberry.cfg`. It has been removed: that config uses OpenOCD's
+> `bcm2835gpio` driver, which memory-maps the GPIO block on the SoC — and the
+> Pi 5 moved GPIO onto the RP1 southbridge, so the driver has nothing to map and
+> cannot work there at all. It was never used in practice. `raspberrypi5.cfg`
+> holds an untested `linuxgpiod` equivalent for whenever the boards get respun;
+> read its header before trusting it.
 
 ---
 
@@ -64,6 +113,9 @@ make clean
 A native Linux emulator is included for hardware-free firmware testing. It compiles the real firmware sources (`Ramps.c`, `Modbus.c`, `Scales.c`, `UARTCallback.c`) against a HAL/FreeRTOS shim layer and simulates lathe physics — spindle with inertia, leadscrew, carriage with half-nut engagement, and cross-slide. The emulator exposes Modbus RTU via PTY pair and TCP socket so the unmodified Python GUI can connect as if talking to real hardware.
 
 A two-pane ANSI terminal dashboard with sparklines provides live visualization, with keyboard controls for spindle RPM, manual axis movement, half-nut engagement, and more. All parameters are configurable via TOML file.
+
+The emulator also hosts the firmware test suite (`emulator/test/`), which drives
+the real ISR directly — run it with `ctest` from `emulator/build`.
 
 ### Emulator Build & Run
 
@@ -82,56 +134,10 @@ cmake --build build
 * Pin assignments for encoder, buttons, LEDs, SWD, etc. reviewed and tested
 * Memory layout defined by `STM32F411CEUX_FLASH.ld` and `STM32F411CEUX_RAM.ld`
 
----
-
-## 🧩 PCB & Schematic
-
-Firmware integrates with hardware design available at:
-
-* **PCB repo**: bartei/rotary-controller-pcb — includes Proteus schematic, BOM (with pricing), and fab files; KiCad version in progress ([github.com][2], [github.com][3], [github.com][1])
-
-Together, they form a complete controller + UI system when paired with:
-
-* `rotary-controller-python` — a Raspberry Pi Kivy-based DRO + control UI
+Board design and system-level hardware: see the [top-level README](../README.md).
 
 ---
 
-## 🛎️ Usage Notes
+## 📄 License
 
-* Works as a **single-axis rotary DRO**
-* FreeRTOS scheduler handles encoder sampling loop
-* GPIO/button routines support nudge and rotary button functions
-* SWD pins must be appropriately wired and matched in length
-
----
-
-## 📘 Resources & Links
-
-* [Firmware repo](https://github.com/bartei/rotary-controller-f4)
-* [PCB repo (Proteus/KiCad)](https://github.com/bartei/rotary-controller-pcb)
-* [Raspberry Pi UI with Kivy](https://github.com/bartei/rotary-controller-python)
-* Join the community on **Discord**
-
----
-
-## ✅ Next Steps
-
-1. Test hardware interface in CubeMX; verify pin assignments
-2. Build and flash firmware, connect to DRO UI app
-3. Utilize FreeRTOS for real-time sampling and control
-4. Contribute improvements — e.g. KiCad support, UI features, multi-axis
-
----
-
-## 📝 Contact & Support
-
-Need help? Join our **Discord** community for support, discussions, and updates.
-
-
----
-
-Let me know if you'd like additions like block diagrams, pinout tables, or usage screenshots!
-
-[1]: https://github.com/bartei/rotary-controller-f4"
-[2]: https://github.com/bartei/rotary-controller-pcb"
-[3]: https://github.com/bartei/rotary-controller-python"
+MIT — see `LICENSE`.

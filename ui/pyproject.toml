@@ -1,11 +1,12 @@
 [project]
-name = "rcp"
-version = "1.0.0"
-description = "Rotary Controller Python"
+name = "reflex"
+version = "1.1.0-rc.1"
+description = "Reflex UI"
 authors = [
-    { name = "Stefano Bertelli", email = "stefano@provvedo.com" }
+    { name = "Stefano Bertelli", email = "stefano@provvedo.com" },
+    { name = "Evan Dudzik" }
 ]
-requires-python = ">=3.10,<4.0"
+requires-python = ">=3.11,<4.0"
 license = "MIT"
 readme = "README.md"
 dependencies = [
@@ -25,28 +26,30 @@ dependencies = [
 dev = [
     "coverage>=7.6.9",
     "pytest>=8.3.4",
-    "python-semantic-release>=9.15.2",
+    "pillow>=10.0.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not system'"  # explicit `-m system` on the CLI overrides this
+markers = [
+    "system: emulator-backed end-to-end system tests (requires the reflex-fw emulator; slow, excluded from default `uv run pytest` runs -- invoke explicitly with `-m system`)",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.semantic_release]
-version_toml = ["pyproject.toml:project.version"]
-patch_without_tag = true
-branch = "main"
-hvcs = "github"
-remove_dist = false
-upload_to_pypi = false
-build_command = "uv build"
-prerelease = false
-
-[tool.semantic_release.branches.main]
-match = "main"
-prerelease = false
-
-[tool.semantic_release.branches.dev]
-match = "dev"
-prerelease = true
-prerelease_token = "rc"
+# python-semantic-release was RETIRED with the split repos (2026-08-22).
+#
+# Its config here had accumulated v7 keys that PSR 10 silently ignores, so
+# several options read like live settings while doing nothing at all -- and
+# nobody could say from this file what a push to dev would actually do. That
+# ambiguity is where the `[skip ci]` habit came from, and on every branch but
+# main/dev that marker deleted the test run and bought nothing.
+#
+# Releases are now cut by .github/workflows/release.yml: ONE version for both
+# halves of the monorepo, tagged `vX.Y.Z`, carrying the firmware binary and
+# this package's wheel on a single GitHub release. It is dispatched
+# deliberately rather than firing on a push. The repo-root VERSION file is the
+# source of truth and the workflow writes both it and the `version` field
+# above -- do not bump either by hand.
