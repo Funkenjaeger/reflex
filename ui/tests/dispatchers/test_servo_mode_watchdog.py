@@ -12,16 +12,22 @@ told nobody. It posts a transient notice to the top status bar as well. The log
 line stays: the log is what makes an episode findable afterwards, the notice is
 what reaches the operator while it is happening.
 
-WHAT IT STILL DOES NOT DO is fault to alarm, which would call on_enter_alarm ->
-set_enable(False) and run the enable falling-edge teardown, stopping the feed
-with the tool in the groove on a false positive.
+WHAT IT STILL DOES NOT DO is fault to alarm. A false positive there would stop
+the feed with the tool in the groove and the spindle turning -- and release the
+leadscrew as well.
 
-This docstring used to justify that by saying clearing enable "RELEASES the
-carriage hold". THAT CLAIM IS UNVERIFIED and is no longer asserted here: the
-cited firmware lines cancel in-flight take-up and zero commanded motion, and
-whether the carriage is then held or free depends on CL86T behaviour that no
-source in this repo states. The alarm rung stays off the table on the simpler
-argument above, which does not depend on it.
+THE "RELEASES THE CARRIAGE HOLD" CLAIM, CORRECTED 2026-08-31 from the machine.
+This docstring used to attach the phrase to clearing enable. The phrase is
+true; the attribution was not. SYNC ENABLE CONTROLS THE SERVO DRIVE:
+servoEnableTask drives a real enable pin (Ramps.c:1672-1673), and servoMode ==
+0 takes ENA high, disabling the drive and leaving the leadscrew free to turn by
+hand. set_enable(False) never touches ENA -- it clears elsStop.active, which is
+a different hold entirely (it gates sync-step accumulation, so clearing it is
+the "go" for a pass).
+
+on_enter_alarm drops sync and the feed BEFORE clearing enable, so escalating
+really would de-energise the drive mid-pass. The rung stays closed for that
+reason rather than the old one.
 """
 import logging
 from unittest.mock import MagicMock, patch

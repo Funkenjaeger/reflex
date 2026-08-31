@@ -29,13 +29,25 @@ the servo-mode divergence watchdog's escalation, or admit the page is theatre.
 |---|---|---|---|
 | log-only | writes a line to the journal | none, and no benefit either — at the lathe there is a touchscreen and no terminal, so this reached nobody | superseded |
 | **notice** | **amber line on the top status bar via `els_uic.notify`** | **none — touches no motion path** | **ADOPTED** |
-| alarm | `on_enter_alarm` → `set_enable(False)`, running the enable falling-edge teardown | a false positive stops the feed with the tool in the groove and the spindle turning | **NOT TAKEN** |
+| alarm | `on_enter_alarm` → drops sync, then the feed, then `set_enable(False)` | a false positive stops the feed with the tool in the groove **and de-energizes the drive, freeing the leadscrew** | **NOT TAKEN** |
 
 The reasoning is asymmetric and that asymmetry is the whole argument. A false
 positive on the notice rung costs one amber line. A false positive on the
 alarm rung is itself a hazard event — the detector would cause the class of
-incident it exists to detect. Until the disengage path is demonstrated safe
-rather than argued safe, the alarm rung stays closed.
+incident it exists to detect. The alarm rung stays closed.
+
+!!! note "Sync enable controls the servo drive"
+    `servoEnableTask` drives a real enable pin (`Ramps.c:1672-1673`):
+    `servoMode != 0` takes `ENA` low and the drive is energized;
+    `servoMode == 0` takes it high, **the drive is disabled, and the leadscrew
+    is free to turn by hand**. That is what "releasing the carriage hold"
+    means, and it is why `on_enter_alarm`'s ordering matters — it drops sync
+    first, so escalating really would release the leadscrew mid-pass.
+
+    Note this is a *different* hold from `elsStop.active`, which gates
+    sync-step accumulation; clearing that one is the "go" for a pass
+    (`Ramps.c:1247`). Two holds, and a single phrase that used to be attached
+    to the wrong one.
 
 Landed in `a0068d2`. Watchdog at `ui/reflex/dispatchers/servo.py:232`.
 
@@ -69,6 +81,7 @@ reported, but nothing is gated. **GAP** = nothing found.
 | Drive fault | GAP | GAP | GAP | GAP | GAP |
 | UI death | n/a | GAP | GAP | **GAP** | GAP |
 | Firmware re-asserts feed after UI said stop | — | ◐ | ◐ | ◐ | — |
+| Leadscrew turned while the drive is off | GAP | **GAP** | GAP | — | GAP |
 
 That table is mostly GAP, and that is the finding. It is not evidence the
 machine is dangerous — it is evidence that **what protects the operator today
@@ -110,6 +123,14 @@ stops polling. Guard #25 above is UI-*initiated* (it fires on a failed write
 ack) and therefore cannot fire when the UI is the thing that died. The
 firmware's take-up gates run independently of UI liveness, but they only run
 at take-up.
+
+**Leadscrew turned while the drive is off.** Should invalidate the thread
+reference. It does not — see the gap called out under
+[Open questions](#open-questions). Dropping sync de-energizes the drive, the
+leadscrew becomes hand-turnable, and nothing clears `referenceLatched` short
+of an engage cycle. This one is a code gap rather than an unwritten feature,
+and it is the only row here where the machine can end up confidently wrong
+rather than merely unprotected.
 
 ---
 
@@ -186,20 +207,29 @@ exactly why it is called out here.
 
 ## Open questions
 
-!!! warning "The carriage-hold claim is UNVERIFIED, and it is load-bearing"
-    Three places — the watchdog docstring, its test module, and the Open Loops
-    task body — asserted that clearing enable *"releases the carriage hold"*,
-    citing `Ramps.c:815/826`. Reading those lines: they cancel in-flight
-    take-up and zero commanded motion (`stepsToGo`, `currentSpeed`,
-    `desiredSteps`). Whether the carriage is then **held by the drive or
-    free** is a fact about CL86T behaviour with no commanded motion that no
-    source in this repository states, and the cited line numbers have drifted.
+!!! danger "A latched thread reference survives sync being switched off"
+    **This is a gap in the code, not in the enumeration**, and it follows
+    directly from the note above.
 
-    This matters because it is the strongest form of the argument for keeping
-    the alarm rung permanently closed. The decision above does not depend on
-    it — the simpler argument (a false positive stops the feed mid-cut) is
-    sufficient — but the claim should be settled at the machine rather than
-    inherited, and it should stop being repeated until it is.
+    Dropping sync de-energizes the drive, so the leadscrew can be turned by
+    hand. There is no leadscrew feedback — the firmware knows only commanded
+    steps — so anything that moves while the drive is off is invisible to it,
+    and a thread reference latched before that point no longer describes the
+    machine.
+
+    Firmware clears `referenceLatched` **only on the `elsStop.enable` 0→1
+    edge** (`Ramps.c:781-783`, and `Ramps.h:191` says so). `stop_sync()`
+    clears `syncEnable` on every scale and touches nothing else. So sync off
+    and back on **without an engage cycle** carries the old reference across,
+    and the UI keeps showing `REF LATCHED`.
+
+    That path is not hypothetical: it is what the 2026-08-30 bench run walked
+    when Sync Enable was pressed mid-cut, toggled again, and the job resumed
+    without disengaging.
+
+    Evan, 2026-08-31: *"when sync is disabled the leadscrew can be rotated
+    freely. That's why it's imperative that a latched phase ref must be
+    cleared when sync is disabled."* It currently is not.
 
 Two more, both cheap to close and neither closed here:
 

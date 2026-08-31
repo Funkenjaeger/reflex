@@ -256,21 +256,32 @@ class ServoDispatcher(SavingDispatcher):
           NOTICE      <- HERE. Posts to the top status bar via els_uic.notify.
                       Touches no motion path at all, so a false positive costs
                       the operator one amber line and nothing else.
-          alarm       would call on_enter_alarm -> set_enable(False), running
-                      the enable falling-edge teardown (Ramps.c:805-832:
-                      takeupPending, stepsToGo, currentSpeed and desiredSteps
-                      all cleared -- "make the machine inert"). A false
-                      positive mid-pass stops the feed with the tool in the
-                      groove and the spindle turning. NOT TAKEN.
+          alarm       would call on_enter_alarm, which drops sync and the feed
+                      before clearing enable. A false positive mid-pass both
+                      stops the feed with the tool in the groove and the
+                      spindle turning, AND releases the leadscrew (below).
+                      NOT TAKEN.
 
-        The older note here said clearing enable "releases the carriage hold".
-        THAT PHRASE IS UNVERIFIED (2026-08-31): the cited lines cancel in-flight
-        take-up and zero commanded motion, and whether the carriage is then held
-        by the drive or free is a fact about the CL86T with no commanded motion,
-        which no source in this repo states. Left standing as an open question
-        rather than repeated as established -- it is the load-bearing claim for
-        keeping the alarm rung off the table, and it appears in at least three
-        places having never been checked in any of them.
+        "RELEASES THE CARRIAGE HOLD" -- CORRECTED 2026-08-31, Evan, from the
+        machine. The phrase was right and its citation was wrong, which is why
+        it survived three copies without anyone being able to check it.
+
+        SYNC ENABLE CONTROLS THE SERVO DRIVE. servoEnableTask drives a real
+        enable pin (Ramps.c:1672-1673): servoMode != 0 -> ENA low, drive
+        energised; servoMode == 0 -> ENA high, DRIVE DISABLED AND THE LEADSCREW
+        FREE TO TURN BY HAND. So the hold is released by dropping sync, not by
+        set_enable(False) -- the enable falling edge (Ramps.c:792-832) clears
+        elsStop.active and zeroes commanded motion but never touches ENA.
+
+        The old citation (Ramps.c:815/826) pointed at a DIFFERENT hold:
+        elsStop.active == 1 stops sync-step accumulation, so clearing it 1->0
+        is the "go" for a pass (firmware's own words, Ramps.c:1247). Two holds,
+        one phrase, and the wrong line numbers attached.
+
+        This UPHOLDS keeping the alarm rung closed, for a better reason than
+        the old note gave: on_enter_alarm calls stop_sync() and stop_feed()
+        before set_enable(False), so escalating really would de-energise the
+        drive mid-pass.
 
         Only the dangerous direction is reported. "We said run, it says stopped"
         is a stalled feed -- annoying, visible, and not a runaway.
