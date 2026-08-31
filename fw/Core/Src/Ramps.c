@@ -161,22 +161,38 @@
  *    left to this constant — elsSlipSettleTicks() floors it at runtime — but a
  *    value below the pacing period means that floor is doing all the work and
  *    the number here is decorative.
- *  - Ticks, not milliseconds. At the measured 103.8 kHz ISR rate 700 ticks is
- *    ~6.7 ms. The emulator's real-time serve loop runs the same ISR ~10x slower,
+ *  - A DURATION, not a tick count -- ELS_MS_TO_TICKS converts at the rate the
+ *    build declares, which is what carried it through 100 kHz -> 50 kHz intact.
+ *    The emulator's real-time serve loop runs the same ISR ~10x slower,
  *    so anything tuned by watching wall-clock there is 10x wrong here
  *    (els_slip.h has the full unit-trap list).
  *
- * Smaller is safer and only becomes unsafe in one direction: too small starts
- * refusing healthy take-ups. Tune it DOWN from here against a machine that still
- * confirms reliably, never up to make a refusal go away. The commissioning data
- * above is what any further move must argue against, and it is executable:
- * els_slip_horizon_commission_test.cpp encodes those seven observations and the
- * gap the current value sits in, so a change made without revisiting them turns
- * that test red. */
-/* 7 ms. Commissioned as 700 ticks against 18 machine captures when the ISR
- * ran at 100 kHz; expressed as the DURATION it always was, so the rate
- * change carries it instead of silently doubling it. */
-#define ELS_SLIP_SETTLE_TICKS       ELS_MS_TO_TICKS(7)
+ * "SMALLER IS SAFER" WAS WRONG, AND IS WITHDRAWN (2026-08-30, Evan's call).
+ * This paragraph used to say tune it DOWN, never up. That reasoning assumed the
+ * margin against a hand was the binding constraint. It is not:
+ *
+ *   - a hand moving with NO recent pulse is refused at ANY horizon, because
+ *     ticksSinceLastPulse is huge and the motion lands unattributed. That is
+ *     the 2026-08-08 defect, and it is the case actually defended.
+ *   - a hand already in motion DURING the pulses is credited at ANY horizon --
+ *     els_slip.h says outright that it is physically indistinguishable from
+ *     inertial settle using Z and commanded steps alone.
+ *
+ * So the horizon only ever guarded a hand that STARTS moving after the pulses
+ * stop, and between 5x and 14x against a soft 100 ms floor nothing real
+ * changes. Meanwhile the cost of being small was measured: at 7 ms, 7 of the
+ * 16 observed settle tails (43.8%) fell outside the horizon and were discarded.
+ *
+ * The asymmetry runs the other way. Too small throws away real, servo-caused
+ * settle. Too large widens a sliver that is undefended at any width, and costs
+ * one Z count per stranded tail against a ~15 count threshold. ERR HIGH.
+ * els_slip_horizon_commission_test.cpp encodes all 16 observations and this
+ * argument, so a change made without revisiting them turns that test red. */
+/* 20 ms. Covers every settle tail in the 36-capture set (longest 17.86 ms),
+ * stays under 10% of the 250 ms take-up confirmation window, and remains 40x
+ * the post-take-up dwell. Expressed as the DURATION it always was, so an ISR
+ * rate change carries it instead of silently scaling it. */
+#define ELS_SLIP_SETTLE_TICKS       ELS_MS_TO_TICKS(20)
 
 /* Diagnostic probes live in Core/Inc/els_diag_*.h, dispatched by els_diag.h.
  * Their bodies are NOT in this file; their four call sites are, and each one

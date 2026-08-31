@@ -41,10 +41,20 @@
  *   horizon is one count per stranded capture, against a take-up confirmation
  *   threshold that is ~15 Z counts on the commissioned machine.
  *
- * So the horizon is not a compromise between two tight constraints. It has
- * ~14x margin on the side that matters and spends ~1/15th of a threshold on
- * the side that does not. THAT is the argument, and unlike the band it does
- * not depend on the sample being large enough to show a hole.
+ * ---- AND WHY IT IS 20 ms, NOT 7 (2026-08-30, Evan's call) ------------------
+ * Because the cost side is measured and the safety side is not binding. At
+ * 7 ms, SEVEN of the sixteen observed tails (43.8%) fell outside the horizon
+ * and were discarded. Against that, the margin only ever guarded a hand that
+ * STARTS moving after the pulses stop: a hand with no recent pulse is refused
+ * at any horizon, and a hand already moving during the pulses is credited at
+ * any horizon. Between 5x and 14x against a soft 100 ms floor, nothing real
+ * changes.
+ *
+ * So the asymmetry runs the other way from what this file used to say. Too
+ * small discards real servo-caused settle; too large widens a sliver that is
+ * undefended at any width and costs one count per stranded tail against a
+ * threshold of 15. 20 ms clears the longest tail ever observed (17.86 ms),
+ * stays at 8% of the confirmation window, and remains 40x the dwell.
  *
  * ---- OBSERVATIONS ARE IN MICROSECONDS, DELIBERATELY -------------------------
  * The previous version stored them as TICK COUNTS, which made the whole file
@@ -72,10 +82,15 @@ static void check(bool cond, const char *what)
 
 /* ---- the horizon, and what it is measured against ------------------------ */
 
-/* Ramps.c: ELS_SLIP_SETTLE_TICKS = ELS_MS_TO_TICKS(7). Duplicated because that
+/* Ramps.c: ELS_SLIP_SETTLE_TICKS = ELS_MS_TO_TICKS(20). Duplicated because that
  * constant is #defined in a .c where no test can see it -- keep in step by
  * hand, and see els_isr_rate_test for the same caveat. */
-static const int32_t HORIZON_US = 7000;
+static const int32_t HORIZON_US = 20000;
+
+/* The take-up confirmation window the horizon lives inside
+ * (ELS_TAKEUP_CONFIRM_WINDOW_TICKS, 250 ms). A horizon approaching this stops
+ * narrowing anything, which is the real upper bound on raising it. */
+static const int32_t CONFIRM_WINDOW_US = 250000;
 
 /* The post-take-up dwell the horizon must outlast (ELS_SETTLE_TICKS, 500 us):
  * els_slip.h requires the horizon to comfortably exceed it, or the dwell
@@ -142,8 +157,21 @@ int main()
     /* ---- C2: the safety margin, which is the reason it exists ------------ */
     printf("\nC2: a hand cannot be credited -- the half of this that matters\n");
     {
-        check(HORIZON_US * 10 <= HAND_NUDGE_FLOOR_US,
-              "the horizon is >=10x below the fastest plausible hand nudge");
+        /* 5x, not the 10x this file used to demand. The 10x was chosen to
+         * fit a 7 ms horizon, not derived -- and the margin was always doing
+         * less work than its number suggested:
+         *
+         *   - a hand with NO recent pulse is refused at ANY horizon. That is
+         *     the 2026-08-08 defect, and the case actually defended.
+         *   - a hand already moving DURING the pulses is credited at ANY
+         *     horizon; els_slip.h states this is indistinguishable from
+         *     inertial settle using Z and commanded steps alone.
+         *
+         * So this guards only a hand that STARTS moving after the pulses stop.
+         * Between 5x and 14x against a soft, order-of-magnitude floor nothing
+         * real changes -- while 7 ms stranded 43.8% of measured settle. */
+        check(HORIZON_US * 5 <= HAND_NUDGE_FLOOR_US,
+              "the horizon is >=5x below the fastest plausible hand nudge");
         check(!attributedAt(usToTicks(HAND_NUDGE_FLOOR_US), horizon),
               "a count at the hand-nudge floor is NOT attributed");
         /* The bench probe's nudge is seconds out, not 100 ms. */
@@ -151,43 +179,37 @@ int main()
               "a count one full second late is NOT attributed");
     }
 
-    /* ---- C3 (INVERTED 2026-08-28): there is no empty band ---------------- */
-    printf("\nC3: the RETRACTION -- the band the old argument relied on is not there\n");
+    /* ---- C3: the distribution is continuous, and 7 ms sat inside it ------ */
+    printf("\nC3: the RETRACTION -- there was never a band, and 7 ms was inside the data\n");
     {
-        /* The old C3 asserted nothing was ever observed between the new horizon
-         * and the old one (1000 ticks / 10 ms). Four of the 16 combined
-         * observations are: 7300, 9020 us and, at the boundary, 6780. Assert
-         * the refutation explicitly so the band cannot be re-derived. */
-        int inOldBand = 0;
-        for (int i = 0; i < N_OBSERVED; i++) {
-            if (OBSERVED_SETTLE_US[i] > HORIZON_US && OBSERVED_SETTLE_US[i] <= 10000) {
-                inOldBand++;
-            }
-        }
-        printf("   observations between the horizon and the old 10 ms: %d\n", inOldBand);
-        check(inOldBand > 0,
-              "the 'empty band' is occupied -- the 08-27 argument is refuted");
-
-        /* And the interval around the horizon is one of the TIGHTEST in the
-         * set, not the widest. Guards against someone re-running a small sample
-         * and rediscovering a hole. */
-        int32_t widestGap = 0, gapAtHorizon = 0;
+        /* The 2026-08-27 argument put the horizon in an apparently empty band
+         * between 6560 and 11600 us. A second sample of the same size filled
+         * it in. The refutation is kept as an assertion so the hole cannot be
+         * rediscovered from the same data and re-adopted. */
+        int32_t widestGap = 0;
         for (int i = 0; i + 1 < N_OBSERVED; i++) {
             int32_t g = OBSERVED_SETTLE_US[i + 1] - OBSERVED_SETTLE_US[i];
             if (g > widestGap) widestGap = g;
-            if (OBSERVED_SETTLE_US[i] < HORIZON_US
-                && OBSERVED_SETTLE_US[i + 1] >= HORIZON_US) {
-                gapAtHorizon = g;
-            }
         }
-        printf("   widest gap in the set %d us; gap spanning the horizon %d us\n",
-               (int)widestGap, (int)gapAtHorizon);
-        check(gapAtHorizon * 2 < widestGap,
-              "the horizon does not sit in a wide gap; the distribution is continuous");
+        printf("   widest gap anywhere in the set: %d us\n", (int)widestGap);
+        check(widestGap * 2 < HORIZON_US,
+              "no gap in the set is wide enough to hide a horizon in");
+
+        /* The positive case for moving 7 -> 20 ms: how much REAL settle the
+         * old value discarded. This is the measurement that beat the margin
+         * argument, so it is asserted rather than left in a commit message. */
+        int strandedAtOld = 0;
+        for (int i = 0; i < N_OBSERVED; i++) {
+            if (OBSERVED_SETTLE_US[i] > 7000) strandedAtOld++;
+        }
+        printf("   a 7 ms horizon would strand %d of %d observations\n",
+               strandedAtOld, N_OBSERVED);
+        check(strandedAtOld * 3 > N_OBSERVED,
+              "the old horizon discarded a large fraction of real settle");
     }
 
-    /* ---- C4: what a short horizon actually costs ------------------------- */
-    printf("\nC4: the cost of stranding late motion is bounded and immaterial\n");
+    /* ---- C4: the horizon now covers the measured distribution ----------- */
+    printf("\nC4: nothing measured is stranded, and erring high is the cheap direction\n");
     {
         int stranded = 0;
         for (int i = 0; i < N_OBSERVED; i++) {
@@ -195,13 +217,29 @@ int main()
         }
         printf("   %d of %d observations fall outside the horizon\n",
                stranded, N_OBSERVED);
-        check(stranded > 0,
-              "the horizon really does strand some observed motion (no free lunch)");
-        /* Each stranded capture withholds exactly one count. Even if every
-         * observation were stranded, the total is small against the take-up
-         * confirmation threshold -- which is what the credit feeds. */
-        check(N_OBSERVED * 1 < CONFIRM_THRESHOLD_COUNTS * 2,
-              "even total stranding stays within an order of the confirm threshold");
+        check(stranded == 0,
+              "every observed settle tail is attributed");
+        check(HORIZON_US > OBSERVED_SETTLE_US[N_OBSERVED - 1],
+              "the horizon clears the longest tail ever observed");
+
+        /* Zero stranding across 16 observations is NOT proof of zero stranding
+         * -- clearing a small sample's maximum is the same species of move as
+         * the empty band was. What makes it defensible is the asymmetry the
+         * band argument never had: a stranded tail costs exactly one count,
+         * against a threshold of 15, while a too-small horizon throws away
+         * real servo-caused settle 44% of the time. */
+        check(NET_COUNTS_PER_MOVING_CAPTURE == -1,
+              "a stranded tail would still cost exactly one count");
+        check(1 * 10 < CONFIRM_THRESHOLD_COUNTS,
+              "that cost is an order below the confirm threshold");
+
+        /* The real upper bound: a horizon approaching the confirmation window
+         * stops narrowing anything, and attribution degrades toward the
+         * un-attributed behaviour it replaced (els_slip.h). */
+        check(HORIZON_US * 10 <= CONFIRM_WINDOW_US,
+              "the horizon stays <=10% of the take-up confirmation window");
+        check(horizon > usToTicks(DWELL_US) * 20,
+              "and >20x the post-take-up dwell it must outlast");
     }
 
     /* ---- C5: the boundary is exactly where the firmware puts it ---------- */
