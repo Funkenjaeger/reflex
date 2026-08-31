@@ -43,6 +43,8 @@ LathePhysics::LathePhysics(const EmuConfig &cfg) {
     leadscrew_total_steps = 0;
 
     carriage_mm = cfg.z_initial_mm;
+    z_settle_tau_s = cfg.z_settle_tau_s;
+    z_settle_pending_mm = 0.0;   /* nothing commanded yet */
     half_nut_state = cfg.z_half_nut_engaged ? ENGAGED : DISENGAGED;
     half_nut_request_pending = false;
     backlash_offset = z_backlash_mm;  /* assume nut starts on "+ wall" so first +Z motion drives carriage */
@@ -195,6 +197,50 @@ void LathePhysics::tick(double dt, const void *shared_data) {
         }
     }
 
+    /* --- Carriage settle relaxation (servo-driven motion only) ---
+     *
+     * Runs BEFORE the manual-move block and unconditionally — including while
+     * the half-nut is open. A drivetrain that is still coasting does not stop
+     * because the operator opened the nut, and more practically: freezing the
+     * tail on disengage would hide it from exactly the test that wants to catch
+     * the gate releasing early. See the model note in physics.h.
+     *
+     * Exponential form rather than a per-tick fraction so the result is
+     * independent of dt: at dt >> tau this converges to "deliver everything"
+     * instead of overshooting past the target and ringing. */
+    if (z_settle_pending_mm != 0.0) {
+        double applied;
+        if (z_settle_tau_s > 0.0) {
+            applied = z_settle_pending_mm * (1.0 - std::exp(-dt / z_settle_tau_s));
+            /* Terminate the tail at a definite tick: below a thousandth of an
+             * encoder count the remainder can no longer produce a count, so
+             * hand it over whole and let isCarriageSettling() go false. */
+            double residual_mm = SETTLE_RESIDUAL_COUNTS / z_counts_per_mm;
+            if (std::abs(z_settle_pending_mm - applied) < residual_mm)
+                applied = z_settle_pending_mm;
+        } else {
+            /* tau <= 0: no tail. Equivalent to the pre-settle-model code — the
+             * pulse's displacement lands on the first tick after the pulse,
+             * which is the same tick the firmware could first observe it under
+             * the old code too (isrThreadFunc ticks physics, runs the ISR, THEN
+             * feeds the pulse). This is the mutation the settle tests flip. */
+            applied = z_settle_pending_mm;
+        }
+
+        double moved = carriage_mm + applied;
+        double clamped = std::max(z_min_mm, std::min(z_max_mm, moved));
+        if (clamped != moved) {
+            /* Against a travel limit there is nowhere left to settle to;
+             * carrying the remainder would have the carriage lurch the instant
+             * it was commanded away from the stop. */
+            carriage_mm = clamped;
+            z_settle_pending_mm = 0.0;
+        } else {
+            carriage_mm = moved;
+            z_settle_pending_mm -= applied;
+        }
+    }
+
     /* --- Manual move integration --- */
 
     /* Helper: compute jog direction for a move-to-position target.
@@ -319,18 +365,25 @@ void LathePhysics::onStepPulse(int direction) {
         double move = phys_dir * leadscrew_mm_per_step;
         double new_offset = backlash_offset + move;
 
+        /* Wall pushes go into the settle accumulator, NOT straight into
+         * carriage_mm. The lash bookkeeping above is unchanged and still
+         * instantaneous — the nut really does traverse the play window with the
+         * leadscrew; it is the CARRIAGE that lags. tick() relaxes the
+         * accumulator; see the model note in physics.h.
+         *
+         * No clamp here any more: nothing has moved yet, and clamping a pending
+         * displacement against a travel limit is tick()'s job (it owns
+         * carriage_mm and can drop the remainder at the same time). */
         if (new_offset > z_backlash_mm) {
             /* Hit the +wall: overshoot drives carriage forward */
-            carriage_mm += new_offset - z_backlash_mm;
+            z_settle_pending_mm += new_offset - z_backlash_mm;
             new_offset = z_backlash_mm;
         } else if (new_offset < 0.0) {
             /* Hit the -wall: overshoot drives carriage backward */
-            carriage_mm += new_offset;  /* new_offset is negative */
+            z_settle_pending_mm += new_offset;  /* new_offset is negative */
             new_offset = 0.0;
         }
         backlash_offset = new_offset;
-
-        carriage_mm = std::max(z_min_mm, std::min(z_max_mm, carriage_mm));
     }
 }
 
@@ -453,6 +506,14 @@ double LathePhysics::nearestGridPositionMM(double target_mm) const {
 
 double LathePhysics::snapCarriageToGrid() {
     double before = carriage_mm;
+    /* A snap TELEPORTS the carriage onto the thread lattice, so any settle tail
+     * still in flight is stale by definition: it was commanded toward a
+     * position this snap has just overwritten, and delivering it afterwards
+     * would walk the carriage straight back off the lattice the seat exists to
+     * put it on. Both callers are half-nut engage paths, where re-seating the
+     * coupling is precisely the event that makes prior drivetrain state
+     * irrelevant. */
+    z_settle_pending_mm = 0.0;
     carriage_mm = nearestGridPositionMM(carriage_mm);
     carriage_mm = std::max(z_min_mm, std::min(z_max_mm, carriage_mm));
     double dz = carriage_mm - before;

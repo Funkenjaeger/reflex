@@ -160,9 +160,30 @@ class BacklashCalPopup(Popup):
                 f"take-up commanded at {command} steps.")
 
     def _drift_text(self) -> str:
+        """The change against the last stored measurement, reported once and
+        escalated only when it is big enough to mean something.
+
+        UNTIL 2026-08-30 THIS CRIED WOLF ON EVERY RUN. It returned early only
+        on drift == 0, so a one-step difference -- 1.984 um, below the Z
+        scale's own 5 um resolution -- was announced as "a large change is
+        worth investigating". ElsCalFsm.drift_steps' docstring says the
+        opposite: "Non-zero is normal (the measurement carries a
+        detection-distance bias and real quantization); a LARGE change ... is
+        worth an operator's attention." A warning that fires every time is one
+        the operator learns to skip, which costs them the run where it is real.
+
+        The number is still always REPORTED. Only the call to action is gated,
+        because the sentence "that is 3 steps more than last time" is
+        information and "go investigate" is a demand.
+        """
         drift = self._cal.drift_steps
         if not drift:
             return ""
         direction = "more" if drift > 0 else "less"
-        return (f"That is {abs(drift)} steps {direction} than the last stored "
-                f"measurement. A large change is worth investigating.")
+        text = (f"That is {abs(drift)} steps {direction} than the last stored "
+                f"measurement.")
+        threshold = int(self.app.els.els_cal_drift_notice_steps or 0)
+        if threshold and abs(drift) > threshold:
+            text += (f" That is more than the {threshold}-step spread this "
+                     f"machine is held to within a run — worth investigating.")
+        return text

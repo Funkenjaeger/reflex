@@ -121,6 +121,23 @@ A pass has three logical phases:
 - **Trigger.** When the Z scale crosses the stop position in the configured direction, the firmware atomically sets `active = 1` (gating sync off) and, on the *first* such trigger of the job, latches a reference pair: the spindle position and the Z position at that instant. Subsequent triggers in the same job set `active = 1` but do not re-latch — the original reference is what defines this job's thread.
 - **Resume.** Software clears `active` when the operator is ready to start a pass — the first pass of the job included, since reflex-ui arms with `active = 1` before `enable = 1` (2026-08-17). This 1→0 transition is where the backlash take-up and its Z confirmation run on every pass (2026-08-21: first pass and turning included) and, once a reference has been latched, where the re-sync math runs.
 
+#### Manual reference latch (re-sync to an existing thread)
+
+The first-trigger auto-latch is not special in itself — it is merely a moment
+when the carriage is known to sit on the correct side of the leadscrew lash.
+`latchCommand` lets the host request the *same* capture at an operator-chosen
+point (a tool physically seated in an existing thread's groove, lash loaded by
+a cutting-direction jog), so a re-chucked or foreign thread can be picked up.
+The ISR consumes the command in one pass — capturing `latchedSpindle` and
+`latchedZ` coherently and setting `referenceLatched`, which is exactly the
+guard that suppresses the auto-latch for the rest of the job — and acks by
+incrementing `latchSeq`. A latch requested with `enable == 0` is consumed with
+*no* ack: the reference would be wiped on the next `enable` 0→1 edge anyway,
+and the missing seq edge is how the host reads the refusal. Everything
+downstream of the latch is unchanged and unaware of which producer latched.
+The operator procedure, the Z-watch tolerance rationale, and the wizard live
+in reflex-ui (`reflex/fsms/els_resync.py`, `reflex/help/els_thread_resync.md`).
+
 #### Re-sync mechanism
 
 Between the trigger and the resume, the operator can do almost anything — jog the carriage electronically, open the half-nut, hand-wheel the carriage to a different location, snap the half-nut closed at a thread-incompatible position. The spindle keeps rotating freely throughout. By the time `active` clears, the carriage may be anywhere, and the leadscrew may be anywhere relative to where pure uninterrupted sync would have placed it.
@@ -141,6 +158,20 @@ The mechanism does not care whether the carriage was driven electronically or ma
 #### Limits
 
 The re-sync assumes the Z scale reading at resume reflects a carriage that is *mechanically coupled* to the leadscrew at that moment (i.e., the half-nut is engaged when the operator presses Cut). Pressing Cut with the half-nut open will produce a physically meaningless leadscrew offset — there is no sensor to warn against this. The thread geometry parameters (sync ratio, thread-pitch-in-steps, Z-counts-per-pitch) must be configured consistently with each other; the correction folds error within `pitch/2`, so a systematic mismatch larger than half a pitch will alias and the cutter will drift to a different groove. Crucially, the firmware's `threadPitchSteps / zCountsPerPitch` ratio (leadscrew steps per Z-encoder count, the firmware's *model* of the carriage drivetrain) must equal the physical drivetrain's actual leadscrew-steps-per-Z-count ratio, or the algorithm's geometry is decoupled from reality and phase will drift in proportion to cut distance.
+
+#### Thread-phase offset (widening a groove past the cutter)
+
+A thread form is often wider than the tool available to cut it — a worn or reground insert, or a plain parting-style bit standing in for a wide form. The traditional answer is to move the tool along Z between passes, by an amount the operator has to work out and dial in, and hope the leadscrew and the dial agree. Since the ELS already computes thread phase from a latched reference, there is a cheaper route: leave the tool and the workpiece alone and shift the *controller's* idea of phase. Cut the groove, step the phase over by less than the cutter width, cut again, until the groove reaches the width wanted.
+
+The register is a distance and knows nothing about the reason. `fw/Core/Inc/els_phase.h` names two sources that feed this one term: the operator-entered groove-widening offset above, and the X-depth-derived compound-infeed offset. Multi-start threading is *not* one of them — it is a separate feature, to be built semantically from pitch and a start count rather than on raw fractions of a pitch entered by hand.
+
+`elsStop.phaseOffsetSteps` holds a cumulative offset in leadscrew steps, summed into `phaseError` inside `elsComputePhaseCorrection()` ahead of the mod-pitch fold and the forward bias. Every pass after that lands displaced by the offset, so the tool re-enters the thread beside where it cut last and takes the flank off the groove it already made. Applying an offset moves nothing by itself; it changes the correction computed at the *next* resume.
+
+The host writes it through the same command/ack pair as calibration and the manual latch — `phaseOffsetPending` first, then `phaseOffsetCommand`, with `phaseOffsetSeq` as the ack — and that write ORDER is what carries a 32-bit value across a 16-bit register bus without a lock: the ISR reads `Pending` only under a nonzero `Command`. The firmware holds one absolute total and replaces it on each apply, so accumulation and the running-total display are the host's job, and a Clear is simply an apply of zero.
+
+The offset is cleared on the `enable` 0→1 edge that clears `referenceLatched`, because an offset is meaningless without the datum it offsets, and it deliberately survives per-pass stop/resume within a job — a groove is widened over many passes, several of them at each offset as the tool is fed to depth.
+
+**Frame caveat.** The offset is summed into `phaseError` raw, so it displaces phase in the *machine* frame rather than the cutting frame. On a machine whose `cuttingDir` is −1, a given entry displaces the tool the other way along the helix — an effective `pitch − X` where the operator pictured `X`. Both land in the same groove (a whole pitch is one turn of the same helix) and the groove ends up wider by the amount entered either way; what differs is **which flank opens up**. The earlier framing called this harmless on the grounds that every start of a multi-start thread is a legitimate start and that cumulative entry self-corrects. Neither argument survives the restatement: there is no equally-good alternative result when the point is a groove of a given width in a given place, and entering more widens further on the same wrong flank rather than walking it back. It is still not a safety issue — the tool stays in the groove — but it is a wrong part, and it has not been checked against real hardware. `els_phase_offset_command_test` case 7 pins the behavior for both polarities and prints the resulting corrections for comparison at the bench.
 
 ### Closed-loop backlash calibration and take-up confirmation
 
@@ -240,20 +271,27 @@ open-loop behaviour on every uncommissioned machine.
 
 Configuration (SW write): `enable`, `scaleIndex`, `stopPosition`, `stopDirection`, `threadPitchSteps`, `zCountsPerPitch`, `backlashSteps`, `hysteresis`, `calCeilingSteps`, `calMotionThreshCounts`.
 
-Command (bidirectional, firmware clears on consume): `calCommand`.
+Command (bidirectional, firmware clears on consume): `calCommand`, `latchCommand`.
 
-State (firmware-owned, except `active` which is bidirectional): `active`, `latchedZ`, `latchedSpindle`, `referenceLatched`, `takeupPending`, `protocolVersion`.
+State (firmware-owned, except `active` which is bidirectional): `active`, `latchedZ`, `latchedSpindle`, `referenceLatched`, `takeupPending`, `protocolVersion`, `machineMode`.
+
+`machineMode` is the firmware's own answer to "what is this machine doing right now" (`ELS_MMODE_*`, `Core/Inc/els_machine_mode.h`), republished every `servoEnableTask` iteration (~100 ms) in **every build, release included**. It is deliberately a first-class register rather than diagnostic scratchpad: until 2026-08-22 the mode was published only by a mode-watch probe, and since the firmware allows one probe at a time, flashing any other probe silently stopped the host's rung-2 census from collecting anything at all.
 
 Per-resume diagnostics: `lastIdealAdvance`, `lastActualAdvance`, `lastPhaseError`, `lastCorrection`.
 
 Calibration / take-up outcomes: `calSeq`, `calResult`, `calMeasured[3]`, `takeupSeq`, `takeupResult`, `lastTakeupZDelta`.
 
-`calSeq` and `takeupSeq` are monotonic outcome counters, not flags — `calCommand`
-is cleared the instant the ISR consumes it, long before a run finishes, so a host
-polling the command for completion would read a stale result. Edge-detect the
-sequence counters.
+Manual latch ack: `latchSeq` (increments only on an *accepted* latch — a latch
+with `enable == 0` is consumed with no increment, so the absent edge is the
+refusal).
 
-`protocolVersion` names this register layout (currently **1**). Bump it whenever
+`calSeq`, `takeupSeq`, and `latchSeq` are monotonic outcome counters, not flags —
+the command registers are cleared the instant the ISR consumes them, long before
+any result is observable, so a host polling a command for completion would read
+a stale result. Edge-detect the sequence counters.
+
+`protocolVersion` names this register layout (currently **2**; the manual-latch
+pair `latchCommand`/`latchSeq` is the 1→2 append). Bump it whenever
 `rampsSharedData_t` changes shape; reflex-ui checks it at connect so a
 firmware/UI mismatch reports itself by name instead of surfacing as plausible
 garbage in every register past the point of divergence.

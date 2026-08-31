@@ -1,0 +1,49 @@
+# Flat tinted status pill (see status_chip.py). Label + optional value in mono,
+# on a low-alpha rounded fill. Sized to its own content in BOTH axes so a chip
+# can be pinned to an edge of a container without a width the caller has to
+# guess and keep in step with the string.
+
+<StatusChip>:
+    orientation: 'horizontal'
+    size_hint: None, None
+    # dp(18) sits inside the advanced bar's dp(26) status gutter with room to
+    # spare; the caller positions it.
+    height: dp(18)
+    padding: dp(9), 0, dp(9), 0
+    # No gap to reserve when there is no value half.
+    spacing: dp(7) if root.value else 0
+    # Content width, read off the two labels' real textures rather than
+    # estimated from character counts -- the mono face's advance is not the
+    # only thing in the sum (padding and spacing are dp, the font is not).
+    width: chip_label.width + chip_value.width + self.spacing + self.padding[0] + self.padding[2]
+    canvas.before:
+        Color:
+            rgba: root.fill_color
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(3)]
+
+    Label:
+        id: chip_label
+        text: root.text
+        # Natural texture width, NOT a hint: the chip's own width is the sum of
+        # these, so a hint here would make the width self-referential.
+        size_hint: None, 1
+        width: self.texture_size[0]
+        font_name: app.theme.font_mono
+        font_size: dp(11)
+        color: root.label_color
+        halign: 'left'
+        valign: 'middle'
+
+    Label:
+        id: chip_value
+        text: root.value
+        size_hint: None, 1
+        width: self.texture_size[0] if root.value else 0
+        font_name: app.theme.font_mono
+        font_size: dp(11)
+        color: root.value_color
+        halign: 'left'
+        valign: 'middle'

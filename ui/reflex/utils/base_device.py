@@ -27,6 +27,45 @@ class BaseDevice:
     definition = ""
     root_structure = False
 
+    # Registers per FC3 request in refresh(). Raised 32 -> 64 on 2026-08-23.
+    #
+    # WHAT THE FIRMWARE CAN SURVIVE. An FC3 response is 5 + 2N bytes (address,
+    # function, byte-count, 2N of data, 2 of CRC) and it is assembled in a
+    # 256-byte buffer -- `uint8_t u8Buffer[MAX_BUFFER]`, MAX_BUFFER 256, in
+    # fw/Core/Inc/Modbus.h and ModbusConfig.h. That alone puts the ceiling at
+    # N = 125 (5 + 250 = 255). Two details in `process_FC3`
+    # (fw/Core/Src/Modbus.c) say do not go anywhere near it:
+    #
+    #   * the copy loop writes `u8Buffer[u8BufferSize++]` twice per register
+    #     with NO bounds check at all, so overrunning the buffer corrupts
+    #     whatever follows it in RAM rather than returning an error; and
+    #   * `u8BufferSize` is itself a `uint8_t`, so the response length wraps
+    #     silently one byte past 255 -- and the byte-count field the firmware
+    #     writes into `u8Buffer[2]` is a single byte too, wrapping at N = 128.
+    #     `u8regsno` truncates the REQUESTED count to a uint8_t before any of
+    #     this, so a too-large request is not even reliably too-large.
+    #
+    # N = 125 therefore lands exactly on both edges with zero slack, and every
+    # way of exceeding it fails silently. Nothing here may change the firmware,
+    # so the only safe move is to stay well short of it.
+    #
+    # WHY 64. It is half the ceiling to within the rounding: 5 + 2*64 = 133
+    # bytes, leaving 123 of the 256-byte buffer unused, 122 counts before the
+    # length field wraps, and 61 registers clear of the cliff at 125. It is
+    # also where the win is. The two blocks actually read are fastData (30
+    # registers, already one request at 32) and elsStop (122 registers, four
+    # requests at 32 and two at 64). Going higher buys nothing: 96 and 122
+    # still need two requests for elsStop, and each of them spends headroom
+    # for it. Going below 61 puts elsStop back to three.
+    #
+    # THE QUANTITY BEING MINIMISED IS REQUESTS, NOT BYTES. Each request is an
+    # independent chance for the firmware to miss its answering window while
+    # the 100 kHz ISR is saturated -- which is how six of six cuts lost comms
+    # on 2026-08-23, every drop a timeout at the transition into `cutting` and
+    # not one a corrupted frame. This trades more bytes for fewer exchanges on
+    # purpose.
+    MAX_REGISTERS_PER_READ = 64
+
     def __init__(self, connection_manager, base_address=0):
         from reflex.utils.communication import ConnectionManager
         self.base_address = base_address
@@ -54,6 +93,20 @@ class BaseDevice:
 
     def __setitem__(self, key, value):
         var = self._variable_index[key]
+        if var.count > 1 and isinstance(value, (list, tuple)):
+            # Symmetric with __getitem__'s array read: element-wise at
+            # type-length strides. Without this, assigning a list handed the
+            # WHOLE list to the scalar write function, whose int() coercion
+            # raised, was swallowed by the write path's except, and surfaced
+            # only as connected=False -- a silent no-op write. Needed by the
+            # calMeasured round-trip (the calibration legs the take-up gate
+            # derives its threshold from, restored at connect).
+            for i, v in enumerate(value[:var.count]):
+                var.type.write_function(
+                    self.dm,
+                    var.address + self.base_address + var.type.length * i,
+                    v, f"{key}[{i}]")
+            return
         var.type.write_function(self.dm, var.address + self.base_address, value, key)
         return
 
@@ -241,7 +294,7 @@ class BaseDevice:
     @ktrace()
     def refresh(self):
         remaining_size = self.size
-        max_size = 32
+        max_size = self.MAX_REGISTERS_PER_READ
         raw_data = []
         remaining_address = self.base_address
         with kev("read_registers"):

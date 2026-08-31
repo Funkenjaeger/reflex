@@ -99,8 +99,7 @@
         # Primary icon (e.g. stop sign). Centered + larger when it's the only
         # icon; raised + smaller when paired with a second stacked icon.
         source: root.icons[0] if root.icons else ''
-        allow_stretch: True
-        keep_ratio: True
+        fit_mode: "contain"
         # White icons tinted to match the text-glyph segments so image-based
         # segments follow the theme too (selected = accent, else dim).
         color: app.theme.accent_text if root.is_selected else app.theme.text_dim
@@ -111,8 +110,7 @@
     Image:
         # Secondary icon (e.g. retract arrow), only when two icons are stacked.
         source: root.icons[1] if len(root.icons) > 1 else ''
-        allow_stretch: True
-        keep_ratio: True
+        fit_mode: "contain"
         color: app.theme.accent_text if root.is_selected else app.theme.text_dim
         opacity: 1 if len(root.icons) > 1 else 0
         size_hint: 0.6, 0.4

@@ -54,6 +54,8 @@
 #include "els_diag_disengage_latch.h"
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH_V2
 #include "els_diag_mode_watch.h"
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_STOP_OVERSHOOT
+#include "els_diag_stop_overshoot.h"
 #else
 /* Unreachable: Ramps.h rejects an unrecognised probe long before here. Kept so
  * that a probe registered in Ramps.h but never dispatched fails LOUDLY, rather

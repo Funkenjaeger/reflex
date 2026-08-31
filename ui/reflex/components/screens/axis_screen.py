@@ -36,6 +36,20 @@ class AxisScreen(Screen):
     def _all_input_labels(self):
         return [f"Input {i}" for i in range(len(self.app.inputs))]
 
+    def _provisioned_input_labels(self):
+        """Input labels claimed by an axis somebody has named.
+
+        The axis being edited is skipped: its own input is input_0, which this
+        list does not gate, and counting it would let an unprovisioned axis
+        vouch for itself.
+        """
+        claimed = set()
+        for ax in self.app.axes:
+            if ax is self.axis or not ax.is_provisioned:
+                continue
+            claimed |= ax.transform.input_indices
+        return {f"Input {i}" for i in sorted(claimed)}
+
     def _label_to_index(self, label):
         try:
             return int(label.split()[-1])
@@ -60,7 +74,22 @@ class AxisScreen(Screen):
             self.input_0_options = filtered if filtered else self._all_input_labels()
 
         if self.transform_type_label == "Sum":
-            self.input_1_options = [l for l in self.input_0_options if l != self.input_0]
+            # A SUM's SECOND contributor must belong to an axis somebody has
+            # actually named. The first is not filtered this way: assigning an
+            # input to an axis is how an axis gets provisioned in the first
+            # place, so narrowing input_0 would make a fresh axis unreachable.
+            #
+            # WHY THIS IS WORTH DOING (2026-08-30). Axis.compute() adds both
+            # contributors into the displayed position, but consumers that
+            # push a single scale index to the firmware -- ElsFsm.
+            # set_scale_index is the one that matters -- take
+            # contributions[0] alone. Summing in a placeholder that reads zero
+            # forever is a DRO quietly disagreeing with the machine for no
+            # gain, and the placeholder is present on every board with a spare
+            # input rather than being some unusual state.
+            eligible = self._provisioned_input_labels()
+            self.input_1_options = [l for l in self.input_0_options
+                                    if l != self.input_0 and l in eligible]
             if self.input_1 not in self.input_1_options and self.input_1_options:
                 self.input_1 = self.input_1_options[0]
         else:
@@ -88,6 +117,19 @@ class AxisScreen(Screen):
         tt = LABEL_TO_TRANSFORM_TYPE.get(self.transform_type_label, TransformType.IDENTITY)
         idx0 = self._label_to_index(self.input_0)
         idx1 = self._label_to_index(self.input_1)
+
+        if tt == TransformType.SUM and self.input_1 not in self.input_1_options:
+            # FAIL TO IDENTITY, LOUDLY. Reachable whenever nothing is eligible
+            # to sum with -- a machine with one provisioned axis, say -- and
+            # the alternative is building a SUM over whatever stale index the
+            # field happens to hold. An axis that silently reads the wrong
+            # scale is the failure this whole guard exists to prevent.
+            log.warning(
+                "Sum refused for axis %r: %r is not an eligible second input "
+                "(options: %s). Falling back to Identity on %r.",
+                self.axis.axis_name, self.input_1,
+                list(self.input_1_options) or "none", self.input_0)
+            tt = TransformType.IDENTITY
 
         if tt == TransformType.SUM:
             transform = AxisTransform.sum(idx0, idx1)

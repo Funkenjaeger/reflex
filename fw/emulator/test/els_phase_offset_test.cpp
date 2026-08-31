@@ -43,7 +43,8 @@ static elsCorrResult_t correctionForOffset(int32_t offsetSteps) {
       /*syncRatioNum=*/1, /*syncRatioDen=*/6,
       /*threadPitchSteps=*/PITCH, /*zCountsPerPitch=*/PITCH,
       /*stopDirection=*/1,
-      offsetSteps);
+      offsetSteps,
+      /*spindlePeriodCounts=*/elsComputeSpindlePeriod(1, 6, PITCH));
 }
 
 int main() {

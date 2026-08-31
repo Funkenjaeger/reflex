@@ -199,9 +199,11 @@ def test_stopped_rearm_succeeds_even_with_z_past_stop():
 
 def _controller_with_servo_mode(mode):
     """Minimal controller stand-in: toggle_engage only needs engaged,
-    is_feeding, and the FSM handle."""
+    is_feeding, the FSM handle, and (since 2026-08-23) somewhere to put the
+    operator notice each refusal now raises."""
     from types import SimpleNamespace
     from reflex.fsms.ui_controller import ElsUiController
+    from reflex.utils.notices import NoticeCenter
 
     # ElsUiController is a Kivy EventDispatcher, so object.__new__ is refused;
     # its own __new__ does the property setup without running __init__.
@@ -211,6 +213,11 @@ def _controller_with_servo_mode(mode):
     # narrow it per-case (the 2026-08-17 gate keys on BOTH is_feeding and
     # spindle_is_running).
     c._els = SimpleNamespace(spindle_is_running=True)
+    # The REAL NoticeCenter, not a mock: these tests are the only place the
+    # refusal-notifies path is exercised against the production toggle_engage,
+    # and a mock here would assert that notify() was called rather than that
+    # anything reaches the screen.
+    c._notices = NoticeCenter()
     return c
 
 
@@ -239,6 +246,11 @@ def test_disengage_is_refused_while_sync_is_armed_and_spindle_running():
     c.toggle_engage()
     c._els_fsm.disable.assert_not_called()
     c._els_fsm.may_disable.assert_not_called()
+    # AND THE OPERATOR IS TOLD (2026-08-23). Before the notice surface existed
+    # this refusal was a log line and a dead button; the whole point of the
+    # migration is that the reason now reaches the machine.
+    assert c.notice_severity == "warning"
+    assert "Sync Enable" in c.notice_text
 
 
 def test_disengage_allowed_with_sync_armed_but_spindle_stopped():

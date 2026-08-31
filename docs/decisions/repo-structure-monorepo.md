@@ -3,7 +3,7 @@
 **Status:** **DECIDED 2026-08-17 — MONOREPO ADOPTED.** reflex-fw and reflex-ui were welded into one
 repository, `reflex` (`fw/` + `ui/`), on 2026-08-17. This document records that as the current
 ruling and formally supersedes the 2026-08-12 "stay split" decision in
-[`ui/docs/decisions/repo-structure-monorepo.md`](../../ui/docs/decisions/repo-structure-monorepo.md).
+[`ui/docs/decisions/repo-structure-monorepo.md`](https://github.com/Funkenjaeger/reflex/blob/main/ui/docs/decisions/repo-structure-monorepo.md).
 See [Why this document exists](#why-this-document-exists-2026-08-21).
 **Date:** 2026-08-17 (the weld, and the effective decision date) / 2026-08-21 (this record written).
 **Supersedes:** `ui/docs/decisions/repo-structure-monorepo.md` as it has read since 2026-08-12

@@ -1,19 +1,41 @@
 [Unit]
 Description=Reflex UI
 After=network.target auditd.service
+# Bound the crash-restart window: with Restart=always and this unit's own
+# RestartSec=5 (below -- NOT systemd's 100ms default, which this unit has
+# never used), a genuinely broken app (bad import, segfault-on-start, etc.)
+# would otherwise restart forever, once every 5s. StartLimitBurst=5 within
+# StartLimitIntervalSec=200 means systemd gives up and leaves the unit failed
+# after 5 restarts -- at 5s apart that's ~20-25s to trip, comfortably inside
+# the 200s window even if a couple of those restarts take longer to fail than
+# others. 200s of headroom lets ordinary transient failures (a USB/Modbus
+# device not yet enumerated at boot, a race with network-online) self-clear
+# without ever approaching the burst count, while a permanently-crashing app
+# still hits the limit quickly and stays down instead of spinning forever.
+StartLimitIntervalSec=200
+StartLimitBurst=5
 
 [Service]
-ExecStart=/reflex-ui/start.sh
+# Monorepo layout (2026-08-17 weld) -- matches elspi's live, hand-repointed
+# unit as of 2026-08-25 (elspi | reflex-ui-retire | apply-log.md). The old
+# /reflex-ui/ standalone-checkout layout was deleted from elspi that day.
+ExecStart=/home/default/projects/reflex/ui/deploy/start.sh
 KillMode=process
 RestartSec=5
-Restart=on-failure
+# Restart=always, not on-failure: Kivy's stock exit_on_escape default treats
+# Escape as a clean (code 0) exit, which on-failure never restarts. See
+# reflex/app.py MainApp.build() for the app-side neutralization of
+# exit_on_escape -- this Restart= change is the backstop for any other clean
+# exit (config.ini drift, an unhandled path that calls sys.exit(0), etc.),
+# not a substitute for it.
+Restart=always
 StandardOutput=syslog
 StandardError=syslog
 SyslogIdentifier=%n
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/reflex-ui/
+WorkingDirectory=/home/default/projects/reflex/ui/deploy/
 
 [Install]
 WantedBy=multi-user.target

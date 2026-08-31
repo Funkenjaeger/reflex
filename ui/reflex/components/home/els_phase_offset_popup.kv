@@ -1,0 +1,206 @@
+#: import HelpButton reflex.components.widgets.help_button.HelpButton
+
+<PhaseOffsetPopup>:
+    title: "Thread phase offset (widen a groove)"
+    size_hint_x: 0.8
+    size_hint_y: None
+    # Not auto-dismiss: a stray tap outside the modal must not drop an apply
+    # that is still waiting for its ack, which would leave the operator with no
+    # word either way about whether the phase moved.
+    auto_dismiss: False
+
+    # ── WHY THE HEIGHT IS DERIVED RATHER THAN A CONSTANT 520 ──────────────
+    # 520 left the message scroller exactly 92 px, and four of the eight
+    # messages this modal can show are taller than that (measured 2026-08-23:
+    # AT_PITCH, NEGATIVE and NO_ACK at 180 px, NO_GEOMETRY at 120). The
+    # scroller kept them off the buttons, which is what it was added for, and
+    # traded that for hiding the last sentence of each — the one that says what
+    # to do. The popup now spends whatever the screen has: it stays compact on
+    # the entry state (~one line of message) and grows to fit a refusal, so the
+    # long messages are on screen without scrolling at all.
+    #
+    # Terms: Kivy's own <Popup> chrome (dp(12) padding twice + title texture +
+    # dp(16) + separator_height, 68 px at this theme's 18sp title), this box's
+    # padding and its five inter-row gaps, then the rows themselves. Clamped to
+    # the WINDOW — a Popup's parent once opened — rather than to a constant,
+    # and deliberately not to `kivy.core.window.Window`, since a `#:import` of
+    # that constructs a real window at kv-load time, i.e. during test
+    # collection.
+    #
+    # The row list changed 2026-08-23 when the fill-from-a-fraction row came
+    # out (those were multi-start step-overs; see the module docstring). The
+    # gap count is unchanged — the dp(22) fraction line took the row it left —
+    # so the modal is dp(30) SHORTER than it was, and every message the
+    # scroller has to hold gained that much room.
+    height: min((self.parent.height if self.parent else 600) - dp(16), dp(70) + dp(24) + dp(40) + lbl_intro.height + dp(38) + dp(22) + dp(56) + lbl_message.height + dp(56))
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: dp(12)
+        spacing: dp(8)
+
+        Label:
+            id: lbl_intro
+            text: root.body_intro
+            halign: "left"
+            valign: "top"
+            text_size: self.width, None
+            size_hint_y: None
+            height: self.texture_size[1]
+            color: app.theme.text
+            font_size: app.formats.font_size
+
+        # THE HEADLINE: total widening so far, as a distance. Every step-over
+        # goes the same way, so this total IS the widening — how far the groove
+        # has grown past the cutter, measurable on the part — not a controller
+        # number standing in for it. Mono because the operator reads it against
+        # a dial and a proportional font makes a changed digit hard to spot;
+        # accent and full size because it is what the job is about.
+        Label:
+            id: lbl_total
+            text: root.total_text
+            halign: "left"
+            valign: "middle"
+            text_size: self.width, None
+            size_hint_y: None
+            height: dp(38)
+            color: app.theme.accent_text
+            font_name: app.theme.font_mono
+            font_size: app.formats.font_size
+
+        # The same total as a fraction of one pitch, DELIBERATELY SUBORDINATE:
+        # smaller, dim, and hung directly under the distance it qualifies. It
+        # is not a width, it is the aliasing bound — the share of the one pitch
+        # the offset may accumulate before the next pass starts cutting the
+        # neighboring groove. It was a co-equal half of lbl_total until
+        # 2026-08-23, from the multi-start framing where the pitch share WAS
+        # the operator's number; on a widening job it is a limit gauge, and a
+        # limit gauge that reads as loud as the measurement invites the
+        # operator to work to it.
+        Label:
+            id: lbl_fraction
+            text: root.fraction_text
+            halign: "left"
+            valign: "middle"
+            text_size: self.width, None
+            size_hint_y: None
+            height: dp(22)
+            color: app.theme.text_dim
+            font_name: app.theme.font_mono
+            font_size: app.formats.font_size * 0.75
+
+        # Entry row. Typed, with NO preset-fraction buttons beside it: the
+        # right step-over for widening is set by the width of the cutter in
+        # the toolpost, which nothing in this machine knows, so there is no
+        # honest number for a button to fill in. (The row that used to be here
+        # offered 1/2, 1/3 and 1/4 pitch — multi-start amounts, removed
+        # 2026-08-23 with the rest of that framing.)
+        #
+        # Unsigned by design, and not a limitation: widening runs one way, so
+        # an unsigned advance IS the shape of the job. See the module docstring
+        # for that, and for what a stray minus sign would actually do.
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(56)
+            spacing: dp(8)
+
+            FormLabel:
+                text: "Widen by (" + root.unit_label + ")"
+                size_hint_x: 0.6
+
+            FormValueButton:
+                text: root.entry_text
+                disabled: root.busy
+                on_press: app.beep()
+                on_release: root.edit_entry()
+
+        # Outcome/instruction text. Still scrolled rather than sized to its
+        # texture — a message that overflowed a fixed box would render over the
+        # buttons, the exact failure mode els_advbar.kv's collapsible strips
+        # were fixed for, and the same one the wizard's body had until
+        # 2026-08-23. But the scroller is now the LAST line of defence rather
+        # than the first: the popup above sizes itself so every message this
+        # modal can produce is on screen whole, the bar is wide enough to see
+        # from the operator's side of the lathe, and anything that does end up
+        # below the fold says so in words instead of behind a 2 px hairline.
+        FloatLayout:
+            size_hint_y: 1
+
+            ScrollView:
+                id: sv_message
+                size_hint: 1, 1
+                pos_hint: {"x": 0, "y": 0}
+                do_scroll_x: False
+                do_scroll_y: True
+                bar_width: dp(9)
+                bar_margin: dp(1)
+                bar_color: app.theme.accent
+                bar_inactive_color: app.theme.accent
+                scroll_type: ["bars", "content"]
+
+                Label:
+                    id: lbl_message
+                    text: root.message
+                    halign: "left"
+                    valign: "top"
+                    text_size: self.width - dp(12), None
+                    size_hint_y: None
+                    height: self.texture_size[1]
+                    color: app.theme.danger_text if root.state == "refused" else (app.theme.success_text if root.state == "applied" else app.theme.text_dim)
+                    font_size: app.formats.font_size
+
+            Label:
+                id: more_message
+                text: "▼  more below — drag to scroll"
+                size_hint: 1, None
+                height: dp(28)
+                pos_hint: {"x": 0, "y": 0}
+                opacity: 1 if lbl_message.height > sv_message.height + dp(2) else 0
+                halign: "right"
+                valign: "middle"
+                text_size: self.width - dp(16), self.height
+                font_name: app.theme.font_bold
+                font_size: app.formats.font_size * 0.7
+                color: app.theme.accent_text
+                canvas.before:
+                    Color:
+                        rgba: app.theme.accent_bg if self.opacity else (0, 0, 0, 0)
+                    Rectangle:
+                        pos: self.pos
+                        size: self.size
+
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(56)
+            spacing: dp(10)
+
+            # The WHY behind the stripped base text (bench 2026-08-24). In the
+            # button row rather than beside the prose: this row exists in every
+            # state, so the affordance never moves, and a fixed-size square
+            # here costs nothing in the height arithmetic above.
+            HelpButton:
+                pos_hint: {"center_y": 0.5}
+                help_title: root.help_title
+                help_text: root.help_text
+
+            FormValueButton:
+                text: "Close"
+                on_press: app.beep()
+                on_release: root.close()
+
+            # Clear is an ordinary apply of zero, so it acks — and is refused —
+            # exactly like one. It is deliberately NOT a "cancel": it drives
+            # the controller, and closing the modal does not undo it.
+            FormValueButton:
+                text: "Clear"
+                disabled: root.busy
+                on_press: app.beep()
+                on_release: root.clear()
+
+            FormValueButton:
+                text: "Apply"
+                disabled: root.busy
+                on_press: app.beep()
+                on_release: root.apply()

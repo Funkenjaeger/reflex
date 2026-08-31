@@ -108,6 +108,34 @@ class ElsSettingsPopup(Popup):
         from reflex.components.home.els_backlash_cal_popup import BacklashCalPopup
         BacklashCalPopup(bar=self).open()
 
+    def open_thread_resync(self):
+        """Open the pick-up-existing-thread (manual reference latch) wizard.
+
+        Lazily imported like the calibration popup. The wizard itself refuses
+        with a clear message when no job is armed, when the machine is not in a
+        threading mode, or when the link is down -- so this button does not need
+        its own gating, and a greyed-out button could not say which of the three
+        it was.
+
+        THE MODE REFUSAL WAS ADDED 2026-08-30. Until then this docstring was
+        true about the job and silent about the mode, and the wizard would walk
+        its whole procedure in feed mode to latch a reference against
+        threadPitchSteps = 0.
+        """
+        from reflex.components.home.els_resync_popup import ThreadResyncPopup
+        ThreadResyncPopup().open()
+
+    def open_phase_offset(self):
+        """Open the thread-phase offset (groove-widening) entry surface.
+
+        Lazily imported like the wizards above. It needs no gating here either:
+        the FSM refuses an offset with a stated reason when there is no job, no
+        pitch or no connection, and a button greyed out on this screen could
+        not say which of those it was.
+        """
+        from reflex.components.home.els_phase_offset_popup import PhaseOffsetPopup
+        PhaseOffsetPopup().open()
+
     def refresh_backlash(self):
         """Re-read the stored take-up after a calibration commits.
 

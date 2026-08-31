@@ -519,6 +519,40 @@ static void isrThreadFunc(LathePhysics *physics, rampsHandler_t *rampsData, int 
             HAL_IncTick();
         }
 
+        /* Mirror servoEnableTask's machine-mode publication, ~100 ms.
+         *
+         * The emulator does not run the FreeRTOS tasks -- it reimplements the
+         * parts it needs, right here. Without this line elsStop.machineMode
+         * would read 0 (ELS_MMODE_OFF) forever in the emulator, so every
+         * emulator-backed test would exercise a rung-2 census against a dead
+         * register and report it as healthy. That is the same shape as the
+         * defect this register exists to fix, one level down. */
+        static int mode_divider = 0;
+        mode_divider++;
+        if (mode_divider >= rate_hz / 10) {
+            mode_divider = 0;
+            elsPublishMachineMode(&rampsData->shared,
+                                  (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
+        }
+
+        /* Mirror updateSpeedTask's spindle-period refresh, ~20 ms.
+         *
+         * SAME REASON AS THE LINE ABOVE, and the consequence is sharper here.
+         * On hardware the period is computed off the ISR by updateSpeedTask;
+         * without this mirror the cache would stay 0 in the emulator forever,
+         * applyPhaseCorrection would be handed 0 on every pass, and 0 means
+         * DO NOT REDUCE. Every emulator-backed test would then quietly
+         * exercise the pre-04dd1f9 unreduced path while reporting green on the
+         * reduced one -- a test suite that stops testing the feature and says
+         * nothing. Calls the same header function the task does, so there is
+         * one implementation, not two. */
+        static int period_divider = 0;
+        period_divider++;
+        if (period_divider >= rate_hz / 50) {
+            period_divider = 0;
+            elsRefreshSpindlePeriod(&rampsData->shared);
+        }
+
         /* Sleep until next tick */
         std::this_thread::sleep_until(next_tick);
     }

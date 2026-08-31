@@ -44,6 +44,35 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     # it gets it, and neither silently overwrites the other.
     natural_height = NumericProperty(128)
 
+    # How far the status gutter's recessed band is inset from its own bottom
+    # edge, i.e. where the hairline divider sits. ONE NUMBER, FOUR USES: the
+    # recess rectangle, the divider line, and both chips' vertical centring all
+    # read it, so the band and the things sitting in it cannot disagree.
+    #
+    # A REAL PROPERTY RATHER THAN A NAME INVENTED IN THE KV, and that is not
+    # style. Declaring `recess_inset: dp(1)` on the FloatLayout in the kv rule
+    # does create the property -- but as an ObjectProperty defaulting to None,
+    # and the canvas instructions referencing it are evaluated before the rule
+    # assigns it, so every frame started with
+    # "TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'".
+    # Caught by rendering, not by the test suite: the kv parses fine.
+    #
+    # THE VALUE LIVES IN THE KV (`gutter_inset: dp(1)`), not here, and the 0
+    # below is a deliberate non-value. `NumericProperty(dp(1))` was the obvious
+    # way to keep it in one place and it cannot be done: dp() at class-body
+    # time reaches for the display density, which calls
+    # EventLoop.ensure_window(), which under the tests' mock window backend is
+    # a bare sys.exit(1) -- the whole suite died at COLLECTION with
+    # "INTERNALERROR SystemExit: 1". The preview rendered fine, because it has
+    # a real window; only running the suite showed it.
+    #
+    # 0 rather than 1 as the fallback on purpose: if the kv line is ever
+    # deleted the divider lands flush on the gutter's edge, which is visibly
+    # "no inset" rather than a plausible-looking number quietly standing in for
+    # the real one. It was dp(5) until 2026-08-29, which left five
+    # painted-nothing pixels between the divider and the top of the controls.
+    gutter_inset = NumericProperty(0)
+
     # ── One-hot tri-state operating mode (derived from the flags above) ───────
     # The single mode button in the advanced bar cycles through these three:
     #   "wizard"        -> guided multi-step cut (enable_wizard)
@@ -95,6 +124,33 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     minor_diameter_text = StringProperty("")
 
     _skip_save = [
+        # ── LAYOUT CONSTANTS AND PARENT-OWNED STATE, NOT OPERATOR STATE ──────
+        # SavingDispatcher persists every Numeric/String/Boolean property it is
+        # not told to skip and RELOADS it at startup, so anything left off this
+        # list becomes a value the save file can override the source with.
+        #
+        # THIS IS NOT HYPOTHETICAL. elspi holds six per-widget ElsAdvancedBar
+        # YAMLs, and ElsAdvancedBar-2268.yaml still contains
+        # `natural_height: 158.0` -- the pre-2026-08-22 value whose own comment
+        # above documents what it did: children summing to 184 px inside a
+        # 158 px bar, pushing the notice strips out of the top of the bar and
+        # onto the spindle DRO row. Another, ElsAdvancedBar-1735.yaml, carries
+        # `opacity: 0`, which is an invisible advanced bar.
+        #
+        # AND THE ORPHANS ARE REACHABLE. saving_dispatcher.py defaults
+        # `id_override` to f"{self.uid}", a Kivy widget uid, so the file a bar
+        # loads is decided by how many widgets were built before it. Adding the
+        # two StatusChips shifts that count -- which means a change like this
+        # one can land the app on a stale file from a superseded design, and
+        # the symptom presents as a brand-new layout bug in the new work.
+        #
+        # THE SOURCE GUARD IS THE FIX, NOT DELETING THE FILES. The config dir
+        # on elspi is root-owned and the automation's grant covers only the
+        # service restart, so those files stay where they are; skipping the
+        # properties makes them inert instead of merely absent.
+        "natural_height",
+        "opacity",
+        "gutter_inset",
         "is_active",
         "is_running",
         "label_text",

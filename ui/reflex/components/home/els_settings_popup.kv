@@ -54,6 +54,18 @@
                 help_file: "els_backlash_cal.md"
                 on_release: root.open_backlash_calibration()
 
+            ButtonItem:
+                name: "Pick up existing thread"
+                value: "Sync"
+                help_file: "els_thread_resync.md"
+                on_release: root.open_thread_resync()
+
+            ButtonItem:
+                name: "Thread phase offset"
+                value: "Offset"
+                help_file: "els_phase_offset.md"
+                on_release: root.open_phase_offset()
+
             DropDownItem:
                 id: reframe_notify_dropdown
                 height: 60

@@ -102,10 +102,20 @@
           name: "Show Speeds"
           value: root.formats.show_speeds
           on_value: root.formats.show_speeds = self.value
+        # Collapsed where the use case has no pattern screen: a toggle that
+        # cannot do anything is worse than an absent one. The property keeps
+        # its name -- `show_wizard` is the key in the persisted YAML, and
+        # renaming it would make every stored `false` fall back to the default
+        # True and put the button back on machines that had turned it off.
+        # Only the label changes: "Show Wizard" reads as the ELS wizard stop
+        # mode, which is a different thing entirely.
         BooleanItem:
-          name: "Show Wizard"
+          name: "Show Patterns"
           value: root.formats.show_wizard
           on_value: root.formats.show_wizard = self.value
+          height: 60 if app.patterns_available else 0
+          opacity: 1 if app.patterns_available else 0
+          disabled: not app.patterns_available
 
         TitleItem:
           name: "Sound Settings"

@@ -88,7 +88,14 @@ class ElsModeLayout(ModeLayout):
         self.els_bar = els_bar
         self.spindle_info = ElsSpindleInfo()
         self.spacer = Widget()
-        self.els_adv_bar = ElsAdvancedBar(els_bar=els_bar)
+        # id_override="0" like ElsBar above it. Without it SavingDispatcher
+        # falls back to the Kivy widget uid, so the settings file was named by
+        # how many widgets happened to be built first -- elspi accumulated six
+        # ElsAdvancedBar-<uid>.yaml, disagreeing with each other about
+        # enable_retract, i.e. about which stop mode the operator had chosen.
+        # Any change to the widget tree moved the bar to a different file, or
+        # to none, silently reverting the mode selection to defaults.
+        self.els_adv_bar = ElsAdvancedBar(els_bar=els_bar, id_override="0")
         self.els_adv_bar.size_hint_y = None
 
         self.build_axis_bars()
@@ -134,10 +141,33 @@ class ElsModeLayout(ModeLayout):
         if num_rows == 0:
             return
 
-        # Reserve a small margin between the DRO section and the ELS bars,
-        # symmetric with the gap under the top status bar. The spacer (which
-        # absorbs leftover space) ends up exactly this gap on the target res.
-        dro_els_gap = dp(8)
+        # Margin between the DRO section and the ELS bars. THIS IS THE SPACER'S
+        # SIZE, NOT THE VISIBLE GAP, and conflating the two is what made it
+        # wrong for so long.
+        #
+        # It was dp(8), chosen "symmetric with the gap under the top status
+        # bar" -- but the 8 px at the TOP is entirely the first DRO row's own
+        # glyph whitespace (there is no spacer up there), while at the BOTTOM
+        # the spindle row contributes 5 px of the same whitespace and THEN this
+        # spacer is added on top. Measured on the render: 8 px at the top,
+        # 5 + 8 = 13 px at the bottom. The comment claimed a symmetry the
+        # arithmetic never produced.
+        #
+        # dp(3) so that 5 + 3 = 8 and the two ends actually match.
+        #
+        # THIS RESIZES THE DRO ROWS, DELIBERATELY, ON EVAN'S EXPLICIT CALL
+        # (2026-08-29). The spacer is the REMAINDER -- it has size_hint_y 1 --
+        # so it cannot be shrunk on its own: with `available` fixed, taking
+        # 5 px out of the spacer puts them into the rows, 99 -> 101 px each,
+        # and dro_coordbar.kv derives the digit font from row height
+        # (`max_font_size: min(self.height / 1.1, ...)`), so the digits grow
+        # with them. That trade was put to him with the numbers and accepted;
+        # it is a one-time change to a source constant, NOT a relaxation of the
+        # standing rule that nothing may resize in response to transient state.
+        # Notice strips still overlay rather than grow the bar, and the DRO
+        # rows still never move at runtime. See
+        # tests/components/test_els_mode_layout.py, which pins both halves.
+        dro_els_gap = dp(3)
         available = self.height - self.els_bar.height - self.els_adv_bar.height
         row_height = min((available - dro_els_gap) / num_rows, self.app.formats.max_row_height)
 

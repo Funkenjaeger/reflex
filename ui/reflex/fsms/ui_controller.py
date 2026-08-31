@@ -1,3 +1,4 @@
+
 from kivy.properties import StringProperty, BooleanProperty, NumericProperty
 from kivy.event import EventDispatcher
 from kivy.clock import Clock
@@ -8,10 +9,13 @@ from reflex.fsms.ui_fsm import ElsUiFsm
 from reflex.fsms.els_fsm import ElsFsm
 from reflex.fsms.els_stop_hal import ElsStopHal
 from reflex.fsms.els_diag import ElsDiagRecorder
+from reflex.fsms.els_phase_recorder import (
+    PhaseCorrectionRecorder, PhaseLiveTracker, SpindleCountWatch)
 from reflex.fsms.els_mode_watch import ElsModeWatch
 from reflex.utils.devices import (takeup_failure_text,
                                   ELS_DIAG_SCHEMA_MODE_WATCH,
                                   ELS_DIAG_SCHEMA_MODE_WATCH_V2)
+from reflex.utils.notices import (NoticeCenter, NOTICE_INFO, NOTICE_WARNING)
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
 
 log = Logger.getChild(__name__)
@@ -39,6 +43,104 @@ BLINK_TARGET = {
     "set_stop_dia":  "minor_dia",
 }
 
+# How often the notice queue is swept for expiry. 10 Hz: fast enough that a
+# notice never visibly outstays the duration it was given (a tenth of a second
+# on a 4 s strip is not perceptible), slow enough to be free. The sweep does no
+# I/O and touches no registers -- it compares one float against another.
+NOTICE_SWEEP_SECONDS = 0.1
+
+
+# ── Thread-phase offset readout ──────────────────────────────────────────────
+# The operator-facing text lives HERE rather than in utils/devices.py (where
+# takeup_failure_text lives) because it needs the live display format — units
+# and decimal places — and devices.py is the register-map module, deliberately
+# free of any dependency on the running app's formatting state.
+
+def phase_offset_fraction_text(fraction: float) -> str:
+    """The share of one pitch, ALWAYS as a decimal: "0.333", "0.500", "0.275".
+
+    ONE FORMAT, NO BRANCH. Until 2026-08-29 an exact-ish 1/N was rendered by
+    name ("1/3") and everything else as a decimal, on the theory that a round
+    fraction reads faster against the one-pitch bound. Evan's call, and it is
+    his screen: he reads 0.333 without difficulty, so the naming bought nothing
+    and cost a second format for the same quantity.
+
+    Deleting the branch takes a real hazard with it. Naming was a CLAIM, and it
+    needed a tolerance and a denominator cap to keep from asserting that an
+    arbitrary widening offset was a deliberate clean division. A decimal
+    asserts nothing, so there is no longer anything to get wrong -- and no
+    reason for the modal and the status strip to ever disagree.
+
+    The caller supplies the unit: the wording is "0.333 x pitch", never
+    "of a pitch".
+    """
+    return f"{fraction:0.3f}"
+
+
+def phase_offset_value_parts(steps, distance, fraction, formats):
+    """The two numbers of a live phase offset as text: ``(widening, bound)``.
+
+    THE ONE PLACE EITHER NUMBER IS FORMATTED. Two readouts show this offset --
+    the long status line and the short gutter chip -- and they differ only in
+    how they are LABELLED and what they join the parts with. Splitting them any
+    further down than this would give the machine two renderings of the same
+    register that could disagree about units, decimals or the pitch fraction
+    while both looked right in isolation; a chip reading "+0.500 mm" beside a
+    line reading "+0.0197 in" is worse than either alone. Callers pick the
+    joiner, never the arithmetic.
+
+    BOTH NUMBERS, for the reason ElsFsm.phase_offset_display gives, with the
+    distance first. Step-overs all go one way, so the total IS the widening:
+    how far the groove has grown past the width of the cutter, measurable on
+    the part. The fraction trails it as the aliasing bound — the share of the
+    one pitch an offset may accumulate before it is refused.
+    """
+    try:
+        pos_fmt = formats.position_format or "{:+0.3f}"
+        unit = "mm" if formats.current_format == "MM" else "in"
+    except AttributeError:
+        pos_fmt, unit = "{:+0.3f}", "mm"
+
+    if not distance:
+        # A nonzero step total that converts to nothing: no spindle pitch, no
+        # servo ratio, or a zero display factor. Say the raw register value
+        # rather than rendering "+0.000 mm", which reads as "no offset" — the
+        # single thing these readouts exist to contradict.
+        return (f"{int(steps):+d} leadscrew steps", "thread geometry unavailable")
+
+    try:
+        distance_text = pos_fmt.format(distance)
+    except (ValueError, IndexError, KeyError, AttributeError):
+        distance_text = f"{distance:+0.3f}"
+    return (f"{distance_text} {unit}",
+            f"{phase_offset_fraction_text(fraction)} x pitch")
+
+
+def phase_offset_readout(steps, distance, fraction, formats) -> str:
+    """The long form: label and both numbers on one line, bullet-separated.
+
+    Its own label carries the un-convertible case ("... OFFSET SET"), because
+    this line has to stand alone -- there is no separate label beside it to
+    qualify. On this line the distance leads by position; the modal, which had
+    them as co-equal halves of one line, separates them by size and weight
+    instead.
+    """
+    widening, bound = phase_offset_value_parts(steps, distance, fraction, formats)
+    label = "THREAD PHASE OFFSET" if distance else "THREAD PHASE OFFSET SET"
+    return f"{label}  •  {widening}  •  {bound}"
+
+
+def phase_offset_chip_readout(steps, distance, fraction, formats) -> str:
+    """The short form: both numbers, NO label — the chip draws that itself.
+
+    A StatusChip renders its label and its value as two type weights, so the
+    label must not be baked into the value here; and inside a chip the bullets
+    are noise, since the pill's own edge already bounds the group.
+    """
+    widening, bound = phase_offset_value_parts(steps, distance, fraction, formats)
+    return f"{widening}  {bound}"
+
+
 class ElsUiController(EventDispatcher):
     # ── Operator-mode flags (read by FSM conditions / on_enter_stopped) ─
     retract_enabled     = BooleanProperty(False)
@@ -59,6 +161,54 @@ class ElsUiController(EventDispatcher):
     # Without it a refusal and a hung machine are indistinguishable, which is
     # exactly how it presented on hardware 2026-08-08.
     takeup_warning      = StringProperty("")
+
+    # ── Transient operator notices (top status bar) ────────────────────
+    # The live notice, republished from the NoticeCenter for kv to bind to.
+    # Empty text means nothing is showing; `notice_severity` picks the colour.
+    #
+    # WHY TWO PROPERTIES AND NOT THE Notice OBJECT. kv binds to properties, and
+    # an ObjectProperty holding a mutable dataclass does not fire when a field
+    # inside it changes -- the strip would go stale exactly when one notice
+    # replaced another with the same object identity. Flattening to the two
+    # values the renderer actually needs keeps every update a real property
+    # change.
+    #
+    # WHY THE TEXT DOES NOT DOUBLE AS THE VISIBILITY FLAG the way
+    # `takeup_warning` does, and why that asymmetry is correct: a take-up
+    # refusal is a LATCH -- it is true until something clears it -- so its text
+    # and its truth are the same fact. A notice is an EVENT with a lifetime, and
+    # the lifetime is owned by the NoticeCenter. Nothing outside it may decide
+    # the strip is up; the strip is up because there is text.
+    notice_text         = StringProperty("")
+    notice_severity     = StringProperty("")
+
+    # ── Thread-phase offset (widening a groove past the cutter) ────────
+    # True whenever elsStop.phaseOffsetSteps is nonzero, i.e. the machine is
+    # cutting at a DELIBERATE phase shift. Persistent job state, not an event:
+    # it survives every pass until the operator clears it or the firmware wipes
+    # it on the next enable 0->1 edge, and an operator who forgets it is set
+    # ruins the next thread. That is why visibility hangs off this flag and not
+    # off the text being non-empty, the way takeup_warning does — a readout
+    # that could not be formatted (missing thread geometry) must still SHOW,
+    # saying so, rather than silently reading as "no offset".
+    phase_offset_active = BooleanProperty(False)
+    phase_offset_text   = StringProperty("")
+    # The same offset, as the VALUE half of the gutter's phase chip -- both
+    # numbers, no label (the chip draws "PHASE OFFSET" itself, in its own type
+    # weight). Both strings come from phase_offset_value_parts, so the chip and
+    # any long-form readout cannot disagree about units or decimals.
+    phase_offset_chip_value = StringProperty("")
+
+    # ── Thread reference latch (elsStop.referenceLatched, gated on enable) ──
+    # True while the firmware BOTH holds a thread reference AND is enabled.
+    # Persistent job state like the offset above -- the latch is banked on the
+    # first Cut of a job and consumed by every subsequent pass -- and until
+    # 2026-08-24 nothing on screen showed it, so "is anything latched?" could
+    # not be answered at the bench. The enable term is not decoration: the
+    # firmware clears referenceLatched on the enable RISING edge, not on
+    # disengage, so between jobs the register still holds the OLD job's latch
+    # and showing it would claim a reference the next Cut will not use.
+    thread_ref_latched  = BooleanProperty(False)
 
     # ── Operator-job descriptors (mirrored from the widget) ────────────
     # is_threading toggles the X-clear-of-start-dia gate in waiting_to_retract.
@@ -119,18 +269,42 @@ class ElsUiController(EventDispatcher):
         """
         return self._hal
 
+    @property
+    def els_fsm(self):
+        """Read-only access to the ELS domain FSM.
+
+        Exposed for the same reason `hal` is, one level up: auxiliary flows need
+        the RULES, not the registers. The thread-phase offset modal is the case
+        that forced it — every refusal it renders, and every unit conversion it
+        shows, belongs to the FSM, and the alternative to reaching it was
+        re-implementing those refusals in a popup where they would drift.
+
+        Read-only in the sense that matters: callers may ask this object
+        questions and invoke its documented operations, but the threading cycle
+        is still driven from here, and a caller that fights that will lose.
+        """
+        return self._els_fsm
+
     def __init__(self, els: els, board: board, **kw):
         super().__init__(**kw)
         self._els = els
         self._board = board
         self._hal = ElsStopHal(board)
         self._diag_recorder = ElsDiagRecorder(self._hal, board)
+        self._phase_recorder = PhaseCorrectionRecorder(board)
+        self._phase_tracker = PhaseLiveTracker(board)
+        self._spindle_watch = SpindleCountWatch(board)
+
+        # Built FIRST, before any FSM or poller exists, because `notify()` must
+        # be safe to call from anywhere below -- including from construction, if
+        # a future reconcile-on-connect wants to say something.
+        self._notices = NoticeCenter()
 
         # Rung-2 sampler (log-only): compares the domain FSM's state against
-        # the firmware-published machine mode when a mode-watch probe
-        # (schema 4 or 5) is flashed. Dormant against any other firmware — the
-        # schema gate in _poll_mode_watch is the recorder's, so this issues
-        # no reads of its own until a recognised mode-watch probe is present.
+        # the firmware-published machine mode. Runs against every build now
+        # that machineMode is a permanent register (2026-08-22); it used to be
+        # gated on a mode-watch probe being flashed, which made the census
+        # uncollectable during any session that needed a different probe.
         self._mode_watch = ElsModeWatch()
         self._mode_watch_tick = 0
 
@@ -148,6 +322,9 @@ class ElsUiController(EventDispatcher):
         # never-set target; only never-set and an ELS Z-axis remap invalidate.
         self._prev_takeup_seq = 0         # edge-detect baseline for takeup outcomes
         self._pending_takeup_seq = None   # a seq edge seen once; acted on when seen twice
+        self._prev_phase_offset_steps = 0   # last raw total seen; renders on the 2nd sighting
+        self._logged_phase_offset_steps = 0 # last total written to the log, so a units
+                                            # switch re-renders without re-logging
         self._stop_z_encoder = None       # int leadscrew encoder count, or None
         self._retract_z_encoder = None
         self._stop_z_committed = False
@@ -176,8 +353,11 @@ class ElsUiController(EventDispatcher):
         self._els.bind(z_axis_index=lambda *_: self._invalidate_z_targets())
         self._els.bind(x_axis_index=lambda *_: self._invalidate_x_targets())
 
-        # 2. Build domain FSM (HAL injected; controller doubles as modes source).
-        self._els_fsm = ElsFsm(els, board, self._hal, self)
+        # 2. Build domain FSM (HAL injected; controller doubles as modes
+        # source). The diag recorder rides along so the dark rung-3 adopt path
+        # can gate on its learned schema -- inert until els_adopt flips.
+        self._els_fsm = ElsFsm(els, board, self._hal, self,
+                               diag_recorder=self._diag_recorder)
 
         # 3. Eagerly compute initial validation so FSM guards don't start False.
         self._validate_stop_z()
@@ -209,12 +389,35 @@ class ElsUiController(EventDispatcher):
         self._board.bind(update_tick=self._poll_apply_policy)
         self._board.bind(update_tick=self._poll_reframe_targets)
         self._board.bind(update_tick=self._poll_takeup_outcome)
+        self._board.bind(update_tick=self._poll_phase_offset)
+        self._board.bind(update_tick=self._poll_thread_ref_latched)
         # Firmware diagnostic scratchpad. Dormant against any release build --
         # it reads diagSchema once per connection and, finding 0, issues no
         # further reads at all. See reflex/fsms/els_diag.py.
         self._board.bind(update_tick=self._poll_diag_capture)
+        # Phase-correction results. Reads the per-tick elsStop snapshot only,
+        # so unlike the scratchpad recorder above it runs against EVERY build
+        # and costs no Modbus traffic. See els_phase_recorder.py.
+        self._board.bind(update_tick=self._poll_phase_correction)
+        # Live physical phase, ~1 Hz while a reference is latched. Scale
+        # positions from fastData, reference from the elsStop snapshot; the
+        # one non-snapshot input (sync ratio) is read once per reference.
+        self._board.bind(update_tick=self._poll_phase_live)
+        # Raw spindle counter, change-only, no job required -- the belt-off
+        # EMI experiment's instrument. See SpindleCountWatch.
+        self._board.bind(update_tick=self._poll_spindle_watch)
         # Rung-2 mode sampler; equally dormant without the schema-4 probe.
         self._board.bind(update_tick=self._poll_mode_watch)
+
+        # Notice expiry runs off the Kivy Clock, NOT off board.update_tick like
+        # every other poller in this file, and the difference is load-bearing:
+        # update_tick only fires while a board is talking to us, and the very
+        # first notice migrated onto this surface ("no ELS Z axis is assigned --
+        # map it in ELS settings") fires most often when NOTHING is connected.
+        # On update_tick that notice would appear and then stay on screen
+        # forever, which is precisely the persistent-banner failure this surface
+        # is defined not to be.
+        Clock.schedule_interval(self._poll_notices, NOTICE_SWEEP_SECONDS)
 
         # 7. Re-arm HAL when mode flags change so firmware tracks the operator.
         self.bind(retract_enabled=self._on_modes_changed,
@@ -279,6 +482,67 @@ class ElsUiController(EventDispatcher):
             self._sync_ui_state_to_modes()
         self._apply_policy()
 
+    # ——— transient operator notices ———
+    def notify(self, message: str, severity: str = NOTICE_INFO, *,
+               seconds: float | None = None) -> bool:
+        """Tell the operator something, on the top status bar, for a few seconds.
+
+        THE GENERAL CHANNEL. Anything in the app that wants the operator to know
+        something happened calls this: `app.els_uic.notify(...)`. It is
+        deliberately not ELS-specific -- it lives here because this is where
+        every other value republished into kv already lives, not because the
+        notices are about threading.
+
+        WHAT BELONGS HERE, and it is a narrow set: an EVENT the operator would
+        otherwise experience as nothing happening. A refused button press, an
+        action that completed silently, a condition that must change before the
+        machine will do what was asked. Two things do NOT belong here:
+
+          * PERSISTENT MACHINE STATE. A live thread-phase offset or an armed
+            stop is true for the length of a job, and a strip that covers
+            something for a whole job needs its placement argued on its own
+            merits -- see the two overlays in els_advbar.kv. `seconds` is
+            clamped (notices.MAX_SECONDS) so this cannot be bent into one.
+          * ANYTHING THE OPERATOR MUST ACKNOWLEDGE OR DECIDE. A notice has no
+            buttons and vanishes on a timer; if the answer matters, it is a
+            CustomPopup (see _on_pass_interrupted).
+
+        Returns True iff something will be shown. False means the message was
+        empty -- i.e. the caller built it out of nothing -- and is worth
+        checking in a test, never worth branching on at a call site.
+
+        Safe to call from the board polling thread, like the other property
+        writes in this file: the queue itself is locked, and a Kivy property
+        assignment is atomic enough for a string.
+        """
+        posted = self._notices.post(message, severity, seconds=seconds)
+        self._publish_notice()
+        return posted is not None
+
+    def _publish_notice(self):
+        """Mirror whatever the NoticeCenter says is current into the two kv
+        properties. Assignment is guarded so an unchanged notice does not
+        re-fire every binding on the status bar 10 times a second."""
+        current = self._notices.showing
+        text = current.message if current is not None else ""
+        severity = current.severity if current is not None else ""
+        # Severity FIRST: the renderer picks its colour from it, and setting the
+        # text first would paint one frame of the new message in the old
+        # message's colour -- an amber refusal flashing cyan.
+        if severity != self.notice_severity:
+            self.notice_severity = severity
+        if text != self.notice_text:
+            self.notice_text = text
+
+    def _poll_notices(self, _dt):
+        """Retire an expired notice and promote whatever was waiting behind it.
+
+        Republishes only when the current notice actually changed, so the steady
+        state (nothing showing) costs one float comparison per tick.
+        """
+        if self._notices.poll():
+            self._publish_notice()
+
     def _poll_takeup_outcome(self, *args):
         """Log every backlash take-up outcome so it is visible AT THE MACHINE.
 
@@ -296,7 +560,32 @@ class ElsUiController(EventDispatcher):
         Edge-detected on takeupSeq, which increments once per OUTCOME (not per
         tick, and not per take-up attempt).
         """
-        seq = self._hal.read_takeup_seq()
+        # Snapshot the read-failure counter BEFORE any read in this poll. A
+        # failed read returns 0 (communication.py), and in this register map
+        # zero is not a neutral value -- it is a sequence reset. On elspi
+        # 2026-08-21 a CRC-failed 148-byte frame of zeros made takeupSeq read
+        # 2 -> 0; this poller took that for an edge, read zeros for result,
+        # moved and needed through the same failing path, logged a phantom
+        # "CONFIRMED: moved 0 counts, needed 0" and CLEARED a live refusal.
+        # The two-poll guard below does not cover it: a zero frame is only
+        # consistent across two polls if it repeats, and it did not.
+        #
+        # Every read in this poll now comes from the board's once-per-tick
+        # elsStop snapshot rather than four separate exchanges, and the guard
+        # below is unchanged BECAUSE the snapshot reports its own failure the
+        # same way: no snapshot means each read here returns its fallback and
+        # bumps read_failures, exactly as a timed-out per-field read did.
+        #
+        # The snapshot also makes the four values MORE consistent, not less:
+        # takeupResult (register 32) and takeupSeq (33) now arrive in the same
+        # FC3 response instead of two exchanges milliseconds apart. It does not
+        # close the tear the two-poll guard below exists for -- the firmware's
+        # process_FC3 still copies the block a register at a time and the ISR
+        # can still land mid-copy -- so that guard stays.
+        cm = self._board.connection_manager
+        reads_baseline = cm.read_failures
+
+        seq = self._hal.tick.takeup_seq()
         if seq == self._prev_takeup_seq:
             self._pending_takeup_seq = None
             return
@@ -315,11 +604,26 @@ class ElsUiController(EventDispatcher):
             self._pending_takeup_seq = seq
             return
         self._pending_takeup_seq = None
+        prev_seq_before_commit = self._prev_takeup_seq
         self._prev_takeup_seq = seq
 
-        result = self._hal.read_takeup_result()
-        moved = self._hal.read_last_takeup_z_delta()
-        needed = self._hal.read_takeup_thresh_counts()
+        result = self._hal.tick.takeup_result()
+        moved = self._hal.tick.last_takeup_z_delta()
+        needed = self._hal.tick.takeup_thresh_counts()
+        if cm.reads_failed_since(reads_baseline):
+            # ANY read in this poll failed -- the seq read that produced the
+            # edge, or one of the three that make up the outcome. The baseline
+            # is taken at the top of the poll deliberately, so this ONE check
+            # covers the whole poll and an earlier duplicate of it was removed
+            # as unkillable: no mutation could distinguish it from this.
+            #
+            # Reporting now would announce an outcome assembled from zeros --
+            # the phantom CONFIRMED. _prev_takeup_seq has already been
+            # advanced, so roll it back and let the next poll re-detect the
+            # edge cleanly; a real outcome is deferred by a tick, never lost.
+            self._prev_takeup_seq = prev_seq_before_commit
+            self._pending_takeup_seq = None
+            return
 
         if result == 0:
             self.takeup_warning = ""
@@ -327,10 +631,159 @@ class ElsUiController(EventDispatcher):
                 "ELS takeup #%s CONFIRMED: moved %s counts, needed %s (headroom %+d)",
                 seq, moved, needed, int(moved) - int(needed))
         else:
-            self.takeup_warning = takeup_failure_text(result, moved, needed)
+            # `moved` only, and `needed` deliberately not passed: the screen
+            # text uses the SIGN of the motion to pick the wrong-way branch and
+            # names no counts at all. Both numbers still go to the log line
+            # below, which since 2026-08-29 is the only place they exist -- see
+            # takeup_failure_text's docstring. Do not "restore" them to the
+            # warning: it is pinned to 85 characters so the notice strip cannot
+            # land on top of the status chips.
+            # `thread_ref_latched` is passed because the TIMEOUT remedy is
+            # forced and destructive: only the enable 1->0 edge clears a
+            # timed-out take-up, and the edge back clears the datum. The
+            # operator with a reference at stake gets told; the one without
+            # gets the plain text, because a warning that always fires is the
+            # warning nobody reads.
+            self.takeup_warning = takeup_failure_text(
+                result, moved, reference_latched=self.thread_ref_latched)
             log.warning(
                 "ELS takeup #%s REFUSED (result=%s): moved %s counts, needed %s",
                 seq, result, moved, needed)
+
+    def _poll_phase_offset(self, *args):
+        """Republish the firmware's live thread-phase offset as screen state.
+
+        THE FIRMWARE OWNS THE TOTAL, so this reads it every tick rather than
+        mirroring what the UI last applied. elsStop.phaseOffsetSteps is cleared
+        on the enable 0->1 edge and replaced (not accumulated) by every apply,
+        so a UI-side copy would happily survive a job change the machine
+        already discarded — and would then be showing a phase shift that is not
+        being cut, which is worse than showing nothing.
+
+        SEEN TWICE BEFORE IT IS BELIEVED, for the reason spelled out in
+        _poll_takeup_outcome: the Modbus task copies the register block one
+        16-bit register at a time, so a 32-bit value can be read half-old and
+        half-new. Here that would flash an arbitrary distance onto the most
+        load-bearing readout on the screen. A genuine change costs one extra
+        poll (~100 ms) to appear; a torn one never appears at all.
+
+        Once the total is stable the text is recomputed each poll and assigned
+        only when it differs, so a mm<->in switch or a feed-table change
+        re-renders the readout without the step count having moved.
+
+        Never raises into the update loop: phase_offset_display reaches through
+        the spindle axis, which is None until ELS is configured.
+        """
+        # A FAILED READ MUST NOT READ AS "NO OFFSET". The read helpers return 0
+        # on a checksum/timeout failure, and 0 here means exactly "no phase
+        # shift is being cut" -- so a bad frame would clear this readout while
+        # the machine is still cutting at an offset, which is the one thing it
+        # exists to prevent the operator forgetting. Same counter the take-up
+        # poller uses; see the elspi 2026-08-21 phantom CONFIRMED.
+        # Read from the board's once-per-tick elsStop snapshot, not live: this
+        # is a poller, it runs once per tick, and the snapshot is this tick's.
+        # An absent snapshot bumps read_failures just as a failed live read did,
+        # so the guard below is unchanged.
+        cm = self._board.connection_manager
+        reads_baseline = cm.read_failures
+        try:
+            steps = self._hal.tick.phase_offset_steps()
+        except Exception:
+            return
+        if cm.reads_failed_since(reads_baseline):
+            return
+
+        if steps != self._prev_phase_offset_steps:
+            self._prev_phase_offset_steps = steps
+            return
+
+        if steps == 0:
+            if self.phase_offset_active:
+                log.info("ELS thread-phase offset CLEARED (was %s steps)",
+                         self._logged_phase_offset_steps)
+                self.phase_offset_active = False
+                self.phase_offset_text = ""
+                self.phase_offset_chip_value = ""
+            self._logged_phase_offset_steps = 0
+            return
+
+        try:
+            # Hand it the total already read above. Calling this bare would
+            # read phaseOffsetSteps a SECOND time on every rendered tick, and
+            # the two reads could straddle a firmware update — rendering a
+            # distance from one total and a fraction from another.
+            distance, fraction = self._els_fsm.phase_offset_display(steps)
+        except Exception:
+            # Same meaning as a zero distance below: nothing here can convert
+            # the total, but the total is real and must still be announced.
+            distance, fraction = 0.0, 0.0
+
+        formats = getattr(self._board, "formats", None)
+        text = phase_offset_readout(steps, distance, fraction, formats)
+        if text != self.phase_offset_text:
+            self.phase_offset_text = text
+        # Rendered from the same conversion, in the same poll, so the two
+        # readouts can never be a tick out of step with each other.
+        chip_value = phase_offset_chip_readout(steps, distance, fraction, formats)
+        if chip_value != self.phase_offset_chip_value:
+            self.phase_offset_chip_value = chip_value
+        if not self.phase_offset_active:
+            self.phase_offset_active = True
+        if steps != self._logged_phase_offset_steps:
+            self._logged_phase_offset_steps = steps
+            # No colon in this message. Kivy's logger reads the text up to the
+            # first ":" as a log CATEGORY and reformats around it, which turned
+            # a readable line into "[ELS thread-phase offset now N steps] ..."
+            # in the captured output.
+            log.info("ELS thread-phase offset now %s steps -> %s", steps, text)
+
+    def _poll_thread_ref_latched(self, *args):
+        """Republish the firmware's thread-reference latch as screen state.
+
+        Same data path as _poll_phase_offset -- both values from the board's
+        once-per-tick elsStop snapshot, no extra Modbus traffic -- but the
+        OPPOSITE failure policy, because the dangerous lie points the other
+        way. There, clearing on a failed read would hide a live offset the
+        operator must not forget, so a failed poll HOLDS the last state. Here
+        the hazard is a lamp claiming a reference that may not exist: an
+        operator who trusts a stale "latched" re-enters a thread the machine
+        cannot actually pick up. So a failed or absent snapshot HIDES the
+        lamp, and it relights on the first good tick that still says latched.
+        A dark lamp only ever costs a re-latch.
+
+        No seen-twice guard, deliberately: referenceLatched and enable are
+        single uint16 registers, so unlike the 32-bit offset total they cannot
+        be read torn.
+
+        Never raises into Kivy's dispatch. The only exception _get can raise
+        is a KeyError for a register name the map does not have -- a bug, not
+        a runtime condition -- and it is logged, not swallowed silently.
+        """
+        cm = self._board.connection_manager
+        reads_baseline = cm.read_failures
+        try:
+            latched = self._hal.tick.reference_latched()
+            enabled = self._hal.tick.enable()
+        except Exception as e:
+            log.error("thread-ref-latch poll failed: %s", e)
+            latched = enabled = False
+        else:
+            if cm.reads_failed_since(reads_baseline):
+                # Fabricated fallbacks (no snapshot this tick). Both False by
+                # construction already; made explicit so this poller's
+                # hide-don't-hold policy survives a fallback-value change.
+                latched = enabled = False
+
+        show = latched and enabled
+        if show != self.thread_ref_latched:
+            self.thread_ref_latched = show
+            # Both terms in the line, because the indicator going dark has
+            # three distinct causes (unlatched, disengaged, no snapshot) and
+            # a session log that cannot tell them apart is how the next
+            # phantom gets chased. No colon -- Kivy's logger eats everything
+            # before one as a category.
+            log.info("ELS thread-ref indicator %s -- latched=%s enable=%s",
+                     "SHOWN" if show else "hidden", latched, enabled)
 
     def _poll_diag_capture(self, *args):
         """Drain any completed firmware settle capture to disk.
@@ -346,6 +799,37 @@ class ElsUiController(EventDispatcher):
         """
         self._diag_recorder.poll()
 
+    def _poll_phase_correction(self, *args):
+        """Record each new phase-correction result to the diag directory.
+
+        Separate from _poll_diag_capture because they answer to different
+        firmware: that one is dormant unless the build carries ELS_DIAG_SCRATCH,
+        while these four registers are permanent and published by every build.
+        Folding this into it would make the phase data disappear on exactly the
+        release firmware the machine actually runs.
+
+        Never raises -- see PhaseCorrectionRecorder.poll().
+        """
+        self._phase_recorder.poll()
+
+    def _poll_phase_live(self, *args):
+        """Sample the physical phase error against the commanded ledger.
+
+        Separate from _poll_phase_correction: that records what the firmware
+        DECIDED at each pass start; this records whether the machine is
+        physically in phase while the pass RUNS -- the measurement that
+        separates dropped steps from every other theory of the 2026-08-24
+        re-sync misalignment. Never raises -- see PhaseLiveTracker.poll().
+        """
+        self._phase_tracker.poll()
+
+    def _poll_spindle_watch(self, *args):
+        """Log raw spindle counter movement, jobless and change-only.
+
+        Never raises -- see SpindleCountWatch.poll().
+        """
+        self._spindle_watch.poll()
+
     # Every 5th update tick ≈ 6 Hz against the firmware's ~10 Hz publication:
     # fast enough that no dwell in a mode is missed, slow enough that the one
     # extra single-register read stays a rounding error on the serial budget.
@@ -355,19 +839,27 @@ class ElsUiController(EventDispatcher):
         """Rung-2 sampler: (domain FSM state, published machine mode) into the
         mode watch. Log-only by design — see els_mode_watch.py.
 
-        Keys on the recorder's learned schema rather than reading diagSchema
-        itself, so against release firmware (or any other probe) this method
-        is a compare-and-return with zero serial cost. Never raises into the
-        update loop.
+        Runs against EVERY build, because the mode is now a permanent register
+        rather than something a probe republishes into the scratchpad. It used
+        to return immediately unless a mode-watch probe was flashed, and since
+        the firmware allows one probe at a time, choosing any other probe
+        silently chose to collect nothing — which is what happened across both
+        lathe sessions on 2026-08-21/22. Do not reintroduce a schema gate here.
+
+        Never raises into the update loop.
         """
         try:
-            if self._diag_recorder.schema not in (ELS_DIAG_SCHEMA_MODE_WATCH,
-                                                  ELS_DIAG_SCHEMA_MODE_WATCH_V2):
-                return
             self._mode_watch_tick += 1
             if self._mode_watch_tick % self.MODE_WATCH_SAMPLE_EVERY:
                 return
-            mode = self._hal.read_current_mode()
+            # From the tick snapshot. The sample is now genuinely free rather
+            # than "a rounding error on the serial budget" — the note on
+            # MODE_WATCH_SAMPLE_EVERY above was the cost argument for sampling
+            # only every 5th tick, and that cost is gone. The rate is left
+            # alone anyway: 6 Hz against the firmware's ~10 Hz publication is
+            # what the census was collected at, and changing the sampling rate
+            # would change what the census means.
+            mode = self._hal.tick.current_mode()
             self._mode_watch.feed(self._els_fsm.state, mode)
         except Exception as e:
             log.warning(f"mode-watch sample failed: {e}")
@@ -375,7 +867,12 @@ class ElsUiController(EventDispatcher):
     def _poll_els_stop_active(self, *args):
         # Bound to board.update_tick. Kivy property writes from the polling
         # thread are an existing project-wide pattern; matching that here.
-        active = self._hal.read_active()
+        #
+        # Served from the tick snapshot (see ElsStopHal.TickReads): the domain
+        # FSM's _on_board_update wants the same register on the same tick, and
+        # before the snapshot the two spent an exchange each — and could
+        # disagree, having read the register a few milliseconds apart.
+        active = self._hal.tick.active()
         if active != self.els_stop_active:
             self.els_stop_active = active
 
@@ -665,7 +1162,22 @@ class ElsUiController(EventDispatcher):
         return bool(self._board.servo.servoMode)
 
     def toggle_engage(self):
-        """Engage/disengage button intent. Drives the domain FSM."""
+        """Engage/disengage button intent. Drives the domain FSM.
+
+        EVERY REFUSAL BELOW ALSO NOTIFIES (migrated 2026-08-23). This method is
+        the app's clearest example of the problem the notice surface exists for:
+        four paths that end in `return` with nothing but a log line, on a button
+        whose entire feedback is that the LED card changes state. The
+        no-Z-axis path is not hypothetical -- an unmapped ELS Z axis (or simply
+        no controller connected) makes Engage a button that does nothing, with
+        the explanation written to a file the operator has no way to read while
+        standing at the lathe.
+
+        The log lines stay. The log is the record and the notice is the
+        surface; they answer different questions ("what happened during that
+        session" vs "why did nothing happen just now") and neither replaces the
+        other.
+        """
         if self.engaged and self.is_feeding and self._els.spindle_is_running:
             # REFUSE. "Disable the stop" while sync motion is armed is an
             # ambiguous instruction: it reads equally as "stop the carriage" and
@@ -694,6 +1206,11 @@ class ElsUiController(EventDispatcher):
                 "Disengage refused — sync motion is armed. Turn Sync Enable off "
                 "first (equivalent to opening the half nut)."
             )
+            # WARNING, not info: the operator has to go and change something
+            # before this button will work. The notice says WHAT to change,
+            # because "refused" on its own leaves them pressing it again.
+            self.notify("Turn Sync Enable off before disengaging",
+                        NOTICE_WARNING)
             return
         if self.engaged:
             # Guard the trigger: disable() is only valid from stopped/retracting/
@@ -705,6 +1222,12 @@ class ElsUiController(EventDispatcher):
                 log.warning(
                     f"Disengage ignored — not valid from '{self._els_fsm.state}'"
                 )
+                # INFO, not warning: this branch is the double-tap race guard
+                # (the button is already disabled mid-cycle), so nothing is
+                # wrong with the machine and nothing needs fixing. It says the
+                # press was seen and ignored, which is all the operator needs.
+                self.notify(f"Disengage ignored — ELS is {self._els_fsm.state}",
+                            NOTICE_INFO)
         elif self._els.get_z_axis() is None:
             # No Z (leadscrew) axis assigned — engaging would arm ELS against a
             # non-existent axis and crash on_enter_stopped. Refuse instead of
@@ -714,6 +1237,34 @@ class ElsUiController(EventDispatcher):
                 "Cannot engage ELS: no Z axis assigned "
                 "(map the ELS Z axis in setup, or connect the controller)"
             )
+            # THE ONE THAT PROVES THE SURFACE. Reachable with the button fully
+            # enabled, and before this the operator's entire feedback was a
+            # press that did nothing. Names the fix, not the fault.
+            self.notify("No ELS Z axis assigned — map it in ELS settings",
+                        NOTICE_WARNING)
+        elif not self._els_z_is_single_input():
+            # THE DRO AND THE FIRMWARE WOULD DISAGREE ABOUT WHERE THE CARRIAGE
+            # IS. axis_screen.apply_transform() will build AxisTransform.sum()
+            # from two dropdowns, and Axis.compute() adds both contributors
+            # into the displayed position -- but ElsFsm.set_scale_index()
+            # pushes _primary_input(), i.e. contributions[0] ALONE, so the
+            # firmware would track one scale while the screen showed the sum.
+            # Every stop position, every take-up confirmation and the thread
+            # datum itself would be measured against a different number than
+            # the operator is reading.
+            #
+            # REACHABLE, not hypothetical: elspi has four axes over four
+            # inputs, three of them non-spindle, so the second dropdown has
+            # real options today. Refusing at engage rather than guarding
+            # inside set_scale_index because this is the last moment the
+            # operator can be told anything -- past here it is silent.
+            log.warning(
+                "Cannot engage ELS: Z axis transform is %r over %d inputs; "
+                "the firmware can only track one scale",
+                self._els.get_z_axis().transform.transform_type,
+                len(self._els.get_z_axis().transform.contributions))
+            self.notify("ELS Z axis adds two scales — use a single input",
+                        NOTICE_WARNING)
         elif self._els_fsm.may_enable():
             self._els_fsm.enable()
         else:
@@ -723,6 +1274,10 @@ class ElsUiController(EventDispatcher):
             log.warning(
                 f"Engage ignored — not valid from '{self._els_fsm.state}'"
             )
+            # INFO for the same reason as the disengage twin above: a stale or
+            # doubled tap, not a machine problem.
+            self.notify(f"Engage ignored — ELS is {self._els_fsm.state}",
+                        NOTICE_INFO)
 
     def commit_standalone_stop_z(self, stop_z_value: float):
         """Stop-Z entered via the standalone keypad or long-press capture.
@@ -774,13 +1329,22 @@ class ElsUiController(EventDispatcher):
         # over from the previous visit to this wizard step.
         #
         # The axis may be unmapped (None) if the operator hasn't assigned it in
-        # ELS settings -- bail with a warning rather than dereferencing None
-        # (mirrors the engage-time Z guard in toggle_engage).
+        # ELS settings -- bail rather than dereferencing None (mirrors the
+        # engage-time Z guard in toggle_engage).
+        #
+        # SAID OUT LOUD, not only logged. These are wizard steps: the operator
+        # has been asked to set a value and taps to capture it, so a silent
+        # return reads as a dead button in the middle of a procedure they were
+        # instructed to follow -- the worst place for one. The log line stays;
+        # the log is the record and the strip is the surface. Warning rather
+        # than info because it names something the operator must go and change.
         state = self._ui_fsm.state
         if state in ("set_stop_z", "set_retract_z"):
             axis = self._els.get_z_axis()
             if axis is None:
                 log.warning(f"action button: no Z (saddle) axis assigned in state '{state}'")
+                self.notify("No ELS Z axis assigned — map it in ELS settings",
+                            NOTICE_WARNING)
                 return
             if state == "set_stop_z":
                 # Anchor the stop to the physical encoder at the captured Z.
@@ -791,6 +1355,12 @@ class ElsUiController(EventDispatcher):
             axis = self._els.get_x_axis()
             if axis is None:
                 log.warning(f"action button: no X (cross-slide) axis assigned in state '{state}'")
+                # Names the cross-slide explicitly. "X axis" alone would send an
+                # operator hunting through settings for which of the two this
+                # step wanted -- the Z message has the same problem solved the
+                # same way.
+                self.notify("No ELS X (cross-slide) axis assigned — map it in "
+                            "ELS settings", NOTICE_WARNING)
                 return
             if state == "set_start_dia":
                 self._commit_start_dia(axis.scaledPosition)
@@ -1144,6 +1714,23 @@ class ElsUiController(EventDispatcher):
             return False
         servo.toggle_enable()
         return True
+
+    def _els_z_is_single_input(self):
+        """Is the ELS Z axis derived from exactly one scale?
+
+        The firmware is told ONE scale index (ElsFsm.set_scale_index ->
+        elsStop scaleIndex), so anything else is a screen that disagrees with
+        the machine. Written as "is it single-input" rather than "is it not a
+        SUM" on purpose: a transform type added later is refused by default
+        instead of silently inheriting the ELS's trust.
+
+        No axis is not this check's business -- toggle_engage tests that first
+        and has its own message -- so it answers True and lets that branch win.
+        """
+        axis = self._els.get_z_axis()
+        if axis is None:
+            return True
+        return len(axis.transform.contributions) == 1
 
     def start_cut(self):
         self.clear_reframe_notice()   # starting the cut clears a re-reference flag

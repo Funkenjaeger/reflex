@@ -1,11 +1,14 @@
 import os
 
-import sentry_sdk
 from kivy.app import App
 from kivy.config import Config
 from kivy.core.audio import SoundLoader
-from kivy.properties import ObjectProperty, ConfigParserProperty, NumericProperty, ListProperty, StringProperty, BooleanProperty
+from kivy.properties import (ObjectProperty, ConfigParserProperty, NumericProperty,
+                             ListProperty, StringProperty, BooleanProperty,
+                             AliasProperty)
 from kivy.logger import Logger
+
+from reflex.utils import telemetry
 log = Logger.getChild(__name__)
 
 from reflex.utils.log_levels import apply_log_levels
@@ -35,6 +38,18 @@ USE_CASE_MODES = {
     "rotary_table": [MODE_INDEX, MODE_JOG, MODE_DRO],
     "lathe": [MODE_ELS, MODE_DRO],
     "all_features": [MODE_INDEX, MODE_ELS, MODE_JOG, MODE_DRO],
+}
+# Which use cases expose the PATTERN screen (hole circles, lines, rectangles),
+# reached from the wand in the sidebar. A rotary-table feature: it lays holes
+# out on a face. A lathe has nothing to point it at, so the button is not shown
+# there at all -- the same way USE_CASE_MODES keeps ELS off a rotary table.
+#
+# This is a separate table because the pattern screen is not a MODE. Folding it
+# into USE_CASE_MODES would have made it selectable by the mode one-hot.
+USE_CASE_PATTERNS = {
+    "rotary_table": True,
+    "lathe": False,
+    "all_features": True,
 }
 USE_CASE_LABELS = {
     "rotary_table": "Rotary Table",
@@ -74,6 +89,19 @@ class MainApp(App):
     use_case = ConfigParserProperty(
         defaultvalue=DEFAULT_USE_CASE, section="device", key="use_case", config=config, val_type=str
     )
+
+    def _get_patterns_available(self):
+        """Does this use case expose the pattern screen at all?
+
+        An AliasProperty rather than a method so kv rebinds when `use_case`
+        changes: the sidebar button has to appear and disappear with the
+        setting, not only at startup.
+        """
+        return USE_CASE_PATTERNS.get(self.use_case,
+                                     USE_CASE_PATTERNS[DEFAULT_USE_CASE])
+
+    patterns_available = AliasProperty(_get_patterns_available,
+                                       bind=["use_case"], cache=True)
 
     manager = ObjectProperty()
 
@@ -150,6 +178,15 @@ class MainApp(App):
         return self.board.get_spindle_axis()
 
     def build(self):
+        # Neutralize Kivy's stock exit_on_escape default app-side. On elspi,
+        # ~/.kivy/config.ini is regenerable machine state (deploy/reflex-ui.service
+        # runs as root, so this is /root/.kivy/config.ini) -- we don't want the
+        # backstop for "the app comes back up after a clean exit" to depend on a
+        # config.ini value surviving a regenerate. This survives regardless.
+        # Escape is checked live against Config on each keypress, so setting it
+        # here (before any window exists yet) is early enough.
+        Config.set('kivy', 'exit_on_escape', '0')
+
         self.formats = FormatsDispatcher(id_override="0")
         # Reactive theme: seed from the persisted selection and keep the two in
         # sync so the formats-menu picker drives a live recolor. Coerce any
@@ -206,13 +243,11 @@ class MainApp(App):
         if self.sound is None:
             log.warning(f"Failed to load sound from {sound_path}")
 
-        if not self.formats.disable_error_reporting:
-            log.info("Error reporting is enabled, configuring Sentry")
-            sentry_sdk.init(
-                dsn="https://8fd20c0607e9c930a16d51a4b1eacc94@o4509625403506688.ingest.us.sentry.io/4509625405014016",
-                send_default_pii=False,
-                traces_sample_rate=0.2,
-            )
+        # Destination comes from REFLEX_SENTRY_DSN, never from source -- the
+        # literal that used to sit here was the UPSTREAM author's, inherited
+        # through the fork, so this application reported to an organisation
+        # none of its users could read. See utils/telemetry.py.
+        log.info(telemetry.configure(self.formats.disable_error_reporting))
 
         # Backward compat aliases — most KV files use app.servo / app.inputs / app.axes
         self.servo = self.board.servo

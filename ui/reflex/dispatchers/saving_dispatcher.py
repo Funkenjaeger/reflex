@@ -62,6 +62,13 @@ class SavingDispatcher(EventDispatcher):
             return
 
         for k, v in config_data.items():
+            if k == "id_override":
+                # NEVER load this one. It is the key in `filename`, so honouring
+                # a stored value lets a file rename itself back: copy
+                # Foo-2164.yaml to Foo-0.yaml and the `id_override: '2164'`
+                # inside would point the next save at Foo-2164.yaml again. It is
+                # written to the file for legibility; it is not an input.
+                continue
             if k in prop_names:
                 self.__setattr__(k, v)
             else:

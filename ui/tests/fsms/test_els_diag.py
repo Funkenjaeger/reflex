@@ -39,7 +39,20 @@ def board():
 
 @pytest.fixture
 def hal():
-    return MagicMock()
+    h = MagicMock()
+    # ONE REGISTER, TWO ACCESS PATHS, deliberately. The steady-state tick reads
+    # diagSeq from the board's once-per-tick elsStop snapshot
+    # (`hal.tick.diag_seq`); `_choose_baseline` still reads it live
+    # (`hal.read_diag_seq`), because it runs once per connection before any
+    # snapshot is guaranteed to exist. See ElsDiagRecorder.poll.
+    #
+    # Tying them together here means `hal.read_diag_seq.return_value = N` keeps
+    # meaning "the firmware says N" whichever path asks, so every test below
+    # still says what it meant. Leaving `tick.diag_seq` unstubbed would be
+    # actively misleading: a bare MagicMock returns a fresh object every call,
+    # which never equals the baseline -- i.e. a permanent phantom capture edge.
+    h.tick.diag_seq.side_effect = lambda: h.read_diag_seq()
+    return h
 
 
 def rec(hal, board, tmp_path):
@@ -65,6 +78,11 @@ class TestDormancy:
             r.poll()
         assert hal.read_diag_schema.call_count == 1
         hal.read_diag_seq.assert_not_called()
+        # Both paths, because the tick now reads through the snapshot: a
+        # dormant recorder that had merely moved its polling to `tick.diag_seq`
+        # would still be paying for the snapshot's existence and would slip
+        # past a check that only watched the live reader.
+        hal.tick.diag_seq.assert_not_called()
         hal.read_diag_capture.assert_not_called()
 
     def test_unknown_schema_is_refused_not_guessed(self, hal, board, tmp_path):

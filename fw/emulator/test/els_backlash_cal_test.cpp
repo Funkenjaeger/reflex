@@ -20,7 +20,13 @@
  *     is load-bearing;
  *   - the take-up command is measured + max(pct, floor), never trimmed toward
  *     the minimum, because at small lash a flat percentage collapses into the
- *     measurement's own quantization uncertainty (see els_backlash_cal.h).
+ *     measurement's own quantization uncertainty (see els_backlash_cal.h);
+ *   - a machine whose real lash EXCEEDS the configured ceiling must fail rather
+ *     than record the distance it drove, because a lash short by an unknown
+ *     amount is worse than an error — it under-takes-up on every pass
+ *     thereafter and relaxes the gate that would have caught it. See the final
+ *     section, which also pins that this failure is NOT distinguishable from an
+ *     open half-nut.
  *
  * Mutation-tested: see the MUTATION notes on the individual cases for the exact
  * edit that must make each one fail. A test that cannot fail is worse than no
@@ -43,6 +49,20 @@ static void checkEq(int32_t got, int32_t want, const char *what) {
     printf("   %-72s %s (got %d, want %d)\n", what, ok ? "ok" : "FAIL",
            (int)got, (int)want);
     if (!ok) failures++;
+}
+
+/* measured[] is what elsCalUpdate() publishes to the host on EVERY outcome,
+ * success or failure (Ramps.c: "Publish partial measurements on failure too").
+ * So "what does the host end up holding" is a question about this array, not
+ * about the internal phase — hence these two, used by the ceiling section. */
+static bool allZero(const int32_t *m, int32_t n) {
+    for (int32_t i = 0; i < n; i++) if (m[i] != 0) return false;
+    return true;
+}
+
+static bool sameMeasured(const int32_t *a, const int32_t *b, int32_t n) {
+    for (int32_t i = 0; i < n; i++) if (a[i] != b[i]) return false;
+    return true;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -386,6 +406,236 @@ int main() {
         check(ticks > 0 && ctx.result == ELS_CAL_OK, buf);
         snprintf(buf, sizeof buf, "cuttingDir=%+d measures ~80 steps", (int)dir);
         check(ctx.measured[0] >= 80 && ctx.measured[0] <= 92, buf);
+    }
+
+    /* ---------------- Real lash EXCEEDS the configured ceiling ----------- *
+     * The third machine the calibration checklist asks for, alongside normal
+     * take-up and the open half-nut.
+     *
+     * calCeilingSteps is the per-leg hard ceiling, and elsCalTick()'s own
+     * comment names draining it as "the open-half-nut / uncoupled case". This
+     * section is the OTHER machine that produces that same symptom: one whose
+     * lash is genuinely larger than the ceiling it was configured with. The leg
+     * runs out of travel while the nut is still mid-window, so the carriage
+     * never became entitled to move — nothing is broken, the sweep was just
+     * given less travel than the machine needs.
+     *
+     * WHY A WRONG NUMBER WOULD BE WORSE THAN AN ERROR. The measurement feeds
+     * elsCalTakeupCommand() (how far every subsequent pass drives to take up
+     * lash) and elsTakeupConfirmThreshold() (how much carriage motion that
+     * take-up must then produce to be believed). A lash short by an unknown
+     * amount therefore under-takes-up AND lowers the bar the shortfall would
+     * have been caught by — the two failures compound instead of cancelling.
+     *
+     * WHAT THE FIRMWARE ACTUALLY DOES: it refuses, and it refuses cleanly.
+     * measured[] is written only inside elsCalTick()'s `moved` branch, so a leg
+     * that drains its ceiling in silence records nothing at all — not the
+     * ceiling, not a partial value. Case D sweeps every ceiling from one step
+     * up past the boundary, at four nut positions, so that is a property here
+     * rather than an anecdote about one hand-picked number.
+     *
+     * WHAT IT DOES NOT DO: distinguish this from an open half-nut. Case C runs
+     * the two machines side by side at the same ceiling and finds every
+     * host-visible field identical — same ELS_CAL_ERR_NO_MOTION, same all-zero
+     * measured[]. The remedies are opposite (raise the ceiling vs. close the
+     * half-nut) and the operator-facing text names only one of them
+     * (ui/reflex/utils/devices.py: "Carriage did not move — is the half-nut
+     * engaged?"), so an operator with a too-small ceiling is sent to check
+     * something that is already correct. Firmware finding, deliberately NOT
+     * fixed here: this file is emulator-only.
+     *
+     * MUTATION-TESTED 2026-08-23. Each was applied to
+     * Core/Inc/els_backlash_cal.h alone, the whole emulator suite rebuilt and
+     * run, the counts below observed, and the mutation reverted (header
+     * restored byte-for-byte, suite back to green). Counts are failing
+     * assertions in THIS target / red targets across the 25-target suite.
+     *
+     *   C1 record the drained ceiling as measured[] before failing
+     *      (the naive truncation this section exists to refuse)   4 / 1
+     *   C2 delete the post-arm `stepsRemaining == 0` failure
+     *      (a leg that can only ever end on motion)              13 / 3
+     *   C3 confirm on a fixed 1 count, not motionThreshCounts
+     *      (detection gets cheaper, so the boundary moves)        2 / 3
+     *   C4 check exhaustion BEFORE motion                         4 / 1
+     *
+     * Which assertions here died: C1 -> B's cycle and measured[], C's array
+     * comparison, D's failure invariant (4 of 4 — nothing outside this section
+     * noticed at all). C2 -> A, B, C, D's termination and result assertions (8).
+     * C3 -> E's negative half only (1). C4 -> E's positive half (2).
+     *
+     * C1 is the mutation that justifies the section, and it was verified twice.
+     * Under it the run still FAILS: result and phase are untouched, so every
+     * assertion about the outcome code stays green while the host quietly
+     * receives a fabricated lash — only the measured[]-is-empty assertions see
+     * it. Compiling the HEAD version of this file against the C1-mutated header
+     * gives PASSED (0 failures), the working-tree version FAILED (4). C1 was
+     * invisible to the entire suite before this section existed, which is
+     * precisely the shape of hazard the file's header warns about: coverage
+     * that reads as coverage.
+     *
+     * C3 and C4 are here as the negative bounds — they are what stops case E
+     * from being loosened into "any ceiling above the lash works". */
+    printf("\n-- real lash EXCEEDS the configured ceiling --\n");
+    {
+        const int32_t LASH = 100, SPZ = 3, THRESH = 2;
+        const int32_t TIGHT = 60;                     /* well short of LASH */
+        /* Detection costs real travel: the carriage must move THRESH counts
+         * before any of this can register, and one Z count is SPZ servo steps.
+         * Derived from the fixture's own geometry rather than written as 6,
+         * because els_backlash_cal.h's header note is explicit that none of
+         * these numbers may be baked in — the emulator, elspi, and this fixture
+         * all run different scale/leadscrew ratios. */
+        const int32_t DETECT   = SPZ * THRESH;
+        const int32_t BOUNDARY = LASH + DETECT;
+
+        /* ---- A: the SEAT leg is what runs out ------------------------------
+         * The nut starts against the far wall, so the very first leg has the
+         * whole lash to cross and never gets there. This is the shape a machine
+         * shows when the ceiling is badly wrong — it fails before measuring
+         * anything. */
+        elsCalCtx_t seatCtx{};
+        Drivetrain seatDt{LASH, SPZ, true};
+        int32_t seatTicks = runCal(seatCtx, seatDt, TIGHT, THRESH, 1);
+        check(seatTicks > 0, "ceiling short of the lash: run terminates, does not hang");
+        checkEq(seatCtx.result, ELS_CAL_ERR_NO_MOTION, "result is NO_MOTION");
+        checkEq(seatCtx.phase, ELS_CAL_FAILED, "ends in FAILED");
+        checkEq(seatDt.carriage, 0, "fixture sanity: the carriage genuinely never moved");
+
+        /* ---- B: a MEASURE leg is what runs out -----------------------------
+         * Same machine, but the nut is parked mid-window — which is the normal
+         * state, since it sits wherever the last motion left it. The SEAT leg
+         * now has only half the lash to cross and completes, so the run reaches
+         * a real measurement leg before running out of ceiling. That matters:
+         * it rules out "the FSM only refuses because it never armed" and puts
+         * the refusal in the leg whose whole job is to produce a number. */
+        elsCalCtx_t tightCtx{};
+        Drivetrain tightDt{LASH, SPZ, true};
+        tightDt.nutPos = LASH / 2;
+        int32_t tightTicks = runCal(tightCtx, tightDt, TIGHT, THRESH, 1);
+        check(tightTicks > 0, "nut mid-window: run terminates");
+        check(tightDt.carriage != 0,
+              "fixture sanity: the SEAT leg DID move the carriage before the failure");
+        checkEq(tightCtx.result, ELS_CAL_ERR_NO_MOTION, "a drained MEASURE leg is still NO_MOTION");
+        checkEq(tightCtx.cycle, 0, "no cycle is counted");
+        /* THE anti-truncation assertion. The leg drove TIGHT steps in the
+         * commanded direction and saw nothing; the tempting thing to do with
+         * that number is record it, and it would look entirely plausible (60
+         * steps is a believable lash). MUTATION C1 does exactly that and this
+         * is the assertion that catches it. */
+        check(allZero(tightCtx.measured, ELS_CAL_CYCLES),
+              "the drained ceiling is NOT recorded as the lash (measured[] stays empty)");
+
+        /* ---- C: side by side with an open half-nut -------------------------
+         * Same ceiling, same threshold, same cutting direction; the only
+         * difference is which fault the machine has. Everything elsCalUpdate()
+         * publishes is calResult + calMeasured[] (calSeq is just the ack), so
+         * these two comparisons are the whole of what the host gets to reason
+         * from. */
+        elsCalCtx_t openCtx{};
+        Drivetrain openDt{LASH, SPZ, false};
+        int32_t openTicks = runCal(openCtx, openDt, TIGHT, THRESH, 1);
+        checkEq(openCtx.result, ELS_CAL_ERR_NO_MOTION, "open half-nut also reports NO_MOTION");
+        checkEq(tightCtx.result, openCtx.result,
+                "NOT DISTINGUISHABLE: ceiling-exceeded and open half-nut share one code");
+        check(sameMeasured(tightCtx.measured, openCtx.measured, ELS_CAL_CYCLES),
+              "...and the measured[] arrays are identical too - nothing else is published");
+        /* Printed, not asserted: the runs DO differ physically — the
+         * ceiling-exceeded one seats successfully first, so it takes longer and
+         * leaves a Z trace. The information exists at the machine; it just is
+         * not in anything the host is handed. Asserting a tick count would pin
+         * fixture arithmetic rather than firmware behaviour. */
+        printf("      ceiling-exceeded: %d ticks (seated, then ran out); "
+               "open half-nut: %d ticks (never moved)\n",
+               (int)tightTicks, (int)openTicks);
+
+        /* ---- D: the invariant across EVERY ceiling -------------------------
+         * Case B is one ceiling and one nut position. This sweeps every ceiling
+         * from a degenerate one step up past the boundary, at four nut
+         * parkings, and pins the property the section is really about — an
+         * outcome is either a real measurement or nothing, never a short one:
+         *
+         *     OK       => three cycles, every measurement AT OR ABOVE the true
+         *                 lash (the detection distance biases it high, never low
+         *                 — els_backlash_cal.h relies on that direction when it
+         *                 sizes the take-up margin);
+         *     NO_MOTION => cycle 0 and an empty measured[].
+         *
+         * Nothing in between, at any ceiling. That is the claim a wrong-number
+         * hazard needs, and one hand-picked ceiling cannot make it.
+         *
+         * (Ceiling 0 is not swept: elsCalUpdate() refuses it up front with
+         * ELS_CAL_ERR_CONFIG, so it never reaches this FSM.)
+         *
+         * Sweeping nut parkings is not padding. The lash a leg must cross is
+         * fixed, but the DETECTION distance is not: z = carriage/SPZ, so how
+         * far the carriage must travel to register THRESH counts depends on
+         * where it is sitting between counts when the leg arms — up to SPZ-1
+         * steps of swing. That is why this sweep, unlike case E, cannot state a
+         * single boundary; ceilings 104 and 105 succeed here and fail there, on
+         * the same machine. */
+        bool everHung = false, everShort = false, everRecordedOnFailure = false;
+        for (int32_t start = 0; start < LASH; start += LASH / 4) {
+            for (int32_t ceil = 1; ceil <= BOUNDARY + 10; ceil++) {
+                elsCalCtx_t c{};
+                Drivetrain dt{LASH, SPZ, true};
+                dt.nutPos = start;
+                /* Tight tick budget: a run that cannot end is one of the
+                 * interesting failures here (mutation C2), and 20k ticks is
+                 * ~40x what a healthy five-leg run at this ceiling consumes. */
+                int32_t t = runCal(c, dt, ceil, THRESH, 1, /*maxTicks*/ 20000);
+                if (t < 0) { everHung = true; continue; }
+                if (c.result == ELS_CAL_OK) {
+                    if (c.cycle != ELS_CAL_CYCLES) everShort = true;
+                    for (int32_t i = 0; i < ELS_CAL_CYCLES; i++) {
+                        if (c.measured[i] < LASH) everShort = true;
+                    }
+                } else {
+                    if (c.cycle != 0 || !allZero(c.measured, ELS_CAL_CYCLES)) {
+                        everRecordedOnFailure = true;
+                    }
+                }
+            }
+        }
+        check(!everHung, "every ceiling terminates, however small");
+        check(!everShort,
+              "no ceiling produces a SHORT measurement - a run that reports OK measured the lash");
+        check(!everRecordedOnFailure,
+              "no FAILED run leaves a number behind - refusal and measurement never mix");
+
+        /* ---- E: where the boundary actually is ----------------------------
+         * The trap for whoever sets this number. "Ceiling above the lash" is
+         * NOT the requirement — the leg also has to buy the detection distance,
+         * because the measurement completes when the SCALE moves, not when the
+         * nut reaches the wall. So a ceiling set from a dial-indicator reading
+         * plus a little still fails, and fails as NO_MOTION, i.e. as a half-nut
+         * complaint. Below, BOUNDARY-1 is already 5 steps clear of the true
+         * lash and is still refused.
+         *
+         * Verified over 36 (lash, steps-per-count, threshold) combinations
+         * while writing this: FROM A CARRIAGE SITTING EXACTLY ON A COUNT
+         * BOUNDARY, the first ceiling that succeeds is exactly
+         * lash + steps-per-count * threshold, every time. That qualifier is the
+         * whole reason case D exists as a sweep — start the carriage between
+         * counts and the requirement drops by up to steps-per-count - 1, so the
+         * ceiling a machine needs is not one number even on one machine. The
+         * take-up's own margin exists for the same reason
+         * (els_backlash_cal.h: "the measurement already reads high by the
+         * detection distance"). */
+        {
+            elsCalCtx_t justShort{};
+            Drivetrain shortDt{LASH, SPZ, true};
+            runCal(justShort, shortDt, BOUNDARY - 1, THRESH, 1);
+            checkEq(justShort.result, ELS_CAL_ERR_NO_MOTION,
+                    "a ceiling ABOVE the true lash still fails if it cannot buy detection");
+
+            elsCalCtx_t justEnough{};
+            Drivetrain enoughDt{LASH, SPZ, true};
+            runCal(justEnough, enoughDt, BOUNDARY, THRESH, 1);
+            checkEq(justEnough.result, ELS_CAL_OK,
+                    "lash + detection distance is the first ceiling that succeeds");
+            check(justEnough.measured[0] >= LASH,
+                  "...and it measures at or above the true lash, never under it");
+        }
     }
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
