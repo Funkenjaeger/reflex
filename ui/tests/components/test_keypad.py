@@ -55,3 +55,50 @@ import pytest
 )
 def test_keypad_construction_not_covered_here():
     pass
+
+
+# ── the sign key, tested UNBOUND ─────────────────────────────────────────
+# Keypad cannot be constructed here (see the whole preamble above), but
+# sign_key touches only self.nonnegative and self.ids['value'], so it runs
+# perfectly well against a stand-in. That is enough to pin the RULE. The
+# button's `disabled` flag cannot be reached without construction; the call
+# site is pinned instead, in test_els_phase_offset_popup.py.
+from types import SimpleNamespace          # noqa: E402
+
+from reflex.components.popups.keypad import Keypad   # noqa: E402
+
+
+def _stub(text, nonnegative):
+    return SimpleNamespace(nonnegative=nonnegative,
+                           ids={"value": SimpleNamespace(text=text)})
+
+
+def test_sign_key_is_inert_on_a_nonnegative_field():
+    """Guarded as well as hidden. A disabled button is a look, not a rule --
+    a hardware keyboard's minus reaches the same method."""
+    stub = _stub("0.005", nonnegative=True)
+
+    Keypad.sign_key(stub)
+
+    assert stub.ids["value"].text == "0.005"
+
+
+def test_sign_key_cannot_strip_a_sign_on_a_nonnegative_field_either():
+    """Inert means inert, not 'only refuses to ADD a minus'."""
+    stub = _stub("-0.005", nonnegative=True)
+
+    Keypad.sign_key(stub)
+
+    assert stub.ids["value"].text == "-0.005"
+
+
+def test_sign_key_still_toggles_where_negatives_are_legal():
+    """The failure mode of an over-eager guard is a keypad that can no longer
+    enter a negative anywhere in the app."""
+    stub = _stub("12.5", nonnegative=False)
+
+    Keypad.sign_key(stub)
+    assert stub.ids["value"].text == "-12.5"
+
+    Keypad.sign_key(stub)
+    assert stub.ids["value"].text == "12.5"

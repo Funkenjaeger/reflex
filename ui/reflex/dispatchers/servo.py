@@ -145,6 +145,19 @@ class ServoDispatcher(SavingDispatcher):
                     self.servoMode_from_firmware = False
                 self.board.device['servo']['maxSpeed'] = self.maxSpeed
                 self.board.device['servo']['acceleration'] = self.acceleration
+                # jogSpeed belongs in this re-push for the same reason as its
+                # three siblings: firmware RAM does not survive a reset, and
+                # nothing else rewrites it at connect.
+                #
+                # THE EXPOSURE IS NARROW, and worth stating accurately rather
+                # than inflating. It is largely self-healing: jogbar.py zeroes
+                # jogSpeed on every jog release, so the next press re-sends it.
+                # The one case that does not heal is a firmware reset landing
+                # while a jog button is HELD -- there is no False->True edge on
+                # enable_jog left to re-trigger the write, so firmware keeps its
+                # freshly-zeroed jogSpeed and the jog looks dead for the rest of
+                # that hold, until the operator releases and presses again.
+                self.board.device['servo']['jogSpeed'] = self.jogSpeed
                 servo_dir = -1 if self.reverse else 1
                 self.board.device['servo']['servoDir'] = servo_dir
 

@@ -138,6 +138,7 @@ class BacklashCalibration:
         self._baseline_seq = 0
         self._polls = 0
         self._saved_motion = None
+        self._saved_servo_mode = None
 
     # ── lifecycle ────────────────────────────────────────────────────
     def start(self) -> bool:
@@ -177,10 +178,68 @@ class BacklashCalibration:
             )
             return False
 
+        # THE SCALE THE GATE WATCHES IS A PRECONDITION OF THIS RUN, so it is
+        # pushed here alongside the limits rather than inherited from ambient
+        # state. elsStop.scaleIndex lives in firmware RAM: a power cycle
+        # resets it to 0 -- the SPINDLE -- and the only other writers are the
+        # retract/arm/cutting paths, none of which a fresh-boot calibration
+        # traverses. Found 2026-08-25: the cal drove the carriage its whole
+        # ceiling while watching a stationary spindle and reported NO_MOTION
+        # on two different firmware builds; every earlier fresh-boot cal had
+        # worked only because some incidental operator action pushed the
+        # index first. Same resolution ElsFsm.set_scale_index uses.
+        z_axis = self._els.get_z_axis()
+        z_input = z_axis._primary_input() if z_axis is not None else None
+        if z_input is None:
+            self._fail(
+                ELS_CAL_ERR_CONFIG,
+                "No Z axis is assigned, so there is no scale to watch the "
+                "carriage with. Map the Z axis in setup, then calibrate.",
+            )
+            return False
+        self._hal.set_scale_index(z_input.inputIndex)
+
         # Drive at a known speed rather than whatever the machine is set to,
         # and restore afterwards. See CAL_MAX_SPEED.
         self._saved_motion = self._hal.read_servo_motion_params()
         self._hal.set_servo_motion_params(self.CAL_MAX_SPEED, self.CAL_ACCEL)
+
+        # PUT THE SERVO IN SYNC/INDEX MODE OURSELVES, and put it back after.
+        #
+        # The firmware refuses a calibration unless servoMode == 1
+        # (ELS_CAL_ERR_SERVOMODE), and the only automatic route to mode 1 is
+        # servoEnableTask's promotion on `anySyncMotionEnabled && !active &&
+        # mode != 2`. A calibration enables no sync, so that never fired and the
+        # operator had to arm spindle-following by hand -- putting the machine
+        # in a state where a turning spindle drives the carriage, purely to
+        # satisfy a precondition for an operation that does not use the spindle.
+        #
+        # Writing mode 1 here is narrower than what that forced: sync feeds only
+        # when servoMode == 1 AND a scale has syncEnable set, so this commands
+        # nothing on its own. The operator already consented to motion by
+        # pressing Start in a dialog whose entire purpose is to drive the
+        # carriage.
+        #
+        # NOT DONE FOR THE OTHER TWO REFUSALS, deliberately. ELS_CAL_ERR_ENABLED
+        # (a job is live) stays a refusal: silently tearing down a live job to
+        # run a calibration is a worse surprise than being told no.
+        # The read is guarded the same way every other action-gating read in
+        # this file is: a checksum/timeout failure returns 0 rather than
+        # raising, and 0 is a REAL mode here (servo off). Restoring a fabricated
+        # 0 over a genuine mode 1 would leave the servo disabled after a
+        # successful calibration. If the read cannot be trusted, save nothing
+        # and restore nothing -- the mode is then left at 1, which commands no
+        # motion on its own and which servoEnableTask would have promoted to
+        # anyway the moment sync was armed.
+        reads_baseline = self._hal.reads_baseline()
+        saved_mode = self._hal.read_servo_mode()
+        if self._hal.reads_fabricated_since(reads_baseline):
+            self._saved_servo_mode = None
+            log.warning("els_cal: servoMode read was fabricated; mode will not "
+                        "be restored after this run")
+        else:
+            self._saved_servo_mode = saved_mode
+        self._hal.set_servo_mode(1)
 
         self._hal.set_cal_limits(ceiling, thresh)
         self._baseline_seq = self._hal.read_cal_seq()
@@ -197,12 +256,51 @@ class BacklashCalibration:
         return True
 
     def poll(self) -> str:
-        """Advance the run. Call from the UI tick; returns the current state."""
+        """Advance the run. Call from the UI tick; returns the current state.
+
+        GUARDED against a fabricated read the same way ui_controller's take-up
+        outcome poller is (reflex-ui 947ef4b / e8bbe8c): BaseDevice.__getitem__
+        is a live per-field Modbus read, and a checksum/timeout/short-frame
+        failure returns 0 rather than raising past this HAL — see
+        communication.py's read_* helpers and ConnectionManager.read_failures.
+        Zero is not neutral in this register map (0 == ELS_CAL_OK, 0 == "no
+        edge"), so two DISTINCT reads here need the guard, not one:
+
+          1. read_cal_seq() itself. A corrupted read fabricates 0, which can
+             misread as either "still running" (if baseline != 0, harmless) or
+             a SPURIOUS EDGE (if baseline == 0, or the fabricated value simply
+             differs from baseline) -- reporting a run "finished" that has not,
+             and restoring the calibration motion speed mid-sweep.
+          2. read_cal_result() / read_cal_measured(), once a genuine edge is
+             seen. This is the exact elspi 2026-08-21 mechanism (takeupSeq 2
+             -> 0 from a CRC-failed frame, read as a finished outcome) applied
+             to calSeq/calResult/calMeasured instead of takeupSeq/takeupResult.
+             calMeasured feeding elsTakeupConfirmThreshold means a poisoned
+             value here lowers the take-up bar for every later cut, not just
+             this one calibration.
+
+        Neither branch needs the two-poll torn-snapshot guard 6c00072 proved
+        unnecessary for calSeq/diagSeq (they are read seq-first, so a torn
+        FRAME cannot pair a new seq with a stale payload) -- this HAL reads
+        calSeq, calResult and each calMeasured element as up to five SEPARATE
+        live Modbus exchanges, not one frame, so that argument does not cover
+        this call site at all. What both branches need, and now have, is the
+        same fabricated-read counter every other action-gating consumer uses.
+
+        No rollback bookkeeping is needed (unlike the take-up poller's
+        _pending_takeup_seq): _baseline_seq is never advanced here, so a
+        deferred poll simply re-observes the same edge next tick once reads
+        are clean again.
+        """
         if self.state != CalState.RUNNING:
             return self.state
 
         self._polls += 1
-        if self._hal.read_cal_seq() == self._baseline_seq:
+        reads_baseline = self._hal.reads_baseline()
+        seq = self._hal.read_cal_seq()
+        seq_untrustworthy = self._hal.reads_fabricated_since(reads_baseline)
+
+        if seq == self._baseline_seq or seq_untrustworthy:
             if self._polls >= self.TIMEOUT_POLLS:
                 self._restore_motion()
                 # start() already proved the firmware has these registers, so a
@@ -213,16 +311,32 @@ class BacklashCalibration:
                     "a result. Check the servo is enabled and in sync/index "
                     "mode, then retry.",
                 )
+                # A stalled run that eventually finishes will overwrite this;
+                # reconcile at the next connect is the backstop for that race.
+                self._reteach_stored_legs()
             return self.state
 
-        # Ack observed — the run finished, for better or worse.
+        # Ack observed, and the read that produced it was clean -- only now is
+        # it safe to stop driving at the calibration speed.
         self._restore_motion()
-        self.result_code = self._hal.read_cal_result()
-        self.measured = self._hal.read_cal_measured()
+        reads_baseline = self._hal.reads_baseline()
+        result_code = self._hal.read_cal_result()
+        measured = self._hal.read_cal_measured()
+        if self._hal.reads_fabricated_since(reads_baseline):
+            # The edge was real; the outcome was not. Defer rather than judge
+            # a result assembled from zeros -- self.result_code/self.measured
+            # are deliberately left untouched (not overwritten with the
+            # fabricated values) and _baseline_seq is untouched, so the same
+            # edge is re-observed and the real outcome reported once reads
+            # succeed.
+            return self.state
+        self.result_code = result_code
+        self.measured = measured
 
         if self.result_code != ELS_CAL_OK:
             self._fail(self.result_code, ELS_CAL_MESSAGES.get(
                 self.result_code, "Calibration failed."))
+            self._reteach_stored_legs()
             return self.state
 
         if not cal_is_consistent(self.measured, self._els.els_cal_max_spread_steps):
@@ -236,6 +350,10 @@ class BacklashCalibration:
             )
             log.warning("els_cal: inconsistent %s spread=%d",
                         self.measured, spread)
+            # The firmware accepted this run, so calMeasured now holds legs
+            # the HOST just rejected; the gate must keep deriving from the
+            # accepted record, not the rejected one.
+            self._reteach_stored_legs()
             return self.state
 
         self.state = CalState.PASSED
@@ -257,6 +375,11 @@ class BacklashCalibration:
         if self.state != CalState.PASSED:
             return False
         self._els.els_cal_last_measured_steps = self.mean_steps
+        # The legs themselves, not just the mean: reconcile re-teaches them to
+        # firmware RAM after a power cycle so the take-up gate keeps its
+        # derived threshold instead of falling to the floor (see
+        # ElsStopHal.set_cal_measured).
+        self._els.els_cal_measured_legs = [int(v) for v in self.measured]
         self._els.els_backlash_steps = self.command_steps
         self._hal.set_backlash_steps(self.command_steps)
         log.info("els_cal: committed measured=%d command=%d",
@@ -269,13 +392,27 @@ class BacklashCalibration:
         self.message = ""
 
     def _restore_motion(self):
-        """Put the machine's own speed settings back. Idempotent."""
-        if self._saved_motion is None:
-            return
-        max_speed, accel = self._saved_motion
-        self._saved_motion = None
-        if max_speed > 0 and accel > 0:
-            self._hal.set_servo_motion_params(max_speed, accel)
+        """Put the machine's own speed settings AND servo mode back. Idempotent.
+
+        Called from every terminal path -- timeout, finished run, cancel -- so
+        the mode cannot be left promoted by a calibration that ended any way at
+        all. The two restores are independent: a failure to have saved one must
+        not skip the other, which is why they do not share an early return.
+        """
+        if self._saved_motion is not None:
+            max_speed, accel = self._saved_motion
+            self._saved_motion = None
+            if max_speed > 0 and accel > 0:
+                self._hal.set_servo_motion_params(max_speed, accel)
+
+        if self._saved_servo_mode is not None:
+            mode = self._saved_servo_mode
+            self._saved_servo_mode = None
+            # 0 is restored like any other value: start() has already
+            # established the link, so a 0 read here is a genuine "servo off"
+            # and putting the operator back in it is the correct behaviour. The
+            # untrustworthy case is filtered at save time, not here.
+            self._hal.set_servo_mode(mode)
 
     @property
     def progress_text(self) -> str:
@@ -311,6 +448,39 @@ class BacklashCalibration:
         return (self.mean_steps - previous) if previous else 0
 
     # ── internals ────────────────────────────────────────────────────
+    def _reteach_stored_legs(self) -> None:
+        """Restore the take-up gate's basis after a finished-but-failed run.
+
+        The firmware copies its working measured[] into elsStop.calMeasured on
+        EVERY completion, success or failure — deliberate, so a partial run
+        leaves diagnostics — but the take-up confirmation threshold derives
+        from that same array, so a failed run's zeros silently drop the gate
+        to its bare motion floor for every subsequent pass (found 2026-08-23).
+        The partial values are already captured in self.measured and the log
+        by the time this runs, so restoring the last ACCEPTED record costs no
+        diagnostics; it is the same re-teaching reconcile does after a power
+        cycle, applied at the moment the corruption happens instead of at the
+        next connect.
+        """
+        legs = [int(v) for v in (self._els.els_cal_measured_legs or [])]
+        if len(legs) == 3 and all(v > 0 for v in legs):
+            self._hal.set_cal_measured(legs)
+            log.warning(
+                "els_cal: failed run zeroed the firmware's calMeasured; "
+                "re-taught stored legs %s so the take-up gate keeps its "
+                "derived threshold", legs)
+        else:
+            # No accepted record exists (fresh machine, or never passed): the
+            # gate genuinely sits at its floor, and silently is the one way
+            # that must not happen.
+            self.message += (
+                " Note: the take-up confirmation gate is at its minimum "
+                "threshold until a calibration passes."
+            )
+            log.warning(
+                "els_cal: failed run with no stored calibration; take-up "
+                "confirmation gate is at its motion floor until a run passes")
+
     def _fail(self, code: int, message: str) -> None:
         self.state = CalState.REFUSED
         self.result_code = code

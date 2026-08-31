@@ -108,10 +108,18 @@ int main(void)
 
     RampsStart(&data);
 
-    /* Guards the one-time bump. Anything appended to elsStop_t after this must
-     * move it again, and reflex-ui's ELS_PROTOCOL_VERSION with it. */
-    check(data.shared.elsStop.protocolVersion == 2,
-          "protocolVersion is 2 (scratchpad map)");
+    /* Guards the bump. Anything appended to elsStop_t after this must move it
+     * again, and reflex-ui's ELS_PROTOCOL_VERSION with it.
+     *
+     * It has now done that job three times for real, all on 2026-08-22.
+     * 2 -> 3 when machineMode was promoted out of the diagnostic scratchpad
+     * into a permanent register. 3 -> 4 when the manual reference latch merged
+     * and appended latchCommand/latchSeq -- that branch had ALSO written 3, and
+     * this assertion is what forced the renumber rather than letting two
+     * distinct layouts quietly share a version number. 4 -> 5 when the
+     * thread-phase offset block was appended for the groove-widening offset. */
+    check(data.shared.elsStop.protocolVersion == 7,
+          "protocolVersion is 7 (v6 map + the STEP pulse width instrument)");
 
 #ifdef ELS_DIAG_SCRATCH
     /* Pinned to a SPECIFIC schema, not "any nonzero". A probe revision changes

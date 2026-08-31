@@ -140,9 +140,40 @@ class ElsStop(BaseDevice):
     diagSchema is the only thing standing between a reader and a plausible
     number with the wrong meaning.
 
-    Read the block ON DEMAND only. 64 registers is ~12 ms of extra serial time
-    at 115200 baud against ~29 ms for the whole map -- a permanent 40% tax on
-    every poll cycle for a block that is empty in production.
+    The scratchpad's ~12 ms-of-serial-time cost used to be the argument for
+    never reading this block on a tick. That argument was overturned on
+    2026-08-23 and the note is kept because the reasoning is worth having: the
+    whole elsStop block IS now refreshed once per board tick
+    (Board._refresh_els_stop_snapshot). What the byte-count argument missed is
+    that bytes are not what fails. The firmware answers when its 100 kHz ISR
+    lets it, so what times out is REQUESTS, and the per-field live reads the
+    snapshot replaced cost five to fourteen of those per tick against the
+    snapshot's two -- at the price of about 200 extra bytes, roughly 2 ms of a
+    33 ms tick. Six of six cuts lost comms under the old arrangement on
+    2026-08-23, every drop a timeout at the transition into `cutting`.
+
+    Still true, and unaffected: the 50-register diagTrace has no reader on the
+    tick path. It rides along only because it sits between registers that do
+    (diagSeq at 49, machineMode at 112, phaseOffsetSteps at 120), so skipping
+    it would not save a request -- 122 registers and 72 registers are both two.
+    Manual latch pair (latchCommand, latchSeq) added with the interactive
+    re-sync feature, and REBASED onto the scratchpad map on 2026-08-16: the pair
+    now sits AFTER diagReserved, not where the pre-rebase branch put it. struct
+    224 -> 228 bytes, rampsSharedData_t 432 -> 436, protocolVersion 2 -> 3.
+
+    The bump matters more than the four bytes. Both parents of that rebase
+    called themselves protocolVersion 2 and meant different layouts -- this
+    branch's 2 ended at latchSeq with no diagnostic block, dev-staging's 2 ends
+    at diagReserved[4]. Three layouts sharing one version number is exactly what
+    protocolVersion exists to prevent, so the combined map is 3.
+
+    Appending after the diagnostic block is deliberate: every offset that has
+    been exercised on the lathe keeps the address it was verified at.
+
+    Same command/ack contract as calCommand/calSeq: the firmware clears the
+    command the instant the ISR consumes it, so edge-detect latchSeq, never poll
+    latchCommand. A latch written with enable == 0 is consumed with NO seq
+    increment — the absent ack IS the refusal.
     """
 
     definition = """
@@ -185,6 +216,17 @@ typedef struct {
   uint16_t diagCaptureTicks;
   uint16_t diagEndReason;
   uint16_t diagReserved[4];
+  uint16_t machineMode;
+  uint16_t machineModeReserved;
+  uint16_t latchCommand;
+  uint16_t latchSeq;
+  uint16_t phaseOffsetCommand;
+  uint16_t phaseOffsetSeq;
+  int32_t  phaseOffsetPending;
+  int32_t  phaseOffsetSteps;
+  uint32_t executionCyclesPeak;
+  uint32_t stepPulseMinCycles;
+  uint32_t stepPulseRuntCount;
 } elsStop_t;
 """
 
@@ -193,7 +235,14 @@ typedef struct {
 # Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
 # Modbus contract; never renumber, only append.
 
-ELS_PROTOCOL_VERSION = 2        # elsStop.protocolVersion this UI is built against
+ELS_PROTOCOL_VERSION = 7        # elsStop.protocolVersion this UI is built against
+                                # 3 (2026-08-22): machineMode promoted to a permanent
+                                # register so the rung-2 census collects in every build.
+                                # 4 (2026-08-22): latchCommand/latchSeq for the manual
+                                # reference latch, appended after the diagnostic block so
+                                # every offset exercised on the lathe keeps its address.
+                                # 5 (2026-08-22): the thread-phase offset block
+                                # (groove widening), appended the same way.
 
 # Diagnostic scratchpad schema ids (elsStop.diagSchema). 0 means no probe is
 # compiled into the firmware and the block must not be interpreted at all.
@@ -207,6 +256,7 @@ ELS_DIAG_SCHEMA_DISENGAGE_LATCH = 3    # counts servoEnableTask re-asserting the
 ELS_DIAG_SCHEMA_MODE_WATCH = 4         # RETIRED: counted every latch refusal, incl. the per-tick no-ops of a power feed
 ELS_DIAG_SCHEMA_MODE_WATCH_V2 = 5      # same, but net_counts ticks only when the refusal would have STARTED the feed
 ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3 = 6   # same capture, but the firmware HOLDS the take-up gate open for the whole window, so END_WINDOW is now the complete measurement rather than a floor
+ELS_DIAG_SCHEMA_STOP_OVERSHOOT = 7   # what the carriage does AFTER the ELS stop fires: post-trigger Z travel in diagNetCounts, and the servo steps the firmware emitted after the trigger packed into diagReserved[0..1] -- the discriminator between a commanded overshoot and one that happened downstream of the pulse train
 
 # elsStop.diagEndReason. A window-full capture did not finish measuring: its
 # last bucket is a floor, not a result, and it must not be read as one.
@@ -227,7 +277,23 @@ ELS_TAKEUP_ERR_TIMEOUT = 6      # take-up never reached its commanded target
 # check rather than the firmware state — an operator at the machine can act on
 # "is the half-nut engaged?" and cannot act on "takeupResult == 4".
 ELS_CAL_MESSAGES = {
-    ELS_CAL_ERR_ENABLED: "Disengage the ELS stop before calibrating.",
+    # NAMES WHAT THE REMEDY COSTS (2026-08-30, Gate 1). Re-engaging fires the
+    # elsStop.enable 0->1 edge, and Ramps.c:766 clears referenceLatched AND
+    # phaseOffsetSteps on it -- deliberately, because a new job needs a new
+    # reference. The old text stopped at "disengage first", so an operator who
+    # read it as a trivial precondition lost their thread datum and any groove
+    # widening to a message that gave no hint of it. els_cal.py:223 argues
+    # that refusing beats tearing down a live job; the refusal's own remedy
+    # tears it down anyway, which is exactly why it has to say so.
+    #
+    # ROOM TO EXPLAIN, unlike the take-up twin: this renders as the modal's
+    # body_text, not in the 435 px notice strip.
+    ELS_CAL_ERR_ENABLED: (
+        "Disengage the ELS stop before calibrating.\n\n"
+        "Re-engaging afterwards starts a new job, which clears the thread "
+        "reference and any phase offset. Finish the thread first if you "
+        "still need them."
+    ),
     ELS_CAL_ERR_SERVOMODE: "Servo is not in sync/index mode.",
     ELS_CAL_ERR_CONFIG: "Calibration limits are not configured.",
     ELS_CAL_ERR_NO_MOTION: (
@@ -236,16 +302,78 @@ ELS_CAL_MESSAGES = {
     ELS_CAL_ERR_ABORTED: "Calibration aborted — conditions changed mid-run.",
 }
 
+# EVERY TAKE-UP MESSAGE LEADS WITH "Cut aborted" (2026-08-29, Evan's call).
+# The old texts described the FAULT and left the machine's STATE implicit, so
+# an operator who read "Carriage not moving — is the half-nut engaged?" still
+# had to ask "okay, what now?". "Cut aborted" answers that first, and the Cut
+# button reactivating underneath is the confirming cue.
+#
+# AND EVERY ONE FITS 65 CHARACTERS, which is a layout contract, not a style
+# preference. The notice strip is pinned across the top of the advanced bar,
+# i.e. over the status gutter, and it is translucent -- so a message too wide
+# lands ON TOP of the phase-offset chip's text and both become unreadable.
+# Evan accepts the chips being dimmed by the red tint; he does not accept text
+# on text.
+#
+# THE BUDGET IS NOT THE GAP BETWEEN THE CHIPS, and getting that wrong is how
+# this was first measured. The strip's Label is halign 'center' across the
+# FULL bar, and the gap is not centred on the bar: chip_reference ends at
+# x=197, chip_phase starts at x=783, but the bar's own centre is x=566. So a
+# centred string is bounded by TWICE its distance to the NEARER obstruction --
+# 2 x (783 - 566) = 435 px -- not by the 586 px gap. Measuring against the gap
+# passed every string and the render then showed the longest one sitting on
+# the phase chip anyway (previews/preview_phase_offset.py, 2026-08-29).
+#
+# At ChakraPetch-SemiBold dp(13) these run ~6.7 px/char at worst, so 435 px is
+# 65 characters. Every string below was CHOSEN from a measurement, not counted:
+# previews/preview_takeup_text_widths.py renders candidates and reports the
+# margin. Guarded in CI by tests/fsms/test_els_cal.py, whose comment also
+# records the narrow-gap case none of this covers.
 ELS_TAKEUP_MESSAGES = {
-    ELS_TAKEUP_ERR_UNCONFIRMED: (
-        "Carriage not moving — is the half-nut engaged? "
-        "The cut will not start until the backlash take-up is confirmed."
+    # Shares the calibration code: same physical cause, same remedy. The
+    # firmware refuses a take-up commanded in JOG mode outright, because the
+    # mode promotion that would rescue it deliberately skips jog.
+    ELS_CAL_ERR_SERVOMODE: (              # 63 ch, 400 px of 435
+        "Cut aborted — servo in jog mode. Leave jog and press Cut again."
     ),
-    ELS_TAKEUP_ERR_TIMEOUT: (
-        "Backlash take-up did not complete. Disengage and re-engage the "
-        "ELS stop to clear."
+    ELS_TAKEUP_ERR_UNCONFIRMED: (         # 38 ch, 253 px of 435
+        "Cut aborted — is the half-nut engaged?"
+    ),
+    ELS_TAKEUP_ERR_TIMEOUT: (             # 59 ch, 393 px of 435
+        "Cut aborted — take-up did not complete. Re-engage the stop."
     ),
 }
+
+# Where the WRONG-way branch of takeup_failure_text goes. Kept out of the dict
+# because it is not keyed by a firmware result code -- it is a refinement of
+# ELS_TAKEUP_ERR_UNCONFIRMED chosen by the sign of the observed motion -- but
+# it is subject to the same contract, so it is measured with the others rather
+# than hiding inside the function. WRONG stays shouted: this is a wiring or
+# scale-direction fault, not "the carriage did not move far enough".
+ELS_TAKEUP_WRONG_WAY = (                  # 60 ch, 399 px of 435
+    "Cut aborted — WRONG-way motion. Check the Z scale direction."
+)
+
+# The TIMEOUT message when a thread reference is actually at stake. Kept out of
+# the dict for the same reason as WRONG_WAY: it is not keyed by a firmware
+# result code, it is a refinement of ELS_TAKEUP_ERR_TIMEOUT chosen by UI state.
+#
+# THE REMEDY IS FORCED, WHICH IS WHY THE COST HAS TO BE NAMED. Ramps.c:1110 is
+# explicit that the timeout backstop "does NOT release the gate ... recovery is
+# the enable 1->0 escape hatch": takeupPending stays set, so pressing Cut again
+# cannot clear it. And the enable 0->1 edge back clears referenceLatched and
+# phaseOffsetSteps (Ramps.c:766). The operator cannot route around paying, so
+# the only thing left for the message to do is say what they are paying.
+#
+# CHOSEN FROM A MEASUREMENT, like every string above it: six candidates were
+# rendered by previews/preview_takeup_text_widths.py and this one won on
+# reading, not on width -- fault, imperative, cost, in that order.
+ELS_TAKEUP_TIMEOUT_LATCHED = (            # 62 ch, 398 px of 435
+    "Cut aborted — take-up stuck. Re-engage; the reference is lost."
+)
+
+# Unknown result code. Still leads with the state, for the same reason.
+ELS_TAKEUP_UNKNOWN = "Cut aborted — backlash take-up failed."
 
 
 class Global(BaseDevice):
@@ -264,25 +392,50 @@ typedef struct {
 """
 
 
-def takeup_failure_text(result_code, z_delta=None, thresh_counts=None):
+def takeup_failure_text(result_code, z_delta=None, reference_latched=False):
     """Operator-facing text for a take-up failure.
 
-    When the firmware's derived threshold and the observed motion are both
-    available, name them. "Moved 5 counts, needed 11" is a diagnosis an operator
-    can act on — a partially engaged half-nut looks completely different from
-    one that never engaged — whereas the bare sentence leaves them guessing
-    which of the two they have.
+    THE COUNTS ARE NOT ON THE SCREEN ANY MORE (2026-08-29, Evan's call). This
+    used to append "Moved 5 counts, needed 11", on the argument that the ratio
+    distinguishes a partially engaged half-nut from one that never engaged.
+    That argument was wrong about its audience: those are raw Z-scale counts,
+    a unit exposed NOWHERE else in the UI, so the operator at the machine has
+    nothing to judge 5-against-11 by and the sentence cost him the width that
+    now keeps the notice from landing on top of the status chips.
+
+    THEY DID NOT DISAPPEAR — THEY MOVED. ui_controller._poll_takeup_outcome
+    logs every outcome with both numbers, refused and confirmed:
+
+        ELS takeup #25 REFUSED (result=4): moved 0 counts, needed 15
+
+    which is where a diagnostician reads them and where the elspi 2026-08-21
+    phantom-CONFIRMED investigation actually read them from. That line is
+    load-bearing now and is pinned by
+    tests/fsms/test_ui_controller_takeup_outcome.py.
+
+    `thresh_counts` WAS the third parameter and is gone rather than left
+    unused: nothing on this path needs the threshold now that it is not named
+    on screen, and a parameter kept "just in case" is a parameter the next
+    caller passes wrongly. `z_delta` stays because its SIGN still picks a
+    branch, even though its magnitude is no longer printed.
 
     A NEGATIVE delta means the carriage moved the WRONG way, which is a
     different fault entirely (scale direction, or something else driving the
     carriage) and is called out as such rather than folded into "not enough".
+
+    `reference_latched` picks the TIMEOUT variant that names what the remedy
+    costs. IT IS GATED RATHER THAN ALWAYS SHOWN, deliberately: the operator who
+    has no reference latched loses nothing by re-engaging, and telling them
+    otherwise is the same cry-wolf defect Gate 1 item 2 fixes elsewhere. It is
+    gated on the reference alone and NOT on the phase offset, because an offset
+    cannot exist without an engaged job (PHASE_OFFSET_NO_JOB) and "the
+    reference is lost" is the wrong noun for an offset anyway.
     """
-    base = ELS_TAKEUP_MESSAGES.get(result_code, "Backlash take-up failed.")
+    base = ELS_TAKEUP_MESSAGES.get(result_code, ELS_TAKEUP_UNKNOWN)
+    if result_code == ELS_TAKEUP_ERR_TIMEOUT and reference_latched:
+        return ELS_TAKEUP_TIMEOUT_LATCHED
     if result_code != ELS_TAKEUP_ERR_UNCONFIRMED:
         return base
-    if z_delta is None or thresh_counts is None:
-        return base
-    if z_delta < 0:
-        return (f"{base} The carriage moved {abs(int(z_delta))} counts the WRONG "
-                f"way — check the Z scale direction.")
-    return f"{base} Moved {int(z_delta)} counts, needed {int(thresh_counts)}."
+    if z_delta is not None and z_delta < 0:
+        return ELS_TAKEUP_WRONG_WAY
+    return base

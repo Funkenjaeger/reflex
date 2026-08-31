@@ -22,6 +22,33 @@ class ConnectionManager:
         self.device: minimalmodbus.Instrument | None = None
         self._connected = False
 
+        # Monotonic count of reads that returned a FABRICATED value rather
+        # than data from the controller. Two things produce one, and from the
+        # caller's side they are identical:
+        #
+        #   * a read that raised -- checksum, timeout, short frame (below);
+        #   * a read attempted with no link at all, which the HAL
+        #     short-circuits to a zero (els_stop_hal.py).
+        #
+        # The second door is why this counter exists in its current form: it
+        # was originally incremented only on the first, so a DISCONNECT
+        # fabricated exactly the same zeros while leaving the counter still --
+        # and every guard built on the counter passed. The read helpers return
+        # 0 either way (they always have, and every caller is written against
+        # that), so the zero itself is indistinguishable from a real zero at
+        # the call site. This counter
+        # is what makes it distinguishable: snapshot it before a group of
+        # related reads and compare after (see `reads_failed_since`).
+        #
+        # WHY A COUNTER AND NOT AN EXCEPTION. Raising from read_* would be the
+        # tidier design and is a much larger change: every field access in the
+        # app goes through __getitem__, and turning each into a throw site
+        # would need error handling at hundreds of call sites that today
+        # legitimately do not care. A counter lets the handful of readers where
+        # a wrong value is a SAFETY matter -- the sequence-edge pollers -- opt
+        # into strictness without destabilising the rest.
+        self.read_failures: int = 0
+
         self._last_error_message: str | None = None
         self._last_error_time: float = 0.0
         self._error_repeat_interval: float = _ERROR_REPEAT_INTERVAL_S
@@ -34,6 +61,17 @@ class ConnectionManager:
     @property
     def connected(self) -> bool:
         return self._connected
+
+    def reads_failed_since(self, baseline: int) -> bool:
+        """Did any read fail since `read_failures` was sampled as `baseline`?
+
+        For readers that must not act on a value they cannot trust. The
+        canonical use is a sequence-edge poller: snapshot before the reads,
+        check after, and if this is True discard the whole poll rather than
+        interpret it -- the next poll re-reads everything anyway, at the cost
+        of one tick.
+        """
+        return self.read_failures != baseline
 
     @connected.setter
     def connected(self, value: bool):
@@ -161,6 +199,7 @@ def read_float(dm: ConnectionManager, address) -> float:
         return value
     except Exception as e:
         dm.connected = False
+        dm.read_failures += 1
         dm._log_error_once(str(e))
         return 0
 
@@ -186,6 +225,7 @@ def read_long(dm, address) -> int:
         return value
     except Exception as e:
         dm.connected = False
+        dm.read_failures += 1
         dm._log_error_once(str(e))
         return 0
 
@@ -212,6 +252,7 @@ def read_unsigned(dm, address):
         return value
     except Exception as e:
         dm.connected = False
+        dm.read_failures += 1
         dm._log_error_once(str(e))
         return 0
 

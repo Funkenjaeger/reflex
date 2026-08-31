@@ -27,6 +27,15 @@ EmuConfig::EmuConfig() {
 
     z_encoder_counts_per_mm = 400.0;
     z_backlash_mm = 0.02;
+    /* STRUCTURAL PLACEHOLDER, NOT A MEASUREMENT. See physics.h's z_settle_tau_s
+     * note for the full argument; the short version is that 1 ms is 10 ticks at
+     * the emulator's default 10 kHz isr_rate_hz, which keeps the whole settle
+     * tail comfortably inside the firmware's ELS_SETTLE_TICKS (50) dwell. That
+     * is deliberate: the default must exercise the settle code path without
+     * asserting an answer to the open question of whether the real settle
+     * outruns that dwell. A test that wants the long-settle regime sets tau
+     * explicitly, so the assumption is visible in the test. */
+    z_settle_tau_s = 0.001;
     z_max_mm = 300.0;
     z_min_mm = -5.0;
     z_initial_mm = 0.0;
@@ -148,6 +157,7 @@ bool loadConfig(const std::string &path, EmuConfig &cfg) {
 
     cfg.z_encoder_counts_per_mm = getDouble("z_axis.encoder_counts_per_mm", cfg.z_encoder_counts_per_mm);
     cfg.z_backlash_mm = getDouble("z_axis.backlash_mm", cfg.z_backlash_mm);
+    cfg.z_settle_tau_s = getDouble("z_axis.settle_tau_s", cfg.z_settle_tau_s);
     cfg.z_max_mm = getDouble("z_axis.max_position_mm", cfg.z_max_mm);
     cfg.z_min_mm = getDouble("z_axis.min_position_mm", cfg.z_min_mm);
     cfg.z_initial_mm = getDouble("z_axis.initial_position_mm", cfg.z_initial_mm);

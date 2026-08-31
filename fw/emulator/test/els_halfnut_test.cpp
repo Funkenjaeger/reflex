@@ -17,6 +17,12 @@
  * linked. Pulses are fed in the production order used by isrThreadFunc:
  * tick(dt) first, then onStepPulse().
  *
+ * Carriage-position assertions call settleCarriage() first (see its note). The
+ * servo-driven settle tail added 2026-08-22 means the carriage no longer lands
+ * on the same tick as the pulse that commanded it, and this file's subject is
+ * lash accounting, not delivery latency. The tail itself is covered by
+ * els_carriage_settle_test.
+ *
  * Build/run: compiled as the `els_halfnut_test` CTest target (see CMakeLists).
  */
 #include "physics.h"
@@ -118,6 +124,22 @@ static void warmGate(LathePhysics &p, int dir) {
     pulseTrain(p, dir, WARMUP_PULSES, 3, false);
 }
 
+/* Tick until the servo-driven settle tail (added 2026-08-22, see physics.h) has
+ * fully drained into carriage_mm, so getCarriageMM() reports the whole of what
+ * the drivetrain was commanded rather than the part that has arrived so far.
+ *
+ * Every assertion in this file is about LASH ACCOUNTING — how much commanded
+ * travel the play window absorbs and which wall the nut sits on — and none of
+ * it is about delivery latency. Draining first keeps those two questions
+ * separate. It also keeps the "carriage still parked" assertions honest: after
+ * a drain, parked means the lash really did absorb the travel, not merely that
+ * it has not turned up yet. Aborts rather than looping forever if the tail
+ * never ends; an undecidable settle would be a defect in the model itself. */
+static void settleCarriage(LathePhysics &p) {
+    for (int i = 0; i < 100000 && p.isCarriageSettling(); i++)
+        p.tick(DT, &g_shared);
+}
+
 static int failures = 0;
 #define CHECK(cond, ...) do { \
     if (cond) { printf("  [PASS] " __VA_ARGS__); printf("\n"); } \
@@ -202,9 +224,11 @@ static void testLashWallBothDirections() {
          * Half-step slack around the boundary pulse (float accumulation). */
         double z0 = p.getCarriageMM();
         pulseTrain(p, c.dir, 155, 3, false);
+        settleCarriage(p);
         CHECK(std::abs(p.getCarriageMM() - z0) < STEP / 2.0,
               "%s: carriage still parked after 155 lash steps", c.name);
         pulseTrain(p, c.dir, 10, 3, false);
+        settleCarriage(p);
         double expect = phys * (165 * STEP - LASH);
         CHECK(std::abs((p.getCarriageMM() - z0) - expect) < 1e-6,
               "%s: moved %.5f after 165 steps (want %.5f)",

@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 from kivy.clock import Clock
 
+from reflex.dispatchers.axis_transform import AxisTransform
 from reflex.fsms.ui_controller import ElsUiController
 
 
@@ -42,9 +43,14 @@ def _engage(ctrl):
     _pump()
 
 
-def _make_z_axis(scaled_position=0.0, encoder_offset=0):
+def _make_z_axis(scaled_position=0.0, encoder_offset=0, transform=None):
     axis = MagicMock()
     axis.scaledPosition = scaled_position
+    # A REAL transform, not a MagicMock attribute. ElsUiController refuses to
+    # engage unless the ELS Z axis derives from exactly one scale, and a bare
+    # MagicMock reports len(contributions) == 0 -- so every engage in this
+    # suite would refuse, for a reason that has nothing to do with the test.
+    axis.transform = transform or AxisTransform.identity(2)
     # Scale by 1000 so the display↔encoder round-trip preserves sub-mm decimals
     # (a real leadscrew has finer resolution than 1 count/mm).
     axis.position_to_encoder.side_effect = lambda mm: round(mm * 1000) + encoder_offset
@@ -59,6 +65,7 @@ def _make_z_axis(scaled_position=0.0, encoder_offset=0):
 def _make_x_axis(scaled_position=0.0, encoder_offset=0):
     axis = MagicMock()
     axis.scaledPosition = scaled_position
+    axis.transform = AxisTransform.identity(3)
     axis.position_to_encoder.side_effect = lambda mm: round(mm * 1000) + encoder_offset
     axis.scaled_from_encoder.side_effect = lambda enc: (enc - encoder_offset) / 1000.0
     axis._primary_input.return_value = SimpleNamespace(
@@ -67,9 +74,50 @@ def _make_x_axis(scaled_position=0.0, encoder_offset=0):
     return axis
 
 
+class FakeConnectionManager:
+    """Read-failure accounting with the PRODUCTION semantics, not a Mock.
+
+    A MagicMock would make `reads_failed_since()` return a truthy Mock, so every
+    guarded poll would discard itself and the tests would pass for the wrong
+    reason -- green because nothing is ever interpreted. The counter is the
+    whole mechanism under test, so it is modelled for real: an int that only
+    goes up, and a comparison against a caller-held baseline.
+    """
+
+    def __init__(self, connected: bool = True):
+        self.read_failures = 0
+        # Production reads this on the write-verification path
+        # (ElsFsm.on_enter_cutting accumulates the per-write ACK from it), so
+        # the fake carries it rather than leaving a Mock to answer truthily.
+        self.connected = connected
+
+    def reads_failed_since(self, baseline: int) -> bool:
+        return self.read_failures != baseline
+
+    def fail_read(self, n: int = 1):
+        """Simulate n failed Modbus reads (checksum / timeout / short frame)."""
+        self.read_failures += n
+
+
 def _make_collaborators(*, z_axis=None, x_axis=None, connected=False):
     board = MagicMock()
     board.connected = connected
+    # A REAL dict, for the same reason FakeConnectionManager is a real object.
+    # This is the board's once-per-tick elsStop snapshot, and ElsStopHal.TickReads
+    # treats an empty one as "no snapshot -> fabricated read". Left as a MagicMock
+    # attribute it would be truthy and would hand every snapshot read a Mock, so
+    # a poller under test would interpret a Mock as a register value and the test
+    # would pass without a number ever being checked. Empty by default: a test
+    # that wants the pollers to see registers puts them here.
+    board.els_stop_values = {}
+    # Real semantics, deliberately not a Mock -- see FakeConnectionManager.
+    # connected defaults True and deliberately does NOT follow board.connected:
+    # this models the SERIAL LINK, not the board dispatcher's view of it, and
+    # before this fake existed it was a MagicMock attribute that every test read
+    # as truthy. Tying it to board.connected silently sent the default fixture
+    # down on_enter_cutting's abort-to-alarm path. A test that wants a dead link
+    # sets it explicitly.
+    board.connection_manager = FakeConnectionManager()
     # ElsFsm._safety_margin_display reads leadScrewPitch / leadScrewPitchIn /
     # ratioNum / ratioDen off board.servo. leadScrewPitch=0.0 keeps the margin
     # at zero, matching these tests' assumption that "safe side of stop_z"
@@ -968,52 +1016,67 @@ def test_depth_latch_ignores_uncommitted_stop_dia():
 # ─── Rung-2 mode-watch sampler ─────────────────────────────────────────────
 
 class TestModeWatchSampler:
-    """_poll_mode_watch: dormant without a mode-watch probe, decimated when
-    present, and structurally incapable of raising into the update loop."""
+    """_poll_mode_watch: samples against EVERY build, decimated, and
+    structurally incapable of raising into the update loop.
 
-    def test_dormant_without_the_mode_watch_probe(self, ctrl):
+    The dormancy this class used to pin was the defect. Until 2026-08-22 the
+    sampler returned immediately unless a mode-watch probe (schema 4/5) was
+    flashed, because the firmware only published its machine mode from inside
+    that probe. Probes are one-at-a-time by construction, so flashing any other
+    probe silently chose to collect no rung-2 census -- and rungs 3 and 4 are
+    blocked on that census. It cost two consecutive lathe sessions on
+    2026-08-21/22, both spent cutting real passes under a takeup-settle probe,
+    both recording nothing, with no signal to the operator that the data was
+    not accruing.
+
+    machineMode is now a permanent register published by every build, so the
+    gate is gone. Do not reintroduce one.
+    """
+
+    def test_samples_against_release_firmware_with_no_probe(self, ctrl):
+        """THE REGRESSION TEST. Release firmware, no probe, no schema -- the
+        census must still accrue, because that is the build the machine
+        actually runs."""
         ctrl._diag_recorder = MagicMock()
         ctrl._diag_recorder.schema = None          # release firmware
         ctrl._hal = MagicMock()
-        for _ in range(20):
-            ctrl._poll_mode_watch()
-        ctrl._hal.read_current_mode.assert_not_called()
-
-    def test_samples_every_nth_tick_and_feeds_the_watch(self, ctrl):
-        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
-        ctrl._diag_recorder = MagicMock()
-        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH
-        ctrl._hal = MagicMock()
-        ctrl._hal.read_current_mode.return_value = 5      # HELD
+        ctrl._hal.tick.current_mode.return_value = 5      # HELD
         ctrl._mode_watch = MagicMock()
-        for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY * 2):
+        for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY * 3):
             ctrl._poll_mode_watch()
-        assert ctrl._hal.read_current_mode.call_count == 2
+        assert ctrl._hal.tick.current_mode.call_count == 3
         ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 5)
 
-    def test_samples_under_the_v2_probe_too(self, ctrl):
-        """The schema-4 -> 5 bump (2026-08-17, effective counting only) must
-        not send the rung-2 census dormant at the flash — that would be the
-        exact silent-dormancy failure the KNOWN_SCHEMAS refusal exists to
-        make loud, produced instead by a gate nobody re-checked."""
-        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH_V2
+    def test_samples_under_an_unrelated_probe(self, ctrl):
+        """The case that actually lost the data: a takeup-settle probe flashed
+        for a different agenda. The census must not care which probe, or
+        whether there is one."""
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
         ctrl._diag_recorder = MagicMock()
-        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH_V2
+        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
         ctrl._hal = MagicMock()
-        ctrl._hal.read_current_mode.return_value = 4      # JOG
+        ctrl._hal.tick.current_mode.return_value = 6      # TAKEUP
         ctrl._mode_watch = MagicMock()
         for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY):
             ctrl._poll_mode_watch()
-        assert ctrl._hal.read_current_mode.call_count == 1
+        assert ctrl._hal.tick.current_mode.call_count == 1
+        ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 6)
+
+    def test_samples_every_nth_tick_and_feeds_the_watch(self, ctrl):
+        ctrl._diag_recorder = MagicMock()
+        ctrl._hal = MagicMock()
+        ctrl._hal.tick.current_mode.return_value = 4      # JOG
+        ctrl._mode_watch = MagicMock()
+        for _ in range(ctrl.MODE_WATCH_SAMPLE_EVERY * 2):
+            ctrl._poll_mode_watch()
+        assert ctrl._hal.tick.current_mode.call_count == 2
         ctrl._mode_watch.feed.assert_called_with(ctrl._els_fsm.state, 4)
 
     def test_a_failing_read_never_reaches_the_update_loop(self, ctrl):
-        from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
         ctrl._diag_recorder = MagicMock()
-        ctrl._diag_recorder.schema = ELS_DIAG_SCHEMA_MODE_WATCH
         ctrl._mode_watch_tick = ctrl.MODE_WATCH_SAMPLE_EVERY - 1
         ctrl._hal = MagicMock()
-        ctrl._hal.read_current_mode.side_effect = RuntimeError("link glitch")
+        ctrl._hal.tick.current_mode.side_effect = RuntimeError("link glitch")
         ctrl._poll_mode_watch()                    # must not raise
 
 

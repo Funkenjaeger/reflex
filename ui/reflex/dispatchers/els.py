@@ -1,5 +1,6 @@
 from kivy.logger import Logger
-from kivy.properties import BooleanProperty, NumericProperty, StringProperty
+from kivy.properties import (BooleanProperty, ListProperty,
+                             NumericProperty, StringProperty)
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
 
@@ -13,6 +14,14 @@ class ElsDispatcher(SavingDispatcher):
     _skip_save = ["x", "y", "width", "height", "size_hint_x", "size_hint_y",
                   "pos", "size", "minimum_height", "minimum_width", "padding", "spacing",
                   "spindle_is_running"]
+    # get_our_properties() only auto-includes Numeric/String/BooleanProperty by
+    # exact type -- a ListProperty is invisible to it otherwise (see axis.py's
+    # identical "offsets" case). Without this, els_cal_measured_legs (2744c05)
+    # is never written to or read from the YAML file: it survives a firmware
+    # power cycle only because the UI PROCESS stays up and keeps it in memory,
+    # and resets silently to [0, 0, 0] on any UI/app restart -- reproducing
+    # the exact power-cycle defect 2744c05 was written to close.
+    _force_save = ["els_cal_measured_legs"]
 
     # ── ELS axis roles ────────────────────────────────────────────────
     spindle_axis_index = NumericProperty(-1)
@@ -57,6 +66,13 @@ class ElsDispatcher(SavingDispatcher):
     # A wide spread means the measurement is not reproducible, which is itself
     # the finding — do NOT widen this to make a wizard proceed.
     els_cal_max_spread_steps = NumericProperty(12)
+    # The three per-reversal leg measurements of the last ACCEPTED calibration,
+    # verbatim. Persisted so reconcile can re-teach firmware RAM after a power
+    # cycle -- the take-up gate derives its confirmation threshold from their
+    # mean, and without them it silently falls to the bare motion floor every
+    # boot. [0, 0, 0] means no accepted calibration on record; reconcile skips
+    # the push rather than teach the firmware a lie.
+    els_cal_measured_legs = ListProperty([0, 0, 0])
 
     # Take-up margin: always measured + max(pct, floor), never trimmed toward
     # the minimum. The floor exists because at a small lash a flat percentage
@@ -69,6 +85,32 @@ class ElsDispatcher(SavingDispatcher):
     # the raw measured mean (lash + detection distance), NOT the commanded
     # take-up — keeping them separate is what lets a later run notice drift.
     els_cal_last_measured_steps = NumericProperty(0)
+
+    # How much run-to-run change is worth an operator's ATTENTION, in servo
+    # steps. Until 2026-08-30 there was no such number: els_backlash_cal_popup
+    # called ANY nonzero difference "a large change worth investigating", so
+    # one step -- 1.984 mm/1000 on elspi -- cried wolf, and ElsCalFsm.drift_steps'
+    # own docstring says the opposite in as many words ("Non-zero is normal ...
+    # a LARGE change ... is worth an operator's attention").
+    #
+    # DEFAULTED TO THE SPREAD LIMIT, and it is the same 12 for a reason rather
+    # than by copy: els_cal_max_spread_steps is the disagreement this machine
+    # is allowed WITHIN one run, so a change smaller than that is not
+    # distinguishable from the measurement's own noise. It is a separate
+    # property because it is a separate question -- within-run repeatability
+    # versus between-run change -- and tying them would make raising one
+    # silently raise the other.
+    els_cal_drift_notice_steps = NumericProperty(12)
+
+    # ── Thread re-sync (manual reference latch) ───────────────────────
+    # Z counts the carriage may sit from its post-jog baseline during fine
+    # alignment, and how closely a hand re-seat against the drive flank must
+    # return to it. DELIBERATELY tiny: a re-seat is the carriage arriving back
+    # at a mechanical stop it was already against, so missing by more than a
+    # couple of counts means the Z chain has lost custody of the position —
+    # the same fault that would silently corrupt every ELS operation. That is
+    # a finding to surface, never a reason to raise this number.
+    els_resync_z_tol_counts = NumericProperty(3)
 
     # Calibration POLICY (spread test, take-up margin) deliberately does NOT
     # live here. ElsDispatcher cannot be constructed without a running MainApp,

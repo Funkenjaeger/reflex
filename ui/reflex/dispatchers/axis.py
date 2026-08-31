@@ -29,7 +29,17 @@ class AxisDispatcher(SavingDispatcher):
     _save_class_name = "Axis"
 
     # ── Persisted properties ─────────────────────────────────────────
-    axis_name = StringProperty("?")
+    # "?" IS THE UNPROVISIONED MARKER, not decoration. Every axis the board
+    # creates starts here and keeps the name until someone sets one, so the
+    # default doubles as "nobody has told this axis what it is". There is no
+    # separate enabled/present flag, and deriving the state from the name
+    # rather than adding one is what makes it work on machines whose YAML was
+    # written before this existed -- an added BooleanProperty would read as
+    # its default on every stored axis, which is a migration either way it
+    # defaults.
+    UNPROVISIONED_NAME = "?"
+
+    axis_name = StringProperty(UNPROVISIONED_NAME)
     axis_index = NumericProperty(0)
     syncRatioNum = NumericProperty(360)
     syncRatioDen = NumericProperty(100)
@@ -95,6 +105,17 @@ class AxisDispatcher(SavingDispatcher):
         self._transform = value
         self._save_transform_config()
         self._update_position()
+
+    @property
+    def is_provisioned(self) -> bool:
+        """Has anyone told this axis what it is?
+
+        The board creates one axis per physical scale input, so a machine
+        using three of four inputs still carries the fourth -- correctly, the
+        input exists and may be wired later. What it must NOT do is let that
+        placeholder look like a real axis to anything that offers choices.
+        """
+        return bool(self.axis_name) and self.axis_name != self.UNPROVISIONED_NAME
 
     def _primary_input(self):
         """Return the primary InputDispatcher, or None if out of range."""
@@ -255,6 +276,19 @@ class AxisDispatcher(SavingDispatcher):
         return p * factor
 
     # ── Sync ratio ───────────────────────────────────────────────────
+
+    def push_sync_ratio(self):
+        """Re-write this axis's sync ratio into the firmware registers.
+
+        The ratio registers are firmware RAM and the binding below fires only
+        when the UI-side property CHANGES -- so after a power cycle the
+        firmware holds 0/0 while the UI believes the ratio is set, sync
+        follows nothing, and (2026-08-25) an instrumented bench test recorded
+        fifteen minutes of silence. Reconcile calls this for every axis at
+        connect; the same-value dispatch rule makes the explicit call the only
+        reliable way to re-teach an unchanged setting.
+        """
+        self._set_sync_ratio()
 
     def _set_sync_ratio(self, *args, **kv):
         if not self.board.connected:

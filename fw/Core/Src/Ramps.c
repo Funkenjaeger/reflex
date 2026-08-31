@@ -18,6 +18,7 @@
 #include <math.h>
 #include "Ramps.h"
 #include "Scales.h"
+#include "els_isr_rate.h"
 #include "els_phase.h"
 
 /* Post-takeup settle dwell: after the backlash takeup reaches its commanded
@@ -30,7 +31,50 @@
  * move during a lash-absorbed takeup, so there is nothing to settle), so this is
  * now a short, behaviour-neutral guard rather than a real settle window. Keep it
  * small so the emulator's bounded-guard scenario loop doesn't time out. */
-#define ELS_SETTLE_TICKS 50
+#define ELS_SETTLE_TICKS            ELS_US_TO_TICKS(500)     /* 0.5 ms */
+
+/* ---- QUIESCENCE: has the carriage actually STOPPED? --------------------
+ *
+ * The Z confirmation gate asks whether the carriage moved FAR ENOUGH. It has
+ * never asked whether it has stopped moving, and it has no channel through
+ * which it could: els_takeup_settle_gate_test drives the real ISR against the
+ * emulator's carriage settle model and shows the firmware behaving
+ * BIT-IDENTICALLY -- same release tick, same verdict -- whether the carriage is
+ * stationary or still owes 1.36 Z counts that take another 360 ticks to arrive.
+ * So this is a missing INPUT, not a mis-tuned constant, and no amount of
+ * adjusting ELS_SETTLE_TICKS would have found it.
+ *
+ * DEFAULT OFF, and deliberately so. Enabling it changes the release condition
+ * of EVERY pass, and the machine it would run on cannot currently be measured
+ * for it: elspi's 18 takeup-settle-v3 captures show the carriage never moving
+ * more than ONE encoder count after a take-up, which is the resolution floor of
+ * a 200 counts/mm scale. At that floor "still moving" and "stopped" are not
+ * distinguishable, so switching this on there would buy nothing and could cost
+ * spurious refusals. It is built now because the emulator can finally make it
+ * fail; it is enabled when a measurement says it should be.
+ *
+ * What those captures DO establish is that a quiescence test is implementable
+ * at all: across 900 trace buckets, 893 were exactly 0 and 7 were exactly -1,
+ * with not a single +1. Encoder dither would have produced both signs and would
+ * have made a stillness test unusable. It is real motion, in one direction.
+ *
+ * ELS_QUIESCENT_TICKS is sized against the EMULATOR, not that field data --
+ * those single counts arrive scattered across the whole window and may be drift
+ * rather than settle. Treat it as provisional and commission it with the
+ * inter-pulse-gap measurement (todo.md), the same way ELS_SLIP_SETTLE_TICKS
+ * must be. The confirm window still bounds the wait, so a machine that never
+ * goes quiet aborts rather than hangs. */
+#ifndef ELS_REQUIRE_QUIESCENCE
+#define ELS_REQUIRE_QUIESCENCE 0
+#endif
+#define ELS_QUIESCENT_TICKS         ELS_MS_TO_TICKS(2)       /* 2 ms */
+
+/* NOTE (2026-08-27): a companion ELS_QUIESCENT_NET_TOL_COUNTS, widening the
+ * tracker above from exact equality to a net-displacement window, was written
+ * and then backed out. The reasoning and the measurements are at the tracker
+ * itself; the short version is that any tolerance above zero contradicts the
+ * >=200-ticks-since-the-last-pulse invariant els_takeup_quiescence_test pins,
+ * and that is Evan's call to make rather than a refactor. */
 
 /* Backstop for a backlash takeup that never reaches its commanded target. ISR
  * runs at ~100 kHz (TIM9, 10 us/tick), so this is ~5 s — far longer than any
@@ -39,7 +83,7 @@
  * it. It is a DIAGNOSTIC, not a control: it does not release the sync gate (see
  * the takeup block for why), it just names the failure so the UI can. The known
  * way in is servoMode != 1, where stepsToGo is never consumed at all. */
-#define ELS_TAKEUP_TIMEOUT_TICKS 500000
+#define ELS_TAKEUP_TIMEOUT_TICKS    ELS_MS_TO_TICKS(5000)    /* 5 s */
 
 /* How long the Z confirmation gate keeps LOOKING after the commanded take-up
  * motion has finished, before latching its verdict. ISR is ~100 kHz, so this is
@@ -70,7 +114,7 @@
  * late-but-genuine take-up before giving up and aborting the pass. It can stay
  * generous precisely because a hand nudge inside it no longer counts as
  * evidence. Shortening it would only make the machine give up sooner. */
-#define ELS_TAKEUP_CONFIRM_WINDOW_TICKS 25000
+#define ELS_TAKEUP_CONFIRM_WINDOW_TICKS ELS_MS_TO_TICKS(250) /* 250 ms */
 
 /* Mechanical settle allowance for motion attribution: how long after a commanded
  * step pulse Z motion may still be credited to the servo rather than to whatever
@@ -78,12 +122,35 @@
  * as the actual exposure bound, so it is the number an attacker — or an
  * unlucky operator — has to hit.
  *
- * THIS VALUE IS NOT COMMISSIONED. It is a starting point chosen to satisfy the
- * constraints below, not a measurement of elspi's drivetrain, and it CANNOT be
- * derived from the emulator: the emulator's lash model moves the carriage
- * instantaneously with the pulse, so it has no settle behaviour to measure at
- * all. Measuring it means watching real Z counts arrive after the last pulse of
- * a real take-up, on the machine, at the take-up speed actually in use.
+ * COMMISSIONED 2026-08-27 against elspi, and lowered 1000 -> 700 as a result.
+ * It still cannot be derived from the emulator -- that lash model moves the
+ * carriage instantaneously with the pulse, so it has no settle behaviour at all
+ * -- so the number comes from the machine, via the takeup-settle-v3 probe
+ * (els_diag_takeup_settle.h) whose t=0 is the tick after the LAST take-up pulse.
+ *
+ * THE DATA: 18 captures, every one ending END_WINDOW at the full 2000 ticks, so
+ * none was truncated. ELEVEN were completely still -- zero in every bucket. The
+ * other SEVEN each delivered EXACTLY ONE count (net -1, a single nonzero bucket)
+ * at 79, 545, 571, 656, 1165, 1399 and 1786 ticks. At the measured 103.8 kHz
+ * that longest tail is 17.2 ms. So the carriage stops essentially dead; what
+ * looks like a settle tail is one 5 um count arriving late, one-directional,
+ * and in most take-ups not at all.
+ *
+ * WHY 700 SPECIFICALLY. The observations clump into <=656 and >=1165 with
+ * NOTHING in between, and 700 sits inside that empty gap: lowering from 1000
+ * therefore discards no motion the old value was crediting. The four early
+ * counts stay attributed; the three late ones were already outside 1000 and are
+ * single counts against a confirm threshold measured in TENS, so failing to
+ * attribute them cannot refuse a healthy take-up. What it buys is a 30% smaller
+ * window for a hand nudge to be credited to the servo, which is the whole point
+ * of this constant.
+ *
+ * READ THE CAPTURES' ONE CAVEAT BEFORE EXTENDING THIS. They come from a
+ * diagnostic build whose hold computes the gate's verdict LATER than release,
+ * making that build MORE PERMISSIVE on a marginal take-up. That bears on
+ * whether the GATE would confirm -- never read "the diagnostic build confirmed"
+ * as "release would have". It does not touch the settle measurement itself,
+ * which is what the hold exists to make possible.
  *
  * Constraints any replacement value must satisfy:
  *  - MUST exceed ELS_SETTLE_TICKS (50). The gate's first evaluation happens that
@@ -94,15 +161,38 @@
  *    left to this constant — elsSlipSettleTicks() floors it at runtime — but a
  *    value below the pacing period means that floor is doing all the work and
  *    the number here is decorative.
- *  - Ticks, not milliseconds. At the ~100 kHz hardware ISR rate 1000 ticks is
- *    ~10 ms. The emulator's real-time serve loop runs the same ISR ~10x slower,
+ *  - A DURATION, not a tick count -- ELS_MS_TO_TICKS converts at the rate the
+ *    build declares, which is what carried it through 100 kHz -> 50 kHz intact.
+ *    The emulator's real-time serve loop runs the same ISR ~10x slower,
  *    so anything tuned by watching wall-clock there is 10x wrong here
  *    (els_slip.h has the full unit-trap list).
  *
- * Smaller is safer and only becomes unsafe in one direction: too small starts
- * refusing healthy take-ups. Tune it DOWN from here against a machine that still
- * confirms reliably, never up to make a refusal go away. */
-#define ELS_SLIP_SETTLE_TICKS 1000
+ * "SMALLER IS SAFER" WAS WRONG, AND IS WITHDRAWN (2026-08-30, Evan's call).
+ * This paragraph used to say tune it DOWN, never up. That reasoning assumed the
+ * margin against a hand was the binding constraint. It is not:
+ *
+ *   - a hand moving with NO recent pulse is refused at ANY horizon, because
+ *     ticksSinceLastPulse is huge and the motion lands unattributed. That is
+ *     the 2026-08-08 defect, and it is the case actually defended.
+ *   - a hand already in motion DURING the pulses is credited at ANY horizon --
+ *     els_slip.h says outright that it is physically indistinguishable from
+ *     inertial settle using Z and commanded steps alone.
+ *
+ * So the horizon only ever guarded a hand that STARTS moving after the pulses
+ * stop, and between 5x and 14x against a soft 100 ms floor nothing real
+ * changes. Meanwhile the cost of being small was measured: at 7 ms, 7 of the
+ * 16 observed settle tails (43.8%) fell outside the horizon and were discarded.
+ *
+ * The asymmetry runs the other way. Too small throws away real, servo-caused
+ * settle. Too large widens a sliver that is undefended at any width, and costs
+ * one Z count per stranded tail against a ~15 count threshold. ERR HIGH.
+ * els_slip_horizon_commission_test.cpp encodes all 16 observations and this
+ * argument, so a change made without revisiting them turns that test red. */
+/* 20 ms. Covers every settle tail in the 36-capture set (longest 17.86 ms),
+ * stays under 10% of the 250 ms take-up confirmation window, and remains 40x
+ * the post-take-up dwell. Expressed as the DURATION it always was, so an ISR
+ * rate change carries it instead of silently scaling it. */
+#define ELS_SLIP_SETTLE_TICKS       ELS_MS_TO_TICKS(20)
 
 /* Diagnostic probes live in Core/Inc/els_diag_*.h, dispatched by els_diag.h.
  * Their bodies are NOT in this file; their four call sites are, and each one
@@ -201,8 +291,33 @@ void RampsStart(rampsHandler_t *rampsData) {
   rampsData->shared.elsStop.takeupPending = 0;
   /* Register-layout version. Bump this whenever elsStop_t / rampsSharedData_t
    * changes shape; reflex-ui reads it at connect so a firmware/UI map mismatch
-   * reports itself by name instead of surfacing as garbled register reads. */
-  rampsData->shared.elsStop.protocolVersion = 2;
+   * reports itself by name instead of surfacing as garbled register reads.
+   *
+   * 3 (2026-08-22): machineMode promoted out of the diagnostic scratchpad
+   * into a permanent register, so the rung-2 census can be collected in a
+   * build the machine actually runs. See the machineMode comment in Ramps.h.
+   *
+   * 4 (2026-08-16, landing 2026-08-22): latchCommand/latchSeq appended for the manual reference
+   * latch. BOTH parents of this rebase called themselves 2 and meant different
+   * maps -- dev-staging's 2 ends at diagReserved[4], the pre-rebase
+   * feat/els-thread-resync's 2 ended at latchSeq with no diagnostic block at
+   * all. Leaving it at 2 would give three distinct layouts one version number,
+   * which is precisely the silent-garbage failure this field exists to prevent.
+   *
+   * The new pair is appended AFTER the diagnostic scratchpad on purpose, so
+   * every offset that has been exercised on the lathe -- the whole diag block
+   * included -- keeps the address it was verified at. Only genuinely new
+   * registers move.
+   *
+   * 5 (2026-08-22): the thread-phase offset block (phaseOffsetCommand/Seq/
+   * Pending/Steps) appended for the groove-widening offset, same
+   * append-at-the-tail discipline.
+   *
+   * 6 (2026-08-23): executionCyclesPeak, the ISR headroom measurement. Added
+   * after the machine lost Modbus on 6 of 6 cuts and the counter that should
+   * have shown why turned out to be a spot sampler that could not see the
+   * event. */
+  rampsData->shared.elsStop.protocolVersion = 7;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
    * explicitly zeroed when no probe is compiled in, rather than left to whatever
@@ -211,6 +326,13 @@ void RampsStart(rampsHandler_t *rampsData) {
   elsDiagInit(&rampsData->diag, &rampsData->shared.elsStop);
   rampsData->shared.elsStop.calCommand   = 0;
   rampsData->shared.elsStop.calSeq       = 0;
+  rampsData->shared.elsStop.latchCommand = 0;
+  rampsData->shared.elsStop.latchSeq     = 0;
+  rampsData->shared.elsStop.phaseOffsetCommand = 0;
+  rampsData->shared.elsStop.phaseOffsetSeq     = 0;
+  rampsData->shared.elsStop.phaseOffsetPending = 0;
+  rampsData->shared.elsStop.phaseOffsetSteps   = 0;
+  rampsData->shared.elsStop.executionCyclesPeak = 0;
   rampsData->shared.elsStop.calResult    = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupResult = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupSeq    = 0;
@@ -379,6 +501,62 @@ static inline void updateJogPosition(rampsHandler_t *data) {
  * electronic retract, manual jog, half-nut snap, etc.
  *
  * See ARCHITECTURE.md → ELS Shoulder Stop for the conceptual model. */
+/* ---- the spindle period, computed off the ISR and cached -----------------
+ *
+ * elsComputeSpindlePeriod() is double-precision arithmetic, which on this core
+ * is a fistful of softfp library calls (see its banner in els_phase.h -- it
+ * cost the ISR 2.6x its whole tick budget on 2026-08-28 when it ran inline).
+ * It depends only on three registers that change at JOB SETUP, so recomputing
+ * it per pass was waste as well as hazard.
+ *
+ * NOT IN THE REGISTER MAP ON PURPOSE. This is derived firmware-internal state,
+ * not something the host reads, so it stays a file static and costs no
+ * protocolVersion bump -- that append queue is congested with the take-up gate
+ * and the re-sync latch command.
+ *
+ * THE KEY IS CARRIED WITH THE VALUE, and applyPhaseCorrection re-checks it
+ * rather than trusting the refresh to have happened. A cache whose producer
+ * runs on a 50 ms task and whose consumer runs at 100 kHz has a staleness
+ * window by construction; the key check closes it. On a mismatch the ISR
+ * passes 0, which means "do not reduce" -- the pre-04dd1f9 path -- so a stale
+ * cache degrades gracefully instead of reducing by a period from the previous
+ * job. Both compares are integer and the third is a single-precision float
+ * compare (VCMP, hardware); none of this is a library call.
+ *
+ * A torn read is not possible: aligned 32-bit loads and stores are atomic on
+ * Cortex-M4, and the ISR only ever reads. */
+static int32_t elsPeriodCache      = 0;
+static int32_t elsPeriodKeyNum     = 0;
+static int32_t elsPeriodKeyDen     = 0;
+static float   elsPeriodKeyTps     = 0.0f;
+
+/* Called from updateSpeedTask (and mirrored in the emulator's main loop --
+ * the emulator does not run FreeRTOS tasks). Cheap when nothing changed. */
+void elsRefreshSpindlePeriod(rampsSharedData_t *shared) {
+  int32_t num = shared->scales[0].syncRatioNum;
+  int32_t den = shared->scales[0].syncRatioDen;
+  float   tps = shared->elsStop.threadPitchSteps;
+
+  if (num == elsPeriodKeyNum && den == elsPeriodKeyDen && tps == elsPeriodKeyTps) {
+    return;
+  }
+  elsPeriodCache  = elsComputeSpindlePeriod(num, den, tps);
+  elsPeriodKeyNum = num;
+  elsPeriodKeyDen = den;
+  elsPeriodKeyTps = tps;
+}
+
+/* The ISR-side read: returns the cached period only if it was computed for
+ * exactly these registers, else 0 (= do not reduce). */
+static inline int32_t elsCachedSpindlePeriod(const rampsSharedData_t *shared) {
+  if (shared->scales[0].syncRatioNum == elsPeriodKeyNum
+      && shared->scales[0].syncRatioDen == elsPeriodKeyDen
+      && shared->elsStop.threadPitchSteps == elsPeriodKeyTps) {
+    return elsPeriodCache;
+  }
+  return 0;
+}
+
 static inline void applyPhaseCorrection(rampsSharedData_t *shared) {
   int32_t deltaSpindle =
     shared->scales[0].position - shared->elsStop.latchedSpindle;
@@ -394,8 +572,12 @@ static inline void applyPhaseCorrection(rampsSharedData_t *shared) {
       shared->scales[0].syncRatioNum, shared->scales[0].syncRatioDen,
       shared->elsStop.threadPitchSteps, shared->elsStop.zCountsPerPitch,
       shared->elsStop.stopDirection,
-      0 /* offsetSteps: no elsStop_t field yet -- see the PHASE OFFSET note in
-         * els_phase.h and todo.md. 0 is bit-for-bit the pre-feature path. */);
+      /* The live cumulative offset. Zero for every job that never sets one,
+       * which is bit-for-bit the pre-feature path (els_phase_offset_test T1). */
+      shared->elsStop.phaseOffsetSteps,
+      /* Precomputed off the ISR; 0 if the cache does not match these exact
+       * registers, which means do not reduce. */
+      elsCachedSpindlePeriod(shared));
 
   shared->servo.stepsToGo += r.stepsToAdd;
 
@@ -535,20 +717,76 @@ static inline void elsCalUpdate(rampsHandler_t *data) {
   }
 }
 
+/* ---- pin writes: BSRR on hardware, the HAL on the emulator ---------------
+ *
+ * HAL_GPIO_WritePin is a real function call -- prologue, branch, store, return
+ * -- and this ISR made SIX of them per tick at 100 kHz. After the period
+ * arithmetic came out (0d9ceab) they were the only calls left in the ISR apart
+ * from an fmodf that never executes on any real geometry (measured: elspi's
+ * 5027 phase_live captures peak at |phaseErrSteps| 354 against a 2^22 guard).
+ * BSRR is a single atomic store -- write the pin mask to set, the mask shifted
+ * up 16 to clear -- with no read-modify-write and no call.
+ *
+ * THE EMULATOR MUST KEEP THE HAL, and this is not a style preference. Two
+ * separate things depend on that call actually being made:
+ *   - hal_shim.c watches it to drive emu_hw.step_pin / dir_pin / spare2_pin,
+ *     which is the ONLY way the physics model sees a step pulse; and
+ *   - els_isr_peak_test replaces it with a stub that charges emu_dwt.CYCCNT,
+ *     which is the only way that test can make ISR time pass at all.
+ * A BSRR store writes a field in a plain struct that nothing is watching, so
+ * both would stop working silently -- the physics would see no pulses and the
+ * peak test would measure zero. Neither failure announces itself.
+ *
+ * WHAT THE DIVERGENCE COSTS, stated rather than glossed: the emulator no
+ * longer runs the same pin-write path as the hardware. That is acceptable
+ * because it never did -- there is no GPIO peripheral behind the shim, only a
+ * stub -- so what the emulator verifies is WHEN pulses happen and how many,
+ * which this does not touch. It does not, and never did, verify how a pin gets
+ * written. */
+#ifdef EMULATOR_BUILD
+#define ELS_PIN_WRITE(port, pin, set)     HAL_GPIO_WritePin((port), (pin), (set) ? GPIO_PIN_SET : GPIO_PIN_RESET)
+#else
+#define ELS_PIN_WRITE(port, pin, set)     ((port)->BSRR = (set) ? (uint32_t)(pin) : ((uint32_t)(pin) << 16u))
+#endif
+
 void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   uint32_t start = DWT->CYCCNT;
   // Reset the step pin as soon as possible
-  HAL_GPIO_WritePin(STEP_GPIO_PORT, STEP_PIN, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(SPARE_2_GPIO_PORT, SPARE_2_PIN, GPIO_PIN_RESET);
+  ELS_PIN_WRITE(STEP_GPIO_PORT, STEP_PIN, 0);
+  ELS_PIN_WRITE(SPARE_2_GPIO_PORT, SPARE_2_PIN, 0);
   rampsSharedData_t *shared = &(data->shared);
   shared->executionIntervalPrevious = shared->executionIntervalCurrent;
   shared->executionIntervalCurrent = DWT->CYCCNT;
   shared->executionInterval = shared->executionIntervalCurrent - shared->executionIntervalPrevious;
   shared->fastData.executionInterval = shared->executionInterval;
 
+  /* The STEP pulse that the reset above just ended began at emission last
+   * pass; its HIGH width is exactly start - stepPulseSetAt (Ramps.h, the
+   * pulse width instrument). `start` was taken before the reset, so the
+   * computation sitting here -- after `shared` exists -- measures the same
+   * edge the drive saw. ~5 cycles per tick, unconditional: an instrument
+   * that exists only in a probe build is a measurement nobody has. */
+  if (data->stepPulseArmed) {
+    data->stepPulseArmed = 0;
+    uint32_t stepPulseWidth = start - data->stepPulseSetAt;
+    if (shared->elsStop.stepPulseMinCycles == 0u
+        || stepPulseWidth < shared->elsStop.stepPulseMinCycles) {
+      shared->elsStop.stepPulseMinCycles = stepPulseWidth;
+    }
+    if (stepPulseWidth < ELS_STEP_RUNT_CYCLES) {
+      shared->elsStop.stepPulseRuntCount++;
+    }
+  }
+
   // Reset reference latch on elsStop.enable rising edge (start of a new threading job)
   if (shared->elsStop.enable && !data->elsStopPreviousEnable) {
     shared->elsStop.referenceLatched = 0;
+    /* The phase offset dies with the datum it was measured from. A new job means
+     * a new reference, so carrying a half-pitch shift into it would put the very
+     * first pass of the next thread out of phase for reasons the operator has no
+     * way to see. Per-pass stop/resume does NOT come through here, so the offset
+     * survives within a job -- which is the entire point of holding a total. */
+    shared->elsStop.phaseOffsetSteps = 0;
   }
 
   // Auto-clear active when enable is deasserted
@@ -595,12 +833,88 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
 
   data->elsStopPreviousEnable = shared->elsStop.enable;
 
+  /* Manual reference latch (interactive re-sync to an existing thread). Same
+   * command/ack split as calCommand: consumed and cleared in one ISR pass so a
+   * host-side two-register write can never be seen half-applied, and the pair is
+   * captured in the same tick so spindle and Z are coherent. Only meaningful
+   * inside a job — outside one the reference would be wiped on the next enable
+   * 0->1 edge, so a latch while disabled is consumed WITHOUT the latchSeq ack
+   * and the host reads the missing edge as the refusal. Setting referenceLatched
+   * is also what suppresses the first-trigger auto-latch for the rest of the
+   * job: the trigger block only captures while referenceLatched == 0. */
+  if (shared->elsStop.latchCommand != 0u) {
+    shared->elsStop.latchCommand = 0u;
+    if (shared->elsStop.enable != 0u) {
+      shared->elsStop.latchedZ         = shared->scales[shared->elsStop.scaleIndex].position;
+      shared->elsStop.latchedSpindle   = shared->scales[0].position;
+      shared->elsStop.referenceLatched = 1;
+      shared->elsStop.latchSeq++;
+    }
+  }
+
+  /* Thread-phase offset apply. The calCommand idiom again: Pending was fully
+   * written before Command was set, so reading it here is atomic without a
+   * lock. Gated on enable for the same reason as the latch above -- outside a
+   * job the total would be wiped by the next enable edge, so accepting it would
+   * be a lie. Absent seq increment = refused. NOTHING MOVES as a result of
+   * this; the new total is consumed by the next applyPhaseCorrection(). */
+  if (shared->elsStop.phaseOffsetCommand != 0u) {
+    shared->elsStop.phaseOffsetCommand = 0u;
+    if (shared->elsStop.enable != 0u) {
+      shared->elsStop.phaseOffsetSteps = shared->elsStop.phaseOffsetPending;
+      shared->elsStop.phaseOffsetSeq++;
+    }
+  }
+
   // Detect completion of post-resume backlash takeup move, dwell for the servo
   // to settle, CONFIRM THE CARRIAGE ACTUALLY MOVED, then apply phase correction.
   // takeupPending stays set throughout so sync remains gated and the servo holds
   // at the takeup target.
   if (shared->elsStop.takeupPending) {
     data->elsStopTakeupTicks++;
+    /* Stillness, tracked every tick the take-up is in flight -- including
+     * during the commanded move, so the counter is already meaningful when the
+     * dwell ends. Any change in Z resets it: the test is "has it stopped", and
+     * one count of movement means it has not.
+     *
+     * THIS IS PER-TICK EXACT EQUALITY, AND REPLACING IT IS NOT A FREE CHANGE.
+     * Widening it to a net-displacement window (tolerate N counts of drift
+     * across the window) was attempted on 2026-08-27 and BACKED OUT. It works
+     * -- els_takeup_quiescence_window_test T2 shows it makes the gate immune to
+     * +-1 dither, which exact equality is starved by forever -- but it is
+     * logically incompatible with the invariant els_takeup_quiescence_test
+     * pins at its line 419: "the gate waited at least the quiescence window
+     * after the last pulse". That invariant IS exact equality restated; any
+     * tolerance above zero lets the counter mature while the carriage is still
+     * delivering counts, and at a tolerance of 2 the gate released with 1.17 Z
+     * counts still undelivered -- more than the entire settle tail this gate
+     * was built to catch. Tolerance 1 preserved the physical property (0.83
+     * counts owed) but still broke the timing invariant.
+     *
+     * So the choice is Evan's, not a refactor: keeping the invariant means
+     * living with the dither blind spot; taking the window means deciding that
+     * "N counts of net drift" is the definition of stopped and rewriting that
+     * assertion deliberately. Do not quietly widen this while the assertion
+     * stands. See els_takeup_quiescence_window_test T2, which characterises
+     * TODAY's behaviour and must go red the day this changes.
+     *
+     * COMPILED OUT ENTIRELY when the flag is off, not merely ignored. The
+     * comparison is cheap, but this is the ~100 kHz ISR whose execution time is
+     * itself a published register, and a release build should carry no cost at
+     * all for a feature it does not use. Leaving it in cost 64 bytes of flash
+     * and made the claim "a release build is bit-for-bit the old gate" false,
+     * which is worse than the cycles. */
+#if ELS_REQUIRE_QUIESCENCE
+    {
+      int32_t zQ = shared->scales[shared->elsStop.scaleIndex].position;
+      if (zQ != data->elsStopQuiescentZ) {
+        data->elsStopQuiescentZ     = zQ;
+        data->elsStopQuiescentTicks = 0;
+      } else if (data->elsStopQuiescentTicks < ELS_QUIESCENT_TICKS) {
+        data->elsStopQuiescentTicks++;
+      }
+    }
+#endif
     // Crossing test (not exact equality): the servo emits one step per servoCycle
     // while desiredSteps can advance several steps per tick, so currentSteps may
     // skip the exact target (esp. across the reversal pulse-skip). Treat the
@@ -698,7 +1012,29 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
          * narrows the exposure without closing it — a nudge landing inside the
          * settle horizon of a real pulse is still indistinguishable, and no
          * amount of arithmetic here changes that. */
-        if (elsSlipConfirmed(&data->elsSlip, shared->elsStop.takeupThreshCounts)) {
+        /* QUIESCENCE, and note it is an AND against the existing evidence, never
+         * a replacement: a carriage that is merely stationary has proved
+         * nothing about coupling. Compiled to a constant `true` unless
+         * ELS_REQUIRE_QUIESCENCE is set, so a release build reaches the old
+         * gate's decision by exactly the old path.
+         *
+         * NOT literally bit-for-bit, and the difference is stated rather than
+         * rounded off: the two tracker fields stay in rampsHandler_t either way
+         * -- measured at +16 bytes of flash in the ARM release build -- because
+         * making a struct layout depend on a compile flag is a worse trade than
+         * 16 bytes. Behaviour is unchanged; the binary is slightly larger.
+         *
+         * When it withholds, it does so WITHOUT reporting a refusal:
+         * the take-up may be perfectly good and simply still settling, and the
+         * gate re-evaluates every tick. A carriage that never goes quiet is
+         * caught by the confirm window below, which is the honest failure. */
+#if ELS_REQUIRE_QUIESCENCE
+        bool carriageStopped = (data->elsStopQuiescentTicks >= ELS_QUIESCENT_TICKS);
+#else
+        bool carriageStopped = true;
+#endif
+        if (carriageStopped
+            && elsSlipConfirmed(&data->elsSlip, shared->elsStop.takeupThreshCounts)) {
           if (shared->elsStop.takeupResult != ELS_CAL_OK) {
             shared->elsStop.takeupResult = ELS_CAL_OK;
           }
@@ -715,9 +1051,16 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
           if (data->elsStopCorrectOnConfirm) {
             applyPhaseCorrection(shared);
           }
-        } else if (shared->elsStop.takeupResult != ELS_TAKEUP_ERR_UNCONFIRMED) {
+        } else if (carriageStopped
+                   && shared->elsStop.takeupResult != ELS_TAKEUP_ERR_UNCONFIRMED) {
           /* Report once on the transition, not every tick, so takeupSeq stays a
-           * count of OUTCOMES rather than a tick counter. */
+           * count of OUTCOMES rather than a tick counter.
+           *
+           * Gated on carriageStopped as well: while the carriage is still
+           * moving there is no verdict yet, and announcing UNCONFIRMED then
+           * would put a refusal on the operator's screen for a take-up that is
+           * about to succeed. Silence until the machine has settled enough to
+           * be judged. */
           shared->elsStop.takeupResult = ELS_TAKEUP_ERR_UNCONFIRMED;
           shared->elsStop.takeupSeq++;
         }
@@ -746,6 +1089,29 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
                  + ELS_TAKEUP_CONFIRM_WINDOW_TICKS)) {
             data->elsStopSettleCount++;
           } else {
+            /* AN ABORT MUST NEVER REPORT SUCCESS. takeupResult is set to
+             * ELS_CAL_OK at initiation, and the UNCONFIRMED branch above is
+             * gated on carriageStopped -- so a take-up whose carriage never
+             * went quiet reaches this abort with OK still standing, and the UI
+             * reads an ABORTED pass as a CONFIRMED one. That is the wrong
+             * direction for a safety gate to fail in: the whole point of the
+             * take-up is to prove the drivetrain is coupled before a cut, and
+             * announcing proof that was never obtained is worse than
+             * announcing nothing.
+             *
+             * Only rewrite an untouched OK. UNCONFIRMED and TIMEOUT are real
+             * verdicts already published with their own takeupSeq bump, and
+             * overwriting one would lose the more specific cause.
+             *
+             * LATENT, NOT LIVE: with ELS_REQUIRE_QUIESCENCE off (the default,
+             * and the flag has never shipped on) carriageStopped is a constant
+             * true, the UNCONFIRMED branch always fires first, and this cannot
+             * be reached. It is fixed now so that turning the flag on is not
+             * also the moment this is discovered. */
+            if (shared->elsStop.takeupResult == ELS_CAL_OK) {
+              shared->elsStop.takeupResult = ELS_TAKEUP_ERR_NOT_QUIESCENT;
+              shared->elsStop.takeupSeq++;  /* an outcome, so it gets a seq */
+            }
             data->elsStopTakeupLatched    = 1;
             shared->elsStop.takeupPending = 0;   /* stop holding the machine */
             shared->elsStop.active        = 1;   /* back to stopped-at-shoulder */
@@ -904,7 +1270,42 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
                    && shared->elsStop.threadPitchSteps != 0.0f
                    && shared->elsStop.zCountsPerPitch  != 0.0f
                    && shared->scales[0].syncRatioDen   != 0;
-    if (shared->elsStop.backlashSteps != 0u) {
+    /* REFUSE A TAKE-UP IN JOG MODE, where nothing can ever rescue it.
+     *
+     * stepsToGo is consumed only by updateIndexingPosition, which runs in
+     * servoMode 1. Commanding a take-up in another mode banks the move and
+     * leaves takeupPending set, which gates sync -- the machine sits there
+     * with the spindle turning and nothing happening.
+     *
+     * WHY MODE 2 ONLY, and not the blanket `servoMode != 1` this was first
+     * written as. servoEnableTask auto-promotes the mode to 1 whenever sync
+     * motion is enabled and the stop is not active -- but that promotion
+     * explicitly skips mode 2 (see the anySyncMotionEnabled block). So:
+     *
+     *   mode 2 (JOG): unrescuable. The one thing that would fix it is the one
+     *     thing that refuses to. Fail fast, here.
+     *   mode 0: transient and legitimate. The task runs at ~100 ms while this
+     *     ISR runs at ~100 kHz, so a resume can genuinely land on a tick where
+     *     the mode has not been promoted YET. Refusing here would break normal
+     *     cuts to guard a case that fixes itself within one task tick; the
+     *     ~5 s ELS_TAKEUP_TIMEOUT_TICKS backstop covers the residue where it
+     *     never does.
+     *
+     * The refusal returns the machine to exactly where it was before the
+     * operator pressed Cut -- stopped at the shoulder, reference intact --
+     * which is the same recovery shape the confirmation-failure abort already
+     * uses, and requires nothing of the operator but leaving jog mode.
+     * takeupResult reuses ELS_CAL_ERR_SERVOMODE rather than minting a code:
+     * same physical cause, same sentence, the way ELS_TAKEUP_ERR_UNCONFIRMED
+     * already shares NO_MOTION. */
+    if (shared->elsStop.backlashSteps != 0u
+        && shared->fastData.servoMode == 2u) {
+      shared->elsStop.takeupResult = ELS_CAL_ERR_SERVOMODE;
+      shared->elsStop.takeupSeq++;
+      shared->elsStop.active       = 1;   /* back to stopped-at-shoulder */
+      shared->servo.stepsToGo      = 0;
+      shared->servo.currentSpeed   = 0;
+    } else if (shared->elsStop.backlashSteps != 0u) {
       shared->servo.stepsToGo    = 0;
       shared->servo.currentSpeed = 0;
       data->elsStopSettleCount   = 0;
@@ -931,6 +1332,20 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
       /* Baseline for the Z confirmation gate. Captured at INITIATION, before
        * any pulses are issued, so the gate measures the whole takeup. */
       data->elsStopTakeupZStart      = shared->scales[shared->elsStop.scaleIndex].position;
+      /* Quiescence tracker, reset with the take-up so no count carries over
+       * from the previous one.
+       *
+       * NOT LOAD-BEARING, and said plainly because the comment here first
+       * claimed otherwise: pre-seeding the counter to a fully-satisfied value
+       * instead was mutation-tested and changed NOTHING (Q5). Any take-up that
+       * actually moves the carriage resets the counter on its first tick of
+       * motion, and one that moves the carriage nowhere is refused by
+       * elsSlipConfirmed regardless of what this counter says. It is hygiene,
+       * not a guard -- do not build a safety argument on it. */
+#if ELS_REQUIRE_QUIESCENCE
+      data->elsStopQuiescentZ        = data->elsStopTakeupZStart;
+      data->elsStopQuiescentTicks    = 0;
+#endif
       /* Same instant, same reason, for the attribution accumulator: it must
        * cover the whole take-up. It starts credited with nothing and stays
        * that way until the first pulse fires (els_slip.h), so the Z motion of
@@ -988,16 +1403,25 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
 
     if (change > 0) {
       direction = 1;
-      HAL_GPIO_WritePin(DIR_GPIO_PORT, DIR_PIN, shared->servo.servoDir == 1 ? GPIO_PIN_SET : GPIO_PIN_RESET);
+      /* set when servoDir == 1, clear otherwise -- same truth table as the
+       * ternary this replaced, written out rather than inverted. */
+      ELS_PIN_WRITE(DIR_GPIO_PORT, DIR_PIN, shared->servo.servoDir == 1);
     }
     if (change < 0) {
-      HAL_GPIO_WritePin(DIR_GPIO_PORT, DIR_PIN, shared->servo.servoDir == 1 ? GPIO_PIN_RESET : GPIO_PIN_SET);
+      /* The OPPOSITE polarity of the change > 0 branch above: clear when
+       * servoDir == 1, set otherwise. */
+      ELS_PIN_WRITE(DIR_GPIO_PORT, DIR_PIN, shared->servo.servoDir != 1);
       direction = -1;
     }
 
     if (direction == data->servoPreviousDirection && change != 0) {
-      HAL_GPIO_WritePin(STEP_GPIO_PORT, STEP_PIN, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(SPARE_2_GPIO_PORT, SPARE_2_PIN, GPIO_PIN_SET);
+      ELS_PIN_WRITE(STEP_GPIO_PORT, STEP_PIN, 1);
+      ELS_PIN_WRITE(SPARE_2_GPIO_PORT, SPARE_2_PIN, 1);
+      /* Pulse born here; its width is measured at the next entry's reset.
+       * Fresh DWT read, not `start`: the whole point is how late in the tick
+       * this set happened. */
+      data->stepPulseSetAt = DWT->CYCCNT;
+      data->stepPulseArmed = 1;
       shared->servo.currentSteps += direction;
 #ifdef EMULATOR_BUILD
       if (emu_step6_active) {
@@ -1114,6 +1538,11 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
 #endif
 
   shared->executionCycles = DWT->CYCCNT - start;
+  /* Peak-hold. Three instructions, and the only reason the cut-start spike is
+   * visible at all -- see the executionCyclesPeak comment in Ramps.h. */
+  if (shared->executionCycles > shared->elsStop.executionCyclesPeak) {
+    shared->elsStop.executionCyclesPeak = shared->executionCycles;
+  }
 }
 
 _Noreturn void userLedTask(__attribute__((unused)) void *argument) {
@@ -1146,6 +1575,11 @@ _Noreturn void updateSpeedTask(void *argument) {
 
     // Update the current speed
     osDelay(updateSpeedTaskTicks);
+
+    /* Keep the spindle period current. Off the ISR deliberately: the
+     * computation is double-precision and there is no FP64 hardware on this
+     * core. Cheap when the geometry has not moved, which is almost always. */
+    elsRefreshSpindlePeriod(&rampsData->shared);
 
     // Update fast access variables
     rampsData->shared.fastData.cycles = rampsData->shared.executionCycles;
@@ -1215,6 +1649,18 @@ _Noreturn void servoEnableTask(void *argument) {
 
     rampsData->shared.fastData.servoSpeed = (float)(int32_t)(rampsData->shared.servo.currentSteps - previousPosition) * 10;
     previousPosition = rampsData->shared.servo.currentSteps;
+
+    /* THE MACHINE MODE, published unconditionally -- release builds included.
+     *
+     * Derived here rather than in the ISR because it is a ~100 ms question
+     * about what the machine is doing, and the ISR has no business spending
+     * cycles on it. Written before the probe hook below so a mode-watch probe
+     * and this register can never disagree about the same tick.
+     *
+     * This used to happen ONLY inside that probe. See the machineMode comment
+     * in Ramps.h for why that made the rung-2 census uncollectable in any
+     * build the operator would actually cut with. */
+    elsPublishMachineMode(shared, (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
 
     /* Probe hook: a mode-watch probe derives and publishes the machine mode
      * once per task tick. No code in a release build or any other probe.

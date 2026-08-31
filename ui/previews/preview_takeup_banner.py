@@ -53,6 +53,8 @@ IDLE_TICKS = 8
 # the strip's height, which is the whole subject here.
 WARNING = ELS_TAKEUP_MESSAGES[ELS_TAKEUP_ERR_UNCONFIRMED]
 
+FAILED = []
+
 app = MainApp()
 
 # Widgets worth printing. The point is the ELS bar and anything that could be
@@ -116,12 +118,17 @@ def _shot(name):
 def _capture(_dt):
     """Both operator modes, warning off and on.
 
-    THE MODE MATTERS AND ASSUMING IT DID NOT COST A WRONG DIAGNOSIS. The
-    advanced bar's control row is `size_hint_y: 1.0` in stop-only and `0.8`
-    (with a 0.2 wizard strip) in wizard mode, so the two modes divide the bar's
-    height by different arithmetic. A fresh config comes up in WIZARD mode; the
-    machine is run in STOP-ONLY, which is where the banner was reported landing
-    on top of the spindle DRO row. Render both or measure the wrong screen.
+    THE MODE MATTERS AND ASSUMING IT DID NOT COST A WRONG DIAGNOSIS. A fresh
+    config comes up in WIZARD mode; the machine is run in STOP-ONLY, which is
+    where the banner was reported landing on top of the spindle DRO row.
+    Render both or measure the wrong screen.
+
+    The two modes used to divide the bar's height by different arithmetic
+    (control row `size_hint_y: 1.0` in stop-only, `0.8` plus a 0.2 wizard
+    strip in wizard), which is what made them tellable apart in the geometry
+    dump. THAT IS NO LONGER TRUE: since the 2026-08-29 gutter redesign the bar
+    is 128 px in both, the dump prints identical numbers for the two states,
+    and the mode has to be asserted rather than read off. See `show()`.
     """
     bar = _find(lambda w: type(w).__name__ == "ElsAdvancedBar")
 
@@ -129,7 +136,20 @@ def _capture(_dt):
         for _ in range(n):
             EventLoop.idle()
 
-    def show(tag):
+    def show(tag, wizard):
+        """Both warning states of one bar mode, with the mode DEMANDED.
+
+        `wizard` is not decoration: the mode is asserted here, at the moment
+        of capture, because the 2026-08-29 gutter redesign left the bar the
+        same height in both modes and the geometry dump can therefore no
+        longer tell them apart. Until 2026-08-30 the 'stoponly-fresh' pair
+        was silently captured in wizard mode; nothing in the dump said so.
+        """
+        assert bar is not None, f"no ElsAdvancedBar to capture {tag!r} against"
+        assert bar.enable_wizard is wizard, (
+            f"{tag}: bar is in {'wizard' if bar.enable_wizard else 'stop-only'} "
+            f"mode but this shot is captured as "
+            f"{'wizard' if wizard else 'stop-only'}")
         app.els_uic.takeup_warning = ""
         settle()
         _dump(f"{tag} / WARNING OFF")
@@ -140,40 +160,44 @@ def _capture(_dt):
         _shot(f"{tag}_on")
 
     try:
-        # _arm already set stop-only BEFORE the first layout, so this is the
-        # boot state of a machine whose saved config is stop-only.
-        show("stoponly-fresh")
+        # _stoponly() set and ASSERTED stop-only before this ran, so this is
+        # the boot state of a machine whose saved config is stop-only.
+        show("stoponly-fresh", wizard=False)
 
         # Into wizard and back out. This is the path an operator takes with the
         # wizard toggle, and it is the difference between "stop-only is broken"
         # and "leaving wizard mode is broken" -- which are different fixes.
-        if bar is not None:
-            bar.enable_wizard = True
+        bar.enable_wizard = True
         settle()
-        show("wizard")
+        show("wizard", wizard=True)
 
-        if bar is not None:
-            bar.enable_wizard = False
+        bar.enable_wizard = False
         settle()
-        show("stoponly-toggled")
+        show("stoponly-toggled", wizard=False)
 
-        # DISCRIMINATOR. Is the wizard strip's stale 26px simply a layout that
-        # never re-ran, or does size_hint_y == 0 genuinely leave the height
-        # alone? Force the layout and look again: if the strip drops to 0 the
-        # bug is a missed relayout on mode change; if it stays 26 the mixed
-        # fixed/proportional children are the cause and no relayout can save
-        # them. Different fixes, so this is worth one more render.
-        if bar is not None:
-            bar.do_layout()
-            settle()
-            fl = [c for c in bar.children if type(c).__name__ == "FloatLayout"]
-            print(f"\n>>> AFTER FORCED do_layout(): wizard strip shy="
-                  f"{fl[0].size_hint_y if fl else '?'} height="
-                  f"{round(fl[0].height) if fl else '?'}")
-        show("stoponly-relaid")
-    except Exception:
+        # THE ORIGINAL DISCRIMINATOR IS GONE, AND SAYING SO IS THE POINT.
+        # It asked whether the wizard strip's stale 26 px was a missed relayout
+        # or mixed fixed/proportional children, by reading the size_hint_y of
+        # "the FloatLayout child" after a forced do_layout(). The 2026-08-29
+        # gutter redesign removed that strip; the only FloatLayout child left is
+        # `bar_float`, the bar's own full-height container, so the line printed
+        # "wizard strip shy=1 height=128" -- a confident answer about a widget
+        # that does not exist. Retired 2026-08-30 rather than left to mislead.
+        #
+        # The relaid pair still earns its place: it is the one that would catch
+        # a mode change that needs a forced layout to land.
+        bar.do_layout()
+        settle()
+        print(f"\n>>> AFTER FORCED do_layout(): bar h={round(bar.height)} "
+              f"natural_height={bar.natural_height} "
+              f"(no separate wizard strip since 2026-08-29 -- the bar is the "
+              f"same height in both modes, which is why `show()` asserts the "
+              f"mode instead of inferring it from geometry)")
+        show("stoponly-relaid", wizard=False)
+    except Exception as exc:
         import traceback
         traceback.print_exc()
+        FAILED.append(exc)
     app.stop()
 
 
@@ -189,15 +213,59 @@ def _arm(_dt):
     app.set_mode(MODE_ELS)
     home = app.manager.get_screen("home")
     home.els_bar.enable_advanced = True
-    # Stop-only BEFORE the first layout pass: a fresh config defaults to wizard,
-    # and the machine is run in stop-only. Setting it later would measure a
-    # toggled bar, which is a different state (see _capture).
-    adv = _find(lambda w: type(w).__name__ == "ElsAdvancedBar")
-    if adv is not None:
+
+    def _stoponly(_d):
+        """Stop-only, AFTER the mode swap has mounted the bar.
+
+        FIXED 2026-08-30. This ran inline in _arm(), immediately after
+        set_mode() -- but HomePage.change_mode defers the mode swap through
+        Clock, so ElsAdvancedBar was not in the tree yet, `_find` returned
+        None, and the `if adv is not None:` guard swallowed it. The
+        `stoponly-fresh` pair was therefore captured in WIZARD mode, the
+        state a fresh config boots into, while the dump above it and the
+        filename both said stop-only. It was invisible because the
+        2026-08-29 gutter redesign made the bar the same HEIGHT in both
+        modes, so the geometry dump -- the only thing anyone read -- prints
+        identical numbers for the two states it is meant to tell apart.
+        Caught by the transparent-pixel count of the exported PNGs being
+        equal to the wizard shots' and unequal to stop-only's.
+
+        preview_phase_offset.py and preview_status_notice.py already defer
+        this and say so in a comment ("setting it in _arm silently does
+        nothing"); so did preview_banner_placements.py before it was deleted
+        on 2026-08-30. This one was the last holdout.
+
+        THE ASSERT IS THE POINT. A guard that skips silently is how this
+        survived, so the mode is now demanded rather than requested: if the
+        bar is not there, or the flag does not take, the run dies instead of
+        writing four confidently mislabelled pictures.
+        """
+        adv = _find(lambda w: type(w).__name__ == "ElsAdvancedBar")
+        assert adv is not None, (
+            "ElsAdvancedBar is not mounted yet -- every shot below would be "
+            "captured in whatever mode a fresh config booted into, not the "
+            "one in its filename. Raise the delay.")
         adv.enable_wizard = False
         adv.enable_retract = False
-    Clock.schedule_once(_capture, 1.5)
+        assert adv.enable_wizard is False and adv.enable_retract is False, (
+            f"stop-only did not take (enable_wizard={adv.enable_wizard!r}, "
+            f"enable_retract={adv.enable_retract!r}) -- the 'stoponly-fresh' "
+            f"shots would be a picture of some other mode.")
+        Clock.schedule_once(_capture, 1.0)
+
+    Clock.schedule_once(_stoponly, 1.5)
 
 
 Clock.schedule_once(_arm, 2.0)
 app.run()
+
+
+# A HARNESS THAT WRITES FILES AND EXITS 0 IS NOT EVIDENCE IT WORKED.
+# The try/except above exists so Kivy's clock cannot swallow the traceback --
+# it must not also swallow the exit code. Added 2026-08-30, after a sibling
+# preview wrote 2 of its 5 shots and still reported rc=0: the same shape that
+# let preview_walkthrough_shots.py abandon a whole section unnoticed for a
+# week. (That sibling, preview_banner_placements.py, was deleted the same day
+# -- it rendered proposals for a banner the status gutter made impossible.)
+if FAILED:
+    raise SystemExit(f"{__file__}: capture failed: {FAILED[0]!r}")

@@ -51,6 +51,42 @@ int main() {
 
     rampsSharedData_t s;
 
+    /* THE REGISTER, not just the derivation. elsDeriveMachineMode being right
+     * is worth nothing if the value never reaches the wire: until 2026-08-22
+     * the mode existed only inside a diagnostic probe, so the rung-2 census was
+     * uncollectable in any build the machine actually ran. elsPublishMachineMode
+     * is the one place that writes it, and this pins that it does.
+     *
+     * NOT COVERED HERE, and declared rather than implied: whether the CALL SITE
+     * in servoEnableTask actually runs. The emulator does not execute the
+     * FreeRTOS tasks (it mirrors this call in its own ISR thread instead), so
+     * no automated test reaches that line. It is verified by reading
+     * elsStop.machineMode off the real machine after a flash. */
+    {
+        std::memset(&s, 0, sizeof(s));
+        s.elsStop.machineMode = 0xBEEF;          /* poison, so a no-op write shows */
+        elsPublishMachineMode(&s, 0);
+        bool ok = (s.elsStop.machineMode == ELS_MMODE_OFF);
+        printf("[%s] publish writes the register (all-zero state -> OFF)\n", ok ? "PASS" : "FAIL");
+        if (!ok) failures++;
+
+        std::memset(&s, 0, sizeof(s));
+        s.fastData.servoMode = 2;                /* JOG */
+        s.elsStop.machineMode = 0xBEEF;
+        elsPublishMachineMode(&s, 0);
+        ok = (s.elsStop.machineMode == ELS_MMODE_JOG);
+        printf("[%s] publish tracks a state change (servoMode 2 -> JOG)\n", ok ? "PASS" : "FAIL");
+        if (!ok) failures++;
+
+        std::memset(&s, 0, sizeof(s));
+        s.fastData.servoMode = 1;
+        s.elsStop.machineMode = 0xBEEF;
+        elsPublishMachineMode(&s, 1);            /* calibration owns the servo */
+        ok = (s.elsStop.machineMode == ELS_MMODE_CAL);
+        printf("[%s] publish honours calRunning (-> CAL)\n", ok ? "PASS" : "FAIL");
+        if (!ok) failures++;
+    }
+
     /* Boot: everything zero. */
     std::memset(&s, 0, sizeof(s));
     expect(&s, 0, ELS_MMODE_OFF, "all-zero boot state is OFF");

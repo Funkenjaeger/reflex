@@ -20,6 +20,23 @@ add_definitions(
     -DSTM32F411xE
     -DUSE_HAL_DRIVER
     -DEMULATOR_BUILD
+
+    # PIN THE TICK RATE THE TIMING CONSTANTS DERIVE FROM, to the rate hardware
+    # ran at before 2026-08-28. This is preserving existing behaviour, not
+    # endorsing it -- read the banner in Core/Inc/els_isr_rate.h.
+    #
+    # The emulator's ISR thread actually runs at 10 kHz (config/lathe.toml,
+    # isr_rate_hz), 10x slower than hardware ever did, so a tick constant has
+    # ALWAYS meant a different wall-clock duration here than on the machine:
+    # ELS_SLIP_SETTLE_TICKS = 700 was 7 ms on hardware and 70 ms here. Every
+    # timing test in this suite was written against those 70 ms.
+    #
+    # Pinning 100000 reproduces exactly the tick values those tests expect, so
+    # the hardware rate change lands WITHOUT silently re-tuning them. Declaring
+    # 10000 instead -- making the emulator model the same DURATIONS as the
+    # machine -- is the right end state and is its own change, with its own
+    # test fallout. Do it deliberately.
+    -DELS_ISR_TICK_HZ=100000
 )
 
 # Compiler warnings
@@ -78,12 +95,28 @@ add_executable(els_phase_test ${CMAKE_SOURCE_DIR}/test/els_phase_test.cpp)
 target_link_libraries(els_phase_test m)
 add_test(NAME els_phase_test COMMAND els_phase_test)
 
+# The libm-free phase math must be the same math -- see the file header.
+add_executable(els_phase_libm_equiv_test ${CMAKE_SOURCE_DIR}/test/els_phase_libm_equiv_test.cpp)
+target_link_libraries(els_phase_libm_equiv_test m)
+add_test(NAME els_phase_libm_equiv_test COMMAND els_phase_libm_equiv_test)
+
 # Phase-offset primitive: the offsetSteps term's inheritance of the fold and
 # the forward-bias, pinned at the boundaries (one pitch aliases to a no-op,
 # a negative offset forward-biases to pitch-|offset|). Header-only, like above.
 add_executable(els_phase_offset_test ${CMAKE_SOURCE_DIR}/test/els_phase_offset_test.cpp)
 target_link_libraries(els_phase_offset_test m)
 add_test(NAME els_phase_offset_test COMMAND els_phase_offset_test)
+
+# The deltaSpindle mod-PPR reduction (elsReduceDeltaSpindle, 2026-08-27).
+# An equivalence SWEEP, not a permutation test: it compares the shipped float32
+# path and the pre-patch float32 path against the same formula in double, over
+# 20,000 revolutions of deltaSpindle, both stopDirection polarities, at a pitch
+# that is inexact in float32 (18 TPI) and one that is exact (4 TPI). The 4 TPI
+# leg is the control that pins the surviving residual on the rounded
+# threadPitchSteps register rather than on the reduction. Header-only.
+add_executable(els_phase_reduce_test ${CMAKE_SOURCE_DIR}/test/els_phase_reduce_test.cpp)
+target_link_libraries(els_phase_reduce_test m)
+add_test(NAME els_phase_reduce_test COMMAND els_phase_reduce_test)
 
 # Backlash calibration / take-up confirmation: exercises the pure decision layer
 # in Core/Inc/els_backlash_cal.h against a simulated drivetrain with lash.
@@ -102,6 +135,25 @@ add_executable(els_slip_test ${CMAKE_SOURCE_DIR}/test/els_slip_test.cpp)
 target_include_directories(els_slip_test PRIVATE ${CMAKE_SOURCE_DIR}/../Core/Inc)
 target_link_libraries(els_slip_test m)
 add_test(NAME els_slip_test COMMAND els_slip_test)
+
+# The COMMISSIONING of ELS_SLIP_SETTLE_TICKS: els_slip_test proves the horizon
+# mechanism, this proves the VALUE against elspi's 2026-08-27 capture set.
+add_executable(els_slip_horizon_commission_test
+    ${CMAKE_SOURCE_DIR}/test/els_slip_horizon_commission_test.cpp)
+target_include_directories(els_slip_horizon_commission_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/../Core/Inc)
+target_link_libraries(els_slip_horizon_commission_test m)
+add_test(NAME els_slip_horizon_commission_test
+    COMMAND els_slip_horizon_commission_test)
+
+# The tick constants are durations: truncation, ordering invariants, and the
+# proof that expressing them through els_isr_rate.h changed no value at the old
+# 100 kHz rate. Header-only, like the commission test above.
+add_executable(els_isr_rate_test
+    ${CMAKE_SOURCE_DIR}/test/els_isr_rate_test.cpp)
+target_include_directories(els_isr_rate_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/../Core/Inc)
+add_test(NAME els_isr_rate_test COMMAND els_isr_rate_test)
 
 # Half-nut engagement physics tests: exercise LathePhysics directly. Links
 # physics.cpp + config.cpp (EmuConfig ctor); the test file stubs the shim
@@ -259,6 +311,17 @@ target_link_libraries(els_diag_scratch_takeup_settle_v3_test m pthread)
 add_test(NAME els_diag_scratch_takeup_settle_v3_test
     COMMAND els_diag_scratch_takeup_settle_v3_test)
 
+# The stop-overshoot probe, driven through its entry points at tick
+# granularity. Header-only against Ramps.h -- it does not link Ramps.c, because
+# what is under test is the probe's arithmetic, not the ISR that feeds it.
+add_executable(els_diag_stop_overshoot_test
+    ${CMAKE_SOURCE_DIR}/test/els_diag_stop_overshoot_test.cpp)
+target_compile_definitions(els_diag_stop_overshoot_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_STOP_OVERSHOOT)
+target_link_libraries(els_diag_stop_overshoot_test m)
+add_test(NAME els_diag_stop_overshoot_test
+    COMMAND els_diag_stop_overshoot_test)
+
 add_executable(els_diag_scratch_disengage_latch_test
     ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)
@@ -296,3 +359,122 @@ add_executable(els_machine_mode_test
     ${CMAKE_SOURCE_DIR}/test/els_machine_mode_test.cpp)
 target_link_libraries(els_machine_mode_test m)
 add_test(NAME els_machine_mode_test COMMAND els_machine_mode_test)
+
+# Manual reference latch (interactive re-sync to an existing thread). Same stub
+# strategy as the relatch test: links the real Ramps.c, stubs every external.
+# Covers the latchCommand/latchSeq command/ack contract: atomic consume,
+# auto-latch suppression via referenceLatched, refusal (no ack) outside a job,
+# and the resume path measuring from the manual datum.
+add_executable(els_manual_latch_test
+    ${CMAKE_SOURCE_DIR}/test/els_manual_latch_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_manual_latch_test m pthread)
+add_test(NAME els_manual_latch_test COMMAND els_manual_latch_test)
+
+# Carriage settle model (physics.cpp). Proves the settle tail added 2026-08-22
+# is OBSERVABLE -- that a test can tell it from the instantaneous behaviour it
+# replaced -- and that its time constant is a real knob. Same link shape as
+# els_halfnut_test: physics.cpp + config.cpp with the shim externals stubbed in
+# the test file, no HAL and no firmware sources. A settle model no test could
+# detect would be worse than none, because it would look like the ELS_SLIP_
+# SETTLE_TICKS todo item was done.
+add_executable(els_carriage_settle_test
+    ${CMAKE_SOURCE_DIR}/test/els_carriage_settle_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/physics.cpp
+    ${CMAKE_SOURCE_DIR}/src/config.cpp)
+target_link_libraries(els_carriage_settle_test m)
+add_test(NAME els_carriage_settle_test COMMAND els_carriage_settle_test)
+
+# CHARACTERIZATION of a KNOWN DEFECT: the take-up confirmation gate asks "did
+# the carriage move far enough?" and never "has it stopped?", so a settle tail
+# longer than ELS_SETTLE_TICKS (50) sees the cut released while the carriage is
+# still moving. Assertions pin TODAY's behaviour on purpose -- fixing the gate
+# must turn this target red. Only emulator target that links the real Ramps.c
+# ISR AND the production physics.cpp together, which is what lets the firmware
+# gate see the real settle model rather than a second copy of it in a fixture.
+add_executable(els_takeup_settle_gate_test
+    ${CMAKE_SOURCE_DIR}/test/els_takeup_settle_gate_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/physics.cpp
+    ${CMAKE_SOURCE_DIR}/src/config.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_takeup_settle_gate_test m pthread)
+add_test(NAME els_takeup_settle_gate_test COMMAND els_takeup_settle_gate_test)
+
+# Same rig as els_takeup_settle_gate_test, with the quiescence input COMPILED IN.
+# The pair is only meaningful because they share a fixture: the flag is the one
+# thing that differs between them.
+add_executable(els_takeup_quiescence_test
+    ${CMAKE_SOURCE_DIR}/test/els_takeup_quiescence_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/physics.cpp
+    ${CMAKE_SOURCE_DIR}/src/config.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_compile_definitions(els_takeup_quiescence_test PRIVATE ELS_REQUIRE_QUIESCENCE=1)
+target_link_libraries(els_takeup_quiescence_test m pthread)
+add_test(NAME els_takeup_quiescence_test COMMAND els_takeup_quiescence_test)
+
+# The take-up ABORT VERDICT, and a characterisation of the per-tick quiescence
+# test's blind spot (2026-08-27). Also ELS_REQUIRE_QUIESCENCE=1, but on
+# els_takeup_confirm_test's Lash fixture rather than physics.cpp: these cases
+# need carriage motion the servo did NOT command (dither, creep,
+# never-settling), which a driven physics model cannot express.
+#
+# T1 is a FIX: an abort used to report ELS_CAL_OK because the UNCONFIRMED
+# branch is gated on carriageStopped. T2 is a CHARACTERISATION of a limitation
+# deliberately left in place -- replacing exact equality with a net-displacement
+# window contradicts the >=200-ticks-since-last-pulse invariant
+# els_takeup_quiescence_test:419 pins, so it is Evan's decision, and T2 must go
+# red the day it is taken. See the file header for the measurements.
+add_executable(els_takeup_quiescence_window_test
+    ${CMAKE_SOURCE_DIR}/test/els_takeup_quiescence_window_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_compile_definitions(els_takeup_quiescence_window_test PRIVATE ELS_REQUIRE_QUIESCENCE=1)
+target_link_libraries(els_takeup_quiescence_window_test m pthread)
+add_test(NAME els_takeup_quiescence_window_test COMMAND els_takeup_quiescence_window_test)
+
+add_executable(els_phase_offset_command_test
+    ${CMAKE_SOURCE_DIR}/test/els_phase_offset_command_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_phase_offset_command_test m pthread)
+add_test(NAME els_phase_offset_command_test COMMAND els_phase_offset_command_test)
+
+add_executable(els_takeup_jog_guard_test
+    ${CMAKE_SOURCE_DIR}/test/els_takeup_jog_guard_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_takeup_jog_guard_test m pthread)
+add_test(NAME els_takeup_jog_guard_test COMMAND els_takeup_jog_guard_test)
+
+add_executable(els_isr_peak_test
+    ${CMAKE_SOURCE_DIR}/test/els_isr_peak_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_isr_peak_test m pthread)
+add_test(NAME els_isr_peak_test COMMAND els_isr_peak_test)
+
+add_executable(els_resync_powered_test
+    ${CMAKE_SOURCE_DIR}/test/els_resync_powered_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+add_test(NAME els_resync_powered_test COMMAND els_resync_powered_test)
+
+add_executable(els_step_pulse_width_test
+    ${CMAKE_SOURCE_DIR}/test/els_step_pulse_width_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+add_test(NAME els_step_pulse_width_test COMMAND els_step_pulse_width_test)
+target_link_libraries(els_step_pulse_width_test m pthread)
+target_link_libraries(els_resync_powered_test m pthread)

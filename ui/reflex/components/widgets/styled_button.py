@@ -36,13 +36,18 @@ class StyledButton(BeepMixin, ButtonBehavior, FloatLayout):
     margin_x = NumericProperty(0)
     margin_y = NumericProperty(0)
 
+    # Label colour while disabled. Its own property rather than an opacity,
+    # because dimming the whole widget collapses the label into the fill --
+    # see the note in styled_button.kv.
+    disabled_text_color = ColorProperty([0.4, 0.44, 0.48, 1])
+
     # When True, render the cyan accent / glow style instead of the slate style.
     is_highlighted = BooleanProperty(False)
 
     # When True, the button is fully hidden (opacity 0). Use this -- not an
     # instance-level ``opacity:`` rule -- to collapse a StyledButton, because the
     # class kv already binds ``opacity`` to ``disabled``. A second ``opacity:``
-    # binding would fight that one, and the disabled-dim (0.4) can win, leaving a
+    # binding would fight that one, and the disabled-dim can win, leaving a
     # faint zero-width ghost of the label. Folding both into one expression keeps
     # a single opacity binding.
     hidden = BooleanProperty(False)

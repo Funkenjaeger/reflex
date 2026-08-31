@@ -85,29 +85,24 @@ uv run pytest
 
 ### Raspberry Pi & OSPI
 
-* Install an SD card image from the [OSPI project](https://github.com/bartei/ospi)
-* OSPI ships with RCP pre-installed in `/root/rotary-controller-python/`. Reflex UI **must** be manually installed to replace it:
+Deploying to the Pi at the machine — from a blank SD card through firmware —
+is documented as a single procedure in the user guide:
 
-  ```bash
-  # Stop the existing RCP service
-  sudo systemctl stop rotary-controller
+**[Installing on a Pi](https://funkenjaeger.github.io/reflex/setup/installing/)**
 
-  # Clone the reflex monorepo
-  cd /root
-  git clone https://github.com/Funkenjaeger/reflex.git
-  cd reflex/ui
-  uv sync
+In short: write an SD image from the [OSPI project](https://github.com/bartei/ospi),
+clone this repo to `/home/default/projects/reflex`, `uv sync` in `ui/`, then
+install `deploy/reflex-ui.service` and swap the boot application from upstream's
+`rcp.service` to `reflex-ui.service`. The unit and launch wrapper ship in
+[`deploy/`](deploy/) — do not hand-write them.
 
-  # Update the systemd service unit to point to the new path and module
-  ```
+```bash
+journalctl -u reflex-ui.service -b     # application log
+tail -n +1 /var/log/kivy*              # Kivy log
+```
 
-* View logs:
-
-  ```bash
-  journalctl -u reflex
-  journalctl -xeu reflex
-  tail -n +1 /var/log/kivy*
-  ```
+For deploying *uncommitted* work from a dev machine — push-to-deploy over SSH,
+rsync, iterating on a branch — see [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md).
 
 ---
 

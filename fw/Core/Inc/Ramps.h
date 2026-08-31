@@ -68,6 +68,7 @@
 #define ELS_DIAG_SCHEMA_MODE_WATCH 4        /* RETIRED -- see v2 */
 #define ELS_DIAG_SCHEMA_MODE_WATCH_V2 5
 #define ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3 6
+#define ELS_DIAG_SCHEMA_STOP_OVERSHOOT 7   /* what the carriage does AFTER the stop fires */
 
 /* WHICH probe is compiled in, selected by the build as
  * -DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_<NAME>. scripts/build.sh --diag=<name> is the
@@ -109,6 +110,8 @@
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_MODE_WATCH_V2
 /* recognised */
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
+/* recognised */
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_STOP_OVERSHOOT
 /* recognised */
 #else
 #error "unknown ELS_DIAG_PROBE. Register the schema id in Ramps.h and add it to this chain; see DIAG.md."
@@ -201,6 +204,13 @@ typedef struct {
    * Core/Inc/els_backlash_cal.h — read that before changing anything here. */
   uint16_t protocolVersion;       // READ-ONLY (firmware-owned): register-layout version, starts at 1. Bump whenever this struct changes; reflex-ui checks it at connect so a map mismatch names itself instead of surfacing as garbled reads
   uint16_t calCommand;            // bidirectional: SW writes 1 to request a calibration run; FIRMWARE CLEARS IT on consume. This is the atomic hand-off. SW must NOT poll it for completion — it clears the instant the ISR picks it up, long before the run finishes. Edge-detect calSeq instead
+  // ORDERING INVARIANT (do not reorder these fields): calSeq must sit at a LOWER address than
+  // calResult/calMeasured. Modbus FC3 copies the block one register at a time in ascending address
+  // order and the 100 kHz ISR can land between any two -- seq-first makes a torn read come out as
+  // (stale seq, new payload), which edge-detection harmlessly re-reads, instead of (new seq, stale
+  // payload), which a host acts on. That inverted shape was the 2026-08-22 takeupSeq/takeupResult
+  // bug on elspi (fixed host-side in 947ef4b); this field order is what makes it structurally
+  // impossible for the calibration trio. Same rule for diagSeq below.
   uint16_t calSeq;                // READ-ONLY (firmware-owned): increments once per finished run, success OR failure. Monotonic, so a host polling at Modbus rates cannot alias a fast run
   uint16_t calResult;             // READ-ONLY (firmware-owned): outcome of the run counted by calSeq. ELS_CAL_* in els_backlash_cal.h; 0 = OK
   uint16_t takeupResult;          // READ-ONLY (firmware-owned): outcome of the last take-up. ELS_CAL_*/ELS_TAKEUP_* in els_backlash_cal.h; 0 = OK. Replaces a binary fault flag so "carriage never moved" and "never reached target" stay distinguishable
@@ -239,7 +249,7 @@ typedef struct {
    * production build. reflex-ui reads this only when a diagnostic view is open.
    */
   uint16_t diagSchema;         // READ-ONLY (firmware-owned): identifies the probe compiled into the block. 0 = none; do NOT interpret anything below it. Never assume a schema you did not read
-  uint16_t diagSeq;            // READ-ONLY (firmware-owned): increments once per COMPLETED capture. Edge-detect this; there is deliberately no "capture in progress" register to poll
+  uint16_t diagSeq;            // READ-ONLY (firmware-owned): increments once per COMPLETED capture. Edge-detect this; there is deliberately no "capture in progress" register to poll. ORDERING INVARIANT: must stay at a LOWER address than the capture payload it counts -- see the calSeq comment above for why a reorder reintroduces the torn-read bug
   uint16_t diagBucketTicks;    // READ-ONLY (firmware-owned): ISR ticks summed into each diagTrace bucket. PUBLISHED so the host never has to assume the ISR rate — the repo has disagreed with itself about that rate by 10x
   uint16_t diagBucketCount;    // READ-ONLY (firmware-owned): populated diagTrace entries, for the same reason
   int32_t  diagSettleTicks;    // READ-ONLY (firmware-owned): ticks from capture start to the LAST tick that saw nonzero dZ. THE measurement ELS_SLIP_SETTLE_TICKS is a guess at — meaningful in v2, where the capture stops before the pass starts
@@ -248,7 +258,172 @@ typedef struct {
   uint16_t diagCaptureTicks;   // READ-ONLY (firmware-owned): ticks the capture actually ran, i.e. how long the servo stayed silent after the take-up. Distinct from diagSettleTicks, which is when Z last MOVED
   uint16_t diagEndReason;      // READ-ONLY (firmware-owned): ELS_DIAG_END_*. A window-full capture did not finish measuring; treat its tail as a floor, not a result
   uint16_t diagReserved[4];    // pads the block to a fixed 128 bytes so its size never depends on which probe is in it
+
+  /* --- MACHINE MODE. PERMANENT, and deliberately NOT in the scratchpad above.
+   *
+   * The firmware's own answer to "what is this machine doing right now",
+   * derived once per servoEnableTask iteration (~100 ms) by
+   * elsDeriveMachineMode() and published here in EVERY build, release
+   * included. Values are ELS_MMODE_* in els_machine_mode.h; reflex-ui mirrors
+   * them and the register-map contract test pins both.
+   *
+   * WHY IT MOVED HERE (2026-08-22). It used to exist only while a mode-watch
+   * probe was flashed, which republished it into diagCaptureTicks. Probes are
+   * one-at-a-time by construction, so flashing any other probe silently chose
+   * to collect no rung-2 census -- and the census is what rungs 3 and 4 are
+   * blocked on. Two consecutive lathe sessions on 2026-08-21/22 ran
+   * takeup-settle probes and recorded zero mode data, while the operator was
+   * cutting real passes and had no way to know. A machine property that only
+   * exists in a diagnostic build is a property nobody can rely on.
+   *
+   * APPENDED AFTER the diagnostic block on purpose: the block's whole value is
+   * a stable offset, so nothing is inserted ahead of it. This is a real
+   * register-map change and it bumps protocolVersion. */
+  uint16_t machineMode;        // READ-ONLY (firmware-owned): ELS_MMODE_* (els_machine_mode.h), republished every servoEnableTask tick in every build
+  /* EXPLICIT pad, not decoration. elsStop_t is 4-aligned (it holds int32/float),
+   * so a lone trailing uint16 makes the compiler add two bytes of IMPLICIT
+   * padding -- and this struct is cast wholesale into uint16 Modbus holding
+   * registers (RampsModbusData.u16regsize = sizeof(shared)/sizeof(uint16_t)),
+   * which turns invisible padding into a phantom register nobody declared and
+   * reflex-ui cannot mirror. Naming it keeps both sides computing the same
+   * size, which is exactly what the contract test caught here: firmware 436,
+   * mirror 434. Same reason diagReserved[4] exists.
+   *
+   * KEPT even though the re-sync pair below now happens to restore alignment
+   * on its own: this block must not depend on what follows it. Delete the pad
+   * and the padding comes back the moment anything after it is removed. */
+  uint16_t machineModeReserved;
+  /* --- Interactive re-sync to an existing thread. The manual latch is the SAME
+   * capture as the first-trigger auto-latch, at an operator-chosen point where
+   * lash state was established by a cutting-direction jog. It sets
+   * referenceLatched, which is exactly what suppresses the auto-latch for the
+   * rest of the job. Appended at the tail per the reserved order above; the pair
+   * is 4 bytes so no padding. Next append is the auto-start block. */
+  uint16_t latchCommand;          // bidirectional: SW writes 1 to request a manual reference latch; FIRMWARE CLEARS IT on consume. Consumed ONLY while enable == 1 (a reference is meaningless outside a job and would be wiped by the next enable 0->1 anyway); when enable == 0 it is cleared with NO latchSeq increment, so an absent ack IS the refusal. SW must edge-detect latchSeq, never poll this
+  uint16_t latchSeq;              // READ-ONLY (firmware-owned): increments once per ACCEPTED manual latch. Monotonic; the ack for latchCommand
+
+  /* --- THREAD-PHASE OFFSET. Deliberately displaces where the tool re-enters
+   * the thread by a chosen distance. The operator-facing job it was built for
+   * is WIDENING A GROOVE PAST THE WIDTH OF THE CUTTER: cut the groove, step the
+   * phase over by less than the cutter width, cut again, repeat until the
+   * groove is the width wanted -- no re-indexing, and the datum is never
+   * re-established. The register itself knows nothing about that; it is a
+   * distance, and els_phase.h names a second source (the X-depth-derived
+   * compound infeed) that will feed this same term. Appended at the tail per
+   * the reserved order above; the uint16s come first and the int32s after, so
+   * the block packs with zero padding.
+   *
+   * THE HAND-OFF is the calCommand idiom exactly: the host writes Pending FIRST,
+   * then writes Command. The ISR reads Pending only under a nonzero Command, and
+   * that ordering is the whole reason a 32-bit value crosses a 16-bit register
+   * bus without a lock -- there is no window in which the ISR can see a half-
+   * written Pending. Command is cleared by the FIRMWARE on consume, so the host
+   * must NOT poll it for completion; edge-detect phaseOffsetSeq.
+   *
+   * CONSUMED ONLY WHILE enable == 1, same as latchCommand and for the same
+   * reason: the total is cleared by the next enable 0->1 edge, so an offset
+   * applied outside a job is a value that silently evaporates. When enable == 0
+   * the command is cleared with NO seq increment -- the absent ack IS the
+   * refusal.
+   *
+   * WHAT IT DOES NOT DO: applying an offset moves nothing. It changes the
+   * correction computed at the NEXT resume's phase correction, so it is safe to
+   * apply at any point in a job, mid-pass included, and its effect appears when
+   * the carriage next returns to the thread.
+   *
+   * SIGN LIVES IN THE MACHINE FRAME, NOT THE CUTTING FRAME. phaseOffsetSteps is
+   * summed straight into phaseError (els_phase.h) in leadscrew steps, ahead of
+   * the mod-pitch fold and the forward bias. On a machine whose cuttingDir is -1
+   * a given entry therefore displaces the tool the OTHER WAY along the helix --
+   * an effective pitch-X where the operator pictured X. Both land in the SAME
+   * groove, a whole pitch being one turn of the same helix, and the groove ends
+   * up wider by the amount entered either way. What changes is WHICH FLANK
+   * opens up.
+   *
+   * THE OLD ARGUMENT FOR WHY THIS IS HARMLESS DOES NOT SURVIVE THE RESTATEMENT,
+   * and that is worth being explicit about. This note used to say the -1 machine
+   * merely picks the COMPLEMENTARY start of an N-start thread, that every start
+   * of a thread is a legitimate start so it cannot be a wrong cut, and that
+   * cumulative entry self-corrects -- enter pitch/3 again and you are on the
+   * start you wanted. None of the three transfer to widening. There is no
+   * equally-good alternative result: the groove opens up on the flank opposite
+   * the one intended. And entering more does NOT walk it back; it widens
+   * further on the same wrong flank. Still not a safety issue -- the tool stays
+   * in the groove and removes what was asked for -- but it is a wrong part, and
+   * the only cheap defense is an air pass on the first step-over of a job.
+   *
+   * UNVERIFIED on real hardware; els_phase_offset_command_test pins today's
+   * behavior for both polarities so that a future correction has to be
+   * deliberate.
+   *
+   * NOT FOLDED HERE. The total is stored exactly as the host wrote it; the fold
+   * to mod-pitch happens at use, inside the primitive. Folding on write would
+   * make the register silently disagree with the number the host displays. */
+  uint16_t phaseOffsetCommand;    // bidirectional: SW writes 1 to apply phaseOffsetPending as the new total; FIRMWARE CLEARS IT on consume. Not a completion flag -- edge-detect phaseOffsetSeq
+  uint16_t phaseOffsetSeq;        // READ-ONLY (firmware-owned): increments once per ACCEPTED apply. Monotonic; the ack for phaseOffsetCommand
+  int32_t  phaseOffsetPending;    // host-written candidate total, leadscrew steps. Read by the ISR ONLY under a nonzero phaseOffsetCommand; write it BEFORE the command, never after
+  int32_t  phaseOffsetSteps;      // READ-ONLY (firmware-owned): the live cumulative total in leadscrew steps, applied at every phase correction. Cleared on the enable 0->1 edge that clears referenceLatched -- an offset is meaningless without the datum it offsets -- and survives per-pass stop/resume within a job
+
+  /* --- WORST ISR DURATION SEEN, in CPU cycles. The headroom measurement.
+   *
+   * THE BUDGET IS 1000 CYCLES. The core runs at 100 MHz (8 MHz HSE /4 x100 /2)
+   * and TIM9 gives a 10 us tick, so SynchroRefreshTimerIsr has 1000 cycles per
+   * tick and the Modbus task, the USART RX interrupt and everything else on the
+   * chip live in what is left. Read this against 1000, not against nothing.
+   *
+   * WHY A PEAK AND NOT THE EXISTING COUNTER. executionCycles is measured every
+   * tick, but the only copy anyone can see is fastData.cycles, which
+   * servoEnableTask samples once per ~10 ms osDelay -- about one tick in a
+   * thousand. The event worth measuring is cut-start, where take-up initiation,
+   * applyPhaseCorrection's float work and diagnostic arming land in the same
+   * few ticks; a spot sampler will essentially never catch it. On 2026-08-23
+   * the machine lost Modbus on 6 of 6 cuts, every one a TIMEOUT rather than a
+   * CRC error, meaning the Modbus task never got CPU -- and the instrument that
+   * should have shown that was structurally unable to.
+   *
+   * PERMANENT, not a diagnostic probe, for the reason machineMode was made
+   * permanent: a measurement that exists only in a probe build is a measurement
+   * nobody has, and probes are one-at-a-time by construction.
+   *
+   * RESET BY WRITING 0. The ISR only ever raises it. A host write of zero that
+   * lands between the ISR's compare and its store is lost, which costs one
+   * repeat of the write and nothing else -- the alternative, a command/ack pair,
+   * is a lot of machinery for a diagnostic counter. */
+  uint32_t executionCyclesPeak;   // READ-ONLY except for reset: highest executionCycles since the host last wrote 0 here. Compare against 1000 (the per-tick budget at 100 MHz / 10 us)
+
+  /* STEP pulse width instrument (2026-08-25, the dropped-step investigation).
+   *
+   * The pulse is SET at emission, mid-tick after the heavy blocks, and RESET
+   * as the first action of the next ISR entry -- so its HIGH width is however
+   * much wall clock separates those two points, and an overrunning tick can
+   * squeeze it under the servo drive's minimum (typ. 1.5-2.5 us = 150-250
+   * cycles at 100 MHz). A pulse the drive never registered is a step
+   * currentSteps counted and the carriage never made: sync is open-loop on
+   * commanded steps, so the error is PERMANENT and invisible to every
+   * register but the scales. These two MEASURE whether that happens, rather
+   * than inferring it from executionCyclesPeak.
+   *
+   * The width is the DWT delta from the set to the next entry's
+   * already-taken timestamp, so interrupt latency and pending-overrun
+   * compression are IN the number, exactly as the drive experiences them.
+   *
+   * stepPulseMinCycles is a MIN-hold: narrowest pulse since the host last
+   * wrote 0. Zero means "nothing measured since reset", never "a zero-width
+   * pulse" -- the first width replaces it unconditionally.
+   * stepPulseRuntCount counts pulses under ELS_STEP_RUNT_CYCLES: the min
+   * answers "how bad", the count answers "how often". Same reset-by-
+   * writing-0 trade as executionCyclesPeak above. */
+  uint32_t stepPulseMinCycles;    // READ-ONLY except for reset: narrowest STEP pulse since host wrote 0. 0 = nothing measured yet
+  uint32_t stepPulseRuntCount;    // READ-ONLY except for reset: pulses narrower than ELS_STEP_RUNT_CYCLES since host wrote 0
 } elsStop_t;
+
+/* Runt threshold, CPU cycles. 250 = 2.5 us at 100 MHz -- the top of the
+ * minimum-pulse range common step-servo drives specify. Deliberately the
+ * CONSERVATIVE end: a count of pulses under it is "pulses a drive could
+ * plausibly have missed", and the min-hold carries the exact number for any
+ * tighter spec. Compile-time because the threshold is a property of the
+ * DRIVE, not something an operator tunes. */
+#define ELS_STEP_RUNT_CYCLES 250u
 
 typedef struct {
   uint32_t executionInterval;          // READ-ONLY (firmware-owned): ISR period in CPU cycles (current - previous timestamp)
@@ -275,6 +450,11 @@ typedef struct {
   deltaPosError_t scalesSpeed[SCALES_COUNT];
   deltaPosError_t rampsDeltaPos;
   uint32_t servoPreviousDirection;
+  /* STEP pulse width bookkeeping (see elsStop_t): DWT timestamp of the last
+   * pulse SET, and whether one is in flight awaiting its width measurement
+   * at the next entry. Handler-private; the map publishes the results. */
+  uint32_t stepPulseSetAt;
+  uint32_t stepPulseArmed;
   uint16_t elsStopPreviousActive;
   uint16_t elsStopPreviousEnable;
   int32_t  elsStopTakeupTargetSteps;  // servo.currentSteps target value at end of post-resume backlash takeup
@@ -284,6 +464,8 @@ typedef struct {
   int32_t  elsStopTakeupZStart;       // scales[elsStop.scaleIndex].position captured at takeup INITIATION; the baseline the Z confirmation gate measures against
   int32_t  elsStopTakeupZSign;        // +1/-1: sign the Z scale should move in for this takeup; sign(signedTakeup) x droSign. Only the magnitude gates completion — the sign turns lastTakeupZDelta into a wrong-way diagnostic
   int32_t  elsStopTakeupTicks;        // ISR ticks since takeup initiation; backstop against a takeup that never reaches target (see ELS_TAKEUP_TIMEOUT_TICKS)
+  int32_t  elsStopQuiescentZ;         // last Z scale position the quiescence tracker saw; any change resets elsStopQuiescentTicks
+  int32_t  elsStopQuiescentTicks;     // consecutive ISR ticks with Z unchanged. The "has it STOPPED" input the confirmation gate never had; only consulted when ELS_REQUIRE_QUIESCENCE is set (see Ramps.c)
   uint16_t elsStopTakeupLatched;      // 1 once the Z confirmation window has closed on an unconfirmed takeup; further Z motion can no longer release the gate (see ELS_TAKEUP_CONFIRM_WINDOW_TICKS)
   uint16_t elsStopCorrectOnConfirm;  // 1 if the take-up in flight is to be followed by applyPhaseCorrection() once CONFIRMED, i.e. a reference was latched and thread geometry was set at initiation. 0 on a first pass (no reference yet) and in turning (no pitch): those take-ups exist to prove coupling only. Set at initiation, read at confirmation, cleared with the job (2026-08-21).
   elsCalCtx_t elsCal;                 // backlash calibration run state; non-Modbus, the ISR owns it entirely (els_backlash_cal.h)
@@ -316,6 +498,15 @@ void RampsStart(rampsHandler_t *rampsData);
 void SynchroRefreshTimerIsr(rampsHandler_t *data);
 
 _Noreturn void updateSpeedTask(void *argument);
+
+/* Recompute the cached spindle-count period when the geometry registers move.
+ * Lives in Ramps.c because the cache must be ONE object -- a static-inline
+ * version in a header would give each translation unit its own copy, so the
+ * producer would fill one and the ISR would read another. Called from
+ * updateSpeedTask on hardware and mirrored in the emulator's main loop, which
+ * does not run FreeRTOS tasks. Never call it from the ISR: it is double
+ * arithmetic and this core has no FP64 hardware. */
+void elsRefreshSpindlePeriod(rampsSharedData_t *shared);
 
 _Noreturn void userLedTask(__attribute__((unused)) void *argument);
 

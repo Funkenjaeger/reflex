@@ -84,16 +84,21 @@
     tab_style: True
     on_release: app.manager.goto("plot")
 
-    # Hide wizard button when show_wizard is False. Use a fixed height with
+    # Hidden unless the use case exposes patterns AND the operator has them
+    # switched on. The use-case term is not optional: the pattern screen lays
+    # holes out on a face, so on a lathe the button is not offered at all,
+    # whatever the setting says. See USE_CASE_PATTERNS in app.py.
+    #
+    # Use a fixed height with
     # size_hint_y None so BoxLayout honours it, collapsing to 0 when hidden.
     # Avoid `size_hint_y: 0` (Kivy treats 0 as None -> full height) and the old
     # self-referential `height: self.height` (left a stale height at runtime
     # that drew a dark band over the ABS/INC tab above). Height 0 also makes it
     # non-drawing regardless of the IconButton disabled-opacity class rule.
     size_hint_y: None
-    height: dp(46) if app.formats.show_wizard else 0
-    opacity: 1 if app.formats.show_wizard else 0
-    disabled: not app.formats.show_wizard
+    height: dp(46) if (app.formats.show_wizard and app.patterns_available) else 0
+    opacity: 1 if (app.formats.show_wizard and app.patterns_available) else 0
+    disabled: not (app.formats.show_wizard and app.patterns_available)
 
   # Mode one-hot (ELS/DRO etc.): segments built from allowed_modes() in
   # home_toolbar.py since the set depends on use case. Tap cycles modes.

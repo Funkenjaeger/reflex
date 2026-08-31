@@ -86,9 +86,10 @@
  *    the last pulse. A horizon shorter than the dwell rejects the inertial
  *    settle it was built to accept.
  *
- * The horizon itself is an UNMEASURED PARAMETER. See ELS_SLIP_SETTLE_TICKS in
- * Ramps.c: it is a starting value, not a commissioned one, and the number that
- * belongs there can only come off the real machine.
+ * The horizon itself was COMMISSIONED on 2026-08-27 and lowered 1000 -> 700.
+ * See ELS_SLIP_SETTLE_TICKS in Ramps.c for the capture set it came from, and
+ * emulator/test/els_slip_horizon_commission_test.cpp, which encodes those
+ * observations so the constant cannot drift away from its own evidence.
  */
 #ifndef ELS_SLIP_H
 #define ELS_SLIP_H

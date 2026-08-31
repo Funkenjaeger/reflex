@@ -2,8 +2,11 @@ from kivy.logger import Logger
 from transitions import Machine
 
 from reflex.dispatchers import els, board
+from reflex.fsms import els_adopt
+from reflex.fsms.els_mode_watch import mode_name
 from reflex.fsms.els_stop_hal import ElsStopHal
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
+from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
 
 import math
 from fractions import Fraction
@@ -39,12 +42,18 @@ class ElsFsm:
         {'trigger': 'fault', 'source': '*', 'dest': 'alarm'},
     ]
 
-    def __init__(self, els: els, board: board, hal: ElsStopHal, controller):
+    def __init__(self, els: els, board: board, hal: ElsStopHal, controller,
+                 diag_recorder=None):
         self.els = els
         self.board = board
         self.servo = board.servo
         self.hal = hal
         self.controller = controller
+        # How the (dark) rung-3 adopt path learns which diagnostic probe THIS
+        # connection's firmware carries -- the recorder's learned schema is the
+        # gate, so no second diagSchema read is ever issued. Optional: None
+        # simply keeps the adopt gates failed (see _read_adoptable_mode).
+        self.diag_recorder = diag_recorder
 
         self.fsm = Machine(
             model=self,
@@ -365,7 +374,14 @@ class ElsFsm:
 
     # bound to update_tick during moves
     def _on_board_update(self, *args, **kv):
-        if self.hal.read_active():
+        # `tick.active()`, not `read_active()`: this is bound to update_tick, so
+        # it reads the snapshot the board already took this tick rather than
+        # spending its own Modbus exchange on a register three other pollers are
+        # also asking for. Freshness is unchanged -- this runs once per tick
+        # either way -- and a failed snapshot yields False here exactly as a
+        # failed live read did. is_move_done() below stays LIVE: it reads the
+        # SERVO block, which has no per-tick snapshot.
+        if self.hal.tick.active():
             if self.state == 'cutting':
                 bus.publish("els_stop_activated")
                 self.stop_active()
@@ -480,6 +496,13 @@ class ElsFsm:
         - cutting / retracting → hands off, log only: motion may be live, and
           blindly rewriting could disarm a stop that is actively protecting the
           cut. (Full link-loss-mid-cut recovery is a known separate gap.)
+
+        A DARK rung-3 path sits ahead of these branches: when
+        els_adopt.ELS_ADOPT_ON_CONNECT is flipped and the mode-watch probe
+        (diag schema 4) is present, the policy keys on the firmware-published
+        machine mode (els_adopt.adopt_plan) instead of this session's state.
+        The flag ships False, so today every connect takes the branches above
+        unchanged; see els_adopt.py for the policy and what earns the flip.
         """
         # Push the calibration limits FIRST, in every state, before any
         # state-specific policy below.
@@ -497,11 +520,48 @@ class ElsFsm:
             int(self.els.els_cal_motion_thresh_counts),
         )
 
+        # THE REST OF WHAT FIRMWARE RAM FORGOT, same reasoning, all data-only
+        # (no motion, no arming) and therefore safe in every state. One
+        # 2026-08-25 power cycle exposed four faces of this defect: scaleIndex
+        # sent a calibration watching the SPINDLE (fixed at cal start), the
+        # sync ratio and thread geometry muted an instrumented bench test for
+        # fifteen minutes, and calMeasured drops the take-up gate to its floor
+        # every boot. The arm path now teaches the job's own premises; these
+        # two are the session-wide ones nothing else re-teaches.
+        #
+        # The calibration legs: only a real record, never zeros -- an absent
+        # calibration must stay absent, and the firmware's all-legs-positive
+        # validity rule means a zero push would be indistinguishable from it
+        # anyway. Stale-but-real raises the gate's bar above the floor; if the
+        # machine's lash has since shrunk enough to over-tighten it, the gate
+        # refuses LOUDLY and the fix (recalibrate) is in the message.
+        legs = [int(v) for v in self.els.els_cal_measured_legs]
+        if len(legs) == 3 and all(v > 0 for v in legs):
+            self.hal.set_cal_measured(legs)
+
+        # Sync ratios, every axis: the firmware registers are written only by
+        # a property-CHANGE binding, so an unchanged UI setting is never
+        # re-sent on its own. See Axis.push_sync_ratio.
+        for axis in self.board.axes:
+            axis.push_sync_ratio()
+
         # SNAPSHOT BEFORE TEARDOWN. The firmware keeps running across a UI
         # restart, so these registers are the only surviving evidence of what
         # the machine was doing. Read first, because everything below destroys
         # it. Never raises -- a diagnostic must not block a safety teardown.
         flight = self.hal.read_motion_in_flight()
+
+        # RUNG-3 ADOPT PATH, DARK. With ELS_ADOPT_ON_CONNECT at its shipped
+        # False this evaluates one module attribute and falls through -- every
+        # gate below stays byte-for-byte today's behavior. When the census
+        # earns the flip, connect becomes a READ: the plan keys on the
+        # firmware's published mode, not on which state THIS session happens
+        # to be in (which after a restart is always 'disabled' -- the
+        # unreachable-branch class the 2026-08-16 review §4.4 documents).
+        mode = self._read_adoptable_mode()
+        if mode is not None:
+            self._adopt_on_connect(mode, flight)
+            return
 
         state = self.state
         if state in ('disabled', 'alarm'):
@@ -582,6 +642,76 @@ class ElsFsm:
                 f"firmware ELS stop untouched (motion may be live)"
             )
 
+    def _read_adoptable_mode(self):
+        """The firmware-published machine mode, or None unless EVERY rung-3
+        gate passes. Any None keeps reconcile on the state-keyed branches
+        unchanged. Gates, in order:
+
+        - els_adopt.ELS_ADOPT_ON_CONNECT, read live off the module so the
+          eventual flip (and tests) reach the real setting;
+        - the diag recorder has recognized the mode-watch probe (schema 4) on
+          THIS connection. read_current_mode is a scratchpad register that
+          means something else entirely under any other schema, so the
+          recorder's learned schema is the gate -- never a bare read;
+        - the read itself succeeds. A raising diagnostic read must degrade to
+          the state-keyed reconcile, never take connect down with it.
+        """
+        if not els_adopt.ELS_ADOPT_ON_CONNECT:
+            return None
+        recorder = self.diag_recorder
+        if recorder is None or recorder.schema != ELS_DIAG_SCHEMA_MODE_WATCH:
+            return None
+        try:
+            return int(self.hal.read_current_mode())
+        except Exception as e:
+            log.warning(
+                f"reconcile_firmware_on_connect: mode read failed ({e}) — "
+                f"falling back to the state-keyed reconcile"
+            )
+            return None
+
+    def _adopt_on_connect(self, mode, flight):
+        """Execute the rung-3 plan for an observed machine mode. The POLICY
+        lives in els_adopt.adopt_plan (each cell's reasoning documented
+        there); this method only carries it out, in the safe order:
+        teardown (sync first), then the operator notice, then the adoption.
+        `flight` is the pre-teardown register snapshot, taken by the caller
+        before anything here can destroy it."""
+        plan = els_adopt.adopt_plan(mode)
+        if plan.teardown:
+            # SYNC OFF FIRST, ALWAYS -- same two hazards as the state-keyed
+            # disabled/alarm branch (releasing a held stop, and the
+            # servoEnableTask race); see that branch's comment for the full
+            # reasoning. The ordering contract carries over unchanged.
+            self.hal.stop_sync()
+            self.hal.set_enable(False)
+            self.hal.set_active(False)
+        if plan.announce:
+            # Deliberately loud, and deliberately WITHOUT a teardown: the work
+            # in flight keeps its own armed stop precisely because nothing
+            # here touched it. The operator decides what happens next.
+            log.warning(
+                f"reconcile_firmware_on_connect: firmware reports "
+                f"{mode_name(mode)} at connect ({flight}) — hands off, "
+                f"notifying the operator of interrupted work"
+            )
+            self.interrupted_pass = dict(
+                flight, mode=mode, mode_name=mode_name(mode))
+            bus.publish("els_pass_interrupted")
+        if self.state != plan.state:
+            # ADOPTION, not a transition: set_state fires no callbacks, which
+            # is the point -- on_enter_stopped would arm a fresh stop and
+            # on_enter_disabled would run its own teardown, and the plan has
+            # already decided both. Broadcast manually so the controller
+            # mirrors the adopted state exactly as it would a transition.
+            self.fsm.set_state(plan.state)
+            self._broadcast()
+        log.info(
+            f"reconcile_firmware_on_connect: adopted mode={mode_name(mode)} → "
+            f"state='{plan.state}' (teardown={plan.teardown}, "
+            f"announce={plan.announce})"
+        )
+
     def push_stop_to_firmware(self):
         """Push the operator's frozen stop encoder to firmware + set scaleIndex.
 
@@ -593,6 +723,17 @@ class ElsFsm:
             return
         self.hal.set_stop_position(enc)
         self.set_scale_index()
+        # THE JOB'S PREMISES LAND WHEN THE JOB ARMS, not first at cut. All of
+        # this is firmware RAM: after a power cycle an engaged-and-armed job
+        # used to sit with pitch 0 and backlash 0 until the first Cut pushed
+        # them -- during which window the re-sync wizard would latch against
+        # zero geometry and every phase instrument read the job as "turning".
+        # Found 2026-08-25 when exactly that muted a 15-minute bench test.
+        if self.controller.is_threading:
+            self.push_thread_geometry()
+        else:
+            self.push_turning_geometry()
+        self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
 
     def _spindle_pitch_mm(self) -> Fraction:
         # spindle.syncRatioNum/Den is mm-per-rev (= mm-per-thread-pitch when
@@ -646,6 +787,255 @@ class ElsFsm:
         )
         self.hal.set_thread_pitch_steps(thread_pitch_steps)
         self.hal.set_z_counts_per_pitch(z_counts_per_pitch)
+
+    # ——— Thread-phase offset (widening a groove past the cutter's width) ———
+    # The operator has a tool narrower than the thread form he wants. He cuts
+    # the groove, shifts the controller's idea of phase by a small step-over,
+    # and cuts again, until the groove reaches the width he is after. Nothing
+    # is re-indexed and the datum is never re-established.
+    # elsStop.phaseOffsetSteps holds the live cumulative total; the register
+    # comment in fw/Core/Inc/Ramps.h is the authority on what the firmware does
+    # with it.
+    #
+    # THE PRIMITIVE IS GENERAL AND THE REFUSALS ARE ABOUT THE MATH, not about
+    # widening: everything below is "an offset larger than a pitch aliases",
+    # "the frame has no thread phase", "the firmware would eat this silently".
+    # els_phase.h names a second source that will feed the same term (the
+    # X-depth-derived compound infeed, 6a77c598); it will reuse this path
+    # unchanged.
+    #
+    # ACCUMULATION LIVES HERE, NOT IN FIRMWARE. The firmware holds ONE absolute
+    # total and replaces it on every apply, which is exactly what makes Clear an
+    # ordinary apply of zero rather than a second command. Every entry is
+    # read-add-write against the firmware's number, never against a UI-side copy
+    # — the firmware clears the total on the enable 0->1 edge, and a local copy
+    # would happily survive a job change the machine already discarded.
+
+    PHASE_OFFSET_OK         = 'ok'
+    PHASE_OFFSET_OFFLINE    = 'offline'
+    PHASE_OFFSET_NO_JOB     = 'no_job'
+    PHASE_OFFSET_NO_PITCH   = 'no_pitch'
+    PHASE_OFFSET_NO_GEOMETRY = 'no_geometry'
+    PHASE_OFFSET_NEGATIVE   = 'negative'
+    PHASE_OFFSET_AT_PITCH   = 'at_pitch'
+
+    def _leadscrew_steps_per_display_unit(self):
+        """Fraction: leadscrew steps in ONE display unit (mm or inch).
+
+        servo.ratioNum/Den is mm-per-step and formats.factor is display-units-
+        per-mm, both exact Fractions, so this stays exact and the single
+        rounding happens where the step count is finally needed. None when the
+        geometry to answer is missing or degenerate.
+        """
+        try:
+            servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
+            factor = Fraction(self.board.formats.factor)
+        except (ValueError, ZeroDivisionError, TypeError):
+            return None
+        if servo_ratio == 0 or factor == 0:
+            return None
+        return 1 / (servo_ratio * factor)
+
+    def thread_pitch_steps(self) -> float:
+        """One thread pitch in leadscrew steps, or 0.0 if it cannot be known.
+
+        The modulus the offset wraps at, so it is both the bound an entry is
+        refused against and the denominator of the "fraction of a pitch"
+        readout. Computed from the SAME inputs push_thread_geometry sends the
+        firmware, so the two cannot disagree about what a pitch is.
+
+        NEVER RAISES. _spindle_pitch_mm() reaches els.get_spindle_axis(), which
+        is None until an axis is mapped -- and this is read from a Kivy clock
+        callback, where an exception takes the update loop with it rather than
+        producing a visible error. AttributeError/TypeError are caught for
+        exactly that case, not defensively.
+        """
+        try:
+            servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
+            if servo_ratio == 0:
+                return 0.0
+            return float(self._spindle_pitch_mm() / servo_ratio)
+        except (ValueError, ZeroDivisionError, TypeError, AttributeError):
+            return 0.0
+
+    def phase_offset_steps(self) -> int:
+        """The live total the FIRMWARE is applying, in leadscrew steps."""
+        return self.hal.read_phase_offset_steps()
+
+    def reads_baseline(self) -> int:
+        """Snapshot for detecting fabricated reads; see ElsStopHal."""
+        return self.hal.reads_baseline()
+
+    def reads_fabricated_since(self, baseline: int) -> bool:
+        """True if any read since `baseline` was fabricated rather than read."""
+        return self.hal.reads_fabricated_since(baseline)
+
+    def phase_offset_seq(self) -> int:
+        """Ack counter. Capture before an apply, edge-detect after."""
+        return self.hal.read_phase_offset_seq()
+
+    def steps_to_display(self, steps) -> float:
+        """Leadscrew steps -> a distance in display units (mm or inch).
+
+        Public because the alternative is worse: a caller that needs "half a
+        pitch as a distance" either reaches into a private helper or rebuilds
+        servo-ratio x format-factor locally, and a second copy of that
+        arithmetic is free to drift from the one the firmware is fed.
+        Returns 0.0 rather than raising when the geometry is unavailable.
+        """
+        per_unit = self._leadscrew_steps_per_display_unit()
+        if not per_unit:
+            return 0.0
+        try:
+            return float(Fraction(int(steps)) / per_unit)
+        except (ValueError, TypeError, ZeroDivisionError):
+            return 0.0
+
+    def pitch_display(self) -> float:
+        """One thread pitch as a distance in display units.
+
+        The at-one-pitch refusal bound, expressed in the units the operator's
+        entries are in, and derived from the same thread_pitch_steps() the
+        refusal itself uses so the two cannot disagree.
+
+        NO PRODUCTION CALLER since the fill-from-a-fraction buttons came out
+        (2026-08-23) — those were the only thing that needed a pitch as a
+        distance. Kept because the bound is a real quantity a surface may yet
+        want to name, and because its agreement with the refusal is worth a
+        test either way.
+        """
+        return self.steps_to_display(int(round(self.thread_pitch_steps())))
+
+    def phase_offset_display(self, steps=None):
+        """(distance in display units, fraction of one pitch) for the total.
+
+        Both numbers, because they answer different questions. The DISTANCE is
+        how far the groove has been widened so far — and since every step-over
+        goes the same way, that is not a proxy for the widening, it IS the
+        widening, measurable on the part. The FRACTION is the aliasing bound: how
+        much of the one pitch an offset may accumulate has been spent. A
+        readout with only the distance hides how close the total is to the
+        refusal; only the fraction makes the entry unverifiable.
+
+        `steps` lets a caller that has ALREADY read the total pass it in rather
+        than provoke a second read of the same register. The status-bar poller
+        is the one that needed it: it reads the total, waits to see it twice
+        (the torn-read guard), and only then renders — so calling this with no
+        argument made every rendered tick read phaseOffsetSteps twice, and the
+        two reads could straddle a firmware update and render a distance and a
+        fraction computed from different totals. Omitting it reads the total
+        live, which is what an on-demand caller wants.
+        """
+        if steps is None:
+            steps = self.phase_offset_steps()
+        distance = self.steps_to_display(steps)
+        pitch = self.thread_pitch_steps()
+        fraction = (steps / pitch) if pitch else 0.0
+        return distance, fraction
+
+    def _phase_offset_blockers(self) -> str:
+        """Everything that makes an offset meaningless, independent of value."""
+        if not self.board.connected:
+            return self.PHASE_OFFSET_OFFLINE
+        if not self.controller.is_threading:
+            # Turning has no thread phase to shift. The firmware agrees — it is
+            # sent threadPitchSteps = 0 — so an offset would sit in a register
+            # nothing reads.
+            return self.PHASE_OFFSET_NO_PITCH
+        if self.thread_pitch_steps() <= 0.0:
+            return self.PHASE_OFFSET_NO_PITCH
+        if self._leadscrew_steps_per_display_unit() is None:
+            return self.PHASE_OFFSET_NO_GEOMETRY
+        if not self.hal.read_enable():
+            # The firmware would consume the command WITHOUT acking it, and an
+            # absent ack is indistinguishable from a dropped frame. Say why
+            # here instead of letting the operator watch a total not change.
+            return self.PHASE_OFFSET_NO_JOB
+        return self.PHASE_OFFSET_OK
+
+    def apply_phase_offset(self, distance_display: float) -> str:
+        """SET the offset to a distance. Returns a PHASE_OFFSET_* code.
+
+        SETS, DOES NOT ACCUMULATE (Evan, 2026-08-23). The entered number is the
+        offset, measured from the latched reference — not a further helping
+        added to whatever is already there. Applying 0.010 twice leaves the
+        offset at 0.010.
+
+        The accumulate behaviour it replaces was a host-side choice made under
+        the multi-start framing, where stepping by pitch/N repeatedly was the
+        workflow. For widening a groove the field reads as a setting, and an
+        incremental version of this deserves its own control that says so
+        rather than being the same button behaving differently.
+
+        Three things fall out of the change, which is why it is worth stating:
+          * pressing Apply twice is now idempotent, so the double-press that
+            silently stepped the groove one increment wider is gone;
+          * the firmware already held ONE ABSOLUTE TOTAL and replaced it on
+            every write, so this is now the same shape on both sides of the
+            link rather than the host maintaining a running sum;
+          * nothing reads the current total to compute the new one, so a
+            fabricated read can no longer poison it.
+
+        REFUSES RATHER THAN CLAMPS AT ONE PITCH (decided 2026-08-22). A total of
+        exactly one pitch is a no-op and 1.5 pitches is indistinguishable from
+        0.5, so clamping would silently put the cut somewhere other than where
+        the operator asked — in metal, before anything looks wrong. The bound
+        is the ALIASING bound and has nothing to do with what the offset is
+        being used for; it holds for any source of the term.
+
+        ADVANCE-ONLY, BECAUSE THE WORK IS. Widening runs one way: the operator
+        opens one side of the groove and keeps stepping over until it is wide
+        enough. There is no signed workflow to support, so a negative entry is
+        a slip, and it is refused BY NAME rather than quietly absoluted — the
+        math is asymmetric (a negative offset does not step the phase back by
+        |offset|; the forward bias turns it into a forward jog of pitch-|offset|,
+        els_phase.h T5, which cuts the flank the operator was not opening), so
+        silently 'fixing' the sign would either move the tool somewhere unasked
+        or hide the slip.
+        """
+        blocked = self._phase_offset_blockers()
+        if blocked != self.PHASE_OFFSET_OK:
+            return blocked
+
+        try:
+            entry = Fraction(float(distance_display))
+        except (ValueError, TypeError, OverflowError):
+            return self.PHASE_OFFSET_NEGATIVE
+        if entry < 0:
+            return self.PHASE_OFFSET_NEGATIVE
+
+        per_unit = self._leadscrew_steps_per_display_unit()
+        # ROUND ONCE, at the end: the entry is exact up to here.
+        offset_steps = int(round(entry * per_unit))
+
+        # NO READ OF THE CURRENT TOTAL. Under the old accumulate behaviour this
+        # is where the firmware's running total was read and added to, and a
+        # fabricated read there made the new total collapse to just the entry.
+        # Setting has no such exposure: the value written depends only on what
+        # the operator typed.
+        pitch = self.thread_pitch_steps()
+        if offset_steps >= pitch:
+            return self.PHASE_OFFSET_AT_PITCH
+
+        log.info(f"*** apply_phase_offset: SET entry={float(distance_display)} "
+                 f"-> {offset_steps} steps of {pitch:.1f}/pitch")
+        self.hal.request_phase_offset(offset_steps)
+        return self.PHASE_OFFSET_OK
+
+    def clear_phase_offset(self) -> str:
+        """Return the total to zero. An ordinary apply, so it acks like one.
+
+        Gated on the same blockers as an apply for one reason: while enable is
+        0 the firmware consumes the command without acking, so a Clear there
+        would leave a nonzero total on screen with no explanation. The next
+        enable 0->1 edge clears it regardless.
+        """
+        blocked = self._phase_offset_blockers()
+        if blocked != self.PHASE_OFFSET_OK:
+            return blocked
+        log.info("*** clear_phase_offset: total -> 0")
+        self.hal.request_phase_offset(0)
+        return self.PHASE_OFFSET_OK
 
     # ——— Safety margin ———
     def _safety_margin_display(self) -> float:

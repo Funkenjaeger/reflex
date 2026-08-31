@@ -31,6 +31,7 @@
 #define ELS_DIAG_END_WINDOW 2   /* ran out of buckets while still quiet-or-moving */
 
 #include <stdint.h>
+#include "els_isr_rate.h"
 #include <stdbool.h>
 
 /* WHAT THIS PROBE EXISTS TO MEASURE -- the two numbers Ramps.c otherwise GUESSES:
@@ -96,8 +97,11 @@
  * (published per capture), unlike the v1->v2 gating change which altered what
  * the numbers MEANT.
  *
- * 40 x 50 = 2000 ticks ~= 19.4 ms at the measured ~103 kHz, which covers
- * ELS_SLIP_SETTLE_TICKS (1000) with 2x margin. Under v3 the gate is held open
+ * 40 x 50 = 2000 ticks ~= 19.4 ms at the measured ~103 kHz, which covered
+ * ELS_SLIP_SETTLE_TICKS with 2x margin when that constant was 1000, and with
+ * ~2.9x since it was commissioned down to 700 on 2026-08-27 using exactly these
+ * captures -- the margin only grew, so the geometry still stands. Under v3 the
+ * gate is held open
  * for exactly this span (see ELS_DIAG_SETTLE_HOLD_TICKS below), so the window
  * is the measurement rather than a race against the next commanded move.
  *
@@ -106,7 +110,12 @@
  * the confirm gate is still invisible here -- the "+5000 ticks" nudge case in
  * els_takeup_confirm_test.cpp shows exactly that. Do not read a zero from this
  * probe as a statement about the confirm window. See DIAG.md. */
-#define ELS_DIAG_BUCKET_TICKS 40
+/* 400 us per bucket. Expressed as a duration so the bucket keeps its
+ * wall-clock width across a tick-rate change -- the 18 commissioning
+ * captures were taken at 400 us and a silently doubled bucket would make
+ * new captures incomparable with them. diagBucketTicks is published to the
+ * host precisely so it never has to assume this. */
+#define ELS_DIAG_BUCKET_TICKS ELS_US_TO_TICKS(400)
 
 /* THE HOLD, AND WHY v2 HAD TO BE RETIRED TO GET IT.
  *
@@ -134,7 +143,8 @@
  * WHAT THIS DELIBERATELY CHANGES, AND IT MUST NOT BE READ PAST. The gate's
  * verdict is computed LATER than in a release build, so more of the settle
  * tail falls inside elsSlipConfirmed()'s attribution horizon
- * (ELS_SLIP_SETTLE_TICKS = 1000) and is counted as evidence. A diagnostic
+ * (ELS_SLIP_SETTLE_TICKS, 1000 when these captures were taken, 700 since) and
+ * is counted as evidence. A diagnostic
  * build is therefore MORE PERMISSIVE than release on a marginal take-up --
  * partial engagement is the case that can differ. An open half-nut still
  * refuses either way (no motion is attributable at any dwell). NEVER read "the

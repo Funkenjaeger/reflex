@@ -2,6 +2,28 @@
 
 ---
 
+## ELS interactive re-sync (pick up existing thread) — 2026-08-08, feat/els-thread-resync
+
+Emulator-verified only; **NOT proven on hardware**. Cross-repo register change
+with reflex-fw's same-named branch (`latchCommand`/`latchSeq`, protocolVersion
+1 → 2) — the two branches must be flashed/deployed together.
+
+- New: `reflex/fsms/els_resync.py` (run controller, mutation-proven tests in
+  `tests/fsms/test_els_resync.py`), `els_resync_popup.py/.kv` (wizard, opened
+  from ELS settings → "Pick up existing thread"), help doc
+  `els_thread_resync.md`, system test `tests/system/test_els_thread_resync.py`.
+- elspi verification (Evan): real re-chucked threaded part — jog into the
+  thread, hand-seat, latch, AIR PASS first. Checklist lives in TickTick task
+  6a768a98.
+- The Z-hold tolerance (`els_resync_z_tol_counts`, default 3) is deliberately
+  NOT exposed in the settings popup — it is a commissioning value with a
+  "do not widen" rule; revisit only if real elspi scale jitter demands it.
+- The resync wizard's popup Z/spindle readers bind to the axis primary inputs
+  at open; if axis mapping changes while the popup is open the readers go
+  stale. Low risk (settings and the wizard are both modal), noted for rigor.
+
+---
+
 ## Polish backlog — found during 2026-08-08 hardware testing
 
 **DO NOT ACTION THESE YET.** Evan's explicit call: these are usability gripes
@@ -75,19 +97,26 @@ operator to ignore it.
 
 ## Deployment
 
-## Deployment
+### ~~OSPI migration: service unit, install path, service name~~ DONE (2026-08-30)
 
-### OSPI Service Unit Migration
-- **Issue:** OSPI ships with a systemd service unit pointing to `/root/rotary-controller-python` and `rcp.main`. Reflex UI lives in a different path and uses `reflex.main`.
-- **Action:** Document the exact changes needed to the systemd service unit (ExecStart, WorkingDirectory, etc.) and test the full migration path on a Pi.
+Three items — documenting the systemd unit changes, replacing the README's
+hand-wave snippet, and reconciling the service name — closed together by
+`docs/setup/installing.md`, the operator-facing install procedure.
 
-### Document Systemd Service Unit Changes
-- **Issue:** The README includes a bash snippet for replacing RCP with reflex-ui on OSPI but doesn't specify the exact systemd service unit changes.
-- **Action:** Once deployment is tested on a Pi, document the exact changes (ExecStart, WorkingDirectory, etc.) and update the README with complete instructions.
+The unit is no longer *described*: `deploy/reflex-ui.service` and
+`deploy/start.sh` ship in the repo and are copied into place, so there is
+nothing to hand-edit. All three README defects are gone, each of which would
+have stopped a first-time installer:
 
-### Reconcile Systemd Service Name in README
-- **Issue:** The README's `journalctl` commands reference a service named `reflex`, but the original OSPI service is `rotary-controller`. The correct service name depends on what the migrated service unit is named.
-- **Action:** Reconcile the service name as part of updating the Pi migration instructions.
+| README said | Actually |
+|---|---|
+| RCP in `/root/rotary-controller-python/` | `/rotary-controller-python` |
+| `systemctl stop rotary-controller` | `rcp.service` — `rotary-controller` does not exist |
+| clone into `/root` | `/home/default/projects/reflex`, the path the shipped unit names |
+| `journalctl -u reflex` | `reflex-ui.service` |
+
+Verified against elspi 2026-08-30. **Still open:** scripting it — see
+*Deployment automation* below.
 
 ---
 
@@ -413,9 +442,15 @@ app sets no `Window.clearcolor`, so Kivy's default pure-black shows through at r
 in light-themed image viewers. Composite previews over black before judging.
 
 ### Preview scripts (not for production)
-- `previews/preview_widgets.py`, `previews/preview_probe.py`, `previews/preview_home_live.py`
-  render widgets via `export_to_png` (needs `EventLoop.idle()` ticks + a double export, else
-  only one tile renders). Consider deleting these or moving under `tests/` before release.
+- **DONE 2026-08-30.** `preview_widgets.py` and `preview_probe.py` were deleted (both died at
+  import on `facelift_theme`, removed at the theme refactor), along with
+  `preview_banner_placements.py` (it rendered proposals for a banner that grows the advanced
+  bar, a question the status gutter answered differently). `preview_home_live.py` was repaired
+  instead: it had rendered at 800x600 its whole life, because it set the size through `sys.argv`
+  while the run recipe exports `KIVY_NO_ARGS=1`.
+- The surviving previews are documentation generators, not scratch scripts, and the doc set they
+  produce is the release's Gate 2 scope. They still need generalizing and sequencing into demo
+  stills; that work is tracked on the roadmap, not here.
 
 ### Mockup fonts (Chakra Petch / Share Tech Mono / DSEG7) — DONE + follow-ups (2026-06-21)
 - Bundled all three (SIL OFL 1.1) under `reflex/fonts/` with their OFL license files.
@@ -523,7 +558,9 @@ Works-as-specified (note, not bugs):
 ## README auto-updating screenshots
 
 - **Approach: committed images, not release assets.** README screenshots live in
-  `docs/screenshots/` and are referenced by relative path. CI regenerates them and
+  `docs/screenshots/` at the REPO ROOT (moved there 2026-08-30 so MkDocs, whose
+  docs_dir cannot reach outside itself, can reference them) and are referenced by
+  relative path. Nothing regenerates them automatically -- and
   semantic-release commits them as part of the release commit (via its `assets` config
   in `pyproject.toml`). Chosen over release assets because (a) the repo is private and
   GitHub's Camo proxy can't fetch private release assets, so asset URLs wouldn't render,

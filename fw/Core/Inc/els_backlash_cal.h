@@ -108,6 +108,14 @@
 /* elsStop.takeupResult additionally uses: */
 #define ELS_TAKEUP_ERR_UNCONFIRMED 4u /* deliberately shares NO_MOTION: same physical cause */
 #define ELS_TAKEUP_ERR_TIMEOUT     6u /* take-up never reached its commanded target */
+/* The confirm window closed while the carriage had still never gone quiet, so
+ * no verdict was ever reachable. A SEPARATE code from UNCONFIRMED on purpose:
+ * UNCONFIRMED means "we judged it and the motion was not there", this means "we
+ * never got to judge it at all", and the operator's next move differs (chase the
+ * vibration, not the half-nut). Only reachable with ELS_REQUIRE_QUIESCENCE set;
+ * in a release build the quiescence input is compiled out, carriageStopped is a
+ * constant true, and this code is unreachable. */
+#define ELS_TAKEUP_ERR_NOT_QUIESCENT 7u
 
 /* Calibration phases. Values are internal (not published over Modbus); the
  * host sees calResult + calSeq, not this. */
