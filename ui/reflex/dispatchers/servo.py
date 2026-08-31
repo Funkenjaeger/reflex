@@ -8,6 +8,7 @@ from kivy.properties import StringProperty, NumericProperty, BooleanProperty
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
 from reflex.utils.ctype_calc import uint32_subtract_to_int32
+from reflex.utils.notices import NOTICE_WARNING
 
 log = Logger.getChild(__name__)
 
@@ -229,22 +230,46 @@ class ServoDispatcher(SavingDispatcher):
     # reported as a divergence.
     SERVO_MODE_DIVERGENCE_POLLS = 5
 
+    # The exact words the operator sees. A constant so the test asserts on the
+    # string that ships rather than on a paraphrase of it.
+    DIVERGENCE_NOTICE = ("Controller did not stop when asked — the carriage "
+                         "may still be driven")
+
     def _check_servo_mode_divergence(self, observed):
-        """LOG-ONLY watchdog: did the machine keep feeding after we said stop?
+        """Watchdog: did the machine keep feeding after we said stop?
 
         The invariant: nothing an operator can legitimately do makes the firmware
         disagree with the last servoMode the UI wrote. Any persistent
         disagreement is a defect somewhere -- a dropped write, a firmware task
-        re-asserting on its own (servoEnableTask does exactly this, Ramps.c
-        approx 1105), or a path that cleared elsStop.enable while sync was still
-        live. This does not care which; it reports the disagreement.
+        re-asserting on its own (servoEnableTask does exactly this, Ramps.c:1626
+        -- the assert is unconditional in release builds, because the
+        elsDiagServoGate wrapped around it returns false in every one), or a
+        path that cleared elsStop.enable while sync was still live. This does
+        not care which; it reports the disagreement.
 
-        WHY IT ONLY LOGS, and why that is not timidity. Faulting to alarm would
-        call on_enter_alarm, which calls set_enable(False) -- and clearing enable
-        releases the carriage hold (Ramps.c:815/826). A false positive during a
-        live pass would therefore TRIGGER the very hazard this exists to detect.
-        Escalating to alarm is only safe once the disengage path is provably
-        safe, and it is not yet: see the branch notes and the Open Loops task.
+        THE THREE RUNGS, and which one this is (decided 2026-08-31, Evan):
+
+          log-only    what this did until today. At the lathe there is a
+                      touchscreen and no terminal, so a log line is a message
+                      to whoever reads the file next week -- i.e. to nobody.
+          NOTICE      <- HERE. Posts to the top status bar via els_uic.notify.
+                      Touches no motion path at all, so a false positive costs
+                      the operator one amber line and nothing else.
+          alarm       would call on_enter_alarm -> set_enable(False), running
+                      the enable falling-edge teardown (Ramps.c:805-832:
+                      takeupPending, stepsToGo, currentSpeed and desiredSteps
+                      all cleared -- "make the machine inert"). A false
+                      positive mid-pass stops the feed with the tool in the
+                      groove and the spindle turning. NOT TAKEN.
+
+        The older note here said clearing enable "releases the carriage hold".
+        THAT PHRASE IS UNVERIFIED (2026-08-31): the cited lines cancel in-flight
+        take-up and zero commanded motion, and whether the carriage is then held
+        by the drive or free is a fact about the CL86T with no commanded motion,
+        which no source in this repo states. Left standing as an open question
+        rather than repeated as established -- it is the load-bearing claim for
+        keeping the alarm rung off the table, and it appears in at least three
+        places having never been checked in any of them.
 
         Only the dangerous direction is reported. "We said run, it says stopped"
         is a stalled feed -- annoying, visible, and not a runaway.
@@ -272,6 +297,43 @@ class ServoDispatcher(SavingDispatcher):
                 f"The carriage may be driven without the UI asking. See ELS "
                 f"disengage/reconnect notes."
             )
+            # The log line above stays. The notice is an ADDITIONAL channel,
+            # not a replacement: the log is what makes the episode findable
+            # afterwards, and the notice is what reaches the operator while it
+            # is happening. Same "once per episode" rule -- this whole branch
+            # runs on the Nth poll only.
+            self._notify_operator(self.DIVERGENCE_NOTICE, NOTICE_WARNING)
+
+    def _notify_operator(self, message, severity) -> bool:
+        """Post to the top status bar, if there is an app to post through.
+
+        Lazily imported and defensively guarded, matching els_resync_popup and
+        els_settings_popup: this module is a plain dispatcher holding no app
+        reference, and importing MainApp at module scope would close an import
+        cycle.
+
+        Called from the board polling thread. That is safe by els_uic.notify's
+        own contract -- the notice queue is locked and a Kivy property
+        assignment is atomic enough for a string.
+
+        Returns True iff the operator will actually see it, which is what lets
+        a test tell "posted" apart from "silently swallowed".
+        """
+        try:
+            from reflex.app import MainApp
+            app = MainApp.get_running_app()
+            uic = getattr(app, "els_uic", None) if app is not None else None
+            if uic is None:
+                # Previews, tests and early startup have no controller. Not an
+                # error: the log line is the fallback channel and it has
+                # already been written by the time we get here.
+                return False
+            return bool(uic.notify(message, severity))
+        except Exception as e:
+            # A watchdog that can take the app down at the lathe is worse than
+            # one that cannot speak.
+            log.error(f"servoMode divergence notice failed: {e}")
+            return False
 
     def update_scaledPosition(self, instance, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)
