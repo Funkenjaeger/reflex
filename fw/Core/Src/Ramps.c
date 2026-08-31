@@ -833,6 +833,40 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
 
   data->elsStopPreviousEnable = shared->elsStop.enable;
 
+  /* CUSTODY OF THE LEADSCREW. Evan, 2026-08-31: "the instant the drive is
+   * de-energized we've lost custody of the leadscrew position, period. That's
+   * when the ref is invalidated."
+   *
+   * That is the whole rule, and it needs no list of mechanisms to justify it.
+   * This firmware has no leadscrew feedback — it knows only the steps it
+   * commanded — so its model of leadscrew position is valid exactly as long as
+   * the drive is holding it. servoMode == 0 takes ENA high in servoEnableTask
+   * and de-energises the drive; from that instant the position is unknown, and
+   * a thread phase datum measured against it is worthless. Sub-pitch error is
+   * enough to matter, so "probably did not move" is not a defence.
+   *
+   * STATED AS A LEVEL, NOT AN EDGE, deliberately. Custody is a STATE, so the
+   * invariant is "no custody, no reference" — it cannot be defeated by a
+   * missed transition, where the edge form can. No legitimate latch happens
+   * with the drive off, so nothing wants the weaker form (see the servoMode
+   * gate on the manual latch below, which refuses that case out loud).
+   *
+   * The guard on referenceLatched keeps this a pure read in the common case:
+   * the ISR runs at 50 kHz and this must not become a store every tick.
+   *
+   * phaseOffsetSteps dies with it, following the enable-rising-edge precedent
+   * above — an offset is meaningless without the datum it offsets.
+   *
+   * Why this fires at DISABLE rather than at the next re-enable, also Evan:
+   * "it's a better cue for the operator to see the status indicate that
+   * there's no ref as soon as sync is disabled, rather than continuing to
+   * report a ref as latched (which technically it was, but it was unusable
+   * since it'd be cleared the moment they try to use it)." */
+  if (shared->fastData.servoMode == 0u && shared->elsStop.referenceLatched) {
+    shared->elsStop.referenceLatched = 0;
+    shared->elsStop.phaseOffsetSteps = 0;
+  }
+
   /* Manual reference latch (interactive re-sync to an existing thread). Same
    * command/ack split as calCommand: consumed and cleared in one ISR pass so a
    * host-side two-register write can never be seen half-applied, and the pair is
@@ -841,10 +875,22 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
    * 0->1 edge, so a latch while disabled is consumed WITHOUT the latchSeq ack
    * and the host reads the missing edge as the refusal. Setting referenceLatched
    * is also what suppresses the first-trigger auto-latch for the rest of the
-   * job: the trigger block only captures while referenceLatched == 0. */
+   * job: the trigger block only captures while referenceLatched == 0.
+   *
+   * THE servoMode GATE (2026-08-31) rides the same refusal channel. A latch
+   * taken with the drive de-energised would be cleared by the block above
+   * before anything could use it, so accepting it would ack a reference that
+   * does not exist. Refusing it here means the host sees no latchSeq edge and
+   * reports the refusal, instead of the reference silently evaporating.
+   *
+   * This does NOT interfere with picking up an existing thread: that procedure
+   * seats the carriage against a HELD leadscrew (the half nut is closed and
+   * pulled back until it seats on the flank the leadscrew pushes from), which
+   * requires the drive energised. Moving the carriage by hand happens with the
+   * half nut OPEN, where the drive is irrelevant. */
   if (shared->elsStop.latchCommand != 0u) {
     shared->elsStop.latchCommand = 0u;
-    if (shared->elsStop.enable != 0u) {
+    if (shared->elsStop.enable != 0u && shared->fastData.servoMode != 0u) {
       shared->elsStop.latchedZ         = shared->scales[shared->elsStop.scaleIndex].position;
       shared->elsStop.latchedSpindle   = shared->scales[0].position;
       shared->elsStop.referenceLatched = 1;

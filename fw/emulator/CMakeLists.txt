@@ -373,6 +373,19 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
 target_link_libraries(els_manual_latch_test m pthread)
 add_test(NAME els_manual_latch_test COMMAND els_manual_latch_test)
 
+# No drive, no thread reference. servoMode == 0 de-energises the drive, at which
+# point the firmware has lost custody of the leadscrew position -- it has no
+# leadscrew feedback and knows only commanded steps -- so a thread phase datum
+# measured against it is worthless. Covers the invariant (a LEVEL rule, not an
+# edge: case 5 starts from an already-off drive), the two things that must not
+# break (jog, and the normal stopped-at-shoulder pass), and the paired latch
+# refusal that rides the existing no-ack channel.
+add_executable(els_drive_custody_test
+    ${CMAKE_SOURCE_DIR}/test/els_drive_custody_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_link_libraries(els_drive_custody_test m pthread)
+add_test(NAME els_drive_custody_test COMMAND els_drive_custody_test)
+
 # Carriage settle model (physics.cpp). Proves the settle tail added 2026-08-22
 # is OBSERVABLE -- that a test can tell it from the instantaneous behaviour it
 # replaced -- and that its time constant is a real knob. Same link shape as
