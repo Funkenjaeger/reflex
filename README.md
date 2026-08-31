@@ -147,7 +147,7 @@ The first release, as two separately versioned repositories (`reflex-fw` and
 - **Electronic retract** and the advanced ELS bar.
 - Jogging with a trapezoidal velocity profile.
 
-### 1.1.0 · `rc.1` tagged 2026-08-22 — **current**
+### 1.1.0 · released 2026-08-31 — **current**
 
 The release where the controller stops trusting and starts **verifying**. Every
 headline feature below exists because some way of getting a thread wrong had no
@@ -172,8 +172,19 @@ detection before it.
   now says what to do about it.
 - **One repository, one version.** `fw/` and `ui/` welded with full history
   preserved on both sides; releases are cut for both halves together.
-- **This user guide**, and a generated screenshot set that doubles as the
+- **This user guide**, covering installation on a Pi through to picking up an
+  existing thread — with a generated screenshot set that doubles as the
   regression check for the screens it photographs.
+- **Error reporting is opt-in, and goes where you tell it.** There is no
+  built-in destination: set `REFLEX_SENTRY_DSN` to your own Sentry project, or
+  leave it off, which is the default. Nothing leaves the machine otherwise.
+- **Half the interrupt budget back.** Step generation runs at 50 kHz rather
+  than 100, taking sustained ISR load from ~40% to ~20% — the headroom the
+  next two releases are going to spend.
+- **The in-app update screen is withdrawn.** It queried a repository that no
+  longer publishes releases and installed to a path that no longer exists.
+  Updating is a `git pull` and, when the firmware moves, a flash; both are in
+  the guide.
 
 ### 1.2.0 · planned — auto-start
 
