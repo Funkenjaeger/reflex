@@ -92,3 +92,4 @@ nav:
   - Design notes:
       - decisions/repo-structure-monorepo.md
       - design/els-command-channel.md
+      - ELS safety case: design/els-safety-case.md
