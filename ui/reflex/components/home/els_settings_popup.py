@@ -121,6 +121,16 @@ class ElsSettingsPopup(Popup):
         true about the job and silent about the mode, and the wizard would walk
         its whole procedure in feed mode to latch a reference against
         threadPitchSteps = 0.
+
+        AND THE REFUSAL MOVED TO OPEN TIME 2026-08-31. The paragraph above
+        stayed true and stayed insufficient: refusing is not the same as
+        refusing in time. The wizard opened on JOG_TEXT, which tells the
+        operator to close the half nut and haul the carriage back by hand,
+        and only the Begin button at the end of that consulted any of these
+        conditions. ThreadResync.entry_refusal is now also evaluated in
+        ThreadResyncPopup.__init__, so the modal opens straight into REFUSED
+        with the reason. The button here is still deliberately NOT gated, for
+        exactly the reason this docstring has always given.
         """
         from reflex.components.home.els_resync_popup import ThreadResyncPopup
         ThreadResyncPopup().open()
