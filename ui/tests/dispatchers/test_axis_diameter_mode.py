@@ -1,5 +1,5 @@
-"""X reads diameter: the cross-slide readout shows the work's diameter rather
-than how far the slide physically travelled.
+"""X DRO reads Diameter: the cross-slide readout shows the work's diameter
+rather than how far the slide physically travelled.
 
 WHY IT EXISTS. Without it the only way to get a diameter DRO is to enter a
 scale at twice the real resolution, and nothing then records that the doubling

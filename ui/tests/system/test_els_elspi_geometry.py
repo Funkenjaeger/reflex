@@ -72,16 +72,16 @@ _BASE_TOML = _REFLEX_FW_DIR / "emulator" / "config" / "lathe.toml"
 # commissioning below and the emulator TOML patch.
 _ELSPI_Z_COUNTS_PER_MM = 200        # [z_axis] encoder_counts_per_mm: 400 -> 200
 # X WAS 400 AND MATCHED THE REFERENCE MACHINE UNTIL 2026-08-31. It does not any
-# more, and the reason is worth carrying: the head is a 1 um scale (1000
-# counts/mm), and Evan deliberately provisions it at 500 so the X DRO reads
-# DIAMETER rather than radius. Reflex has no radius/diameter setting yet, so the
-# doubling lives inside the scale ratio -- which is exactly the invisibility the
-# open radius/diameter task exists to fix. When that lands this becomes 1000
-# plus an explicit toggle, and this constant must move with it.
+# more, and the history is worth carrying. The head is a 1 um scale and is now
+# provisioned as one; the X DRO still reads DIAMETER, but that doubling lives in
+# the axis's diameter_mode (ELS setup -> "X DRO reads"), NOT in this ratio.
 #
-# Until 2026-08-31 it was provisioned at 400 (2.5 um) against a 1 um head, so
-# the X DRO read 2.5x true travel. A dial-indicator check found it.
-_ELSPI_X_COUNTS_PER_MM = 500        # [x_axis] 1 um head, doubled for diameter
+# It was 400 (2.5 um against a 1 um head) until 2026-08-31, so the X DRO read
+# 2.5x true travel for months; a dial-indicator check found it. It was then 500
+# -- correct, but only because the doubling was hidden inside the scale, which
+# is the invisibility the radius/diameter feature exists to end. Corrected on
+# the machine 2026-09-01, resolution and convention set together.
+_ELSPI_X_COUNTS_PER_MM = 1000       # [x_axis] 1 um head, entered faithfully
 #
 # AND THIS CONSTANT IS DECLARED, NOT VERIFIED. Measured 2026-09-01: the test
 # below passes unchanged with X set to 37 counts/mm. The cycle it drives is

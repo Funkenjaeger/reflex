@@ -41,12 +41,24 @@
         # spindle would be a trap -- so it lives directly under the dropdown
         # that nominates X rather than on the axis screen. Collapses when no X
         # is assigned: there is nothing for it to describe.
-        BooleanItem:
-          id: x_diameter_toggle
-          name: "X reads diameter"
+        #
+        # A DROPDOWN OF TWO NAMED CONVENTIONS, not a boolean. As an on/off "X
+        # reads diameter", OFF means "reads radius instead" -- an inference
+        # only someone already fluent in the setting makes, and a dimmed OFF is
+        # exactly where it gets skipped. Both alternatives are now spelled out,
+        # and the label and value read as one sentence.
+        # NO `value:` BINDING, and this is load-bearing. A kv `value:` is
+        # applied while the tree is built -- before on_pre_enter, before `els`
+        # is even set -- so it would fire on_value with the property's DEFAULT
+        # and write "Radius" onto an axis provisioned for diameter, silently
+        # halving the readout at startup. The three dropdowns above have the
+        # same shape for the same reason: value is pushed in from
+        # _refresh_x_dro_reads, never bound.
+        DropDownItem:
+          id: x_dro_reads_dropdown
+          name: "X DRO reads"
           help_file: "els_radius_diameter.md"
-          value: root.x_diameter_mode
-          on_value: root.on_x_diameter_selected(self, self.value)
+          on_value: root.on_x_dro_reads_selected(self, self.value)
           opacity: 1 if root.has_x_axis else 0
           height: 60 if root.has_x_axis else 0
           disabled: not root.has_x_axis

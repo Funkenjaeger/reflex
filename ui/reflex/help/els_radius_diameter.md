@@ -1,11 +1,12 @@
-X Reads Diameter
-================
+X DRO Reads
+===========
 
-Makes the cross-slide readout show the **diameter** of the work rather
-than how far the cross slide has physically travelled.
+Whether the cross-slide readout shows the **diameter** of the work or the
+**radius** — how far the cross slide has physically travelled.
 
-Moving the cross slide 1 mm changes the diameter by 2 mm, so with this
-on, the readout moves twice as fast as the slide.
+Moving the cross slide 1 mm changes the diameter by 2 mm. On **Diameter**
+the readout therefore moves twice as fast as the slide; on **Radius** it
+moves with it.
 
 ## Where it applies
 
@@ -15,8 +16,8 @@ saddle or a spindle has no diameter, so the setting is not offered on
 them at all.
 
 If you reassign the X role to a different axis, this follows the role:
-the toggle reads whichever axis is X now. The axis you moved away from
-keeps its own setting, and its Axis screen says so.
+it reads whichever axis is X now. The axis you moved away from keeps its
+own setting, and its Axis screen says so.
 
 ## What it changes, and what it does not
 
@@ -40,13 +41,14 @@ one, and nothing then records that a doubling was intended — a later
 reader sees a 2 µm scale on a 1 µm head and has no way to know which is
 wrong.
 
-Enter the resolution printed on the scale, and turn this on.
+Enter the resolution printed on the scale, and set this to **Diameter**.
 
 ## Notes
 
-- Off by default, and turning it on does not change any stored scale.
-  If your X scale is currently entered at double the real resolution to
-  get a diameter readout, correct the resolution **and** turn this on
-  together — doing only one halves or doubles the readout.
+- New setups read **Radius**, and changing this does not touch any
+  stored scale. If your X scale is currently entered at double the real
+  resolution to get a diameter readout, correct the resolution **and**
+  switch this to Diameter together — doing only one halves or doubles
+  the readout.
 - **Inner Thread** decides which direction counts as clear of the work;
   it is independent of this setting.

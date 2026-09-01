@@ -72,23 +72,28 @@ runs at the reference values, not these:
 | Primitive | elspi (real) | Emulator reference |
 |---|---|---|
 | Z encoder scale | 200 counts/mm | 400 counts/mm |
-| X encoder scale | **500 counts/mm** — see below | 400 counts/mm |
+| X encoder scale | **1000 counts/mm** — see below | 400 counts/mm |
 | Spindle encoder | 6144 PPR | 4000 PPR |
 | Leadscrew | 8 TPI (0.125 in pitch), 1600 steps/rev | 8 TPI, 800 steps/rev |
 
-**THE X SCALE IS NOT THE HEAD'S RESOLUTION, and this trips people.** The head is a
-1 µm scale — 1000 counts/mm. It is provisioned at **500** on purpose, so the X DRO reads
-**diameter** rather than radius. Reflex has no radius/diameter setting yet, so the doubling
-has nowhere to live except inside the scale ratio, and nothing on the machine records that a
-convention decision was made. Anything consuming the X DRO must know this: the virtual
+**THE X SCALE IS THE HEAD'S RESOLUTION — and the X DRO still reads DIAMETER.** Those are
+now two separate facts, which is the point. The head is a 1 µm scale and is provisioned as
+one; the doubling lives in the axis's `diameter_mode` (ELS setup → *X DRO reads* →
+`Diameter`), so `Axis-0.yaml` records the convention decision instead of burying it in a
+ratio. Anything consuming the X DRO must still know the readout is a diameter: the virtual
 compound / auto-advance-from-X-depth work is the first such consumer, and its math is wrong
-if its convention and this ratio disagree. There is an open task to enter the scale
-faithfully (1000) and move the doubling to an explicit toggle; when it lands, this row and
-`tests/system/test_els_elspi_geometry.py`'s `_ELSPI_X_COUNTS_PER_MM` both change.
+if its convention and this setting disagree — but it can now *ask*, which it could not
+before.
 
-This row read **400 counts/mm** until 2026-08-31 and was simply wrong — the X DRO had been
-reporting 2.5× true cross-slide travel for months. A dial-indicator check found it. Do not
-trust a scale row here without a measurement behind it.
+**History, because both halves of this row have been wrong before.** It read **400
+counts/mm** until 2026-08-31 and was simply wrong: the X DRO had been reporting 2.5× true
+cross-slide travel for months, and a dial-indicator check found it. It then read **500** —
+correct, but only because the diameter doubling was hidden inside the ratio, with nothing
+recording that. Both were entered as settled facts. Do not trust a scale row here without a
+measurement behind it.
+
+Corrected on the machine 2026-09-01: resolution 1 µm *and* `X DRO reads = Diameter`, set
+together in one sitting, because either alone moves the readout by a factor of two.
 
 There is deliberately **no sync ratio recorded here**: the sync ratio is computed
 dynamically per operation from the machine settings above (spindle PPR included) *and* the
