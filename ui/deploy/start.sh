@@ -10,7 +10,16 @@
 # Kivy renders directly via KMS/DRM on the Pi (no X server), so no DISPLAY is set.
 # These KCFG_* vars configure Kivy via its environment-variable config overrides.
 export KCFG_KIVY_KEYBOARD_MODE="systemanddock"
-export KCFG_KIVY_LOG_DIR="/var/log"
+# NOT /var/log. The service still runs as root today, so Kivy's logs landed there
+# root-owned and accumulated -- 80 stray kivy_*.txt files in a system directory as
+# of 2026-09-01, unreadable to the operator account and to any rebuild. This
+# directory is owned by the service user instead, which is also the direction the
+# pi-gen image is going: see elspi.git RUNTIME-INVENTORY.md, "Decided 2026-09-01".
+# Created defensively so a fresh deploy cannot fail on a directory that does not
+# exist yet -- Kivy aborts if its log dir is missing, and on this machine that
+# means a lathe with no UI and no terminal to fix it from.
+export KCFG_KIVY_LOG_DIR="/var/log/reflex"
+mkdir -p "$KCFG_KIVY_LOG_DIR" 2>/dev/null || true
 export KCFG_GRAPHICS_WIDTH=1024
 export KCFG_GRAPHICS_HEIGHT=600
 export KCFG_GRAPHICS_FULLSCREEN=auto
