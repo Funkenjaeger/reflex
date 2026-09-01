@@ -1707,6 +1707,31 @@ class ElsUiController(EventDispatcher):
             # confirm callback is a no-op (the feed the operator wanted is on —
             # don't toggle it off just because it was enabled meanwhile).
             if not confirmed:
+                # CLEAR SYNC FIRST, THEN DROP THE MODE. This ordering is the
+                # whole fix, and it is not new: ElsStopHal.stop_sync's docstring
+                # spells out the race, and on_enter_disabled and on_enter_alarm
+                # both already do it. THIS BUTTON WAS THE THIRD CALL SITE AND
+                # NEVER GOT IT.
+                #
+                # servoEnableTask re-asserts servoMode = 1 every 100 ms while
+                # ANY scale still has syncEnable set and elsStop.active is 0 --
+                # and during a cut active IS 0. So dropping servoMode alone
+                # hands the firmware a window to switch the feed straight back
+                # on, and the only thing that eventually closed it was the
+                # servoMode -> syncEnable binding in dispatchers/els.py, which
+                # fires as a REACTION and therefore writes syncEnable LAST.
+                #
+                # Observed on the bench 2026-08-30: pressing Sync Enable
+                # mid-cut stopped the leadscrew but left sync active and the
+                # advanced bar dead; a second press was needed to make it
+                # stick. That second press worked because the binding had
+                # cleared syncEnable by then.
+                #
+                # SCOPE: the ELS path only. app.on_servo_enable_pressed calls
+                # servo.toggle_enable() directly for the plain power feed in
+                # non-ELS modes, which has no ELS stop and no sync to clear;
+                # that path is deliberately untouched.
+                self.hal.stop_sync()
                 servo.toggle_enable()
             return True
         if not confirmed and self.feed_without_armed_stop():

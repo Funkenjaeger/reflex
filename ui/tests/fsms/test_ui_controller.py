@@ -1158,3 +1158,64 @@ def test_unarmed_stop_message_names_the_actual_cause():
     c.toggle_engage()
     _pump()
     assert "No stop is set" in c.unarmed_stop_message()
+
+
+# ── Sync Enable OFF must clear sync BEFORE dropping the mode ────────────────
+#
+# THE BENCH SYMPTOM, 2026-08-30: pressing Sync Enable mid-cut stopped the
+# leadscrew but left sync active and the advanced bar dead, and a second press
+# was needed to make it stick.
+#
+# THE MECHANISM: servoEnableTask re-asserts servoMode = 1 every 100 ms while
+# ANY scale still has syncEnable set and elsStop.active is 0 -- and during a cut
+# active IS 0. Dropping servoMode alone hands the firmware a window to switch
+# the feed straight back on. ElsStopHal.stop_sync exists precisely to close it,
+# and on_enter_disabled / on_enter_alarm both already use it. This button was
+# the third call site and never did.
+
+def _feed_off_rig():
+    """A connected rig with the feed ON and both calls recorded in order."""
+    board, els = _make_collaborators(connected=True)
+    c = ElsUiController(els=els, board=board)
+    board.servo.servoMode = 1                      # feed running
+
+    order = []
+    board.servo.toggle_enable = lambda: order.append("toggle_enable")
+    c.hal.stop_sync = lambda: order.append("stop_sync")
+    return c, board, order
+
+
+def test_turning_the_feed_off_clears_sync_first():
+    """THE ORDER IS THE FIX. Reversed, the firmware gets its window back."""
+    c, _board, order = _feed_off_rig()
+
+    assert c.request_feed_enable() is True
+
+    assert order == ["stop_sync", "toggle_enable"], (
+        "sync must be cleared BEFORE servoMode is dropped -- got %r" % (order,))
+
+
+def test_turning_the_feed_ON_does_not_clear_sync():
+    """Negative control. stop_sync on the ON path would fight the very feed the
+    operator just asked for."""
+    board, els = _make_collaborators(connected=True)
+    c = ElsUiController(els=els, board=board)
+    board.servo.servoMode = 0                      # feed off, operator turns it on
+
+    order = []
+    board.servo.toggle_enable = lambda: order.append("toggle_enable")
+    c.hal.stop_sync = lambda: order.append("stop_sync")
+
+    c.request_feed_enable(confirmed=True)
+
+    assert "stop_sync" not in order
+
+
+def test_a_confirm_callback_on_an_already_running_feed_still_touches_nothing():
+    """Guards the early return the ordering sits inside: if the feed came on
+    between the dialog opening and the operator confirming, neither call fires."""
+    c, _board, order = _feed_off_rig()
+
+    assert c.request_feed_enable(confirmed=True) is True
+
+    assert order == []
