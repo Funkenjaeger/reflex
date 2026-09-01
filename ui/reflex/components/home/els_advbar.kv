@@ -323,14 +323,18 @@
 
         Widget: # spacer
 
+        # "Major ø" in wizard, "Safe ø" in stop + retract -- same value, named
+        # for the job it is doing. Visibility and label both come from single
+        # derived properties on the bar (show_start_dia / start_dia_label)
+        # rather than repeating the condition on three lines here.
         TextHeaderButton:
           id: btn_major_dia
-          text_header: "Major ø"
+          text_header: root.start_dia_label
           text_button: app.formats.position_format.format(root.controller.start_dia)
           blink_enable: root.controller.active_input == "major_dia"
-          width: self.height if root.enable_wizard else 0
-          opacity: 1 if root.enable_wizard else 0
-          disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
+          width: self.height if root.show_start_dia else 0
+          opacity: 1 if root.show_start_dia else 0
+          disabled: not ( root.controller.x_z_inputs_enabled and root.show_start_dia )
           on_short_press: root.on_value_button_released("major_dia")
           on_long_press: root.on_value_long_press("major_dia")
 

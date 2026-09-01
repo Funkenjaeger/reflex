@@ -27,6 +27,24 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     enable_retract = BooleanProperty(True)
     enable_wizard = BooleanProperty(True)
 
+    # A committed diameter in stop + retract mode, so the X-clear gate is not
+    # vacuous there. OPTIONAL AND ON BY DEFAULT (Evan, 2026-08-31); when off the
+    # field is hidden outright rather than greyed.
+    #
+    # WHY IT EXISTS. Pressing Retract feeds the carriage back to Start Z under
+    # power, and a tool still in the groove is dragged along the thread. Backing
+    # off in X is always the operator's hand -- there is one servo and it drives
+    # the leadscrew. Wizard mode already resists that: _apply_policy gates the
+    # button on _x_clear_of_start_dia(). But that predicate returns True
+    # whenever no diameter is committed, and until now ONLY the wizard could
+    # commit one -- so in stop + retract the gate was vacuously satisfied and
+    # caught nothing. Evan: "that's the main reason I don't often use the mode."
+    #
+    # NO NEW MECHANISM. The predicate, the refusal message and the disable path
+    # all already exist and are already exercised in wizard mode. All that was
+    # missing was a way to put a value in.
+    enable_safe_dia = BooleanProperty(True)
+
     # Height this bar WANTS, i.e. its base plus whichever collapsible notice
     # strips are currently showing. Computed in the kv rule.
     #
@@ -86,6 +104,51 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         return "stop"
 
     mode = AliasProperty(_get_mode, None, bind=["enable_wizard", "enable_retract"])
+
+    # ── The diameter field: shown when, and called what ───────────────────────
+    # Derived here rather than repeated in the kv, where the same condition
+    # would have had to appear three times (width, opacity, disabled) and drift
+    # apart on the first edit. It is also the whole behaviour of this feature,
+    # so having it as one testable expression means the truth table can be
+    # pinned without standing up a widget tree.
+    def _get_show_start_dia(self):
+        """Is the diameter field on screen?
+
+        Wizard always shows it -- there it is the MAJOR diameter of the thread
+        being cut, and the wizard collects it as step 3.
+
+        Stop + retract shows it only when the operator has left the safe
+        diameter enabled, because there its job is the retract gate rather
+        than the cut.
+
+        Stop-only never shows it: there is no Retract in that mode, so there is
+        no hazard for the gate to catch and nothing for the value to do.
+        """
+        if self.enable_wizard:
+            return True
+        return bool(self.enable_retract and self.enable_safe_dia)
+
+    show_start_dia = AliasProperty(
+        _get_show_start_dia, None,
+        bind=["enable_wizard", "enable_retract", "enable_safe_dia"])
+
+    def _get_start_dia_label(self):
+        """What the field is CALLED, which differs by what it is for.
+
+        "Major ø" in wizard mode: it is a thread dimension there, and the
+        wizard's own prompts name it that way.
+
+        "Safe ø" in stop + retract: nothing is being threaded to a major
+        diameter, and calling a clearance gate after thread geometry is
+        actively misleading. Evan's naming call, 2026-08-31.
+
+        Same underlying value (controller.start_dia) either way -- the name
+        changes with the job, not the storage.
+        """
+        return "Major ø" if self.enable_wizard else "Safe ø"
+
+    start_dia_label = AliasProperty(_get_start_dia_label, None,
+                                    bind=["enable_wizard"])
 
     def apply_mode(self, value):
         """Set the operating mode from the one-hot mode tab's selected value."""

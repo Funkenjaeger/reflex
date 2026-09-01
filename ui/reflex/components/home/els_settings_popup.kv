@@ -30,6 +30,16 @@
                 value: root.bar.inner_thread
                 on_value: root.bar.inner_thread = self.value
 
+            # Only meaningful in stop + retract: wizard always collects a
+            # diameter, and stop-only has no Retract to gate. Left ON by
+            # default -- the gate it enables is the only thing standing between
+            # Retract and a tool dragged back through the thread.
+            BooleanItem:
+                name: "Safe diameter"
+                help_file: "els_safe_diameter.md"
+                value: root.bar.enable_safe_dia
+                on_value: root.bar.enable_safe_dia = self.value
+
             NumberItem:
                 name: "Backlash takeup (mm)"
                 help_file: "els_backlash_takeup.md"
