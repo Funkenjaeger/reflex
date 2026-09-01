@@ -6,7 +6,9 @@ full ELS cut/stop/retract cycle at the REAL elspi lathe's commissioned
 geometry, read from its live config 2026-08-03:
 
     Z scale:       200 counts/mm      (reference machine: 400)
-    X scale:       400 counts/mm      (matches -- no change)
+    X scale:       500 counts/mm      (reference machine: 400; see below --
+                                       a 1 um head deliberately doubled so the
+                                       X DRO reads diameter)
     Spindle:       6144 counts/rev    (reference machine: 4000)
     Leadscrew:     0.125 in @ 1600 steps/rev -> exactly 127/64000 mm/step
                    (reference machine: 800 steps/rev -> 127/32000)
@@ -69,6 +71,31 @@ _BASE_TOML = _REFLEX_FW_DIR / "emulator" / "config" / "lathe.toml"
 # elspi's live-read geometry (2026-08-03) -- ground truth for both the UI
 # commissioning below and the emulator TOML patch.
 _ELSPI_Z_COUNTS_PER_MM = 200        # [z_axis] encoder_counts_per_mm: 400 -> 200
+# X WAS 400 AND MATCHED THE REFERENCE MACHINE UNTIL 2026-08-31. It does not any
+# more, and the reason is worth carrying: the head is a 1 um scale (1000
+# counts/mm), and Evan deliberately provisions it at 500 so the X DRO reads
+# DIAMETER rather than radius. Reflex has no radius/diameter setting yet, so the
+# doubling lives inside the scale ratio -- which is exactly the invisibility the
+# open radius/diameter task exists to fix. When that lands this becomes 1000
+# plus an explicit toggle, and this constant must move with it.
+#
+# Until 2026-08-31 it was provisioned at 400 (2.5 um) against a 1 um head, so
+# the X DRO read 2.5x true travel. A dial-indicator check found it.
+_ELSPI_X_COUNTS_PER_MM = 500        # [x_axis] 1 um head, doubled for diameter
+#
+# AND THIS CONSTANT IS DECLARED, NOT VERIFIED. Measured 2026-09-01: the test
+# below passes unchanged with X set to 37 counts/mm. The cycle it drives is
+# Z-domain -- feed, stop, retract along Z -- and nothing in it reads the X
+# scale, so no assertion here can tell a correct X from an absurd one.
+#
+# That is not an argument for removing the constant: a file whose whole purpose
+# is "run at elspi's real geometry" should state the real geometry, and the
+# stale 400 sat here for months precisely because nothing objected. It IS a
+# reason not to read this file as covering X.
+#
+# The gap is now closable, which it was not before today: with a committed safe
+# diameter reachable outside the wizard, a retract-gate case could drive
+# _x_clear_of_start_dia at a known scale and would then discriminate X.
 _ELSPI_SPINDLE_PPR = 6144           # [spindle] counts_per_rev: 4000 -> 6144
 _ELSPI_LEADSCREW_STEPS = 1600       # 0.125in @ 1600 steps/rev (was 800)
 _ELSPI_MM_PER_STEP = 0.001984375    # [leadscrew] mm_per_step: exactly 127/64000
@@ -126,8 +153,7 @@ def test_els_cycle_at_elspi_geometry(harness):
     h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
     h.commission_geometry(
         z_counts_per_mm=_ELSPI_Z_COUNTS_PER_MM,
-        # x_counts_per_mm left at the shared default (400) -- elspi's X scale
-        # matches the reference machine, no override needed.
+        x_counts_per_mm=_ELSPI_X_COUNTS_PER_MM,
         spindle_ppr=_ELSPI_SPINDLE_PPR,
         leadscrew_steps=_ELSPI_LEADSCREW_STEPS,
     )
