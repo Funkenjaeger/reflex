@@ -32,6 +32,20 @@
           help_file: "spindle_mode.md"
           on_value: root.axis.spindleMode = self.value
 
+        # READ-ONLY, DELIBERATELY. Editing lives under "Cross Slide Axis (X)"
+        # in ELS setup: radius/diameter is a property of that role, not of axes
+        # in general, and offering it here would put it on Z and the spindle
+        # too. It is SHOWN here so an axis can never carry a doubling this
+        # screen does not admit to -- including one that used to be X and no
+        # longer is. Collapses when off; only the exceptional state earns a row.
+        StringItem:
+          name: "Readout"
+          value: "DIAMETER — set in ELS setup"
+          help_file: "els_radius_diameter.md"
+          disabled: True
+          opacity: 1 if (root.axis and root.axis.diameter_mode) else 0
+          height: 60 if (root.axis and root.axis.diameter_mode) else 0
+
         TitleItem:
           name: "Sync Ratio"
         NumberItem:
