@@ -6,8 +6,11 @@
   BoxLayout:
     orientation: "vertical"
     padding: 10
+    # Header names the axis this input feeds, so the operator does not have to
+    # go to the Axes screen to find out what they are editing. Read-only; see
+    # reflex/utils/input_axis_map.py.
     ScreenHeader:
-      text: "Scale Input {}".format(root.input.inputIndex)
+      text: "Scale Input {}{}".format(root.input.inputIndex, "  →  " + root.axis_label if root.axis_label else "")
 
     ScrollView:
       do_scroll_x: False
