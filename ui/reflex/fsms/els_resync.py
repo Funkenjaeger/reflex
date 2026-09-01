@@ -399,10 +399,17 @@ class ThreadResync:
         if latch_seq == self._baseline_seq:
             self._latch_polls += 1
             if self._latch_polls >= self.LATCH_TIMEOUT_POLLS:
+                # TWO CAUSES NOW, and naming only the first sends the operator
+                # to the wrong control. The firmware consumes latchCommand
+                # without a seq edge when elsStop.enable == 0 (the job ended)
+                # OR when fastData.servoMode == 0 (2026-08-31: the drive is
+                # de-energised, so it has lost custody of the leadscrew and a
+                # reference taken now would be worthless). Both present here as
+                # the same silence.
                 self._refuse(
-                    "The controller never acknowledged the latch. The job may "
-                    "have disengaged — check the ELS stop is still engaged and "
-                    "retry."
+                    "The controller never acknowledged the latch. Either the "
+                    "job disengaged or the servo drive is off — check the ELS "
+                    "stop is still engaged and Sync Enable is on, then retry."
                 )
             return
 
