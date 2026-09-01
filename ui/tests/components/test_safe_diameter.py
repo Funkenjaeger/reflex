@@ -132,3 +132,43 @@ def test_the_kv_uses_the_derived_properties(advbar_factory, running_app):
     assert "root.start_dia_label" in block
     assert not re.search(r"root\.enable_wizard", block), \
         "the raw flag is back in the diameter button -- that is the drift"
+
+
+# ── an uncommitted field must not display a value (Evan, 2026-09-01) ────────
+
+def test_the_diameter_buttons_show_dashes_until_committed():
+    """0.000 IS A REAL DIAMETER depending on how X was referenced, so it is not
+    an "obviously unset" placeholder. Displaying it for an uncommitted field
+    claims a value that does not exist -- and for Safe ø the claim is that the
+    Retract gate is armed when it is not.
+
+    Stop Z and Start Z have always done this; the two diameter buttons never
+    did, which only became visible once the field appeared outside the wizard.
+    """
+    from pathlib import Path
+    import reflex.components.home.els_advbar as mod
+
+    kv = (Path(mod.__file__).parent / "els_advbar.kv").read_text(encoding="utf-8")
+
+    for btn, valid in (("btn_major_dia", "start_dia_valid"),
+                       ("btn_minor_dia", "stop_dia_valid")):
+        block = kv[kv.index(f"id: {btn}"):]
+        block = block[:block.index("on_long_press")]
+        assert f"root.controller.{valid}" in block, \
+            f"{btn} renders a value with no committed check"
+        assert 'else "--"' in block, f"{btn} has no unset rendering"
+
+
+def test_the_keypad_title_follows_the_field_name(advbar_factory, running_app):
+    """Long-pressing the field in stop + retract opened a keypad headed
+    "Major ø" -- naming a thread dimension in a mode where nothing is being
+    threaded to one."""
+    from pathlib import Path
+    import reflex.components.home.els_advbar as mod
+
+    src = Path(mod.__file__).read_text(encoding="utf-8")
+    assert 'title_label = (self.start_dia_label if which == "major"' in src, \
+        "the keypad title is hardcoded again"
+
+    ret = advbar_factory(els_bar=None, enable_wizard=False, enable_retract=True)
+    assert ret.start_dia_label == "Safe ø"

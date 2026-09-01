@@ -14,6 +14,6 @@
     FormValueButton:
       size_hint_x: None
       width: 250
-      text: str(root.value)
+      text: root.display
       on_press: app.beep()
       on_release: Factory.Keypad(integer=root.integer).show(root, 'value')

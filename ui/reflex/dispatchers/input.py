@@ -14,7 +14,7 @@ from fractions import Fraction
 
 from kivy.logger import Logger
 from kivy.clock import Clock
-from kivy.properties import NumericProperty, BooleanProperty
+from kivy.properties import NumericProperty, BooleanProperty, StringProperty
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
 from reflex.utils.ctype_calc import uint32_subtract_to_int32
@@ -36,6 +36,20 @@ class InputDispatcher(SavingDispatcher):
     gear_ratio_num = NumericProperty(1)
     gear_ratio_den = NumericProperty(1)
     reverse = BooleanProperty(False)
+
+    #: Which form the setup screen offers for this input's scale --
+    #: "Resolution" (microns per count) or "Ratio" (the stored pair).
+    #:
+    #: PERSISTED, on Evan's instruction 2026-09-01: it was per-visit at first
+    #: and reverted every time the screen was left. "If a user prefers ratio,
+    #: honor that and stick to it." It is a preference about how to READ the
+    #: setting, not part of the machine's geometry -- but a preference that
+    #: does not survive leaving the screen is not a preference.
+    #:
+    #: The screen still OVERRIDES it to "Ratio" when the stored value cannot be
+    #: expressed as a resolution, since honouring a preference is not worth
+    #: displaying a number that would change the setting if accepted.
+    scale_entry_mode = StringProperty("Resolution")
 
     # ── Transient computed properties ────────────────────────────────
     _spindle_wrap_steps = NumericProperty(0)

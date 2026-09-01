@@ -45,16 +45,38 @@ class InputScreen(Screen):
     # ── scale entry: resolution or ratio ─────────────────────────────────────
 
     def _pick_entry_mode(self):
-        """Open on whichever form can express what is already stored.
+        """Honour the operator's stored preference, unless it would lie.
 
-        Resolution for every real scale; ratio when the stored value cannot be
-        carried as a resolution, so the screen never opens showing a number
-        that would change the setting if accepted.
+        The preference wins in every ordinary case -- it is persisted on the
+        input, so choosing Ratio and walking away keeps Ratio (Evan,
+        2026-09-01: "If a user prefers ratio, honor that and stick to it").
+
+        The ONE override: when the stored value cannot be expressed as a
+        resolution, the screen opens on Ratio regardless. Honouring a
+        preference is not worth displaying a number that would change the
+        setting if the operator simply accepted it.
         """
         if self.input is None:
             return
-        self.entry_mode = default_entry_mode(
-            getattr(self.input, "ratioNum", 1), getattr(self.input, "ratioDen", 1))
+        forced = default_entry_mode(getattr(self.input, "ratioNum", 1),
+                                    getattr(self.input, "ratioDen", 1))
+        if forced == "Ratio":
+            self.entry_mode = "Ratio"
+            return
+        preferred = getattr(self.input, "scale_entry_mode", None)
+        self.entry_mode = preferred if preferred in ENTRY_MODES else ENTRY_MODES[0]
+
+    def on_entry_mode(self, _instance, value):
+        """Persist the choice as the operator makes it.
+
+        Written back to the input rather than held on the screen, because the
+        screen is rebuilt on every visit and a preference that does not survive
+        that is not a preference.
+        """
+        if self.input is None or value not in ENTRY_MODES:
+            return
+        if getattr(self.input, "scale_entry_mode", None) != value:
+            self.input.scale_entry_mode = value
 
     def get_resolution(self, ratio_num, ratio_den):
         """Microns per count, for the kv.

@@ -51,6 +51,10 @@
         NumberItem:
           name: "Resolution (um/count)"
           value: root.get_resolution(root.input.ratioNum, root.input.ratioDen)
+          # Fixed decimals: a bare "2" reads as a count of something, "2.000"
+          # reads as a measurement. Three covers every real scale down to the
+          # sub-micron heads (0.1 um).
+          decimals: 3
           help_file: "scales.md"
           on_value: root.set_resolution(self.value)
           opacity: 0 if (root.input.spindleMode or root.entry_mode != "Resolution") else 1

@@ -485,7 +485,11 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         target_attr = "start_dia" if which == "major" else "stop_dia"
         commit = (self.controller.commit_standalone_start_dia if which == "major"
                   else self.controller.commit_standalone_stop_dia)
-        title_label = "Major ø" if which == "major" else "Minor ø"
+        # Follows the bar's own label rather than hardcoding "Major ø": in
+        # stop + retract the field reads "Safe ø", and a keypad headed
+        # "Major ø" would be naming a thread dimension in a mode where nothing
+        # is being threaded to one.
+        title_label = (self.start_dia_label if which == "major" else "Minor ø")
         keypad = Keypad(title=f"Enter {title_label} ({unit_label})")
         keypad.integer = False
 
