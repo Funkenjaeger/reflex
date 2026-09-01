@@ -138,11 +138,13 @@ version rather than 1.4.
 
 - **Control-board respin for differential encoder signalling.**
 - **Register-block integrity checksum** and **index-anchored phase correction**.
-- **Multi-start threading** — the mod-lead fix that finally makes it possible.
+- The **mod-lead fix** multi-start threading would need. Whether multi-start
+  itself is built here is not yet decided.
 
 > [!NOTE]
-> **Multi-start is not supported before 2.0.0**, and the phase offset is not a
-> substitute for it — its correction folds within one pitch and biases into the
+> **Multi-start is not supported**, and cannot be before 2.0.0 — it needs the
+> mod-lead fix above. The phase offset is not a substitute for it either: its
+> correction folds within one pitch and biases into the
 > cutting direction, which is exactly wrong for indexing a second start.
 > See [Widening a groove](https://funkenjaeger.github.io/reflex/guide/widening-a-groove/).
 
