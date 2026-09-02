@@ -1693,6 +1693,52 @@ class ElsUiController(EventDispatcher):
             # A notice that cannot be drawn must not take the app down on startup.
             log.error(f"could not show interrupted-pass notice: {e}")
 
+    def _abandon_cut_on_sync_off(self):
+        """Sync Enable off mid-cut ends the cut, so disengage.
+
+        THE TRAP THIS CLEARS (Evan, bench, 2026-09-01). Turning sync off
+        mid-cut stopped the carriage correctly, but nothing took the domain FSM
+        out of 'cutting': the only exits were stop_active (the carriage
+        physically reaching the shoulder) and fault. So the machine sat
+        engaged, LED green "Armed", with the Disengage button greyed out by
+        in_cycle -- and the only way to clear it was to open the half nut and
+        push the carriage past the stop point by hand to publish stop_active.
+
+        WHY DISENGAGE RATHER THAN RETURN TO 'stopped'. The drive is
+        de-energized by the time this runs, so the leadscrew phase reference is
+        gone (firmware clears referenceLatched on servoMode 0 -- Ramps.c,
+        2026-08-31). The cut cannot be resumed; only re-established. Parking in
+        'stopped' would leave the operator looking at an armed stop for a job
+        that no longer exists.
+
+        NOT WIDENED TO EVERY SYNC-OFF, deliberately. The stop position is
+        anchored to the Z SADDLE SCALE, not the leadscrew -- _commit_stop_z
+        freezes z.position_to_encoder() and on_enter_cutting points the firmware
+        at _saddle_input.inputIndex -- and a linear scale on the carriage keeps
+        its custody whether the drive is energized or not. So an armed stop in
+        'stopped' is still true after a de-energize, and disengaging it there
+        would be churn, not safety.
+
+        Both FSMs have to move. `engaged` follows the domain FSM but the
+        Disengage button is greyed by in_cycle, which follows the UI FSM, so
+        disabling one without cancelling the other leaves the button dead.
+        """
+        if self._els_fsm.state != "cutting":
+            return
+        log.info("Sync Enable off during a cut — abandoning the cut and "
+                 "disengaging (drive de-energized, thread reference lost)")
+        if self._ui_fsm.state.startswith("in_cycle"):
+            self._ui_fsm.cancel()
+        if self._els_fsm.may_disable():
+            self._els_fsm.disable()
+        else:
+            # Should be unreachable: 'cutting' is a valid disable source. Say so
+            # loudly rather than leaving the operator in the trap this exists to
+            # clear.
+            log.error("could not disengage after sync-off from "
+                      f"'{self._els_fsm.state}' — ELS may still read as armed")
+        self.notify("Cut abandoned — ELS disengaged", NOTICE_INFO)
+
     def request_feed_enable(self, confirmed: bool = False) -> bool:
         """Operator asked to toggle the sync/power feed (advanced ELS context).
 
@@ -1733,6 +1779,7 @@ class ElsUiController(EventDispatcher):
                 # that path is deliberately untouched.
                 self.hal.stop_sync()
                 servo.toggle_enable()
+                self._abandon_cut_on_sync_off()
             return True
         if not confirmed and self.feed_without_armed_stop():
             log.info("request_feed_enable: no armed ELS stop — confirmation required")

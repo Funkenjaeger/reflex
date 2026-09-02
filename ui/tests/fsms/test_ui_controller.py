@@ -1219,3 +1219,150 @@ def test_a_confirm_callback_on_an_already_running_feed_still_touches_nothing():
     assert c.request_feed_enable(confirmed=True) is True
 
     assert order == []
+
+
+# ─── Sync Enable off MID-CUT must also disengage ────────────────────────────
+#
+# Found on the bench 2026-09-01, testing the ordering fix above. That fix
+# worked -- the feed no longer flaps -- but it exposed the state underneath:
+# nothing took the domain FSM out of 'cutting'. Its only exits were stop_active
+# (the carriage physically reaching the shoulder) and fault.
+#
+# So the machine sat ENGAGED with the LED green on "Armed" and the Disengage
+# button greyed out by in_cycle. Evan: "presumably I'd have to move the carriage
+# by hand (including opening the half nut) past the stop point to clear that
+# before I could disable the stop. The servo is de-energized so leadscrew
+# custody is already lost at that point."
+#
+# BOTH FSMs have to move, which is the part that is easy to get half-right:
+# `engaged` follows the DOMAIN fsm, but the button is greyed by in_cycle, which
+# follows the UI fsm. Disable one without cancelling the other and the operator
+# is still stuck -- so there is a test below for each half.
+
+
+def _arm_toggle_enable(ctrl):
+    """board.servo is a SimpleNamespace with no toggle_enable (see
+    _make_collaborators). Give it the real one's semantics -- flip servoMode --
+    rather than a recorder, so these tests exercise the de-energize itself."""
+    servo = ctrl._board.servo
+    servo.toggle_enable = lambda: setattr(
+        servo, "servoMode", 0 if servo.servoMode else 1)
+    return servo
+
+
+def _cutting_rig(ctrl):
+    """A connected rig mid-cut with the feed running."""
+    z = ctrl._els.get_z_axis()
+    z.scaledPosition = 0.0
+    ctrl.els_forward = False
+    ctrl.commit_standalone_stop_z(10.0)      # Z=0 is on the safe side
+    ctrl.toggle_engage()
+    _pump()
+    ctrl.on_action_button_clicked()
+    _pump()
+    assert ctrl._els_fsm.state == "cutting", "the rig never reached a cut"
+    assert ctrl._ui_fsm.state == "in_cycle.cutting"
+    _arm_toggle_enable(ctrl).servoMode = 1    # feed running
+    return ctrl
+
+
+def test_disable_is_a_valid_transition_from_cutting(ctrl):
+    """The transition table itself. Without 'cutting' in the source list every
+    escape below raises MachineError instead of disengaging."""
+    _cutting_rig(ctrl)
+    assert ctrl._els_fsm.may_disable() is True
+
+
+def test_sync_off_mid_cut_disengages_the_stop(ctrl):
+    c = _cutting_rig(ctrl)
+
+    c.request_feed_enable()
+    _pump()
+
+    assert c._els_fsm.state == "disabled"
+    assert c.engaged is False, "the LED would still read Armed"
+
+
+def test_sync_off_mid_cut_frees_the_disengage_button(ctrl):
+    """THE OPERATOR-VISIBLE HALF. in_cycle is what greys the button, and it
+    follows the UI fsm -- so disengaging the domain fsm alone would leave Evan
+    exactly as stuck as before, just with a different LED."""
+    c = _cutting_rig(ctrl)
+
+    c.request_feed_enable()
+    _pump()
+
+    assert c._ui_fsm.state == "idle"
+    assert c.in_cycle is False, "the Disengage button is still greyed"
+
+
+def test_sync_off_mid_cut_still_clears_sync_before_dropping_the_mode(ctrl):
+    """The ordering fix this was found while testing must survive it: the
+    disengage happens AFTER the de-energize, not instead of it."""
+    c = _cutting_rig(ctrl)
+    order = []
+    c._board.servo.toggle_enable = lambda: order.append("toggle_enable")
+    c.hal.stop_sync = lambda: order.append("stop_sync")
+
+    c.request_feed_enable()
+    _pump()
+
+    assert order[:2] == ["stop_sync", "toggle_enable"], (
+        "the abandon path broke the ordering fix -- got %r" % (order,))
+
+
+def test_sync_off_mid_cut_tells_the_operator(ctrl):
+    """Disengaging is a second consequence of a press that asked for one thing.
+    The LED changing is not an explanation."""
+    c = _cutting_rig(ctrl)
+    seen = []
+    c.notify = lambda msg, sev=None, **kw: seen.append(msg)
+
+    c.request_feed_enable()
+    _pump()
+
+    assert any("disengage" in m.lower() for m in seen), seen
+
+
+# ─── ...but NOT when merely engaged and idle ────────────────────────────────
+
+def test_sync_off_while_stopped_does_NOT_disengage(ctrl):
+    """THE SCOPE BOUND, and it rests on a mechanism rather than on taste.
+
+    The stop position is anchored to the Z SADDLE SCALE, not the leadscrew:
+    _commit_stop_z freezes z.position_to_encoder() and on_enter_cutting points
+    the firmware at _saddle_input.inputIndex. A linear scale on the carriage
+    keeps custody whether the drive is energized or not, so an armed stop in
+    'stopped' is still TRUE after a de-energize. Disengaging it here would be
+    churn -- an operator who turns the feed off to reposition would have to
+    re-engage and re-arm every time.
+
+    (What a de-energize does destroy is the leadscrew PHASE reference, which
+    firmware already clears on servoMode 0. That is why the cutting case
+    disengages rather than returning to 'stopped': the cut cannot be resumed.)
+    """
+    z = ctrl._els.get_z_axis()
+    z.scaledPosition = 0.0
+    ctrl.commit_standalone_stop_z(10.0)
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl._els_fsm.state == "stopped"
+    _arm_toggle_enable(ctrl).servoMode = 1
+
+    ctrl.request_feed_enable()
+    _pump()
+
+    assert ctrl._els_fsm.state == "stopped", "an idle armed stop was thrown away"
+    assert ctrl.engaged is True
+
+
+def test_sync_off_while_disengaged_does_NOT_raise(ctrl):
+    """The feed can run with ELS disengaged (plain power feed). Nothing to
+    abandon, and no transition to attempt."""
+    assert ctrl._els_fsm.state == "disabled"
+    _arm_toggle_enable(ctrl).servoMode = 1
+
+    assert ctrl.request_feed_enable() is True      # must not raise
+    _pump()
+
+    assert ctrl._els_fsm.state == "disabled"
