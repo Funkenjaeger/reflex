@@ -1329,17 +1329,14 @@ def test_sync_off_mid_cut_tells_the_operator(ctrl):
 def test_sync_off_while_stopped_does_NOT_disengage(ctrl):
     """THE SCOPE BOUND, and it rests on a mechanism rather than on taste.
 
-    The stop position is anchored to the Z SADDLE SCALE, not the leadscrew:
-    _commit_stop_z freezes z.position_to_encoder() and on_enter_cutting points
-    the firmware at _saddle_input.inputIndex. A linear scale on the carriage
-    keeps custody whether the drive is energized or not, so an armed stop in
-    'stopped' is still TRUE after a de-energize. Disengaging it here would be
-    churn -- an operator who turns the feed off to reposition would have to
-    re-engage and re-arm every time.
+    elsStop.active is the HOLD. arm_idle_stop sets active=1 BEFORE enable, so
+    an engaged-idle machine is already held: turning sync on cannot move the
+    carriage. That is the property the cutting case exists to restore, and here
+    it was never lost -- on_enter_cutting's set_active(False) is what releases
+    it, and that has not run.
 
-    (What a de-energize does destroy is the leadscrew PHASE reference, which
-    firmware already clears on servoMode 0. That is why the cutting case
-    disengages rather than returning to 'stopped': the cut cannot be resumed.)
+    So disengaging here would be churn, not safety: an operator who turns the
+    feed off to reposition would pay a re-engage every time.
     """
     z = ctrl._els.get_z_axis()
     z.scaledPosition = 0.0

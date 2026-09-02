@@ -1704,20 +1704,27 @@ class ElsUiController(EventDispatcher):
         in_cycle -- and the only way to clear it was to open the half nut and
         push the carriage past the stop point by hand to publish stop_active.
 
-        WHY DISENGAGE RATHER THAN RETURN TO 'stopped'. The drive is
-        de-energized by the time this runs, so the leadscrew phase reference is
-        gone (firmware clears referenceLatched on servoMode 0 -- Ramps.c,
-        2026-08-31). The cut cannot be resumed; only re-established. Parking in
-        'stopped' would leave the operator looking at an armed stop for a job
-        that no longer exists.
+        WHY IT IS 'cutting' SPECIFICALLY, and this is the load-bearing reason
+        (Evan, 2026-09-01): elsStop.active is the HOLD. arm_idle_stop sets
+        active=1 BEFORE enable, so an engaged-idle machine is held and turning
+        sync on cannot move the carriage. on_enter_cutting then does
+        set_active(False) -- that release IS the cut. So mid-cut the hold is
+        OFF, and leaving the FSM there after a sync-off meant the next Sync
+        Enable press resumed motion immediately, with nothing between the press
+        and the carriage moving.
 
-        NOT WIDENED TO EVERY SYNC-OFF, deliberately. The stop position is
-        anchored to the Z SADDLE SCALE, not the leadscrew -- _commit_stop_z
-        freezes z.position_to_encoder() and on_enter_cutting points the firmware
-        at _saddle_input.inputIndex -- and a linear scale on the carriage keeps
-        its custody whether the drive is energized or not. So an armed stop in
-        'stopped' is still true after a de-energize, and disengaging it there
-        would be churn, not safety.
+        Disengaging restores the property by the same route the machine already
+        uses: re-engaging runs on_enter_stopped -> arm_idle_stop, which re-arms
+        held. Returning to 'stopped' directly would be wrong for a second
+        reason -- the drive is de-energized by now, so the leadscrew phase
+        reference is gone (firmware clears referenceLatched on servoMode 0,
+        Ramps.c 2026-08-31) and the cut cannot be resumed, only re-established.
+
+        NOT WIDENED TO EVERY SYNC-OFF, because in 'stopped' the hold is already
+        in place -- the property this exists to restore is not missing there, so
+        disengaging would be churn, and would make every reposition cost a
+        re-engage. (The stop POSITION also survives a de-energize either way:
+        it is anchored to the Z saddle scale, not the leadscrew.)
 
         Both FSMs have to move. `engaged` follows the domain FSM but the
         Disengage button is greyed by in_cycle, which follows the UI FSM, so
