@@ -1363,3 +1363,34 @@ def test_sync_off_while_disengaged_does_NOT_raise(ctrl):
     _pump()
 
     assert ctrl._els_fsm.state == "disabled"
+
+
+# ─── Flight recorder wiring ────────────────────────────────────────────────
+
+def test_flight_recorder_is_bound_to_the_board_tick(ctrl):
+    """A recorder nobody calls is the purest form of a check that cannot fail.
+
+    Two assertions, because either alone is satisfiable by a broken build: the
+    bind PROVES the controller asked to be called, and driving the bound
+    callable proves the call reaches the recorder rather than a method that
+    exists and does nothing.
+    """
+    ctrl._board.bind.assert_any_call(update_tick=ctrl._poll_flight_recorder)
+
+    rec = ctrl._flight_recorder
+    before = rec.ticks_seen
+    ctrl._poll_flight_recorder()
+    assert rec.ticks_seen == before + 1
+
+
+def test_flight_recorder_survives_a_board_with_no_snapshot(ctrl):
+    """The default rig's els_stop_values is an empty dict -- Board's way of
+    saying this tick has no snapshot. The recorder must count the tick, file
+    nothing, and above all not raise into the update loop."""
+    rec = ctrl._flight_recorder
+    for _ in range(5):
+        ctrl._poll_flight_recorder()
+
+    assert rec.ticks_seen >= 5
+    assert rec.recording is False
+    assert rec.disabled is False

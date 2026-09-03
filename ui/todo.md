@@ -597,3 +597,51 @@ Works-as-specified (note, not bugs):
   (signed spindle-axis `syncRatioNum/Den` from `els_forward`); all ELS system tests now select
   16 TPI (`Fraction(254, 160)`, feeds.py Thread IN "16" = 1.5875 mm/rev, ~0.79 mm/s at
   EMU_RPM=30) explicitly.
+
+---
+
+## ELS flight recorder — phase 1 landed, open ends
+
+Built 2026-09-03 on `integration`: `reflex/fsms/els_flight_recorder.py`, wired into
+`ElsUiController`, tests in `tests/fsms/test_els_flight_recorder.py`, byte budget
+measured by `previews/preview_flight_recorder_budget.py`. **Not deployed** — that
+needs hands at the machine. Zero firmware change, by design; the firmware event
+ring at the register-map tail is phase 2 and is explicitly gated on phase 1
+proving value.
+
+- **The falsifier is the point, and it has a deadline.** After two weeks of logs:
+  if they answer none of the standing measure-at-the-machine asks, the probe
+  system was correctly sized — close the loop, delete this recorder and the log
+  with it. Do not let it become permanent by inertia.
+- **The first consumer is not built.** "Detect the half nut being opened mid-cut
+  and drop to stopped" is to be a DERIVED CHECK over the recorded stream, not
+  another live poller. The fields it needs are asserted by name in
+  `test_the_half_nut_discriminators_are_all_in_the_stream`; the check itself is
+  still to write, offline, against real recorded passes.
+  **Read the module docstring before writing it.** The first emulator capture
+  this recorder took already produced a false positive nobody had predicted —
+  the RETRACT-side backlash traverse (~105 commanded steps over ~163 ms with Z
+  stationary, `takeupPending` 0 throughout). A check written against only the
+  pre-cut take-up and a stalling spindle will fire on every retract.
+- **`syncEnable` is not in the stream.** The per-scale flags live in the `scales[]`
+  block, which nothing snapshots per tick, and reading them per tick is exactly
+  the per-field-read pattern that lost comms on six of six cuts on 2026-08-23.
+  `servoMode` is the available proxy. Closing this properly means snapshotting a
+  second block (measure the exchange cost first) or waiting for phase 2.
+- **No `on_stop` hook**, so a session open when the process dies has no
+  `session_end` record. Deliberate: at this machine the app usually ends by power
+  cycle or systemd restart, where no hook would run either, and a frozen
+  `flight_status.json` already says "the process is gone" unambiguously. Add one
+  only if graceful restarts turn out to matter.
+- **The `ot-elspi` collector leg is not wired.** `flight/flight_status.json` is the
+  intended scrape target and carries everything a collector needs (state, reason,
+  ticks_seen, samples_written, bytes_on_disk, free_bytes). The collector config
+  lives outside this repo.
+- **512 MB / 128 MB-free are guesses about hardware this code cannot see.** The
+  *rate* is measured (~84 bytes/sample, ~8.6 MB per armed hour); the budget is
+  sized from it against an assumed card. Check the real card on deploy and set
+  `REFLEX_FLIGHT_MAX_MB` in `deploy/start.sh` if it is wrong.
+- **Not verified on hardware.** Nothing here has recorded a real pass. In
+  particular the Z-resolution claim ("a fine feed needs a ten-sample window")
+  is arithmetic, not a measurement — check it against the first recorded turning
+  pass before any derived check is tuned against it.

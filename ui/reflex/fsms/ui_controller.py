@@ -9,6 +9,7 @@ from reflex.fsms.ui_fsm import ElsUiFsm
 from reflex.fsms.els_fsm import ElsFsm
 from reflex.fsms.els_stop_hal import ElsStopHal
 from reflex.fsms.els_diag import ElsDiagRecorder
+from reflex.fsms.els_flight_recorder import FlightRecorder
 from reflex.fsms.els_phase_recorder import (
     PhaseCorrectionRecorder, PhaseLiveTracker, SpindleCountWatch)
 from reflex.fsms.els_mode_watch import ElsModeWatch
@@ -294,6 +295,22 @@ class ElsUiController(EventDispatcher):
         self._phase_recorder = PhaseCorrectionRecorder(board)
         self._phase_tracker = PhaseLiveTracker(board)
         self._spindle_watch = SpindleCountWatch(board)
+        # The whole poll stream, persisted rather than discarded. Unlike the
+        # three recorders above it is not scoped to one open question -- it
+        # exists so the NEXT question does not need a firmware probe and a
+        # bench session before it can be asked. Reads only the per-tick
+        # snapshots, so it adds no Modbus traffic. See els_flight_recorder.py,
+        # including what it deliberately cannot answer.
+        #
+        # `fsm_state` is a LAMBDA because _els_fsm does not exist yet at this
+        # point in __init__ and must not be captured by value; the recorder
+        # treats an unanswerable state as "unknown" rather than as a reason to
+        # stop recording the machine.
+        self._flight_recorder = FlightRecorder(
+            board,
+            fsm_state=lambda: self._els_fsm.state,
+            fsm_states=ElsFsm.STATES,
+        )
 
         # Built FIRST, before any FSM or poller exists, because `notify()` must
         # be safe to call from anywhere below -- including from construction, if
@@ -406,6 +423,11 @@ class ElsUiController(EventDispatcher):
         # Raw spindle counter, change-only, no job required -- the belt-off
         # EMI experiment's instrument. See SpindleCountWatch.
         self._board.bind(update_tick=self._poll_spindle_watch)
+        # The flight recorder. Bound LAST of the recorders deliberately: it
+        # samples what this tick's snapshot holds, and running after the pollers
+        # that may write registers means the row it files is the state the rest
+        # of the app acted on rather than the state it was about to change.
+        self._board.bind(update_tick=self._poll_flight_recorder)
         # Rung-2 mode sampler; equally dormant without the schema-4 probe.
         self._board.bind(update_tick=self._poll_mode_watch)
 
@@ -829,6 +851,22 @@ class ElsUiController(EventDispatcher):
         Never raises -- see SpindleCountWatch.poll().
         """
         self._spindle_watch.poll()
+
+    def _poll_flight_recorder(self, *args):
+        """Persist this tick's poll stream while the machine is doing something.
+
+        Separate from every recorder above it because it is not scoped to a
+        question. Those three each exist to settle one open bug and each stops
+        being worth its bytes when that bug closes; this one exists so that the
+        NEXT question -- the half-nut detector is the first known consumer --
+        can be answered from passes already cut instead of from a firmware probe
+        and another evening at the lathe.
+
+        Its own health is published to flight_status.json on every tick, because
+        a recorder that can silently record nothing is a check that cannot fail.
+        Never raises -- see FlightRecorder.poll().
+        """
+        self._flight_recorder.poll()
 
     # Every 5th update tick ≈ 6 Hz against the firmware's ~10 Hz publication:
     # fast enough that no dwell in a mode is missed, slow enough that the one
