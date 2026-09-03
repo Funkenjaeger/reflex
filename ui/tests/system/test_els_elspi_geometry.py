@@ -6,9 +6,11 @@ full ELS cut/stop/retract cycle at the REAL elspi lathe's commissioned
 geometry, read from its live config 2026-08-03:
 
     Z scale:       200 counts/mm      (reference machine: 400)
-    X scale:       500 counts/mm      (reference machine: 400; see below --
-                                       a 1 um head deliberately doubled so the
-                                       X DRO reads diameter)
+    X scale:       1000 counts/mm     (reference machine: 400; a 1 um head,
+                                       entered faithfully -- resolution and
+                                       convention are set together now, the
+                                       diameter doubling having moved to the
+                                       axis's diameter_mode flag on 2026-09-01)
     Spindle:       6144 counts/rev    (reference machine: 4000)
     Leadscrew:     0.125 in @ 1600 steps/rev -> exactly 127/64000 mm/step
                    (reference machine: 800 steps/rev -> 127/32000)

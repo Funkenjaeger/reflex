@@ -39,8 +39,10 @@ in-repo source of truth for the real machine's numbers.
    (1/400 mm per count). The real elspi Z scale is 200 counts/mm. Same
    reasoning as #1: moving the UI side alone to 1/200 would put every
    FSM-computed count-domain value at exactly 2x the emulator's own physics.
-   (elspi's X scale, by contrast, genuinely IS 400 counts/mm on both machines
-   -- see COUNTS_PER_MM below -- so only Z deviates here.)
+   (elspi's X scale WAS also 400 on both machines when this was written, which
+   is why the line below used to say only Z deviates. That stopped being true
+   on 2026-09-01: elspi's X is 1000 counts/mm now, so X deviates too -- see
+   COUNTS_PER_MM below, which deliberately stays at the emulator's 400.)
 
 3. Spindle PPR. Same call, same defaults: the spindle input is commissioned at
    the emulator reference's 4000 counts/rev, where the real elspi spindle
@@ -100,12 +102,20 @@ _ENV = {"env": {"EMU_RPM": "30", "EMU_NO_AUTO_RETRACT": "1"}}
 
 # X-channel readback scale, used only by _move_x_and_wait below to convert a
 # commanded X position in mm into the raw firmware count it should settle at.
-# 400 counts/mm is correct for BOTH machines: the commissioned UI ratio
-# (SystemHarness.commission_geometry, 1/400 mm/count), the emulator's own
-# [cross_slide] encoder_counts_per_mm, and the real elspi cross-slide all
-# agree at 400. Only the X scale matches, though -- elspi's Z scale is 200
-# counts/mm against the emulator's 400 (fidelity gap #2 above), so this
-# constant must not be reused as a Z conversion.
+# 400 is the EMULATOR's number, and that is the only one this constant needs:
+# the commissioned UI ratio (SystemHarness.commission_geometry, 1/400
+# mm/count) and the emulator's own [cross_slide] encoder_counts_per_mm both
+# agree at 400, and commission_geometry() is called below with all defaults.
+#
+# DO NOT 'CORRECT' THIS TO THE REAL MACHINE'S VALUE. The real elspi
+# cross-slide has been 1000 counts/mm since 2026-09-01 (3edf8ff; 400 when
+# this comment was first written, 500 briefly after 08-31), so this line used
+# to say the two machines agreed and no longer can. But this test drives the
+# EMULATOR -- raising this to 1000 would make _move_x_and_wait expect 2.5x
+# the counts the emulator will ever report, and every X wait would time out.
+#
+# Also do not reuse it as a Z conversion -- elspi's Z is 200 counts/mm
+# against the emulator's 400 (fidelity gap #2 above).
 COUNTS_PER_MM = 400
 
 
@@ -135,7 +145,8 @@ def test_real_machine_config_wizard_threading_retract(harness):
     h.commission_servo(reverse=True, max_speed=10000, acceleration=20000)
     # All defaults => emulator-reference geometry on all three axes of gaps
     # #1-#3: leadscrew 800 steps/rev, Z 400 counts/mm, spindle 4000 PPR (elspi
-    # is 1600, 200 and 6144). X's 400 counts/mm is real-machine-accurate.
+    # is 1600, 200 and 6144). X is emulator-reference at 400 too: the real
+    # machine has been 1000 since 2026-09-01, so X is a gap now, not a match.
     h.commission_geometry()
     h.set_feed(Fraction(254, 160))   # Thread IN "16" (16 TPI) -- reflex/feeds.py
     h.els.els_backlash_steps = 403   # real-machine value; REQUIRED as-is
