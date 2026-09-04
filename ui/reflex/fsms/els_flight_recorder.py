@@ -145,7 +145,20 @@ can never read a half-written one. Read it like this:
       "nothing happened", and it is the only one.
 
   ``state`` == "blocked_no_disk" / "blocked_write_error" / "disabled"
-      Alive and NOT recording, with ``reason`` saying why. An operator notice
+      Alive and NOT recording, with ``reason`` saying why. They are distinct
+      on purpose and each is reachable:
+        * "blocked_no_disk"      -- free space fell under the floor.
+        * "blocked_write_error"  -- the log directory is not writable
+                                    (REASON_NOT_WRITABLE). A real write fault.
+        * "disabled"             -- MAX_FAILURES consecutive tick failures from
+                                    ANY cause (REASON_TICK_FAILURES): a board
+                                    read that raised, a serialisation bug, a
+                                    write. Deliberately NOT called a write
+                                    error, because most of the time it is not.
+      NOTE ``write_failures`` in the status file counts those SAME all-cause
+      tick failures. The key name predates this distinction and is kept
+      because ot-state on elspi already publishes it; read it as
+      "tick failures". An operator notice
       was posted once when this began (see NOTICE_NOT_RECORDING) because at the
       lathe there is a touchscreen and no terminal, so a log line is a message
       to whoever reads the file next week.
@@ -327,7 +340,13 @@ MAX_FAILURES = 5
 NOTICE_NOT_RECORDING = "Flight recorder is not recording"
 REASON_NO_DISK = "no space left"
 REASON_NOT_WRITABLE = "log folder not writable"
-REASON_WRITE_ERRORS = "repeated write errors"
+# NOT a write error, despite where it is raised from: poll() catches ANY
+# exception out of _poll() -- board reads, serialisation, disk writes alike
+# -- and trips this after MAX_FAILURES of them. Named for what it actually
+# counts (2026-09-04); it used to be REASON_WRITE_ERRORS, which is why the
+# status word for it must stay the generic "disabled" and not
+# "blocked_write_error".
+REASON_TICK_FAILURES = "repeated tick failures"
 
 # ── Per-sample columns. THE FAST HALF: everything that moves at 30 Hz, and
 # nothing that does not. Positional in the row, declared by name in every
@@ -546,6 +565,7 @@ class FlightRecorder:
         self._failures = 0
         self._disabled = False
         self._disabled_reason = ""
+        self._disabled_reason_short = ""   # which _fail path; picks the state word
         self._blocked_reason = ""
         self._notified_reason = None
         self._last_status = None
@@ -594,7 +614,7 @@ class FlightRecorder:
         except Exception as e:
             self._failures += 1
             if self._failures >= MAX_FAILURES:
-                self._fail(REASON_WRITE_ERRORS, f"{e}")
+                self._fail(REASON_TICK_FAILURES, f"{e}")
             else:
                 log.debug("flight recorder tick failed: %s", e, exc_info=True)
 
@@ -633,6 +653,7 @@ class FlightRecorder:
     def _fail(self, reason_short: str, detail: str) -> None:
         self._disabled = True
         self._disabled_reason = f"{reason_short} ({detail})"
+        self._disabled_reason_short = reason_short
         log.error("flight recorder DISABLED -- %s", self._disabled_reason)
         self._notify_once(reason_short)
         try:
@@ -996,6 +1017,13 @@ class FlightRecorder:
 
     def _state_word(self) -> str:
         if self._disabled:
+            # blocked_write_error is for a genuine WRITE problem only. A
+            # disable from repeated tick failures reports "disabled",
+            # because those come from any cause and calling them write
+            # errors would be a confident false claim -- the thing this
+            # file exists to refuse. See REASON_TICK_FAILURES.
+            if self._disabled_reason_short == REASON_NOT_WRITABLE:
+                return "blocked_write_error"
             return "disabled"
         if self._blocked_reason == REASON_NO_DISK:
             return "blocked_no_disk"

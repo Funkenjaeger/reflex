@@ -234,6 +234,10 @@ def test_an_unwritable_directory_disables_loudly_at_construction(tmp_path):
 
     assert rec.disabled
     assert REASON_NOT_WRITABLE in rec.disabled_reason
+    # A REAL write fault, so it gets the specific word. Until 2026-09-04
+    # _state_word() could never return this at all -- the module docstring
+    # named a state the code could not emit.
+    assert rec._state_word() == "blocked_write_error"
     assert len(notices) == 1
     assert notices[0][0].startswith(NOTICE_NOT_RECORDING)
     # And it stays inert rather than retrying into the update loop forever.
@@ -343,6 +347,10 @@ def test_poll_never_raises_and_disables_after_repeated_failures(tmp_path):
         clock.tick()
 
     assert rec.disabled
+    # NOT blocked_write_error, and this test is why: the failure injected
+    # here is a board READ raising, nothing to do with writing. The
+    # all-cause tick-failure path must keep the generic word or the status
+    # file starts making a confident false claim about the cause.
     assert _status(rec)["state"] == "disabled"
     assert len(notices) == 1
 
