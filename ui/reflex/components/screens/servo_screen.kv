@@ -3,6 +3,8 @@
 #: import StringItem reflex.components.widgets.string_item
 #: import TitleItem reflex.components.widgets.title_item
 #: import BooleanItem reflex.components.widgets.boolean_item
+#: import MODE_INDEX reflex.app.MODE_INDEX
+#: import USE_CASE_MODES reflex.app.USE_CASE_MODES
 
 <ServoScreen>:
   BoxLayout:
@@ -56,8 +58,12 @@
           on_value: root.servo.acceleration = int(self.value)
 
 
+        # This card governs the angular (non-ELS) readout: units per turn.
+        # Use cases that expose Index mode know it as the rotary-table mode;
+        # a lathe never sees that mode, so the header names what the row
+        # does instead. Same gating pattern as the ELS button in setup_screen.kv.
         TitleItem:
-          name: "Rotary Table Mode Settings"
+          name: "Rotary Table Mode Settings" if MODE_INDEX in USE_CASE_MODES.get(app.use_case, []) else "Angular Mode Settings (used when ELS Mode is off)"
         NumberItem:
           disabled: root.servo.elsMode
           name: "Units per 1 turn of the axis [360]"
