@@ -1,5 +1,9 @@
 # Respin punch list -- STM32F413RGT6 interconnect
 
+**Status:** working reference, 2026-09-04. Verified pin/AF assignments per
+RM0430/AN2606/DS11581/AN4488 (see §5); nothing here has been fabricated or
+measured on real hardware.
+
 Every net that touches the MCU, cross-referenced against the datasheet and
 AN2606 so the PA9 class of mistake cannot repeat.
 
