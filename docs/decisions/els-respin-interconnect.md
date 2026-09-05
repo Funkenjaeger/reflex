@@ -1,139 +1,235 @@
-# Respin punch list -- STM32 interconnect
+# Respin punch list -- STM32F413RGT6 interconnect
 
-**Sources.** Firmware (`fw/reflex.ioc`, `Ramps.h`, `Ramps.c`) = authoritative.
-Upstream schematic V1.2 = `[S]`, **older than the actual board -- verify**.
-`[S]` facts here were resolved by matching net labels to pin positions in the
-PDF, then cross-checked: `ENC1B` = U5 Y2 = pin 18 -> PA9 agrees with Evan's own
-schematic reading.
+Every net that touches the MCU, cross-referenced against the datasheet and
+AN2606 so the PA9 class of mistake cannot repeat.
 
-**Target part:** STM32F413RG, LQFP64.
+**Documents used.** `DS11581 Rev 7` (STM32F413xG/H datasheet) -- LQFP64 pinout
+p.44, alternate-function Table 12 pp.66-72. `AN2606 Rev 70` -- section 40,
+**Table 87, STM32F413xx/423xx configuration in system memory boot mode**,
+pp.196-201. Firmware: `fw/reflex.ioc`, `Ramps.h`, `Ramps.c`. Upstream schematic
+V1.2 `[S]`, older than the actual board.
+
+**Package:** LQFP64 -- 48 GPIO, 4x VDD, 4x VSS, VBAT, NRST, VDDA/VREF+,
+VSSA/VREF-, VCAP_1, BOOT0, PH0/PH1.
 
 ---
 
-## 1. Target pinout
+## 1. THE CHECK: pins the mask ROM takes over
 
-`ENC1` moves to TIM8 so PA9 frees for the mask ROM. STEP stays on PA0 -- that is
-why TIM8 and not TIM5. `ENC2B` moves off PB3 so SWO comes back.
+**This is the PA9 failure class, enumerated.** When BOOT0 is high the ROM
+configures ALL of these before any application code runs. It does this
+regardless of board wiring.
+
+Severity is what matters:
+
+* **OUTPUT (push-pull)** -- the ROM *drives* the net. Anything else driving it
+  is a fight. **This is what PA9 is today. Never put a driven signal here.**
+* **Open-drain** -- the ROM only ever sinks. Tolerable, but the pin floats when
+  released, so anything downstream needs a defined level.
+* **Input** -- the ROM only listens, with a weak pull. Harmless to a driver.
+
+| Pin | ROM function | Direction | On LQFP64 | Verdict for us |
+|-----|--------------|-----------|-----------|----------------|
+| **PA9** | USART1_TX | **OUTPUT** | yes | **used deliberately -- see §2** |
+| **PA6** | SPI1_MISO | **OUTPUT** | yes | **KEEP CLEAR of driven signals** |
+| **PB10** | USART3_TX | **OUTPUT** | yes | keep clear |
+| **PB13** | CAN2_TX | **OUTPUT** | yes | keep clear -- and never put MTR_STEP here |
+| **PC11** | SPI3_MISO | **OUTPUT** | yes | keep clear |
+| PA11 / PA12 | USB DM / DP | bidir | yes | leave NC unless you want DFU |
+| PA10 | USART1_RX | input | yes | used deliberately, §2 |
+| PB11 | USART3_RX | input | **no** | n/a |
+| PB5 | CAN2_RX | input, pull-up | yes | acceptable |
+| PA4 | SPI1_NSS | input, pull-down | yes | acceptable |
+| PA5 | SPI1_SCK | input, pull-down | yes | acceptable |
+| PA7 | SPI1_MOSI | input, pull-down | yes | acceptable |
+| PA15 | SPI3_NSS | input, pull-down | yes | acceptable |
+| PC10 | SPI3_SCK | input | yes | acceptable |
+| PC12 | SPI3_MOSI | input | yes | acceptable |
+| PA8 | I2C3_SCL | open-drain | yes | acceptable + needs a defined level |
+| PB4 | I2C3_SDA | open-drain | yes | acceptable |
+| PB6 | I2C1_SCL | open-drain | yes | acceptable |
+| PB7 | I2C1_SDA | open-drain | yes | acceptable |
+| PB14 | I2C4_SDA | open-drain | yes | acceptable |
+| PB15 | I2C4_SCL | open-drain | yes | acceptable |
+| PD5 / PD6 | USART2 | -- | **no** | n/a |
+| PF0 / PF1 | I2C2 | -- | **no** | n/a |
+| PE11-14 | SPI4 | -- | **no** | n/a |
+
+**Pins with NO ROM function on LQFP64** -- the safest place for anything an
+external buffer drives:
+
+`PA0 PA1 PA2 PA3 PB0 PB1 PB2 PB3 PB8 PB9 PB12 PC0 PC1 PC2 PC3 PC4 PC5 PC6 PC7
+PC8 PC9 PC13 PC14 PC15 PD2 PA13 PA14`
+
+---
+
+## 2. Target pinout -- verified against Table 12
+
+AF numbers are from the datasheet, not from memory.
 
 ### Encoders -- all eight channels
 
-| Net | Today | Target | Timer |
-|-----|-------|--------|-------|
-| `ENC1A` | PA8 | **PC6** | TIM8_CH1 *(verify pin, §5.1)* |
-| `ENC1B` | PA9 | **PC7** | TIM8_CH2 *(verify pin, §5.1)* |
-| `ENC2A` | PA5 | PA5 | TIM2_CH1 |
-| `ENC2B` | **PB3** | **PA1** | TIM2_CH2 -- moved to free SWO |
-| `ENC3A` | PA6 | PA6 | TIM3_CH1 |
-| `ENC3B` | PA7 | PA7 | TIM3_CH2 |
-| `ENC4A` | PB6 | PB6 | TIM4_CH1 |
-| `ENC4B` | PB7 | PB7 | TIM4_CH2 |
+| Net | Today | **Target** | Timer / AF | ROM function on target pin |
+|-----|-------|-----------|------------|---------------------------|
+| `ENC1A` | PA8 | **PC6** | TIM8_CH1, **AF3** | **none** |
+| `ENC1B` | PA9 | **PC7** | TIM8_CH2, **AF3** | **none** |
+| `ENC2A` | PA5 | **PA0** | TIM5_CH1, **AF2** | **none** |
+| `ENC2B` | PB3 | **PA1** | TIM5_CH2, **AF2** | **none** |
+| `ENC3A` | PA6 | **PB4** | TIM3_CH1, **AF2** | I2C3_SDA (open-drain) |
+| `ENC3B` | PA7 | **PB5** | TIM3_CH2, **AF2** | CAN2_RX (input) |
+| `ENC4A` | PB6 | PB6 | TIM4_CH1, **AF2** | I2C1_SCL (open-drain) |
+| `ENC4B` | PB7 | PB7 | TIM4_CH2, **AF2** | I2C1_SDA (open-drain) |
 
-All eight arrive via U5 (74VHC9151FT), 8 of 9 channels used, An -> Yn:
-Y1=19 `ENC1A`, Y2=18 `ENC1B`, Y3=17 `ENC2A`, Y4=16 `ENC2B`, Y5=15 `ENC3A`,
-Y6=14 `ENC3B`, Y7=13 `ENC4A`, Y8=12 `ENC4B`. Y9 spare.
+**No encoder channel lands on a ROM output.** ENC1 and ENC2 land on pins with no
+ROM function at all. TIM4 has only PB6/PB7 on LQFP64, so ENC4 has no
+alternative -- open-drain is the best available and it is safe.
 
-### Everything else
+**Bonus:** TIM5 is a **32-bit** timer, so ENC2 gets a 32-bit position counter
+instead of 16-bit. TIM1 and TIM2 are left entirely free.
 
-| Pin | Signal | From today |
-|-----|--------|-----------|
-| PA0 | `MTR_STEP` | keep |
-| PA2 | free | keep (NC today) |
-| PA3 | `SPARE_2` | keep |
-| PA4 | `SPARE_3` | keep |
-| PA8 | **`SPARE_1`** or debug pad | **CHANGED** -- was `ENC1A` |
-| **PA9** | **RESERVED, leave unconnected** | **CHANGED** -- was `ENC1B`. §3.1 |
-| PA10 | `RXD` USART1_RX | keep -- already the ROM's RX pin |
-| PA13 | `TMS/SWDIO` | keep |
-| PA14 | `TCLK/SWCLK` | keep |
-| PA15 | `TXD` USART1_TX | keep |
-| PB0 | `SPARE_4` | keep |
-| **PB2** | **BOOT1, pull down** | **NEW** -- NC today |
-| **PB3** | **`TDO/SWO` only** | **CHANGED** -- was `ENC2B` |
-| PB12 | `USR_LED` | keep |
-| PB14 | `MTR_DIR` | keep |
-| PB15 | `MTR_ENA` | keep |
-| **BOOT0** | **pull-down + force-high pad** | **NEW** -- NC today, confirmed §5.2 |
-| PH0/PH1 | OSC_IN/OSC_OUT, 8 MHz | keep |
+### Motor, comms, debug
 
-`SPARE_1` moves PA1 -> PA8. Free on the F411 today and still free after this:
-PA2, PB1, PB4, PB5, PB8, PB9, PB10, PB13, PC13-15, VBAT.
+| Net | Today | **Target** | AF | ROM function | Note |
+|-----|-------|-----------|----|--------------|------|
+| `MTR_STEP` | PA0 | **PA8** | GPIO (TIM1_CH1 avail.) | I2C3_SCL (OD) | **needs a pull-down**, §3.4. TIM1 free for future hardware step generation. |
+| `MTR_DIR` | PB14 | **PC4** | GPIO | none | |
+| `MTR_ENA` | PB15 | **PC5** | GPIO | none | **needs a pull-down**, §3.4 |
+| `USR_LED` | PB12 | PB12 | GPIO | none | |
+| `TXD` | PA15 | **PA9** | USART1_TX, **AF7** | USART1_TX | **deliberate** -- this is what lets the ROM bootloader talk on the RS-485 bus |
+| `RXD` | PA10 | PA10 | USART1_RX, **AF7** | USART1_RX | already correct |
+| `TMS/SWDIO` | PA13 | PA13 | **AF0** | none | |
+| `TCLK/SWCLK` | PA14 | PA14 | **AF0** | none | |
+| `TDO/SWO` | (dead) | **PB3** | JTDO-SWO, **AF0** | none | freed -- tracing works again |
+| `SPARE_1..4` | PA1/PA3/PA4/PB0 | **PA2, PA3, PB0, PB1** | GPIO | none | |
+| BOOT0 | NC | **pull-down + jumper** | -- | -- | §3.1 |
+| BOOT1 | NC (PB2) | **PB2 pull-down** | -- | none | §3.2 |
 
-**`.ioc` warning:** it lists 16 pins, the firmware drives 19. STEP/DIR/ENA are
-set in code (`Ramps.h:31-38`), not CubeMX. Do not generate a pinout from it.
+### Power and analog -- all of it
 
----
-
-## 2. Connect
-
-1. **BOOT0** -- 10k pull-down + a pad beside a 3V3 pad to force it high. No
-   internal pull on F4 (AN4488 5.2).
-2. **PB2 / BOOT1** -- 10k pull-down. NC today, so a BOOT0-high attempt lands in
-   system memory or SRAM at random.
-3. **J3 debug header** `[S]` -- keep. RESET, SWDIO, SWCLK, SWO, 3V3, 5V, GND.
-4. **NRST** -- to J3, with its cap.
-5. **VCAP** -- per the F413RG datasheet. Do not carry the F411 values across.
-6. **VDDA / VSSA** -- filtered, even with no ADC.
+| Net | Pins | Note |
+|-----|------|------|
+| VDD | **4 pins** | 100n each, close |
+| VSS | **4 pins** | |
+| VDDA/VREF+ | 1 | filtered even with no ADC |
+| VSSA/VREF- | 1 | |
+| VCAP_1 | 1 | **verify value against DS11581** -- do not carry F411 values across |
+| VBAT | 1 | tie to VDD if no RTC battery |
+| NRST | 1 | cap + to the debug header |
+| PH0/PH1 | 2 | 8 MHz HSE |
 
 ---
 
-## 3. Do not connect
+## 3. Do / do not
 
-1. **Nothing on PA9.** Mask ROM hard-codes USART1_TX there and drives it high at
-   startup; an encoder channel on it means two push-pull outputs on one net.
-   *Unplugging the encoder does NOT isolate PA9 -- U5's output still drives it.*
-2. **No MCU pin to RS-485 DE.** Derived from TXD in hardware (Q1/R6/R7).
-   Firmware confirms: `EN_Port = NULL`.
-3. **PA11 / PA12** -- NC today `[S]`. Route only if you want a USB DFU tier.
+1. **BOOT0** -- 10k pull-down + a pad beside 3V3 to force high. No internal
+   pull on F4 (AN4488 5.2). Confirmed NC on V1.2 `[S]`: pin 44 carries no net
+   label while every connected pin on that edge does.
+2. **PB2 / BOOT1** -- 10k pull-down. NC today, so a BOOT0-high attempt would
+   land in system memory or SRAM at random.
+3. **Do not connect PA6, PB10, PB13, PC11** to anything an external device
+   drives. They are ROM push-pull outputs.
+4. **`MTR_STEP` and `MTR_ENA` get hard pull-downs.** Both sit downstream of a
+   ULN2003 whose input is high-Z. During a bootloader session the ROM releases
+   or repurposes those pins, so without a pull-down the drive's enable and step
+   lines float. **A floating enable on a lathe is not acceptable** -- the
+   resistor is what makes "MCU not running" mean "drive disabled".
+5. **No MCU pin to RS-485 DE** -- derived from TXD in hardware (Q1/R6/R7).
+   Firmware confirms `EN_Port = NULL`.
+6. **PA11/PA12 NC** unless you want the USB DFU tier.
 
 ---
 
-## 4. Debug pads
+## 4. Debuggability and test provisioning
+
+### 4.1 Debug interfaces
+
+* **Keep J3**, the 10-pin Cortex debug header `[S]`. With SWO now real, all six
+  useful signals are live: SWDIO, SWCLK, **SWO**, NRST, 3V3, GND.
+* **BOOT0 jumper + adjacent 3V3 pad** -- forcing the ROM becomes a jumper, not
+  rework. This is the single thing whose absence blocked a hypothesis for weeks.
+* **Serial bootloader now works over the existing RS-485 bus**, because TXD/RXD
+  are on the ROM's own PA9/PA10. No extra connector needed for recovery.
+
+### 4.2 Test pads -- signals, at the MCU
 
 Pads or oversized vias that take a soldered wire, not probe-tip targets.
-Distribute several GNDs among them.
+Several GNDs distributed among them, not one.
 
-| Pri | Net | Why |
-|-----|-----|-----|
-| 1 | `ENC1A`/`ENC1B` at the MCU | glitch width still unmeasured after weeks of VFD-noise work |
-| 1 | U5 **inputs** for ENC1 (A1/A2) | separates noise on the cable from noise after the buffer |
-| 1 | STEP/DIR/ENA **at the MCU pin** | existing TPs are downstream of U2; keep both to measure U2 |
-| 1 | BOOT0 + adjacent 3V3 | makes forcing it a jumper, not rework |
-| 2 | `TXD`/`RXD` before U1 | separates "MCU didn't send" from "bus ate it" |
-| 2 | `ENC2A/B`, `ENC3A/B`, `ENC4A/B` at the MCU | same as ENC1, less often |
-| 3 | RS-485 A/B | other half of the pair above |
-| 3 | Spare GPIO direct to pad | scope trigger. `SPARE_n` won't do -- ULN2003 outputs |
-| 3 | SWO (PB3) | once §1 frees it |
+| Pri | Net | Buys you |
+|-----|-----|----------|
+| 1 | `ENC1A`/`ENC1B` at the MCU (PC6/PC7) | the glitch-width measurement still missing after weeks of VFD-noise work |
+| 1 | U5 **inputs** A1/A2 for ENC1 | separates noise on the cable from noise injected after the buffer |
+| 1 | `MTR_STEP` at PA8, **upstream of U2** | existing TPs are downstream; keep both and you can measure U2 itself |
+| 1 | BOOT0 | see above |
+| 2 | `ENC2/3/4` A+B at the MCU | same as ENC1, less often |
+| 2 | `TXD`/`RXD` at PA9/PA10, before U1 | separates "MCU never sent" from "bus ate it" -- constant during bootloader bring-up |
+| 2 | RS-485 A/B | the other half of that pair |
+| 3 | `MTR_DIR`, `MTR_ENA` at the MCU | |
 | 3 | 3V3 / 5V rails | supply noise, next to a VFD |
+| 3 | NRST | |
 
-**Current board has TP1-TP6 all on motor/spare outputs and none on an encoder
-input** -- instrumented what it generates, not what it receives.
+**The current board has TP1-TP6 all on motor/spare outputs and none on an
+encoder input** -- it instrumented what it generates, not what it receives.
+That is the gap to close.
+
+### 4.3 Growth headers -- free pins, chosen for what they can become
+
+After the assignments above, these are unused. Bring them out rather than
+leaving them stranded under the part.
+
+| Header | Pins | Becomes |
+|--------|------|---------|
+| **Analog** | PC0, PC1, PC2, PC3 | ADC1_IN10-13. Spindle current, motor temp, supply monitoring. |
+| **SPI** | PA5, PA6, PA7 (+ PA4 or PA15 as NSS) | SPI1 (AF5). Display, SD card, external ADC. *Note PA6 is a ROM output -- anything here must tolerate being driven during a bootloader session.* |
+| **I2C / CAN** | PB8, PB9 | I2C1 alt (AF4) **or** CAN1 (AF9). Sensors, or a second bus. Mutually exclusive. |
+| **Timer / misc** | PC8, PC9 | TIM3_CH3/CH4, TIM8_CH3/CH4, SDIO_D0/D1. PC9 is also MCO_2 -- a clock output for probing. |
+| **Spare GPIO** | PC12, PD2, PC13-15 | PC13-15 have limited drive; low-speed only. |
+
+Also free: **PA15** (was TXD), **PB14/PB15** (were DIR/ENA), **PA4**.
+
+**A spare GPIO direct to a pad, bypassing U2, is worth reserving explicitly as
+a scope trigger.** The `SPARE_n` nets do not serve this -- they are ULN2003
+outputs. Two such pins let you bracket an interval rather than guess at an edge.
 
 ---
 
-## 5. Verify before layout
+## 5. Verified vs not
 
-1. **PC6/PC7 bonded out on F413RG LQFP64**, and TIM8_CH1/CH2 land there. §1
-   depends entirely on this.
-2. ~~`R9` net~~ **RESOLVED**: BOOT0 (pin 44) carries **no net label** on V1.2
-   while every connected pin on that edge has one, so BOOT0 is genuinely NC and
-   R9 is not its pull-down. R9 sits between 3V3 and NRST -- a reset pull-up.
-   *Still `[S]`; confirm on the real board.*
-3. **U5 supply, 3V3 or 5V** `[S]` -- sets contention severity on PA9 and whether
-   5V tolerance is load-bearing.
-4. **PB1, PB4, PB5, PB8-PB10, PB13, PC13-15, VBAT, PA2** -- shown NC on V1.2;
-   confirm none were claimed on the newer board.
+**Verified from the documents:**
+
+* PC6/PC7/PC8/PC9 exist on LQFP64 (DS p.44 figure) and carry TIM8_CH1/CH2 at
+  AF3 (Table 12).
+* PA0/PA1 carry TIM5_CH1/CH2 at AF2 and have no ROM function.
+* PB4/PB5 = TIM3_CH1/CH2 AF2; PB6/PB7 = TIM4_CH1/CH2 AF2.
+* PA9/PA10 = USART1_TX/RX AF7; PB3 = JTDO-SWO AF0.
+* The complete ROM pin list, from AN2606 Table 87.
+* LQFP64 supply pin counts.
+
+**NOT verified -- do not treat as settled:**
+
+1. **TIM5 and TIM8 encoder-interface mode on F413 specifically.** Confirmed for
+   the F411 from RM0383 (TIM2-TIM5 chapter, and the TIM1/TIM8 chapter). RM0430
+   is the F413 manual and I have not read it. Same family, near-certain, but
+   this is load-bearing for the whole allocation -- check it.
+2. **PB4 is NJTRST at reset (AF0), PB3 is JTDO.** Both default to JTAG until
+   firmware selects SWD-only. PB3 already lives with this today; PB4 would join
+   it. Transient at reset only, but confirm the CubeMX config disables JTAG.
+3. **U5's supply rail, 3V3 or 5V** `[S]` -- sets whether 5V tolerance is
+   load-bearing on the encoder pins.
+4. **Everything marked `[S]`** -- the real board is newer than V1.2.
+5. **VCAP_1 capacitor value** for this part.
 
 ---
 
 ## 6. Open questions, not blockers
 
-* **U2 = ULN2003** `[S]` carries STEP/DIR/ENA and all four spares --
-  open-collector, inverting, slow turn-off. Fine for ENA, unmeasured for a step
-  train. No max step rate or edge has ever been scoped. First suspect if step
-  rate ceilings out.
-* **Differential encoders** -- connectors need no change; J6-J9 are DE-9s with
-  spare pins. Only U5 changes, to line receivers (9 channels today, 8 used).
-  Shield bonding already took belt-off counts -51,525 -> 0, so this is
-  by-construction insurance, not a measured need.
+* **U2 = ULN2003** `[S]` carries STEP/DIR/ENA and the spares -- open-collector,
+  inverting, slow turn-off. Fine for ENA, unmeasured for a step train. No max
+  step rate or edge has ever been scoped. First suspect if step rate ceilings
+  out. Note the target puts STEP on PA8 = **TIM1_CH1**, so hardware step
+  generation via TIM1 is available later without another respin.
+* **Differential encoders** -- J6-J9 are DE-9s with spare pins, so connectors do
+  not change; only U5 becomes line receivers. Shield bonding already took
+  belt-off counts -51,525 -> 0, so this is insurance, not a measured need.
 * **Keep** the 120R RS-485 bias (R3/R4/R5). Stiff on purpose -- the driver is
   off between bits, so bias alone holds the line. It is the baud ceiling.
