@@ -205,19 +205,31 @@ outputs. Two such pins let you bracket an interval rather than guess at an edge.
 * The complete ROM pin list, from AN2606 Table 87.
 * LQFP64 supply pin counts.
 
+**TIM5 and TIM8 encoder mode -- CONFIRMED on the F413 itself**, from
+`RM0430 Rev 9` (the F413/F423 reference manual), established by which chapter
+each section sits in rather than by inference:
+
+* **TIM8** -- *"17.3.16 Encoder interface mode"*, inside the chapter
+  **"Advanced-control timers (TIM1&TIM8)"**. pp.497-499; the running header on
+  p.499 reads exactly that.
+* **TIM5** -- *"18.3.12 Encoder interface mode"*, inside the chapter
+  **"General-purpose timers (TIM2 to TIM5)"**. pp.558-560, same test.
+* **TIM9-TIM14 have NO encoder mode** -- the phrase appears nowhere in their
+  chapter. Excluding them from the allocation was correct, not lucky.
+* Growth, noted not relied on: **LPTIM1 has its own encoder mode**
+  (RM0430 §21.4.14). A fifth quadrature input exists if one is ever wanted,
+  with different capabilities from the TIMx interface -- read that section
+  before counting on it.
+
 **NOT verified -- do not treat as settled:**
 
-1. **TIM5 and TIM8 encoder-interface mode on F413 specifically.** Confirmed for
-   the F411 from RM0383 (TIM2-TIM5 chapter, and the TIM1/TIM8 chapter). RM0430
-   is the F413 manual and I have not read it. Same family, near-certain, but
-   this is load-bearing for the whole allocation -- check it.
-2. **PB4 is NJTRST at reset (AF0), PB3 is JTDO.** Both default to JTAG until
+1. **PB4 is NJTRST at reset (AF0), PB3 is JTDO.** Both default to JTAG until
    firmware selects SWD-only. PB3 already lives with this today; PB4 would join
    it. Transient at reset only, but confirm the CubeMX config disables JTAG.
-3. **U5's supply rail, 3V3 or 5V** `[S]` -- sets whether 5V tolerance is
+2. **U5's supply rail, 3V3 or 5V** `[S]` -- sets whether 5V tolerance is
    load-bearing on the encoder pins.
-4. **Everything marked `[S]`** -- the real board is newer than V1.2.
-5. **VCAP_1 capacitor value** for this part.
+3. **Everything marked `[S]`** -- the real board is newer than V1.2.
+4. **VCAP_1 capacitor value** for this part.
 
 ---
 
