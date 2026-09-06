@@ -116,6 +116,7 @@ reflex/
 ├── help/                      # Contextual help documents (markdown)
 ├── fonts/                     # Font files
 ├── pictures/                  # Image assets
+│   └── help/                  # Optional per-help-topic illustrations (see its README)
 ├── sounds/                    # Audio assets (beep, snap, stop)
 ├── components/                # UI layer
 │   ├── manager.py             # ScreenManager (navigation)
