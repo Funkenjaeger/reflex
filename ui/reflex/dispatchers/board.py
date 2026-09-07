@@ -29,6 +29,10 @@ class Board(EventDispatcher):
     protocol_message = StringProperty("")
     update_tick = NumericProperty(0)
     blink = BooleanProperty(False)
+    # True while something else owns the serial port (the firmware flasher).
+    # A Kivy property so the UI can say "the link is down ON PURPOSE" rather
+    # than showing the same disconnected state a broken cable produces.
+    link_paused = BooleanProperty(False)
     device = ObjectProperty(None, allownone=True)
     servo = ObjectProperty(None, allownone=True)
     inputs = ListProperty()
@@ -65,6 +69,46 @@ class Board(EventDispatcher):
 
         self.task_update = Clock.schedule_interval(self.update, 1.0 / 30)
         Clock.schedule_interval(self.blinker, 1.0 / 4)
+
+    # ------------------------------------------------------------------
+    # Handing the serial port to something else
+    # ------------------------------------------------------------------
+    # fw/scripts/modbus-flash.py opens the port itself, so an in-app firmware
+    # update needs this UI to genuinely let go of it -- not merely stop asking
+    # for data. Cancelling the tick alone leaves minimalmodbus holding an open
+    # file descriptor, and the flasher's own open would fail or, worse,
+    # succeed on a second handle and interleave frames with a poll that has
+    # not actually stopped.
+    #
+    # A PAIR OF METHODS RATHER THAN THE SCREEN REACHING IN, because the resume
+    # half is not symmetric with the pause half: `update()` re-connects on its
+    # own when `connection_manager.device` is None, but only if its Clock event
+    # is running, and the event's timeout has to go back to the fast cadence
+    # rather than whatever backoff it was left on.
+
+    def pause_polling(self):
+        """Stop polling and close the serial port. Idempotent."""
+        if self.link_paused:
+            return
+        self.link_paused = True
+        self.task_update.cancel()
+        self.connection_manager.disconnect()
+        self.connected = False
+        self.els_stop_values = {}
+        self.fast_data_values = {}
+        log.warning("Board polling paused and the serial port released")
+
+    def resume_polling(self):
+        """Re-open the port and resume polling. Idempotent."""
+        if not self.link_paused:
+            return
+        self.link_paused = False
+        self.connection_manager.connect()
+        # A fresh event: a cancelled ClockEvent is not re-armed by assigning to
+        # its timeout, and `update()` reads `self.task_update.timeout` on every
+        # tick.
+        self.task_update = Clock.schedule_interval(self.update, 1.0 / 30)
+        log.info("Board polling resumed")
 
     def _settings_folder(self) -> Path:
         return config_dir()
