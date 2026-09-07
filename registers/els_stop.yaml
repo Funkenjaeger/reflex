@@ -1,0 +1,222 @@
+# =============================================================================
+# reflex ELS register schema -- SINGLE SOURCE OF TRUTH for elsStop_t
+# =============================================================================
+# Generates, and is never generated from:
+#   fw/Core/Inc/Ramps_generated.h   struct + _Static_assert per field
+#   ui/reflex/utils/els_stop_map.py decoder (format string + name->offset)
+#   docs/reference/register-map.md  the documented map, per protocolVersion
+#   registers/offsets.json          per-version offset table for external tools
+#
+# DEFINITION IS DECOUPLED FROM PLACEMENT. A field declares which GROUP it
+# belongs to; the generator does the layout pass and assigns offsets. Moving a
+# field between warm and cold is a one-word edit here, not a manual re-derivation
+# of every offset after it. This is CANopen PDO mapping in miniature: the object
+# is defined once, and a separate declaration says which objects ride the cyclic
+# frame.
+#
+# THE GENERATOR IS NOT TRUSTED. It emits _Static_assert(offsetof(...) == N) for
+# every field, so the COMPILER -- not this file -- has the final vote on padding.
+# A generator that emits both sides is self-consistent by construction and can
+# therefore be confidently wrong; the static asserts are the only check here that
+# can actually come out differently. CI regenerates and diffs against the
+# checked-in output, so a hand-edit to generated code fails the build rather than
+# quietly becoming a third source of truth.
+#
+# STATUS: STRAWMAN, 2026-09-07. Field list and types are machine-extracted from
+# Ramps.h and gated against its stated 140-register total. The `group:`
+# assignments are a PROPOSAL derived from field names and comments -- the reader
+# audit has NOT been done. Every field marked `audit: unverified` is a guess that
+# must be confirmed against actual tick-path readers before this is believed.
+# =============================================================================
+
+schema_version: 1
+protocol_version: 10          # 9 -> 10: the warm/cold remap. Bump on any layout change.
+
+meta:
+  struct: elsStop_t
+  parent: rampsSharedData_t
+  parent_offset_registers: 104   # elsStop base within the parent; 104 + bootCommand(128) == 232, the address modbus-flash.py uses today
+  register_width_bits: 16
+  endianness: little
+  c_header_out: fw/Core/Inc/Ramps_generated.h
+  doc_prose_source: fw/Core/Inc/Ramps.h   # full field prose migrates here verbatim; the one-line `doc:` below is a placeholder, not a second copy
+
+# -----------------------------------------------------------------------------
+# PLACEMENT. Groups are laid out in this order. The generator emits explicit
+# alignment padding between fields and asserts each group is contiguous.
+# -----------------------------------------------------------------------------
+layout:
+  - group: hot
+    doc: >
+      Read as ONE FC3 request every board tick (30 Hz) by
+      Board._refresh_els_stop_snapshot. The quantity being minimised is
+      REQUESTS, not bytes -- each request is an independent chance for the
+      firmware to miss its answering window while the 100 kHz ISR is saturated
+      (2026-08-23: six of six cuts lost comms, every drop a timeout).
+    budget_registers: 75        # 60% of the FC3 ceiling of 125; see base_device.py
+    fail_over_budget: true      # generation FAILS rather than silently splitting into two requests
+
+  - group: cold
+    doc: >
+      Never read on the tick path. Fetched on demand -- at connect, after a
+      calibration run, or when a diagnostic build is being read out.
+    budget_registers: 125
+    fail_over_budget: true
+    # TRAP THIS CLOSES: a cold field read by a tick-driven poller re-creates the
+    # exact 2026-08-23 bug in a new place. The generated accessor for a cold
+    # field asserts it is not called from the tick context.
+    tick_path_access: forbidden
+
+# -----------------------------------------------------------------------------
+# INVARIANTS the generator ENFORCES, rather than the header asking humans to
+# remember them.
+# -----------------------------------------------------------------------------
+invariants:
+  seq_precedes_payload: true
+    # FC3 copies a block one register at a time in ascending address order and an
+    # interrupt can land between any two. A seq at a LOWER address than what it
+    # counts makes a torn read come out as (stale seq, new payload), which
+    # edge-detection harmlessly re-reads. The inverted order IS the 2026-08-22
+    # takeupSeq/takeupResult bug on elspi. Generation fails if any `acks:` target
+    # sits at a lower offset than its seq.
+  command_clears_on_consume: true
+    # Every `kind: command` field is cleared by firmware the instant the ISR
+    # consumes it. The generated docs and accessors say POLL THE ACK, NEVER THE
+    # COMMAND, and no generated helper offers a "wait for command == 0".
+
+types:
+  uint16: {bytes: 2}
+  int16:  {bytes: 2}
+  uint32: {bytes: 4}
+  int32:  {bytes: 4}
+  float:  {bytes: 4}   # IEEE-754 binary32, little-endian, as the STM32 lays it out
+
+# =============================================================================
+# FIELDS. `id` is a STABLE logical identifier, assigned once and NEVER reused --
+# it is what makes the per-version offset table and the 2.0.0 register-block
+# integrity checksum possible across a remap. Order within a group is the
+# physical order.
+# =============================================================================
+fields:
+
+  # --- job setup: written by the UI when a job is configured -----------------
+  - {id: 1,  name: enable,            type: uint16, access: sw_write,   group: hot, doc: "1 = enable ELS stop feature"}
+  - {id: 2,  name: scaleIndex,        type: uint16, access: sw_write,   group: hot, doc: "which scale (0-3) is the position reference (Z axis)"}
+  - {id: 3,  name: stopPosition,      type: int32,  access: sw_write,   group: hot, doc: "threshold in encoder counts"}
+  - {id: 4,  name: stopDirection,     type: int16,  access: sw_write,   group: hot, doc: "1 = stop when pos >= threshold, -1 = when pos <= threshold"}
+  - {id: 5,  name: active,            type: uint16, access: bidirectional, group: hot, doc: "firmware sets 1 when triggered; SW writes 0 to resume"}
+  - {id: 6,  name: threadPitchSteps,  type: float,  access: sw_write,   group: hot, doc: "leadscrew steps per thread pitch; 0.0f = turning"}
+  - {id: 7,  name: hysteresis,        type: int32,  access: sw_write,   group: hot, doc: "counts the carriage must retract before re-enabling"}
+  - {id: 8,  name: zCountsPerPitch,   type: float,  access: sw_write,   group: hot, doc: "Z scale counts per thread pitch; 0.0f = correction disabled"}
+  - {id: 9,  name: backlashSteps,     type: uint32, access: sw_write,   group: hot, doc: "leadscrew backlash take-up magnitude in servo steps"}
+
+  # --- live job state: the reason this block is polled at all ---------------
+  - {id: 10, name: latchedZ,          type: int32,  access: ro_firmware, group: hot, doc: "scales[scaleIndex].position at first trigger of the job"}
+  - {id: 11, name: latchedSpindle,    type: int32,  access: ro_firmware, group: hot, doc: "scales[0].position at first trigger of the job"}
+  - {id: 12, name: referenceLatched,  type: uint16, access: ro_firmware, group: hot, doc: "0 until the first trigger captures the reference"}
+  - {id: 13, name: takeupPending,     type: uint16, access: ro_firmware, group: hot, doc: "1 while the backlash take-up is in progress"}
+  - {id: 14, name: lastIdealAdvance,  type: float,  access: ro_firmware, group: hot, doc: "last resume's ideal advance"}
+  - {id: 15, name: lastActualAdvance, type: float,  access: ro_firmware, group: hot, doc: "last resume's actual advance"}
+  - {id: 16, name: lastPhaseError,    type: float,  access: ro_firmware, group: hot, doc: "last resume's phase error"}
+  - {id: 17, name: lastCorrection,    type: float,  access: ro_firmware, group: hot, doc: "last resume's correction added to stepsToGo (post-modulo)"}
+
+  # --- layout version: anchors every decode, so it stays hot -----------------
+  - {id: 18, name: protocolVersion,   type: uint16, access: ro_firmware, group: hot, doc: "register-layout version; the UI checks it at connect"}
+
+  # --- calibration + take-up command/ack pairs ------------------------------
+  - {id: 19, name: calCommand,        type: uint16, access: bidirectional, group: hot, kind: command, ack: calSeq, doc: "SW writes 1 to request a calibration run; firmware clears on consume"}
+  - {id: 20, name: calSeq,            type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [calResult, calMeasured], doc: "increments once per completed calibration run"}
+  - {id: 21, name: calResult,         type: uint16, access: ro_firmware, group: hot, doc: "ELS_CAL_* outcome code for the run counted by calSeq"}
+
+  # NOTE the ORDER CHANGE: takeupSeq now PRECEDES takeupResult. Under
+  # protocolVersion 9 the payload sits at the lower address, which is the
+  # 2026-08-22 torn-read bug. The remap is the cheapest moment to fix it, and
+  # `invariants.seq_precedes_payload` makes it un-regressable.
+  - {id: 22, name: takeupSeq,         type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [takeupResult, lastTakeupZDelta], doc: "increments once per completed take-up confirmation"}
+  - {id: 23, name: takeupResult,      type: uint16, access: ro_firmware, group: hot, doc: "ELS_TAKEUP_* outcome code for the take-up counted by takeupSeq"}
+  - {id: 24, name: lastTakeupZDelta,  type: int32,  access: ro_firmware, group: hot, doc: "measured Z delta of the last take-up, encoder counts"}
+
+  # --- operator-facing mode + the interactive command/ack pairs -------------
+  - {id: 25, name: machineMode,       type: uint16, access: ro_firmware, group: hot, doc: "firmware-owned machine mode"}
+  - {id: 26, name: latchCommand,      type: uint16, access: bidirectional, group: hot, kind: command, ack: latchSeq, doc: "SW writes 1 for a manual reference latch; consumed only while enable == 1"}
+  - {id: 27, name: latchSeq,          type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [], doc: "increments once per ACCEPTED manual latch; an absent ack IS the refusal"}
+  - {id: 28, name: phaseOffsetCommand, type: uint16, access: bidirectional, group: hot, kind: command, ack: phaseOffsetSeq, doc: "SW writes 1 to apply phaseOffsetPending"}
+  - {id: 29, name: phaseOffsetSeq,    type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [phaseOffsetSteps], doc: "increments once per accepted phase offset"}
+  - {id: 30, name: phaseOffsetPending, type: int32, access: sw_write,    group: hot, doc: "the offset SW wants applied, in servo steps"}
+  - {id: 31, name: phaseOffsetSteps,  type: int32,  access: ro_firmware, group: hot, doc: "the offset actually in force"}
+
+  # --- bootloader hand-off. Address is contractual: external tooling reaches
+  #     for it by absolute register (modbus-flash.py APP_BOOT_COMMAND_REG).
+  #     `export_offset: true` puts it in registers/offsets.json so that table is
+  #     generated rather than hand-maintained per protocolVersion.
+  - {id: 32, name: bootCommand,       type: uint16, access: bidirectional, group: hot, kind: command, ack: bootSeq, export_offset: true, doc: "SW writes 1 to reboot into the bootloader; REFUSED with no ack while enable != 0"}
+  - {id: 33, name: bootSeq,           type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [], export_offset: true, doc: "increments once per accepted reboot request"}
+
+  # --- trigger-instant snapshot (added protocolVersion 9, 2026-09-07) --------
+  - {id: 34, name: stopTriggerSeq,    type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [stopTriggerZ, stopTriggerZSpeed, stopTriggerStepsToGo, stopTriggerSpindleSpeed], doc: "increments once per stop trigger, immediately BEFORE the payload"}
+  - {id: 35, name: stopTriggerZ,      type: int32,  access: ro_firmware, group: hot, doc: "reference-scale position at the trigger; (settled Z) - this = the coast"}
+  - {id: 36, name: stopTriggerZSpeed, type: int32,  access: ro_firmware, group: hot, doc: "reference-scale speed at the trigger, counts/s -- the correction table's x-axis"}
+  - {id: 37, name: stopTriggerStepsToGo, type: int32, access: ro_firmware, group: hot, doc: "servo.stepsToGo at the trigger; nonzero = still commanding motion"}
+  - {id: 38, name: stopTriggerSpindleSpeed, type: int32, access: ro_firmware, group: hot, doc: "scales[0].speed at the trigger, counts/s"}
+
+  # ===========================================================================
+  # COLD. Nothing below is read on the tick path.
+  # ===========================================================================
+
+  # --- calibration results + machine-specific limits ------------------------
+  - {id: 39, name: calMeasured,       type: int32, count: 3, access: ro_firmware, group: cold, audit: unverified, doc: "per-leg measured take-up, read after a calibration run"}
+  - {id: 40, name: calCeilingSteps,   type: int32,  access: sw_write, group: cold, doc: "per-leg hard ceiling in servo steps; MACHINE-SPECIFIC, written at setup"}
+  - {id: 41, name: calMotionThreshCounts, type: int32, access: sw_write, group: cold, doc: "counts that constitute motion during calibration; written at setup"}
+  - {id: 42, name: takeupThreshCounts, type: int32, access: sw_write, group: cold, doc: "counts that confirm a take-up; written at setup"}
+
+  # --- performance counters: diagnostic, monotonic, never urgent ------------
+  - {id: 43, name: executionCyclesPeak, type: uint32, access: ro_firmware, group: cold, audit: unverified, doc: "peak ISR execution time in CPU cycles"}
+  - {id: 44, name: stepPulseMinCycles,  type: uint32, access: ro_firmware, group: cold, audit: unverified, doc: "narrowest step pulse observed, CPU cycles"}
+  - {id: 45, name: stepPulseRuntCount,  type: uint32, access: ro_firmware, group: cold, audit: unverified, doc: "count of step pulses below the drive minimum"}
+
+  # --- the diagnostic scratchpad: 64 registers, ZERO in any release build ----
+  #     Reserved in every build, written only under ELS_DIAG_SCRATCH. This is
+  #     the block that made the hot read two requests: it sat BETWEEN live
+  #     registers, so skipping it saved nothing. Moving it here is most of the
+  #     win, and nothing about the block itself changes.
+  - {id: 46, name: diagSchema,        type: uint16, access: ro_firmware, group: cold, doc: "which probe is compiled in; 0 = nothing here. A reader MUST check this before interpreting anything below"}
+  - {id: 47, name: diagSeq,           type: uint16, access: ro_firmware, group: cold, kind: seq, acks: [diagBucketTicks, diagBucketCount, diagSettleTicks, diagNetCounts, diagTrace, diagCaptureTicks, diagEndReason], doc: "increments once per completed capture"}
+  - {id: 48, name: diagBucketTicks,   type: uint16, access: ro_firmware, group: cold, doc: "ISR ticks summed into each diagTrace bucket; PUBLISHED so the host never assumes the ISR rate"}
+  - {id: 49, name: diagBucketCount,   type: uint16, access: ro_firmware, group: cold, doc: "populated diagTrace entries"}
+  - {id: 50, name: diagSettleTicks,   type: int32,  access: ro_firmware, group: cold, doc: "ticks to settle in the last capture"}
+  - {id: 51, name: diagNetCounts,     type: int32,  access: ro_firmware, group: cold, doc: "net dZ over the last capture"}
+  - {id: 52, name: diagTrace,         type: int16, count: ELS_DIAG_TRACE_BUCKETS, access: ro_firmware, group: cold, doc: "per-bucket SIGNED sum of dZ -- signed so encoder dither cancels and real motion does not"}
+  - {id: 53, name: diagCaptureTicks,  type: uint16, access: ro_firmware, group: cold, doc: "total ticks captured"}
+  - {id: 54, name: diagEndReason,     type: uint16, access: ro_firmware, group: cold, doc: "why the capture ended"}
+  - {id: 55, name: diagReserved,      type: uint16, count: 4, access: ro_firmware, group: cold, kind: reserved, doc: "reserved headroom for probe metadata; NOT alignment padding -- the generator emits alignment separately"}
+
+# -----------------------------------------------------------------------------
+# Named constants the schema depends on. Resolved from the C header so a change
+# there cannot silently desync this file; generation FAILS on a mismatch rather
+# than substituting a default.
+# -----------------------------------------------------------------------------
+constants:
+  ELS_DIAG_TRACE_BUCKETS:
+    value: 50
+    source: fw/Core/Inc/Ramps.h
+    on_mismatch: fail
+
+# =============================================================================
+# EXPECTED GENERATOR OUTPUT for this file -- asserted by the generator's own
+# test, so a refactor that silently changes the layout goes red.
+#
+#   hot   58 registers  (elsStop 0..57)    -> ONE FC3 request  (budget 75)
+#   cold  82 registers  (elsStop 58..139)  -> fetched on demand
+#   total 140 registers -- unchanged from protocolVersion 9
+#
+# Two generator-emitted alignment pads inside hot (before phaseOffsetPending and
+# before stopTriggerZ). Under protocolVersion 9 those were hand-placed fields
+# named machineModeReserved and stopTriggerReserved; they are now the
+# generator's business and vanish from this file.
+#
+# Tick cost: fastData (30 regs, 1 request) + elsStop hot (58 regs, 1 request)
+#            = 2 exchanges per tick, down from 3. A 33% cut in the quantity that
+#            actually causes comms loss.
+# Headroom:  17 registers of hot growth before a second hot request. Auto-start
+#            is planned at ~10.
+# =============================================================================
