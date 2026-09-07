@@ -227,6 +227,8 @@ typedef struct {
   uint32_t executionCyclesPeak;
   uint32_t stepPulseMinCycles;
   uint32_t stepPulseRuntCount;
+  uint16_t bootCommand;
+  uint16_t bootSeq;
 } elsStop_t;
 """
 
@@ -235,7 +237,7 @@ typedef struct {
 # Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
 # Modbus contract; never renumber, only append.
 
-ELS_PROTOCOL_VERSION = 7        # elsStop.protocolVersion this UI is built against
+ELS_PROTOCOL_VERSION = 8        # elsStop.protocolVersion this UI is built against
                                 # 3 (2026-08-22): machineMode promoted to a permanent
                                 # register so the rung-2 census collects in every build.
                                 # 4 (2026-08-22): latchCommand/latchSeq for the manual
@@ -243,6 +245,10 @@ ELS_PROTOCOL_VERSION = 7        # elsStop.protocolVersion this UI is built again
                                 # every offset exercised on the lathe keeps its address.
                                 # 5 (2026-08-22): the thread-phase offset block
                                 # (groove widening), appended the same way.
+                                # 8 (2026-09-06): bootCommand/bootSeq, the software
+                                # path into the Modbus field bootloader, appended the
+                                # same way. The bootloader's identity window at 2048
+                                # is OUTSIDE this struct and does not bump this.
 
 # Diagnostic scratchpad schema ids (elsStop.diagSchema). 0 means no probe is
 # compiled into the firmware and the block must not be interpreted at all.
