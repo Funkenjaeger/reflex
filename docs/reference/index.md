@@ -23,6 +23,8 @@ no drift.
 - [ELS Mode](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_mode.md) &nbsp;`els_mode`
 - [Thread Phase Offset (Widening a Groove)](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_phase_offset.md) &nbsp;`els_phase_offset`
 - [ELS Direction Configuration](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_polarity.md) &nbsp;`els_polarity`
+- [X DRO Reads](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_radius_diameter.md) &nbsp;`els_radius_diameter`
+- [Safe Diameter](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_safe_diameter.md) &nbsp;`els_safe_diameter`
 - [Stop Re-reference Notice](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_stop_reref.md) &nbsp;`els_stop_reref`
 - [ELS Thread Pitch](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_thread_pitch.md) &nbsp;`els_thread_pitch`
 - [Pick Up an Existing Thread](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_thread_resync.md) &nbsp;`els_thread_resync`
@@ -67,4 +69,4 @@ no drift.
 
 ---
 
-36 topics.
+38 topics.
