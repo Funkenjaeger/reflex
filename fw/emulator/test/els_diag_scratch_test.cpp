@@ -118,8 +118,10 @@ int main(void)
      * this assertion is what forced the renumber rather than letting two
      * distinct layouts quietly share a version number. 4 -> 5 when the
      * thread-phase offset block was appended for the groove-widening offset. */
-    check(data.shared.elsStop.protocolVersion == 7,
-          "protocolVersion is 7 (v6 map + the STEP pulse width instrument)");
+    check(data.shared.elsStop.protocolVersion == 9,
+          "protocolVersion is 9 (v8 map + the trigger-instant snapshot stopTriggerSeq/Z/ZSpeed/StepsToGo/SpindleSpeed)");
+    check(data.shared.elsStop.protocolVersion == ELS_PROTOCOL_VERSION,
+          "RampsStart publishes the ELS_PROTOCOL_VERSION macro, not a drifting literal");
 
 #ifdef ELS_DIAG_SCRATCH
     /* Pinned to a SPECIFIC schema, not "any nonzero". A probe revision changes

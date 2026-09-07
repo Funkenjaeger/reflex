@@ -62,7 +62,13 @@ ROOT_STRUCT = "rampsSharedData_t"
 # ever miscomputes padding, these fixed numbers diverge and fail loudly.
 KNOWN_SERVO_DIR_OFFSET = 32      # servo_t.servoDir sits after 8x 4-byte fields
 KNOWN_SERVO_T_SIZE = 36          # 34 bytes of fields + 2 trailing pad -> 4-align
-KNOWN_ROOT_SIZE = 464            # sizeof(rampsSharedData_t); see module test
+KNOWN_ROOT_SIZE = 488            # sizeof(rampsSharedData_t); see module test
+                                 # 468 -> 488 (2026-09-07): the trigger-instant
+                                 # snapshot appended 20 bytes to elsStop_t
+                                 # (stopTriggerSeq + an explicit pad + four
+                                 # int32s); protocolVersion 8 -> 9.
+                                 # 464 -> 468 (2026-09-06): bootCommand/bootSeq
+                                 # for the field bootloader; protocolVersion 7 -> 8.
                                  # 432 -> 436 (2026-08-22): permanent machineMode
                                  # + explicit pad; then -> 440 with the manual
                                  # latch's latchCommand/latchSeq; then -> 452
@@ -433,6 +439,14 @@ SEQ_SAFE_BY_LAYOUT = {
                                      "elsStop.diagEndReason"],
     "elsStop.phaseOffsetSeq":       ["elsStop.phaseOffsetSteps"],
     "elsStop.latchSeq":             [],   # acks a state change, carries no payload
+    # The trigger-instant snapshot (2026-09-07). The seq is the ONLY thing
+    # telling a host that a new capture arrived -- the payload has no other
+    # freshness marker and a repeated pass can legitimately produce identical
+    # values -- so the ordering here is what makes the whole block trustworthy.
+    "elsStop.stopTriggerSeq":       ["elsStop.stopTriggerZ",
+                                     "elsStop.stopTriggerZSpeed",
+                                     "elsStop.stopTriggerStepsToGo",
+                                     "elsStop.stopTriggerSpindleSpeed"],
 }
 
 

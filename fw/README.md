@@ -108,6 +108,19 @@ drive a GPIO-bitbanged probe if the boards are ever respun without a dongle.
 
 ---
 
+## 📡 Field update over Modbus (bootloader) — built, not yet hardware-verified
+
+A resident bootloader in flash sector 0 (`bootloader/`) accepts a new image over
+the same RS-485 link the UI uses, so the ST-Link is needed only for virgin
+boards, option bytes and recovery. Build the app for its slot with
+`-DREFLEX_APP_BASE=0x08020000` and push it with `scripts/modbus-flash.py`;
+`--identity` reads back which stage and which git rev is running. The default
+build and `scripts/flash.sh` above are unchanged. Design, register map, and the
+bring-up procedure: `bootloader/README.md` and
+`../docs/decisions/els-modbus-register-map.md`.
+
+---
+
 ## 🖥️ Lathe Emulator
 
 A native Linux emulator is included for hardware-free firmware testing. It compiles the real firmware sources (`Ramps.c`, `Modbus.c`, `Scales.c`, `UARTCallback.c`) against a HAL/FreeRTOS shim layer and simulates lathe physics — spindle with inertia, leadscrew, carriage with half-nut engagement, and cross-slide. The emulator exposes Modbus RTU via PTY pair and TCP socket so the unmodified Python GUI can connect as if talking to real hardware.

@@ -394,6 +394,18 @@ int main() {
               "the abort published an outcome (takeupSeq bumped)");
         check(rig.data.shared.elsStop.lastIdealAdvance == SENTINEL,
               "no phase correction ran");
+        /* THE OTHER active = 1 SITE (2026-09-07). Ramps.c sets active = 1 in
+         * exactly two places: the stop trigger, and this abort. Only the first
+         * is a coast worth measuring -- this one fires on a carriage that
+         * FAILED to move and then forces stepsToGo and currentSpeed to zero, so
+         * a snapshot taken here would enter the overshoot table as a sample
+         * whose overshoot is not overshoot, indistinguishable from a real pass.
+         * This is the file that can reach the abort (it needs
+         * ELS_REQUIRE_QUIESCENCE=1); that the latch DOES fire on the real
+         * trigger is els_stop_trigger_snapshot_test's half of the pair, so this
+         * assertion is not merely a latch that never works. */
+        checkEq(rig.data.shared.elsStop.stopTriggerSeq, 0,
+                "the abort published NO trigger-instant snapshot");
     }
 
     /* ---- T2 CHARACTERISATION of the exact-equality blind spot ---------- */

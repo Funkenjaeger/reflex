@@ -179,6 +179,12 @@ void SystemInit(void)
 #if defined(USER_VECT_TAB_ADDRESS)
   SCB->VTOR = VECT_TAB_BASE_ADDRESS | VECT_TAB_OFFSET; /* Vector Table Relocation in Internal SRAM */
 #endif /* USER_VECT_TAB_ADDRESS */
+#if defined(REFLEX_APP_BASE) && (REFLEX_APP_BASE != 0x08000000)
+  /* Slotted build (fw/CMakeLists.txt REFLEX_APP_BASE): the vector table is at
+   * the slot base, not at 0x08000000. The bootloader already sets VTOR here
+   * before jumping; this makes the app not depend on that courtesy. */
+  SCB->VTOR = (uint32_t)REFLEX_APP_BASE;
+#endif
 }
 
 /**
