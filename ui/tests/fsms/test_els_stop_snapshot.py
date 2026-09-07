@@ -190,7 +190,17 @@ def els_stop_device():
 
 
 def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
-    """128 registers at 64 a request: two FULL requests, margin ZERO.
+    """130 registers at 72 a request: two requests (72 + 58), margin 14.
+
+    2026-09-06: bootCommand/bootSeq (protocolVersion 8) took the block from
+    128 to 130, past the old 2x64 boundary, exactly as the paragraph below
+    predicted. The chunk was re-derived, not just bumped: two requests need
+    ceil(130/2) = 65 or more; the 60%-of-ceiling rule in
+    test_the_chunk_size_keeps_real_headroom_against_the_firmware caps it at
+    75; 72 sits inside that band with 14 registers of tail growth left before
+    this case fires again. History below kept as written.
+
+    ORIGINAL (2026-08-25): 128 registers at 64 a request: two FULL requests, margin ZERO.
 
     The absolute number matters more than the ratio: this block is read once
     per board tick now, so every request in it is paid 30 times a second.
@@ -206,8 +216,8 @@ def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
     so headroom exists), rather than paying a silent third request.
     """
     device, transport = els_stop_device
-    assert device.size == 128, (
-        f"elsStop is {device.size} registers, not the 128 this case was "
+    assert device.size == 130, (
+        f"elsStop is {device.size} registers, not the 130 this case was "
         f"reasoned about -- re-check the chunk arithmetic, do not just "
         f"update the number")
 
@@ -215,7 +225,7 @@ def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
 
     base = device.base_address
     assert len(transport.requests) == 2
-    assert transport.requests == [(base, 64), (base + 64, 64)]
+    assert transport.requests == [(base, 72), (base + 72, 58)]
 
 
 def test_the_block_still_fits_in_two_requests_with_room_to_spare(els_stop_device):

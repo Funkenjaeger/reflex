@@ -64,7 +64,7 @@ class BaseDevice:
     # on 2026-08-23, every drop a timeout at the transition into `cutting` and
     # not one a corrupted frame. This trades more bytes for fewer exchanges on
     # purpose.
-    MAX_REGISTERS_PER_READ = 64
+    MAX_REGISTERS_PER_READ = 72  # 2026-09-06: elsStop is 130 regs (protocolVersion 8); two requests need >= 65, the 60%-of-125 rule caps at 75
 
     def __init__(self, connection_manager, base_address=0):
         from reflex.utils.communication import ConnectionManager
