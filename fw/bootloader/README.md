@@ -48,6 +48,14 @@ cmake -S . -B build-slot -DCMAKE_BUILD_TYPE=Release -DREFLEX_APP_BASE=0x08020000
 cmake --build build-slot                  # -> build-slot/reflex-fw.bin (header patched)
 ```
 
+Since 2026-09-07 `.github/workflows/release.yml` runs both of those and
+publishes the results, so a commissioning job does not have to build them:
+`reflex-bl-<V>.bin` / `reflex-bl-<V>.elf` are this bootloader (step 4 below
+programs the ELF), `reflex-app-<V>.bin` is the slotted application for step 5
+and for any `modbus-flash.py` run, and `reflex-fw-<V>.bin` is the legacy
+`0x08000000` image that `scripts/flash.sh` writes — which is a different
+layout, not a different build of the same thing.
+
 `build-slot/reflex-fw.bin` is the image: `scripts/reflex_image.py` patches its
 length and CRC32 in post-build and re-validates it. The ELF still carries zero
 placeholders -- program the `.bin` (or the `.hex` made from it), never the ELF,
