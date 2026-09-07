@@ -74,7 +74,12 @@ STATE_NAMES = {0: "IDLE", 1: "BACKUP", 2: "COPY", 3: "TRIAL", 4: "REVERT", 5: "R
 # The app-side command register lives in rampsSharedData_t and so moves with
 # protocolVersion; the identity window tells us which layout is running.
 # Register index = byte offset / 2 (elsStop.bootCommand, Ramps.h).
-APP_BOOT_COMMAND_REG = {8: 232}
+# 9 (2026-09-07) keeps 232: the trigger-instant snapshot was appended at the
+# TAIL of elsStop_t, behind bootCommand/bootSeq, so every offset that existed
+# under protocolVersion 8 is unmoved. Same value, listed separately rather than
+# inferred -- the table is a whitelist of layouts that have been CHECKED, and a
+# guess about an unlisted one is how a flash lands on the wrong register.
+APP_BOOT_COMMAND_REG = {8: 232, 9: 232}
 BOOT_CMD_BOOTLOADER = 1
 
 CHUNK_BYTES = BL_DATA_REGS * 2   # 200

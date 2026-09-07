@@ -14,9 +14,12 @@
  *   3. REFUSE: enable != 0 -> cleared, NO seq edge, NO reset.
  *   4. UNKNOWN: bootCommand == 7 -> cleared, no ack, no reset.
  *   5. IDLE: bootCommand == 0 -> nothing happens.
- *   6. LAYOUT: bootCommand is register 232, bootSeq 233, the struct is 468
- *      bytes, and ELS_PROTOCOL_VERSION is 8 -- the numbers the client's
- *      APP_BOOT_COMMAND_REG table and the UI mirror carry.
+ *   6. LAYOUT: bootCommand is register 232 and bootSeq 233 -- STILL, after the
+ *      2026-09-07 trigger-instant snapshot appended behind them, which is the
+ *      point of appending at the tail and the reason those two numbers are the
+ *      ones the client's APP_BOOT_COMMAND_REG table keys on. The struct is 488
+ *      bytes and ELS_PROTOCOL_VERSION is 9; the pair no longer ends the struct,
+ *      so the no-phantom-register check is made against the new tail field.
  *
  * MUTATIONS (seen red 2026-09-06): drop the `enable != 0` refusal -> case 3
  * fails twice; drop bootSeq++ -> cases 1 and 2; consume in the ISR path
@@ -98,10 +101,18 @@ int main() {
     /* 6. layout facts */
     check(offsetof(rampsSharedData_t, elsStop.bootCommand) == 464, "bootCommand at byte 464 = register 232");
     check(offsetof(rampsSharedData_t, elsStop.bootSeq) == 466, "bootSeq at byte 466 = register 233");
-    check(sizeof(rampsSharedData_t) == 468, "rampsSharedData_t is 468 bytes (464 + the pair)");
-    check(ELS_PROTOCOL_VERSION == 8, "ELS_PROTOCOL_VERSION is 8");
-    check(sizeof(rampsSharedData_t) % 4 == 0 && offsetof(rampsSharedData_t, elsStop.bootSeq) + 2 == sizeof(rampsSharedData_t),
-          "bootSeq is the LAST register: no trailing padding, no phantom register");
+    check(sizeof(rampsSharedData_t) == 488,
+          "rampsSharedData_t is 488 bytes (468 + the 20-byte trigger-instant snapshot)");
+    check(ELS_PROTOCOL_VERSION == 9, "ELS_PROTOCOL_VERSION is 9");
+    /* The pair is no longer the tail -- the trigger-instant snapshot sits
+     * behind it -- so the no-phantom-register property is asserted against
+     * whatever ends the struct today. An implicit trailing pad would make a
+     * register reflex-ui cannot mirror and the contract test would report a
+     * size mismatch it could not name. */
+    check(sizeof(rampsSharedData_t) % 4 == 0
+          && offsetof(rampsSharedData_t, elsStop.stopTriggerSpindleSpeed) + 4
+             == sizeof(rampsSharedData_t),
+          "stopTriggerSpindleSpeed is the LAST register: no trailing padding, no phantom register");
 
     /* 5. idle */
     elsBootCommandTick(sh);

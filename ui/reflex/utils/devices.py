@@ -229,6 +229,12 @@ typedef struct {
   uint32_t stepPulseRuntCount;
   uint16_t bootCommand;
   uint16_t bootSeq;
+  uint16_t stopTriggerSeq;
+  uint16_t stopTriggerReserved;
+  int32_t  stopTriggerZ;
+  int32_t  stopTriggerZSpeed;
+  int32_t  stopTriggerStepsToGo;
+  int32_t  stopTriggerSpindleSpeed;
 } elsStop_t;
 """
 
@@ -237,7 +243,7 @@ typedef struct {
 # Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
 # Modbus contract; never renumber, only append.
 
-ELS_PROTOCOL_VERSION = 8        # elsStop.protocolVersion this UI is built against
+ELS_PROTOCOL_VERSION = 9        # elsStop.protocolVersion this UI is built against
                                 # 3 (2026-08-22): machineMode promoted to a permanent
                                 # register so the rung-2 census collects in every build.
                                 # 4 (2026-08-22): latchCommand/latchSeq for the manual
@@ -249,6 +255,12 @@ ELS_PROTOCOL_VERSION = 8        # elsStop.protocolVersion this UI is built again
                                 # path into the Modbus field bootloader, appended the
                                 # same way. The bootloader's identity window at 2048
                                 # is OUTSIDE this struct and does not bump this.
+                                # 9 (2026-09-07): the trigger-instant snapshot
+                                # (stopTriggerSeq / Z / ZSpeed / StepsToGo /
+                                # SpindleSpeed), latched in the ISR when the ELS
+                                # stop fires. The coast it measures lasts ~12 ms
+                                # against a 33 ms poll, so this UI could never
+                                # have taken the reading itself.
 
 # Diagnostic scratchpad schema ids (elsStop.diagSchema). 0 means no probe is
 # compiled into the firmware and the block must not be interpreted at all.

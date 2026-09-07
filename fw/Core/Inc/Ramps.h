@@ -438,13 +438,77 @@ typedef struct {
    * can serve the same registers no matter how this struct grows. */
   uint16_t bootCommand;           // bidirectional: SW writes ELS_BOOT_CMD_* (els_identity.h); FIRMWARE CLEARS IT on consume. 1 = reboot into the bootloader and stay resident, 2 = plain reboot. Refused (cleared, no ack) while enable != 0
   uint16_t bootSeq;               // READ-ONLY (firmware-owned): increments once per ACCEPTED boot command, immediately before the reset it triggers
+
+  /* --- TRIGGER-INSTANT SNAPSHOT (2026-09-07, protocolVersion 9). The one
+   * measurement the host structurally cannot take.
+   *
+   * WHAT IT IS FOR. The ELS stop is a COMMANDED position: the firmware stops
+   * emitting steps when Z crosses stopPosition and the carriage then coasts
+   * past by an amount that depends on approach speed. Compensating for that
+   * needs (overshoot, approach speed) pairs, and overshoot is
+   * (settled Z) - (Z at the trigger).
+   *
+   * WHY THE HOST CANNOT SUPPLY THE SECOND TERM. Measured on elspi 2026-09-07:
+   * the host polls elsStop.active at 30 Hz (33 ms) and the whole coast lasts
+   * about 12 ms, so by the time the host first SEES the latch roughly 60% of
+   * the coast is already over, and in 22% of passes all of it is. Substituting
+   * stopPosition for the trigger position hides the discrepancy rather than
+   * fixing it -- it disagreed with the older diagnostic-build numbers by ~50%
+   * (16 counts against 10-11 at the same feed) and no amount of host-side care
+   * can resolve that, because the information was never on the wire. Only the
+   * ISR knows the trigger instant. This block puts it there.
+   *
+   * NOT A DIAGNOSTIC PROBE, and deliberately not in the scratchpad above, for
+   * the same reason machineMode and executionCyclesPeak are permanent: the
+   * compensation table is built from ordinary cutting passes over many
+   * sessions, and a measurement that only exists in a probe build is a
+   * measurement nobody has. Five registers-worth of payload, written on the
+   * pass that stops the carriage and never otherwise.
+   *
+   * ORDERING INVARIANT (do not reorder these fields): stopTriggerSeq must sit
+   * at a LOWER address than every field it counts, exactly as calSeq/diagSeq do
+   * -- see the calSeq comment near the top of this struct for the mechanism.
+   * Modbus FC3 copies registers one at a time in ascending address order and
+   * the ISR can land between any two, so seq-first makes a torn frame read as
+   * (stale seq, new payload), which a host edge-detecting the seq re-reads
+   * harmlessly. The inverted shape was the 2026-08-22 takeupSeq/takeupResult
+   * bug. Pinned by test_ack_counters_are_ordered_ahead_of_the_payload_they_
+   * vouch_for in ui/tests/test_register_map_contract.py.
+   *
+   * ONLY THE STOP TRIGGER LATCHES HERE. Ramps.c has a second site that sets
+   * elsStop.active = 1 -- the take-up abort that returns the machine to the
+   * shoulder -- and it deliberately does NOT touch these registers. Nothing
+   * coasted there: the abort forces stepsToGo and currentSpeed to zero on a
+   * carriage that already failed to move, so latching it would feed the
+   * compensation table a sample whose overshoot is not overshoot and whose
+   * approach speed is not an approach speed, with nothing in the block to tell
+   * the host apart from a real pass.
+   *
+   * NO SETTLED-POSITION LATCH, on purpose. The host measures the settled end of
+   * the pair perfectly well -- both endpoints are stationary by then -- so a
+   * motion-ceased detector in the ISR would be new machine-behaviour code
+   * bought for nothing. The scope decision, not an oversight.
+   *
+   * uint16s first so the block packs with zero padding, per the convention
+   * above; stopTriggerReserved is the EXPLICIT pad that keeps the four int32s
+   * 4-aligned (same reason machineModeReserved and diagReserved[4] exist -- an
+   * implicit pad is a phantom register reflex-ui cannot mirror). 20 bytes, 10
+   * registers, taking elsStop_t to 140 registers: still two 72-register reads
+   * per board tick (72 + 68), with 4 registers of tail growth left before a
+   * third request is needed. */
+  uint16_t stopTriggerSeq;          // READ-ONLY (firmware-owned): increments once per stop trigger, immediately BEFORE the payload below. Monotonic; edge-detect it, and re-read on no edge
+  uint16_t stopTriggerReserved;     // explicit pad -- see above; keeps the int32s 4-aligned and the register count honest
+  int32_t  stopTriggerZ;            // READ-ONLY (firmware-owned): scales[scaleIndex].position at the trigger, and it is the SAME value the threshold comparison was made on, not a re-read. (settled Z) - this = the coast. NOTE it is the reference scale as of the PREVIOUS tick when scaleIndex is above the sync-enabled scale's index -- the trigger test runs inside that scale's loop iteration, before this one's position is updated. 10 us of lag, inherent to the DECISION rather than to this register (latchedZ has always had it), and the right endpoint precisely because overshoot is measured from where the firmware decided to stop
+  int32_t  stopTriggerZSpeed;       // READ-ONLY (firmware-owned): scales[scaleIndex].speed at the trigger, encoder counts/s -- the same register and units the DRO shows. The table's x-axis. Computed by updateSpeedTask over the 50 ms window ENDING BEFORE the trigger, so unlike a host estimate it cannot straddle the coast; it is up to 50 ms old, which on a constant-feed threading pass is the steady approach speed and is exactly what is wanted
+  int32_t  stopTriggerStepsToGo;    // READ-ONLY (firmware-owned): servo.stepsToGo at the trigger. NONZERO means the firmware was still commanding motion, so the overshoot is not purely mechanical coast -- the 2026-08-28 stop-overshoot captures found zero emitted steps after the trigger in 12 of 14 passes, and this makes that check automatic per pass instead of a one-off probe build
+  int32_t  stopTriggerSpindleSpeed; // READ-ONLY (firmware-owned): scales[0].speed at the trigger, counts/s. Context, and enough for a host to reconstruct the commanded feed of a threading pass from the sync ratio
 } elsStop_t;
 
 /* Register-layout version published in elsStop.protocolVersion. Mirrored by
  * reflex-ui's ELS_PROTOCOL_VERSION (ui/reflex/utils/devices.py); the UI checks
  * it at connect. Bump it whenever rampsSharedData_t changes shape. The
  * history of every bump is at the assignment in RampsStart(). */
-#define ELS_PROTOCOL_VERSION 8
+#define ELS_PROTOCOL_VERSION 9
 
 /* Runt threshold, CPU cycles. 250 = 2.5 us at 100 MHz -- the top of the
  * minimum-pulse range common step-servo drives specify. Deliberately the

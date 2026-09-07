@@ -106,16 +106,35 @@ def main(argv):
         first = bus.read(0, 4)
         check(len(first) == 4, "FC3 at register 0 still serves the struct")
 
-        # protocolVersion register: read it through the client's knowledge of
-        # where bootCommand is (bootCommand is the last-but-one register).
+        # The boot pair, read through the client's own knowledge of where
+        # bootCommand is -- which is the thing that has to keep working when the
+        # register map grows behind it.
         boot_reg = mf.APP_BOOT_COMMAND_REG[ident.app_protocol]
         tail = bus.read(boot_reg, 2)
         check(tail == [0, 0], "bootCommand/bootSeq read as 0 at the client's register index")
+
+        # Where the struct ENDS. Until protocolVersion 9 the pair WAS the tail,
+        # so this read 3 registers from boot_reg and expected a refusal. The
+        # trigger-instant snapshot (stopTriggerSeq + pad + four int32s = 10
+        # registers) now sits behind it, so the end moved and the number is
+        # derived rather than re-guessed: rampsSharedData_t is 488 bytes = 244
+        # registers, bootCommand is register 232, so 244 - 232 = 12 registers
+        # remain -- exactly the pair plus the snapshot. Reading those 12 must
+        # answer; reading one more must not.
+        STRUCT_REGISTERS = 488 // 2
+        to_end = STRUCT_REGISTERS - boot_reg
+        check(to_end == 12,
+              f"{to_end} registers from bootCommand to the struct end "
+              f"(want 12: the boot pair + the 10-register trigger snapshot)")
+        check(len(bus.read(boot_reg, to_end)) == to_end,
+              "a read to exactly the struct end still answers")
         try:
-            bus.read(boot_reg, 3)
+            bus.read(boot_reg, to_end + 1)
             check(False, "a read past the end of the struct answers")
         except mf.ExceptionResponse as e:
-            check(e.code == 2, "a read straddling the struct end -> exception 2 (bootSeq IS the last register)")
+            check(e.code == 2,
+                  "a read straddling the struct end -> exception 2 "
+                  "(stopTriggerSpindleSpeed IS the last register)")
 
         # --identity as the user runs it
         rc = mf.main(["modbus-flash.py", "--identity", "--port", pty])

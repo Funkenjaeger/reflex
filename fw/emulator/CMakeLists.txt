@@ -355,6 +355,18 @@ add_executable(els_arm_past_stop_test
 target_link_libraries(els_arm_past_stop_test m pthread)
 add_test(NAME els_arm_past_stop_test COMMAND els_arm_past_stop_test)
 
+# The trigger-instant snapshot (elsStop.stopTriggerSeq/Z/ZSpeed/StepsToGo/
+# SpindleSpeed, protocolVersion 9): latched once per stop trigger, never
+# mirrored, and seq-before-payload so a torn Modbus frame is harmless. Drives
+# the real ISR with stubbed externals, same shape as els_arm_past_stop_test.
+# The abort path that also sets active = 1 must NOT publish a capture; that
+# half lives in els_takeup_quiescence_window_test, which can reach it.
+add_executable(els_stop_trigger_snapshot_test
+    ${CMAKE_SOURCE_DIR}/test/els_stop_trigger_snapshot_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_link_libraries(els_stop_trigger_snapshot_test m pthread)
+add_test(NAME els_stop_trigger_snapshot_test COMMAND els_stop_trigger_snapshot_test)
+
 add_executable(els_diag_scratch_mode_watch_v2_test
     ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)

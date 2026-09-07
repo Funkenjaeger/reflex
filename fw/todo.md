@@ -204,6 +204,32 @@ it.
 - **NOT proven on hardware.** The emulator has no servo dynamics, no Modbus timing
   and no metal. Do not treat 4/4 as a machine result.
 
+### Trigger-instant snapshot (2026-09-07) — BUILT, NOT FLASHED
+- **What:** `elsStop.stopTriggerSeq / stopTriggerZ / stopTriggerZSpeed /
+  stopTriggerStepsToGo / stopTriggerSpindleSpeed`, latched in the ISR at the stop
+  trigger (`Core/Src/Ramps.c`, the `shouldStop` block). protocolVersion **8 → 9**,
+  firmware and `ui/reflex/utils/devices.py` together. `elsStop_t` 130 → 140
+  registers; still two 72-register reads per board tick.
+- **Why:** overshoot = (settled Z) − (Z at the trigger), and the host cannot supply
+  the second term. Measured on elspi 2026-09-07: `elsStop.active` is polled at
+  30 Hz (33 ms) against a ~12 ms coast, so ~60% of the coast is over before the
+  host sees the latch and in 22% of passes all of it is. Substituting
+  `stopPosition` disagreed with the older diagnostic-build numbers by ~50%
+  (16 counts against 10–11 at the same feed).
+- **NOT proven on hardware, and deploying it needs a flash at the lathe** — a
+  separate decision. Emulator coverage is `els_stop_trigger_snapshot_test`
+  (latches once per trigger, never mirrors, re-captures per pass, seq before
+  payload) plus the abort half in `els_takeup_quiescence_window_test` T1.
+- **Deliberately NOT included:** a settled-position latch or any motion-ceased
+  detector. The host measures the settled end reliably; adding an ISR-side
+  detector would be new machine-behaviour code bought for nothing.
+- **Headroom, for whoever appends next:** the block is 140 of the 144 registers
+  two 72-register reads cover. Four registers left. The next append past that
+  either raises `BaseDevice.MAX_REGISTERS_PER_READ` (75 is the cap the 60%-of-125
+  rule allows, buying six more) or pays a third request on every one of 30 ticks
+  a second. `ui/tests/fsms/test_els_stop_snapshot.py` is where that arithmetic
+  lives and it fails rather than letting the cost land silently.
+
 ---
 
 ## ELS backlash: closed-loop calibration + take-up confirmation (2026-08-08)

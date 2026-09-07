@@ -335,7 +335,13 @@ void RampsStart(rampsHandler_t *rampsData) {
    * 8 (2026-09-06): bootCommand / bootSeq, the software path into the field
    * bootloader. The identity window that ships with the bootloader is NOT
    * part of this struct and does not bump this number -- see els_identity.h
-   * and the window registration at the end of this function. */
+   * and the window registration at the end of this function.
+   *
+   * 9 (2026-09-07): the trigger-instant snapshot (stopTriggerSeq / Z / ZSpeed /
+   * StepsToGo / SpindleSpeed), latched in the ISR at the stop trigger. The host
+   * polls at 30 Hz and the coast it is trying to measure lasts ~12 ms, so the
+   * trigger position was never obtainable from outside the ISR -- see the block
+   * comment on it in Ramps.h. */
   rampsData->shared.elsStop.protocolVersion = ELS_PROTOCOL_VERSION;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
@@ -1192,6 +1198,12 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
             }
             data->elsStopTakeupLatched    = 1;
             shared->elsStop.takeupPending = 0;   /* stop holding the machine */
+            /* NOT a stop trigger, and so deliberately NOT a trigger-instant
+             * snapshot (stopTriggerSeq et al, Ramps.h). Nothing coasted here:
+             * this abort fires on a carriage that FAILED to move, and the two
+             * lines below force stepsToGo and currentSpeed to zero. Bumping
+             * the seq would hand the overshoot table a sample whose overshoot
+             * is not overshoot, indistinguishable from a real pass. */
             shared->elsStop.active        = 1;   /* back to stopped-at-shoulder */
             shared->servo.stepsToGo       = 0;
             shared->servo.currentSpeed    = 0;
@@ -1254,6 +1266,30 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
         if (shouldStop) {
           shared->elsStop.active = 1;
           data->elsStopHysteresisCleared = 0;
+          /* TRIGGER-INSTANT SNAPSHOT (2026-09-07, protocolVersion 9). The only
+           * place in the system that knows this instant; see the block comment
+           * in Ramps.h for why the host cannot reconstruct it at 30 Hz.
+           *
+           * SEQ FIRST, and it is not stylistic: it sits at a lower Modbus
+           * address than the payload, so incrementing it before the writes and
+           * having the host edge-detect it makes a torn FC3 frame read as
+           * (stale seq, new payload) -- re-read, no harm -- instead of an ack
+           * vouching for a stale capture.
+           *
+           * refPos rather than a fresh read of scales[scaleIndex].position:
+           * this must be the EXACT value shouldStop was decided on. A re-read
+           * cannot differ today (nothing between them writes it), and pinning
+           * it to the decision value means it still cannot if something ever
+           * does.
+           *
+           * Unconditional, unlike the referenceLatched block below: that one
+           * captures a per-JOB datum and must not be overwritten, this is a
+           * per-PASS measurement and every pass is a sample. */
+          shared->elsStop.stopTriggerSeq++;
+          shared->elsStop.stopTriggerZ            = refPos;
+          shared->elsStop.stopTriggerZSpeed       = shared->scales[shared->elsStop.scaleIndex].speed;
+          shared->elsStop.stopTriggerStepsToGo    = shared->servo.stepsToGo;
+          shared->elsStop.stopTriggerSpindleSpeed = shared->scales[0].speed;
           if (!shared->elsStop.referenceLatched) {
             shared->elsStop.latchedZ         = shared->scales[shared->elsStop.scaleIndex].position;
             shared->elsStop.latchedSpindle   = shared->scales[0].position;
