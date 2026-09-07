@@ -10,8 +10,8 @@ ELS_STOP_BASE = 104
 TOTAL_REGISTERS = 140
 
 HOT_BASE = 0
-HOT_COUNT = 58
-HOT_FORMAT = "<HHihHfifIiiHHffffHHHHHHiHHHHH2xiiHHH2xiiii"
+HOT_COUNT = 64
+HOT_FORMAT = "<HHihHfifIiiHHffffHHHHHHiiIIHHHHHHiiHHH2xiiii"
 HOT_FIELDS = [
     "enable",
     "scaleIndex",
@@ -37,6 +37,10 @@ HOT_FIELDS = [
     "takeupSeq",
     "takeupResult",
     "lastTakeupZDelta",
+    "takeupThreshCounts",
+    "stepPulseMinCycles",
+    "stepPulseRuntCount",
+    "diagSeq",
     "machineMode",
     "latchCommand",
     "latchSeq",
@@ -53,19 +57,15 @@ HOT_FIELDS = [
     "stopTriggerSpindleSpeed",
 ]
 
-COLD_BASE = 58
-COLD_COUNT = 82
-COLD_FORMAT = "<3iiiiIIIHHHHii50hHH4H"
+COLD_BASE = 64
+COLD_COUNT = 76
+COLD_FORMAT = "<3iiiIHHH2xii50hHH4H"
 COLD_FIELDS = [
     "calMeasured",
     "calCeilingSteps",
     "calMotionThreshCounts",
-    "takeupThreshCounts",
     "executionCyclesPeak",
-    "stepPulseMinCycles",
-    "stepPulseRuntCount",
     "diagSchema",
-    "diagSeq",
     "diagBucketTicks",
     "diagBucketCount",
     "diagSettleTicks",
@@ -101,31 +101,31 @@ OFFSETS = {
     "takeupSeq": 32,
     "takeupResult": 33,
     "lastTakeupZDelta": 34,
-    "machineMode": 36,
-    "latchCommand": 37,
-    "latchSeq": 38,
-    "phaseOffsetCommand": 39,
-    "phaseOffsetSeq": 40,
-    "phaseOffsetPending": 42,
-    "phaseOffsetSteps": 44,
-    "bootCommand": 46,
-    "bootSeq": 47,
-    "stopTriggerSeq": 48,
-    "stopTriggerZ": 50,
-    "stopTriggerZSpeed": 52,
-    "stopTriggerStepsToGo": 54,
-    "stopTriggerSpindleSpeed": 56,
-    "calMeasured": 58,
-    "calCeilingSteps": 64,
-    "calMotionThreshCounts": 66,
-    "takeupThreshCounts": 68,
-    "executionCyclesPeak": 70,
-    "stepPulseMinCycles": 72,
-    "stepPulseRuntCount": 74,
+    "takeupThreshCounts": 36,
+    "stepPulseMinCycles": 38,
+    "stepPulseRuntCount": 40,
+    "diagSeq": 42,
+    "machineMode": 43,
+    "latchCommand": 44,
+    "latchSeq": 45,
+    "phaseOffsetCommand": 46,
+    "phaseOffsetSeq": 47,
+    "phaseOffsetPending": 48,
+    "phaseOffsetSteps": 50,
+    "bootCommand": 52,
+    "bootSeq": 53,
+    "stopTriggerSeq": 54,
+    "stopTriggerZ": 56,
+    "stopTriggerZSpeed": 58,
+    "stopTriggerStepsToGo": 60,
+    "stopTriggerSpindleSpeed": 62,
+    "calMeasured": 64,
+    "calCeilingSteps": 70,
+    "calMotionThreshCounts": 72,
+    "executionCyclesPeak": 74,
     "diagSchema": 76,
-    "diagSeq": 77,
-    "diagBucketTicks": 78,
-    "diagBucketCount": 79,
+    "diagBucketTicks": 77,
+    "diagBucketCount": 78,
     "diagSettleTicks": 80,
     "diagNetCounts": 82,
     "diagTrace": 84,

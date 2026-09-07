@@ -22,11 +22,18 @@
 # checked-in output, so a hand-edit to generated code fails the build rather than
 # quietly becoming a third source of truth.
 #
-# STATUS: STRAWMAN, 2026-09-07. Field list and types are machine-extracted from
-# Ramps.h and gated against its stated 140-register total. The `group:`
-# assignments are a PROPOSAL derived from field names and comments -- the reader
-# audit has NOT been done. Every field marked `audit: unverified` is a guess that
-# must be confirmed against actual tick-path readers before this is believed.
+# STATUS: 2026-09-07. Field list and types are machine-extracted from Ramps.h and
+# gated against its stated 140-register total. THE READER AUDIT IS DONE:
+# tools/audit_tick_readers.py enumerates the four readers of the tick snapshot
+# (TickReads, board.py, the flight recorder, the phase recorder) and fails if any
+# `cold` field is read on the tick path. It found FOUR misgroupings in the first
+# draft -- takeupThreshCounts, diagSeq, stepPulseMinCycles, stepPulseRuntCount --
+# all of which were filed cold on the strength of their names. It now runs as a
+# gate, so that class of error fails instead of shipping.
+#
+# STILL OPEN: 14 fields sit in `hot` that NO tick reader touches (the command/ack
+# pairs and the stopTrigger block). They are demotion candidates, not defects --
+# see the DEMOTION CANDIDATES note at the bottom of this file.
 # =============================================================================
 
 schema_version: 1
@@ -136,6 +143,17 @@ fields:
   - {id: 23, name: takeupResult,      type: uint16, access: ro_firmware, group: hot, doc: "ELS_TAKEUP_* outcome code for the take-up counted by takeupSeq"}
   - {id: 24, name: lastTakeupZDelta,  type: int32,  access: ro_firmware, group: hot, doc: "measured Z delta of the last take-up, encoder counts"}
 
+  # --- PROMOTED BY THE READER AUDIT, 2026-09-07 -----------------------------
+  # These four were filed cold on the strength of their names and were WRONG.
+  # tools/audit_tick_readers.py enumerates the four readers of the tick
+  # snapshot and each of these turned up in one; the audit now runs as a gate,
+  # so this class of mistake fails instead of shipping. See the audit output in
+  # the wiki journal 2026-09-07.
+  - {id: 42, name: takeupThreshCounts, type: int32, access: sw_write, group: hot, doc: "counts that confirm a take-up. READ ON THE TICK PATH by TickReads, the flight recorder context, and the phase recorder -- a threshold is only meaningful recorded beside the delta it judged"}
+  - {id: 44, name: stepPulseMinCycles, type: uint32, access: ro_firmware, group: hot, doc: "narrowest step pulse observed, CPU cycles. Recorded per context change by BOTH recorders -- a decoupling that coincides with runts is a different finding from one that does not"}
+  - {id: 45, name: stepPulseRuntCount, type: uint32, access: ro_firmware, group: hot, doc: "count of step pulses below the drive minimum; recorded alongside stepPulseMinCycles"}
+  - {id: 47, name: diagSeq,           type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [diagBucketTicks, diagBucketCount, diagSettleTicks, diagNetCounts, diagTrace, diagCaptureTicks, diagEndReason], doc: "increments once per completed capture. Polled by TickReads; its PAYLOAD stays cold, which is exactly the seq-hot/payload-cold shape the ordering invariant permits -- the seq is at the lower address"}
+
   # --- operator-facing mode + the interactive command/ack pairs -------------
   - {id: 25, name: machineMode,       type: uint16, access: ro_firmware, group: hot, doc: "firmware-owned machine mode"}
   - {id: 26, name: latchCommand,      type: uint16, access: bidirectional, group: hot, kind: command, ack: latchSeq, doc: "SW writes 1 for a manual reference latch; consumed only while enable == 1"}
@@ -167,12 +185,9 @@ fields:
   - {id: 39, name: calMeasured,       type: int32, count: 3, access: ro_firmware, group: cold, audit: unverified, doc: "per-leg measured take-up, read after a calibration run"}
   - {id: 40, name: calCeilingSteps,   type: int32,  access: sw_write, group: cold, doc: "per-leg hard ceiling in servo steps; MACHINE-SPECIFIC, written at setup"}
   - {id: 41, name: calMotionThreshCounts, type: int32, access: sw_write, group: cold, doc: "counts that constitute motion during calibration; written at setup"}
-  - {id: 42, name: takeupThreshCounts, type: int32, access: sw_write, group: cold, doc: "counts that confirm a take-up; written at setup"}
 
   # --- performance counters: diagnostic, monotonic, never urgent ------------
   - {id: 43, name: executionCyclesPeak, type: uint32, access: ro_firmware, group: cold, audit: unverified, doc: "peak ISR execution time in CPU cycles"}
-  - {id: 44, name: stepPulseMinCycles,  type: uint32, access: ro_firmware, group: cold, audit: unverified, doc: "narrowest step pulse observed, CPU cycles"}
-  - {id: 45, name: stepPulseRuntCount,  type: uint32, access: ro_firmware, group: cold, audit: unverified, doc: "count of step pulses below the drive minimum"}
 
   # --- the diagnostic scratchpad: 64 registers, ZERO in any release build ----
   #     Reserved in every build, written only under ELS_DIAG_SCRATCH. This is
@@ -180,7 +195,6 @@ fields:
   #     registers, so skipping it saved nothing. Moving it here is most of the
   #     win, and nothing about the block itself changes.
   - {id: 46, name: diagSchema,        type: uint16, access: ro_firmware, group: cold, doc: "which probe is compiled in; 0 = nothing here. A reader MUST check this before interpreting anything below"}
-  - {id: 47, name: diagSeq,           type: uint16, access: ro_firmware, group: cold, kind: seq, acks: [diagBucketTicks, diagBucketCount, diagSettleTicks, diagNetCounts, diagTrace, diagCaptureTicks, diagEndReason], doc: "increments once per completed capture"}
   - {id: 48, name: diagBucketTicks,   type: uint16, access: ro_firmware, group: cold, doc: "ISR ticks summed into each diagTrace bucket; PUBLISHED so the host never assumes the ISR rate"}
   - {id: 49, name: diagBucketCount,   type: uint16, access: ro_firmware, group: cold, doc: "populated diagTrace entries"}
   - {id: 50, name: diagSettleTicks,   type: int32,  access: ro_firmware, group: cold, doc: "ticks to settle in the last capture"}
@@ -220,3 +234,39 @@ constants:
 # Headroom:  17 registers of hot growth before a second hot request. Auto-start
 #            is planned at ~10.
 # =============================================================================
+
+# =============================================================================
+# DEMOTION CANDIDATES -- open, deliberately NOT acted on (2026-09-07)
+# =============================================================================
+# tools/audit_tick_readers.py reports 14 fields in `hot` that no tick reader
+# touches. Demoting them would take hot from 64 registers to roughly 45. They
+# are NOT demoted, because "no reader" means two different things here and only
+# one of them is safe:
+#
+#   SAFE -- command/ack pairs, read LIVE during a bounded operator-initiated
+#   operation and never from the tick. calCommand/calSeq/calResult,
+#   latchCommand, phaseOffsetCommand/Seq/Pending, bootCommand/bootSeq. A write
+#   is FC6 at an absolute address and does not care about grouping; the reads
+#   already go through BaseDevice.__getitem__. Demoting these is a free ~10
+#   registers whenever someone wants them.
+#
+#   NOT SAFE YET -- the stopTrigger block (Seq, Z, ZSpeed, StepsToGo,
+#   SpindleSpeed, 9 registers). It has no reader because it was added on
+#   2026-09-07 and is currently read by bench scripts over raw Modbus. The
+#   flight recorder is its obvious consumer and would read it PER PASS off the
+#   tick snapshot. Demoting it now and promoting it back later costs a second
+#   protocolVersion bump for no gain.
+#
+# A HAZARD THE SPLIT INTRODUCES, which decides how demotion must be done. The
+# two recorders disagree about what a missing key means:
+#
+#   flight recorder:  {f: snap[f] for f in CONTEXT_FIELDS if f in snap}
+#                     -> a demoted field SILENTLY VANISHES from the recording
+#   phase recorder:   snapshot["stepPulseMinCycles"]
+#                     -> a demoted field raises KeyError, loudly
+#
+# The silent one is the dangerous one: it produces a recording that reads
+# perfectly and is missing a column, which is the same failure shape the
+# register-map contract test exists to prevent one layer down. Any demotion of
+# a field named in either recorder's CONTEXT_FIELDS must come WITH the reader
+# change, not before it.

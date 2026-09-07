@@ -4,7 +4,7 @@
 
 `elsStop_t` occupies 140 registers at 104..243 of `rampsSharedData_t`.
 
-## `hot` — 58 registers (elsStop 0..57, absolute 104..161)
+## `hot` — 64 registers (elsStop 0..63, absolute 104..167)
 
 Read as ONE FC3 request every board tick (30 Hz) by Board._refresh_els_stop_snapshot. The quantity being minimised is REQUESTS, not bytes -- each request is an independent chance for the firmware to miss its answering window while the 100 kHz ISR is saturated (2026-08-23: six of six cuts lost comms, every drop a timeout).
 
@@ -34,40 +34,40 @@ Read as ONE FC3 request every board tick (30 Hz) by Board._refresh_els_stop_snap
 | 32 | 136 | `uint16` | `takeupSeq` | ro_firmware | **seq** — monotonic ack increments once per completed take-up confirmation |
 | 33 | 137 | `uint16` | `takeupResult` | ro_firmware | ELS_TAKEUP_* outcome code for the take-up counted by takeupSeq |
 | 34 | 138 | `int32` | `lastTakeupZDelta` | ro_firmware | measured Z delta of the last take-up, encoder counts |
-| 36 | 140 | `uint16` | `machineMode` | ro_firmware | firmware-owned machine mode |
-| 37 | 141 | `uint16` | `latchCommand` | bidirectional | **command** — cleared on consume, poll `latchSeq` SW writes 1 for a manual reference latch; consumed only while enable == 1 |
-| 38 | 142 | `uint16` | `latchSeq` | ro_firmware | **seq** — monotonic ack increments once per ACCEPTED manual latch; an absent ack IS the refusal |
-| 39 | 143 | `uint16` | `phaseOffsetCommand` | bidirectional | **command** — cleared on consume, poll `phaseOffsetSeq` SW writes 1 to apply phaseOffsetPending |
-| 40 | 144 | `uint16` | `phaseOffsetSeq` | ro_firmware | **seq** — monotonic ack increments once per accepted phase offset |
-| 41 | 145 | — | *(alignment pad)* | — | before `phaseOffsetPending` |
-| 42 | 146 | `int32` | `phaseOffsetPending` | sw_write | the offset SW wants applied, in servo steps |
-| 44 | 148 | `int32` | `phaseOffsetSteps` | ro_firmware | the offset actually in force |
-| 46 | 150 | `uint16` | `bootCommand` | bidirectional | **command** — cleared on consume, poll `bootSeq` SW writes 1 to reboot into the bootloader; REFUSED with no ack while enable != 0 |
-| 47 | 151 | `uint16` | `bootSeq` | ro_firmware | **seq** — monotonic ack increments once per accepted reboot request |
-| 48 | 152 | `uint16` | `stopTriggerSeq` | ro_firmware | **seq** — monotonic ack increments once per stop trigger, immediately BEFORE the payload |
-| 49 | 153 | — | *(alignment pad)* | — | before `stopTriggerZ` |
-| 50 | 154 | `int32` | `stopTriggerZ` | ro_firmware | reference-scale position at the trigger; (settled Z) - this = the coast |
-| 52 | 156 | `int32` | `stopTriggerZSpeed` | ro_firmware | reference-scale speed at the trigger, counts/s -- the correction table's x-axis |
-| 54 | 158 | `int32` | `stopTriggerStepsToGo` | ro_firmware | servo.stepsToGo at the trigger; nonzero = still commanding motion |
-| 56 | 160 | `int32` | `stopTriggerSpindleSpeed` | ro_firmware | scales[0].speed at the trigger, counts/s |
+| 36 | 140 | `int32` | `takeupThreshCounts` | sw_write | counts that confirm a take-up. READ ON THE TICK PATH by TickReads, the flight recorder context, and the phase recorder -- a threshold is only meaningful recorded beside the delta it judged |
+| 38 | 142 | `uint32` | `stepPulseMinCycles` | ro_firmware | narrowest step pulse observed, CPU cycles. Recorded per context change by BOTH recorders -- a decoupling that coincides with runts is a different finding from one that does not |
+| 40 | 144 | `uint32` | `stepPulseRuntCount` | ro_firmware | count of step pulses below the drive minimum; recorded alongside stepPulseMinCycles |
+| 42 | 146 | `uint16` | `diagSeq` | ro_firmware | **seq** — monotonic ack increments once per completed capture. Polled by TickReads; its PAYLOAD stays cold, which is exactly the seq-hot/payload-cold shape the ordering invariant permits -- the seq is at the lower address |
+| 43 | 147 | `uint16` | `machineMode` | ro_firmware | firmware-owned machine mode |
+| 44 | 148 | `uint16` | `latchCommand` | bidirectional | **command** — cleared on consume, poll `latchSeq` SW writes 1 for a manual reference latch; consumed only while enable == 1 |
+| 45 | 149 | `uint16` | `latchSeq` | ro_firmware | **seq** — monotonic ack increments once per ACCEPTED manual latch; an absent ack IS the refusal |
+| 46 | 150 | `uint16` | `phaseOffsetCommand` | bidirectional | **command** — cleared on consume, poll `phaseOffsetSeq` SW writes 1 to apply phaseOffsetPending |
+| 47 | 151 | `uint16` | `phaseOffsetSeq` | ro_firmware | **seq** — monotonic ack increments once per accepted phase offset |
+| 48 | 152 | `int32` | `phaseOffsetPending` | sw_write | the offset SW wants applied, in servo steps |
+| 50 | 154 | `int32` | `phaseOffsetSteps` | ro_firmware | the offset actually in force |
+| 52 | 156 | `uint16` | `bootCommand` | bidirectional | **command** — cleared on consume, poll `bootSeq` SW writes 1 to reboot into the bootloader; REFUSED with no ack while enable != 0 |
+| 53 | 157 | `uint16` | `bootSeq` | ro_firmware | **seq** — monotonic ack increments once per accepted reboot request |
+| 54 | 158 | `uint16` | `stopTriggerSeq` | ro_firmware | **seq** — monotonic ack increments once per stop trigger, immediately BEFORE the payload |
+| 55 | 159 | — | *(alignment pad)* | — | before `stopTriggerZ` |
+| 56 | 160 | `int32` | `stopTriggerZ` | ro_firmware | reference-scale position at the trigger; (settled Z) - this = the coast |
+| 58 | 162 | `int32` | `stopTriggerZSpeed` | ro_firmware | reference-scale speed at the trigger, counts/s -- the correction table's x-axis |
+| 60 | 164 | `int32` | `stopTriggerStepsToGo` | ro_firmware | servo.stepsToGo at the trigger; nonzero = still commanding motion |
+| 62 | 166 | `int32` | `stopTriggerSpindleSpeed` | ro_firmware | scales[0].speed at the trigger, counts/s |
 
-## `cold` — 82 registers (elsStop 58..139, absolute 162..243)
+## `cold` — 76 registers (elsStop 64..139, absolute 168..243)
 
 Never read on the tick path. Fetched on demand -- at connect, after a calibration run, or when a diagnostic build is being read out.
 
 | reg | abs | type | field | access | notes |
 |----:|----:|------|-------|--------|-------|
-| 58 | 162 | `int32[3]` | `calMeasured` | ro_firmware | ⚠ group assignment UNVERIFIED per-leg measured take-up, read after a calibration run |
-| 64 | 168 | `int32` | `calCeilingSteps` | sw_write | per-leg hard ceiling in servo steps; MACHINE-SPECIFIC, written at setup |
-| 66 | 170 | `int32` | `calMotionThreshCounts` | sw_write | counts that constitute motion during calibration; written at setup |
-| 68 | 172 | `int32` | `takeupThreshCounts` | sw_write | counts that confirm a take-up; written at setup |
-| 70 | 174 | `uint32` | `executionCyclesPeak` | ro_firmware | ⚠ group assignment UNVERIFIED peak ISR execution time in CPU cycles |
-| 72 | 176 | `uint32` | `stepPulseMinCycles` | ro_firmware | ⚠ group assignment UNVERIFIED narrowest step pulse observed, CPU cycles |
-| 74 | 178 | `uint32` | `stepPulseRuntCount` | ro_firmware | ⚠ group assignment UNVERIFIED count of step pulses below the drive minimum |
+| 64 | 168 | `int32[3]` | `calMeasured` | ro_firmware | ⚠ group assignment UNVERIFIED per-leg measured take-up, read after a calibration run |
+| 70 | 174 | `int32` | `calCeilingSteps` | sw_write | per-leg hard ceiling in servo steps; MACHINE-SPECIFIC, written at setup |
+| 72 | 176 | `int32` | `calMotionThreshCounts` | sw_write | counts that constitute motion during calibration; written at setup |
+| 74 | 178 | `uint32` | `executionCyclesPeak` | ro_firmware | ⚠ group assignment UNVERIFIED peak ISR execution time in CPU cycles |
 | 76 | 180 | `uint16` | `diagSchema` | ro_firmware | which probe is compiled in; 0 = nothing here. A reader MUST check this before interpreting anything below |
-| 77 | 181 | `uint16` | `diagSeq` | ro_firmware | **seq** — monotonic ack increments once per completed capture |
-| 78 | 182 | `uint16` | `diagBucketTicks` | ro_firmware | ISR ticks summed into each diagTrace bucket; PUBLISHED so the host never assumes the ISR rate |
-| 79 | 183 | `uint16` | `diagBucketCount` | ro_firmware | populated diagTrace entries |
+| 77 | 181 | `uint16` | `diagBucketTicks` | ro_firmware | ISR ticks summed into each diagTrace bucket; PUBLISHED so the host never assumes the ISR rate |
+| 78 | 182 | `uint16` | `diagBucketCount` | ro_firmware | populated diagTrace entries |
+| 79 | 183 | — | *(alignment pad)* | — | before `diagSettleTicks` |
 | 80 | 184 | `int32` | `diagSettleTicks` | ro_firmware | ticks to settle in the last capture |
 | 82 | 186 | `int32` | `diagNetCounts` | ro_firmware | net dZ over the last capture |
 | 84 | 188 | `int16[50]` | `diagTrace` | ro_firmware | per-bucket SIGNED sum of dZ -- signed so encoder dither cancels and real motion does not |
