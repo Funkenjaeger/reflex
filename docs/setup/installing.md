@@ -213,7 +213,9 @@ Confirm it took by watching the UI log as it connects:
 journalctl -u reflex-ui.service -b --no-pager | grep -i "protocol version"
 ```
 
-You want `Firmware register protocol version 7 (expected 7)`. A mismatch names
+You want the two numbers to agree — `Firmware register protocol version 9
+(expected 9)` at the time of writing; the number moves with the register map,
+so read it as "these match", not as "it should say 9". A mismatch names
 itself — the UI says whether the firmware or the UI is the older half — and it
 blocks calibration rather than letting you commission against a register map it
 does not understand.
@@ -269,13 +271,78 @@ checkout.
 
 ## Updating later
 
+**From the touchscreen is the normal path.** *Setup → Update* lists the
+releases published on GitHub, and installing one replaces **both** halves: it
+flashes the controller firmware over the RS-485 link — no ST-Link, no power
+cycle, about thirteen seconds — and then checks out the matching UI tag. You
+do not need SSH, and you do not need to work out whether the firmware half
+changed.
+
+A release is one version covering both halves, so the two are only ever
+installed together:
+
+1. **Before anything is touched** the machine checks that it can finish —
+   a clean checkout, `uv` present, the tag fetched, and the release's firmware
+   image downloaded and validated. Anything missing stops it here, with
+   nothing changed.
+2. **The controller is flashed**, and the DRO stops for the duration because
+   the flasher needs the serial port the UI normally holds. The screen says so.
+   **Do not power the machine off while it is flashing.**
+3. **The firmware is then asked what it speaks.** If the register protocol
+   version it reports is not the one the new UI expects, the update **stops
+   there** and the UI half is not installed. There is no way to click past
+   that — a UI and a firmware that disagree about the register layout read
+   every register after the point of divergence as plausible nonsense, and
+   preventing exactly that is what a paired release is for.
+4. **The UI half is checked out**, the environment synced, and the service
+   restarted.
+
+!!! note "Pre-releases"
+    *Offer pre-releases (experimental)* adds release candidates to the list.
+    They are built by the same workflow and carry both halves, so they install
+    the same way; they are simply less tested, and the screen asks before
+    installing one.
+
+!!! warning "Two things it needs, and a fresh install has neither by default"
+    **A git checkout.** The UI half is installed by checking out a tag in
+    `/home/default/projects/reflex`, so this works only where Reflex was
+    installed from a clone, as in step 3. It refuses, and says so, otherwise.
+
+    **The Modbus bootloader on the controller.** Step 6 flashes the firmware
+    the way it always has — one image at `0x08000000`, over SWD — and that
+    layout has no bootloader in it, so there is nothing on the board for a
+    Modbus flash to talk to. Commissioning the bootloader is a one-time
+    ST-Link job described in `fw/bootloader/README.md`; until it is done, the
+    Update screen will read the controller, find no identity window, and
+    refuse. Nothing is harmed by trying.
+
+### From the command line
+
+Still supported, and the fallback when the machine has no route to GitHub, when
+the checkout has local changes, or when an update refused and you want to see
+why.
+
 ```bash
-cd ~/projects/reflex && git pull
-cd ui && ~/.local/bin/uv sync   # only if dependencies changed
+cd ~/projects/reflex && git fetch --tags && git checkout v1.2.0
+cd ui && ~/.local/bin/uv sync
 sudo systemctl restart reflex-ui.service
 ```
 
-If the release also changed the firmware, reflash and power-cycle as in step 6.
-The protocol version check is what tells you whether you needed to — it is
-worth reading the log after every update rather than only when something looks
-wrong.
+That is the UI half only. If the release also moved the firmware, flash it too
+— over Modbus, with the UI stopped so the port is free:
+
+```bash
+sudo systemctl stop reflex-ui.service
+cd ~/projects/reflex/fw
+python3 scripts/modbus-flash.py --identity --port /dev/serial0     # what is on there now
+python3 scripts/modbus-flash.py <the release's reflex-fw-*.bin> --port /dev/serial0
+sudo systemctl start reflex-ui.service
+```
+
+The ST-Link procedure in step 6 is still the answer for a virgin board, for
+option bytes, and for recovering a controller that will not answer over Modbus
+at all.
+
+Either way, the protocol version check is what tells you the two halves agree
+— it is worth reading the log after every update rather than only when
+something looks wrong.
