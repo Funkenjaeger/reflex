@@ -69,11 +69,26 @@ if n1 != 1:
     sys.exit("MUTATION 1 ANCHOR FAILED: no _pad1 line in the generated header")
 results.append(compile_with(mut1, "widened alignment pad _pad1 to uint32_t"))
 
-m = re.search(r"(^  uint16_t calSeq;.*$\n)(^  uint16_t calResult;.*$\n)", src, re.M)
-if not m:
-    sys.exit("MUTATION 2 ANCHOR FAILED: calSeq/calResult pair not found")
-results.append(compile_with(src[:m.start()] + m.group(2) + m.group(1) + src[m.end():],
-                            "swapped calSeq and calResult"))
+# A PURE REORDER: two uint16 fields exchange places. No size changes, so this
+# is the mutation a size check cannot see and only per-field offsets catch.
+#
+# Found structurally rather than by name. Naming a pair made this brittle
+# against the layout it is testing -- calSeq/calResult stopped being adjacent
+# when they moved to the cold group, and takeupSeq/takeupResult stopped being
+# adjacent when migrated prose put a block comment between every declaration.
+# Both times the anchor failed loudly, which is the right behaviour, but a
+# self-test that needs re-anchoring whenever the map moves is a self-test that
+# will eventually be switched off.
+u16 = [m for m in re.finditer(r"^  uint16_t (\w+);", src, re.M)
+       if not m.group(1).startswith("_pad")]
+if len(u16) < 2:
+    sys.exit("MUTATION 2 ANCHOR FAILED: fewer than two uint16 fields to swap")
+a, b = u16[0], u16[1]
+mut2 = (src[:a.start(1)] + b.group(1) + src[a.end(1):b.start(1)]
+        + a.group(1) + src[b.end(1):])
+if mut2 == src:
+    sys.exit("MUTATION 2 CHANGED NOTHING")
+results.append(compile_with(mut2, f"swapped {a.group(1)} and {b.group(1)}"))
 
 mut3, n = re.subn(r"^  uint16_t enable;", "  uint32_t enable;", src, count=1, flags=re.M)
 if n != 1:

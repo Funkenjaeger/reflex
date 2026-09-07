@@ -234,7 +234,13 @@ class Board(EventDispatcher):
         it for no reason.
         """
         try:
-            self.els_stop_values = self.device['elsStop'].refresh()
+            # HOT GROUP ONLY, and that is the point: one FC3 request instead of
+            # two. Every field any tick-driven reader touches is in this group by
+            # construction -- tools/audit_tick_readers.py enumerates the four
+            # readers of this dict and FAILS if a `cold` field appears in one, so
+            # a future reader reaching for a cold field breaks the audit rather
+            # than silently reintroducing a second request per tick.
+            self.els_stop_values = self.device['elsStop'].refresh_hot()
         except Exception as e:
             self.els_stop_values = {}
             self.connection_manager._log_error_once(str(e))

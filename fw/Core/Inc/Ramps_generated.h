@@ -21,13 +21,13 @@
 #endif
 
 #define ELS_STOP_PROTOCOL_VERSION 10u
-#define ELS_STOP_TOTAL_REGS 140u
+#define ELS_STOP_TOTAL_REGS 142u
 #define ELS_STOP_HOT_REG_BASE 0u
-#define ELS_STOP_HOT_REG_COUNT 64u
-#define ELS_STOP_COLD_REG_BASE 64u
-#define ELS_STOP_COLD_REG_COUNT 76u
+#define ELS_STOP_HOT_REG_COUNT 56u
+#define ELS_STOP_COLD_REG_BASE 56u
+#define ELS_STOP_COLD_REG_COUNT 86u
 
-/* elsStop_t occupies registers 104..243 of rampsSharedData_t. */
+/* elsStop_t occupies registers 104..245 of rampsSharedData_t. */
 typedef struct {
 
   /* ---- HOT ----
@@ -37,68 +37,343 @@ typedef struct {
    * firmware to miss its answering window while the 100 kHz ISR is saturated
    * (2026-08-23: six of six cuts lost comms, every drop a timeout).
    */
-  uint16_t enable;                                  /* reg   0  SW write: 1 = enable ELS stop feature */
-  uint16_t scaleIndex;                              /* reg   1  SW write: which scale (0-3) is the position reference (Z axis) */
-  int32_t stopPosition;                             /* reg   2  SW write: threshold in encoder counts */
-  int16_t stopDirection;                            /* reg   4  SW write: 1 = stop when pos >= threshold, -1 = when pos <= threshold */
-  uint16_t active;                                  /* reg   5  bidirectional: firmware sets 1 when triggered; SW writes 0 to resume */
-  float threadPitchSteps;                           /* reg   6  SW write: leadscrew steps per thread pitch; 0.0f = turning */
-  int32_t hysteresis;                               /* reg   8  SW write: counts the carriage must retract before re-enabling */
-  float zCountsPerPitch;                            /* reg  10  SW write: Z scale counts per thread pitch; 0.0f = correction disabled */
-  uint32_t backlashSteps;                           /* reg  12  SW write: leadscrew backlash take-up magnitude in servo steps */
-  int32_t latchedZ;                                 /* reg  14  READ-ONLY (firmware-owned): scales[scaleIndex].position at first trigger of the job */
-  int32_t latchedSpindle;                           /* reg  16  READ-ONLY (firmware-owned): scales[0].position at first trigger of the job */
-  uint16_t referenceLatched;                        /* reg  18  READ-ONLY (firmware-owned): 0 until the first trigger captures the reference */
-  uint16_t takeupPending;                           /* reg  19  READ-ONLY (firmware-owned): 1 while the backlash take-up is in progress */
-  float lastIdealAdvance;                           /* reg  20  READ-ONLY (firmware-owned): last resume's ideal advance */
-  float lastActualAdvance;                          /* reg  22  READ-ONLY (firmware-owned): last resume's actual advance */
-  float lastPhaseError;                             /* reg  24  READ-ONLY (firmware-owned): last resume's phase error */
-  float lastCorrection;                             /* reg  26  READ-ONLY (firmware-owned): last resume's correction added to stepsToGo (post-modulo) */
-  uint16_t protocolVersion;                         /* reg  28  READ-ONLY (firmware-owned): register-layout version; the UI checks it at connect */
-  uint16_t calCommand;                              /* reg  29  bidirectional: SW writes 1 to request a calibration run; firmware clears on consume CLEARED BY FIRMWARE ON CONSUME -- poll calSeq, never this. */
-  uint16_t calSeq;                                  /* reg  30  READ-ONLY (firmware-owned): increments once per completed calibration run Monotonic ack; edge-detect it. Sits below everything it counts. */
-  uint16_t calResult;                               /* reg  31  READ-ONLY (firmware-owned): ELS_CAL_* outcome code for the run counted by calSeq */
-  uint16_t takeupSeq;                               /* reg  32  READ-ONLY (firmware-owned): increments once per completed take-up confirmation Monotonic ack; edge-detect it. Sits below everything it counts. */
-  uint16_t takeupResult;                            /* reg  33  READ-ONLY (firmware-owned): ELS_TAKEUP_* outcome code for the take-up counted by takeupSeq */
-  int32_t lastTakeupZDelta;                         /* reg  34  READ-ONLY (firmware-owned): measured Z delta of the last take-up, encoder counts */
-  int32_t takeupThreshCounts;                       /* reg  36  SW write: counts that confirm a take-up. READ ON THE TICK PATH by TickReads, the flight recorder context, and the phase recorder -- a threshold is only meaningful recorded beside the delta it judged */
-  uint32_t stepPulseMinCycles;                      /* reg  38  READ-ONLY (firmware-owned): narrowest step pulse observed, CPU cycles. Recorded per context change by BOTH recorders -- a decoupling that coincides with runts is a different finding from one that does not */
-  uint32_t stepPulseRuntCount;                      /* reg  40  READ-ONLY (firmware-owned): count of step pulses below the drive minimum; recorded alongside stepPulseMinCycles */
-  uint16_t diagSeq;                                 /* reg  42  READ-ONLY (firmware-owned): increments once per completed capture. Polled by TickReads; its PAYLOAD stays cold, which is exactly the seq-hot/payload-cold shape the ordering invariant permits -- the seq is at the lower address Monotonic ack; edge-detect it. Sits below everything it counts. */
-  uint16_t machineMode;                             /* reg  43  READ-ONLY (firmware-owned): firmware-owned machine mode */
-  uint16_t latchCommand;                            /* reg  44  bidirectional: SW writes 1 for a manual reference latch; consumed only while enable == 1 CLEARED BY FIRMWARE ON CONSUME -- poll latchSeq, never this. */
-  uint16_t latchSeq;                                /* reg  45  READ-ONLY (firmware-owned): increments once per ACCEPTED manual latch; an absent ack IS the refusal Monotonic ack; edge-detect it. Sits below everything it counts. */
-  uint16_t phaseOffsetCommand;                      /* reg  46  bidirectional: SW writes 1 to apply phaseOffsetPending CLEARED BY FIRMWARE ON CONSUME -- poll phaseOffsetSeq, never this. */
-  uint16_t phaseOffsetSeq;                          /* reg  47  READ-ONLY (firmware-owned): increments once per accepted phase offset Monotonic ack; edge-detect it. Sits below everything it counts. */
-  int32_t phaseOffsetPending;                       /* reg  48  SW write: the offset SW wants applied, in servo steps */
-  int32_t phaseOffsetSteps;                         /* reg  50  READ-ONLY (firmware-owned): the offset actually in force */
-  uint16_t bootCommand;                             /* reg  52  bidirectional: SW writes 1 to reboot into the bootloader; REFUSED with no ack while enable != 0 CLEARED BY FIRMWARE ON CONSUME -- poll bootSeq, never this. */
-  uint16_t bootSeq;                                 /* reg  53  READ-ONLY (firmware-owned): increments once per accepted reboot request Monotonic ack; edge-detect it. Sits below everything it counts. */
-  uint16_t stopTriggerSeq;                          /* reg  54  READ-ONLY (firmware-owned): increments once per stop trigger, immediately BEFORE the payload Monotonic ack; edge-detect it. Sits below everything it counts. */
-  uint16_t _pad1;        /* generator-emitted alignment, before stopTriggerZ */
-  int32_t stopTriggerZ;                             /* reg  56  READ-ONLY (firmware-owned): reference-scale position at the trigger; (settled Z) - this = the coast */
-  int32_t stopTriggerZSpeed;                        /* reg  58  READ-ONLY (firmware-owned): reference-scale speed at the trigger, counts/s -- the correction table's x-axis */
-  int32_t stopTriggerStepsToGo;                     /* reg  60  READ-ONLY (firmware-owned): servo.stepsToGo at the trigger; nonzero = still commanding motion */
-  int32_t stopTriggerSpindleSpeed;                  /* reg  62  READ-ONLY (firmware-owned): scales[0].speed at the trigger, counts/s */
+  uint16_t enable;                                  /* reg 0  SW write: 1 = enable ELS stop feature */
+  uint16_t scaleIndex;                              /* reg 1  SW write: which scale (0–3) is the position reference (Z axis) */
+  int32_t stopPosition;                             /* reg 2  SW write: threshold in encoder counts */
+
+  /* reg 4 SW write: 1 = stop when pos >= threshold, -1 = stop when pos <=
+   * threshold
+   */
+  int16_t stopDirection;
+
+  /* reg 5 bidirectional: firmware sets to 1 when triggered; SW writes 0 to
+   * resume
+   */
+  uint16_t active;
+
+  /* reg 6 SW write: leadscrew steps per thread pitch (float); 0.0f = turning
+   * (no correction)
+   */
+  float threadPitchSteps;
+
+  /* reg 8 SW write: encoder counts carriage must retract before re-enabling;
+   * 0 = no hysteresis
+   */
+  int32_t hysteresis;
+
+  /* reg 10 SW write: Z scale encoder counts per thread pitch; 0.0f =
+   * correction disabled
+   */
+  float zCountsPerPitch;
+
+  /* reg 12 SW write: leadscrew backlash takeup magnitude in servo steps;
+   * direction derived from sign(syncRatioNum) × sign(threadPitchSteps ×
+   * zCountsPerPitch); 0 = takeup disabled
+   */
+  uint32_t backlashSteps;
+
+  /* reg 14 READ-ONLY (firmware-owned): scales[scaleIndex].position at first
+   * trigger of the job
+   */
+  int32_t latchedZ;
+
+  /* reg 16 READ-ONLY (firmware-owned): scales[0].position at first trigger of
+   * the job
+   */
+  int32_t latchedSpindle;
+
+  /* reg 18 READ-ONLY (firmware-owned): 0 until first trigger captures the
+   * reference, 1 thereafter; reset on enable 0→1
+   */
+  uint16_t referenceLatched;
+
+  /* reg 19 READ-ONLY (firmware-owned): 1 while the backlash take-up that
+   * starts EVERY pass (first pass and turning included since 2026-08-21) is
+   * executing or awaiting Z confirmation; gates sync off meanwhile
+   */
+  uint16_t takeupPending;
+
+  /* reg 20 READ-ONLY (firmware-owned): last resume's deltaSpindle ×
+   * syncRatioNum / syncRatioDen
+   */
+  float lastIdealAdvance;
+
+  /* reg 22 READ-ONLY (firmware-owned): last resume's deltaZ ×
+   * threadPitchSteps / zCountsPerPitch
+   */
+  float lastActualAdvance;
+
+  /* reg 24 READ-ONLY (firmware-owned): last resume's idealAdvance −
+   * actualAdvance (pre-modulo)
+   */
+  float lastPhaseError;
+
+  /* reg 26 READ-ONLY (firmware-owned): last resume's correction added to
+   * stepsToGo (post-modulo)
+   */
+  float lastCorrection;
+
+  /* reg 28 READ-ONLY (firmware-owned): register-layout version, starts at 1.
+   * Bump whenever this struct changes; reflex-ui checks it at connect so a
+   * map mismatch names itself instead of surfacing as garbled reads
+   */
+  uint16_t protocolVersion;
+
+  /* reg 29 READ-ONLY (firmware-owned): increments once per take-up outcome;
+   * lets SW tell completed-normally from host-cleared, which takeupPending
+   * alone cannot Monotonic ack; edge-detect it. Sits below everything it
+   * counts.
+   */
+  uint16_t takeupSeq;
+
+  /* reg 30 READ-ONLY (firmware-owned): outcome of the last take-up. ELS_CAL_*
+   * /ELS_TAKEUP_* in els_backlash_cal.h; 0 = OK. Replaces a binary fault flag
+   * so "carriage never moved" and "never reached target" stay distinguishable
+   */
+  uint16_t takeupResult;
+  uint16_t _pad1;        /* generator-emitted alignment, before lastTakeupZDelta */
+
+  /* reg 32 READ-ONLY (firmware-owned): signed Z counts moved across the last
+   * take-up, projected onto the take-up direction. NEGATIVE means the
+   * carriage moved the WRONG way — a distinct fault signature from "didn't
+   * move"
+   */
+  int32_t lastTakeupZDelta;
+
+  /* reg 34 READ-ONLY (firmware-DERIVED, not operator-set): Z counts the last
+   * take-up had to move to be confirmed. Derived from (backlashSteps -
+   * mean(calMeasured)) via elsTakeupConfirmThreshold(); falls back to
+   * calMotionThreshCounts with no calibration on file or in turning mode.
+   * Published so the UI can say "moved 3, needed 4" instead of just refusing
+   */
+  int32_t takeupThreshCounts;
+
+  /* reg 36 READ-ONLY except for reset: narrowest STEP pulse since host wrote
+   * 0. 0 = nothing measured yet
+   */
+  uint32_t stepPulseMinCycles;
+
+  /* reg 38 READ-ONLY except for reset: pulses narrower than
+   * ELS_STEP_RUNT_CYCLES since host wrote 0
+   */
+  uint32_t stepPulseRuntCount;
+
+  /* reg 40 READ-ONLY (firmware-owned): increments once per COMPLETED capture.
+   * Edge-detect this; there is deliberately no "capture in progress" register
+   * to poll. ORDERING INVARIANT: must stay at a LOWER address than the
+   * capture payload it counts -- see the calSeq comment above for why a
+   * reorder reintroduces the torn-read bug Monotonic ack; edge-detect it.
+   * Sits below everything it counts.
+   */
+  uint16_t diagSeq;
+
+  /* reg 41 READ-ONLY (firmware-owned): ELS_MMODE_* (els_machine_mode.h),
+   * republished every servoEnableTask tick in every build
+   */
+  uint16_t machineMode;
+
+  /* reg 42 READ-ONLY (firmware-owned): increments once per ACCEPTED manual
+   * latch. Monotonic; the ack for latchCommand Monotonic ack; edge-detect it.
+   * Sits below everything it counts.
+   */
+  uint16_t latchSeq;
+
+  /* reg 43 READ-ONLY (firmware-owned): increments once per ACCEPTED apply.
+   * Monotonic; the ack for phaseOffsetCommand Monotonic ack; edge-detect it.
+   * Sits below everything it counts.
+   */
+  uint16_t phaseOffsetSeq;
+
+  /* reg 44 READ-ONLY (firmware-owned): the live cumulative total in leadscrew
+   * steps, applied at every phase correction. Cleared on the enable 0->1 edge
+   * that clears referenceLatched -- an offset is meaningless without the
+   * datum it offsets -- and survives per-pass stop/resume within a job
+   */
+  int32_t phaseOffsetSteps;
+
+  /* reg 46 READ-ONLY (firmware-owned): increments once per stop trigger,
+   * immediately BEFORE the payload below. Monotonic; edge-detect it, and
+   * re-read on no edge Monotonic ack; edge-detect it. Sits below everything
+   * it counts.
+   */
+  uint16_t stopTriggerSeq;
+  uint16_t _pad2;        /* generator-emitted alignment, before stopTriggerZ */
+
+  /* reg 48 READ-ONLY (firmware-owned): scales[scaleIndex].position at the
+   * trigger, and it is the SAME value the threshold comparison was made on,
+   * not a re-read. (settled Z) - this = the coast. NOTE it is the reference
+   * scale as of the PREVIOUS tick when scaleIndex is above the sync-enabled
+   * scale's index -- the trigger test runs inside that scale's loop
+   * iteration, before this one's position is updated. 10 us of lag, inherent
+   * to the DECISION rather than to this register (latchedZ has always had
+   * it), and the right endpoint precisely because overshoot is measured from
+   * where the firmware decided to stop
+   */
+  int32_t stopTriggerZ;
+
+  /* reg 50 READ-ONLY (firmware-owned): scales[scaleIndex].speed at the
+   * trigger, encoder counts/s -- the same register and units the DRO shows.
+   * The table's x-axis. Computed by updateSpeedTask over the 50 ms window
+   * ENDING BEFORE the trigger, so unlike a host estimate it cannot straddle
+   * the coast; it is up to 50 ms old, which on a constant-feed threading pass
+   * is the steady approach speed and is exactly what is wanted
+   */
+  int32_t stopTriggerZSpeed;
+
+  /* reg 52 READ-ONLY (firmware-owned): servo.stepsToGo at the trigger.
+   * NONZERO means the firmware was still commanding motion, so the overshoot
+   * is not purely mechanical coast -- the 2026-08-28 stop-overshoot captures
+   * found zero emitted steps after the trigger in 12 of 14 passes, and this
+   * makes that check automatic per pass instead of a one-off probe build
+   */
+  int32_t stopTriggerStepsToGo;
+
+  /* reg 54 READ-ONLY (firmware-owned): scales[0].speed at the trigger,
+   * counts/s. Context, and enough for a host to reconstruct the commanded
+   * feed of a threading pass from the sync ratio
+   */
+  int32_t stopTriggerSpindleSpeed;
 
   /* ---- COLD ----
    * Never read on the tick path. Fetched on demand -- at connect, after a
    * calibration run, or when a diagnostic build is being read out.
    */
-  int32_t calMeasured[3];                           /* reg  64  READ-ONLY (firmware-owned): per-leg measured take-up, read after a calibration run */
-  int32_t calCeilingSteps;                          /* reg  70  SW write: per-leg hard ceiling in servo steps; MACHINE-SPECIFIC, written at setup */
-  int32_t calMotionThreshCounts;                    /* reg  72  SW write: counts that constitute motion during calibration; written at setup */
-  uint32_t executionCyclesPeak;                     /* reg  74  READ-ONLY (firmware-owned): peak ISR execution time in CPU cycles */
-  uint16_t diagSchema;                              /* reg  76  READ-ONLY (firmware-owned): which probe is compiled in; 0 = nothing here. A reader MUST check this before interpreting anything below */
-  uint16_t diagBucketTicks;                         /* reg  77  READ-ONLY (firmware-owned): ISR ticks summed into each diagTrace bucket; PUBLISHED so the host never assumes the ISR rate */
-  uint16_t diagBucketCount;                         /* reg  78  READ-ONLY (firmware-owned): populated diagTrace entries */
-  uint16_t _pad2;        /* generator-emitted alignment, before diagSettleTicks */
-  int32_t diagSettleTicks;                          /* reg  80  READ-ONLY (firmware-owned): ticks to settle in the last capture */
-  int32_t diagNetCounts;                            /* reg  82  READ-ONLY (firmware-owned): net dZ over the last capture */
-  int16_t diagTrace[ELS_DIAG_TRACE_BUCKETS];        /* reg  84  READ-ONLY (firmware-owned): per-bucket SIGNED sum of dZ -- signed so encoder dither cancels and real motion does not */
-  uint16_t diagCaptureTicks;                        /* reg 134  READ-ONLY (firmware-owned): total ticks captured */
-  uint16_t diagEndReason;                           /* reg 135  READ-ONLY (firmware-owned): why the capture ended */
-  uint16_t diagReserved[4];                         /* reg 136  READ-ONLY (firmware-owned): reserved headroom for probe metadata; NOT alignment padding -- the generator emits alignment separately */
+
+  /* reg 56 bidirectional: SW writes 1 to request a calibration run; FIRMWARE
+   * CLEARS IT on consume. This is the atomic hand-off. SW must NOT poll it
+   * for completion — it clears the instant the ISR picks it up, long before
+   * the run finishes. Edge-detect calSeq instead CLEARED BY FIRMWARE ON
+   * CONSUME -- poll calSeq, never this.
+   */
+  uint16_t calCommand;
+
+  /* reg 57 READ-ONLY (firmware-owned): increments once per finished run,
+   * success OR failure. Monotonic, so a host polling at Modbus rates cannot
+   * alias a fast run Monotonic ack; edge-detect it. Sits below everything it
+   * counts.
+   */
+  uint16_t calSeq;
+
+  /* reg 58 READ-ONLY (firmware-owned): outcome of the run counted by calSeq.
+   * ELS_CAL_* in els_backlash_cal.h; 0 = OK
+   */
+  uint16_t calResult;
+
+  /* reg 59 bidirectional: SW writes 1 to request a manual reference latch;
+   * FIRMWARE CLEARS IT on consume. Consumed ONLY while enable == 1 (a
+   * reference is meaningless outside a job and would be wiped by the next
+   * enable 0->1 anyway); when enable == 0 it is cleared with NO latchSeq
+   * increment, so an absent ack IS the refusal. SW must edge-detect latchSeq,
+   * never poll this CLEARED BY FIRMWARE ON CONSUME -- poll latchSeq, never
+   * this.
+   */
+  uint16_t latchCommand;
+
+  /* reg 60 bidirectional: SW writes 1 to apply phaseOffsetPending as the new
+   * total; FIRMWARE CLEARS IT on consume. Not a completion flag --
+   * edge-detect phaseOffsetSeq CLEARED BY FIRMWARE ON CONSUME -- poll
+   * phaseOffsetSeq, never this.
+   */
+  uint16_t phaseOffsetCommand;
+  uint16_t _pad3;        /* generator-emitted alignment, before phaseOffsetPending */
+
+  /* reg 62 host-written candidate total, leadscrew steps. Read by the ISR
+   * ONLY under a nonzero phaseOffsetCommand; write it BEFORE the command,
+   * never after
+   */
+  int32_t phaseOffsetPending;
+
+  /* reg 64 bidirectional: SW writes ELS_BOOT_CMD_* (els_identity.h); FIRMWARE
+   * CLEARS IT on consume. 1 = reboot into the bootloader and stay resident, 2
+   * = plain reboot. Refused (cleared, no ack) while enable != 0 CLEARED BY
+   * FIRMWARE ON CONSUME -- poll bootSeq, never this.
+   */
+  uint16_t bootCommand;
+
+  /* reg 65 READ-ONLY (firmware-owned): increments once per ACCEPTED boot
+   * command, immediately before the reset it triggers Monotonic ack;
+   * edge-detect it. Sits below everything it counts.
+   */
+  uint16_t bootSeq;
+
+  /* reg 66 READ-ONLY (firmware-owned): lash measured at each of the 3
+   * reversals, in servo steps. The HOST judges whether the spread is
+   * acceptable — measurement lives here, policy lives in the UI
+   */
+  int32_t calMeasured[3];
+
+  /* reg 72 SW write: per-leg hard ceiling in servo steps. Driving this far
+   * without Z moving IS the open-half-nut / uncoupled failure.
+   * MACHINE-SPECIFIC; size it comfortably past the largest credible lash
+   */
+  int32_t calCeilingSteps;
+
+  /* reg 74 SW write: Z scale counts that count as real motion.
+   * MACHINE-SPECIFIC — ~2 counts on elspi (200 counts/mm, so 1 count ≈ 2.5
+   * servo steps); emulator is 400 counts/mm. 0 disables detection and FAILS
+   * CLOSED (never confirms) — deliberate: an unconfigured threshold must
+   * refuse, not wave everything through
+   */
+  int32_t calMotionThreshCounts;
+
+  /* reg 76 READ-ONLY except for reset: highest executionCycles since the host
+   * last wrote 0 here. Compare against 1000 (the per-tick budget at 100 MHz /
+   * 10 us)
+   */
+  uint32_t executionCyclesPeak;
+
+  /* reg 78 READ-ONLY (firmware-owned): identifies the probe compiled into the
+   * block. 0 = none; do NOT interpret anything below it. Never assume a
+   * schema you did not read
+   */
+  uint16_t diagSchema;
+
+  /* reg 79 READ-ONLY (firmware-owned): ISR ticks summed into each diagTrace
+   * bucket. PUBLISHED so the host never has to assume the ISR rate — the repo
+   * has disagreed with itself about that rate by 10x
+   */
+  uint16_t diagBucketTicks;
+
+  /* reg 80 READ-ONLY (firmware-owned): populated diagTrace entries, for the
+   * same reason
+   */
+  uint16_t diagBucketCount;
+  uint16_t _pad4;        /* generator-emitted alignment, before diagSettleTicks */
+
+  /* reg 82 READ-ONLY (firmware-owned): ticks from capture start to the LAST
+   * tick that saw nonzero dZ. THE measurement ELS_SLIP_SETTLE_TICKS is a
+   * guess at — meaningful in v2, where the capture stops before the pass
+   * starts
+   */
+  int32_t diagSettleTicks;
+
+  /* reg 84 READ-ONLY (firmware-owned): signed Z counts summed across the
+   * capture
+   */
+  int32_t diagNetCounts;
+
+  /* reg 86 READ-ONLY (firmware-owned): per-bucket SIGNED sum of dZ. Signed
+   * rather than magnitude on purpose — encoder dither cancels, real motion
+   * does not, which is exactly the distinction a quiescence test needs and
+   * the reason to prefer net displacement over summed |dZ|
+   */
+  int16_t diagTrace[ELS_DIAG_TRACE_BUCKETS];
+
+  /* reg 136 READ-ONLY (firmware-owned): ticks the capture actually ran, i.e.
+   * how long the servo stayed silent after the take-up. Distinct from
+   * diagSettleTicks, which is when Z last MOVED
+   */
+  uint16_t diagCaptureTicks;
+
+  /* reg 137 READ-ONLY (firmware-owned): ELS_DIAG_END_*. A window-full capture
+   * did not finish measuring; treat its tail as a floor, not a result
+   */
+  uint16_t diagEndReason;
+
+  /* reg 138 pads the block to a fixed 128 bytes so its size never depends on
+   * which probe is in it
+   */
+  uint16_t diagReserved[4];
 } elsStop_t;
 
 /* ---- the compiler's vote ---- */
@@ -120,44 +395,44 @@ _Static_assert(offsetof(elsStop_t, lastActualAdvance) == 44, "lastActualAdvance 
 _Static_assert(offsetof(elsStop_t, lastPhaseError) == 48, "lastPhaseError moved: schema says register 24");
 _Static_assert(offsetof(elsStop_t, lastCorrection) == 52, "lastCorrection moved: schema says register 26");
 _Static_assert(offsetof(elsStop_t, protocolVersion) == 56, "protocolVersion moved: schema says register 28");
-_Static_assert(offsetof(elsStop_t, calCommand) == 58, "calCommand moved: schema says register 29");
-_Static_assert(offsetof(elsStop_t, calSeq) == 60, "calSeq moved: schema says register 30");
-_Static_assert(offsetof(elsStop_t, calResult) == 62, "calResult moved: schema says register 31");
-_Static_assert(offsetof(elsStop_t, takeupSeq) == 64, "takeupSeq moved: schema says register 32");
-_Static_assert(offsetof(elsStop_t, takeupResult) == 66, "takeupResult moved: schema says register 33");
-_Static_assert(offsetof(elsStop_t, lastTakeupZDelta) == 68, "lastTakeupZDelta moved: schema says register 34");
-_Static_assert(offsetof(elsStop_t, takeupThreshCounts) == 72, "takeupThreshCounts moved: schema says register 36");
-_Static_assert(offsetof(elsStop_t, stepPulseMinCycles) == 76, "stepPulseMinCycles moved: schema says register 38");
-_Static_assert(offsetof(elsStop_t, stepPulseRuntCount) == 80, "stepPulseRuntCount moved: schema says register 40");
-_Static_assert(offsetof(elsStop_t, diagSeq) == 84, "diagSeq moved: schema says register 42");
-_Static_assert(offsetof(elsStop_t, machineMode) == 86, "machineMode moved: schema says register 43");
-_Static_assert(offsetof(elsStop_t, latchCommand) == 88, "latchCommand moved: schema says register 44");
-_Static_assert(offsetof(elsStop_t, latchSeq) == 90, "latchSeq moved: schema says register 45");
-_Static_assert(offsetof(elsStop_t, phaseOffsetCommand) == 92, "phaseOffsetCommand moved: schema says register 46");
-_Static_assert(offsetof(elsStop_t, phaseOffsetSeq) == 94, "phaseOffsetSeq moved: schema says register 47");
-_Static_assert(offsetof(elsStop_t, phaseOffsetPending) == 96, "phaseOffsetPending moved: schema says register 48");
-_Static_assert(offsetof(elsStop_t, phaseOffsetSteps) == 100, "phaseOffsetSteps moved: schema says register 50");
-_Static_assert(offsetof(elsStop_t, bootCommand) == 104, "bootCommand moved: schema says register 52");
-_Static_assert(offsetof(elsStop_t, bootSeq) == 106, "bootSeq moved: schema says register 53");
-_Static_assert(offsetof(elsStop_t, stopTriggerSeq) == 108, "stopTriggerSeq moved: schema says register 54");
-_Static_assert(offsetof(elsStop_t, stopTriggerZ) == 112, "stopTriggerZ moved: schema says register 56");
-_Static_assert(offsetof(elsStop_t, stopTriggerZSpeed) == 116, "stopTriggerZSpeed moved: schema says register 58");
-_Static_assert(offsetof(elsStop_t, stopTriggerStepsToGo) == 120, "stopTriggerStepsToGo moved: schema says register 60");
-_Static_assert(offsetof(elsStop_t, stopTriggerSpindleSpeed) == 124, "stopTriggerSpindleSpeed moved: schema says register 62");
-_Static_assert(offsetof(elsStop_t, calMeasured) == 128, "calMeasured moved: schema says register 64");
-_Static_assert(offsetof(elsStop_t, calCeilingSteps) == 140, "calCeilingSteps moved: schema says register 70");
-_Static_assert(offsetof(elsStop_t, calMotionThreshCounts) == 144, "calMotionThreshCounts moved: schema says register 72");
-_Static_assert(offsetof(elsStop_t, executionCyclesPeak) == 148, "executionCyclesPeak moved: schema says register 74");
-_Static_assert(offsetof(elsStop_t, diagSchema) == 152, "diagSchema moved: schema says register 76");
-_Static_assert(offsetof(elsStop_t, diagBucketTicks) == 154, "diagBucketTicks moved: schema says register 77");
-_Static_assert(offsetof(elsStop_t, diagBucketCount) == 156, "diagBucketCount moved: schema says register 78");
-_Static_assert(offsetof(elsStop_t, diagSettleTicks) == 160, "diagSettleTicks moved: schema says register 80");
-_Static_assert(offsetof(elsStop_t, diagNetCounts) == 164, "diagNetCounts moved: schema says register 82");
-_Static_assert(offsetof(elsStop_t, diagTrace) == 168, "diagTrace moved: schema says register 84");
-_Static_assert(offsetof(elsStop_t, diagCaptureTicks) == 268, "diagCaptureTicks moved: schema says register 134");
-_Static_assert(offsetof(elsStop_t, diagEndReason) == 270, "diagEndReason moved: schema says register 135");
-_Static_assert(offsetof(elsStop_t, diagReserved) == 272, "diagReserved moved: schema says register 136");
-_Static_assert(sizeof(elsStop_t) == 280, "elsStop_t is not 140 registers");
+_Static_assert(offsetof(elsStop_t, takeupSeq) == 58, "takeupSeq moved: schema says register 29");
+_Static_assert(offsetof(elsStop_t, takeupResult) == 60, "takeupResult moved: schema says register 30");
+_Static_assert(offsetof(elsStop_t, lastTakeupZDelta) == 64, "lastTakeupZDelta moved: schema says register 32");
+_Static_assert(offsetof(elsStop_t, takeupThreshCounts) == 68, "takeupThreshCounts moved: schema says register 34");
+_Static_assert(offsetof(elsStop_t, stepPulseMinCycles) == 72, "stepPulseMinCycles moved: schema says register 36");
+_Static_assert(offsetof(elsStop_t, stepPulseRuntCount) == 76, "stepPulseRuntCount moved: schema says register 38");
+_Static_assert(offsetof(elsStop_t, diagSeq) == 80, "diagSeq moved: schema says register 40");
+_Static_assert(offsetof(elsStop_t, machineMode) == 82, "machineMode moved: schema says register 41");
+_Static_assert(offsetof(elsStop_t, latchSeq) == 84, "latchSeq moved: schema says register 42");
+_Static_assert(offsetof(elsStop_t, phaseOffsetSeq) == 86, "phaseOffsetSeq moved: schema says register 43");
+_Static_assert(offsetof(elsStop_t, phaseOffsetSteps) == 88, "phaseOffsetSteps moved: schema says register 44");
+_Static_assert(offsetof(elsStop_t, stopTriggerSeq) == 92, "stopTriggerSeq moved: schema says register 46");
+_Static_assert(offsetof(elsStop_t, stopTriggerZ) == 96, "stopTriggerZ moved: schema says register 48");
+_Static_assert(offsetof(elsStop_t, stopTriggerZSpeed) == 100, "stopTriggerZSpeed moved: schema says register 50");
+_Static_assert(offsetof(elsStop_t, stopTriggerStepsToGo) == 104, "stopTriggerStepsToGo moved: schema says register 52");
+_Static_assert(offsetof(elsStop_t, stopTriggerSpindleSpeed) == 108, "stopTriggerSpindleSpeed moved: schema says register 54");
+_Static_assert(offsetof(elsStop_t, calCommand) == 112, "calCommand moved: schema says register 56");
+_Static_assert(offsetof(elsStop_t, calSeq) == 114, "calSeq moved: schema says register 57");
+_Static_assert(offsetof(elsStop_t, calResult) == 116, "calResult moved: schema says register 58");
+_Static_assert(offsetof(elsStop_t, latchCommand) == 118, "latchCommand moved: schema says register 59");
+_Static_assert(offsetof(elsStop_t, phaseOffsetCommand) == 120, "phaseOffsetCommand moved: schema says register 60");
+_Static_assert(offsetof(elsStop_t, phaseOffsetPending) == 124, "phaseOffsetPending moved: schema says register 62");
+_Static_assert(offsetof(elsStop_t, bootCommand) == 128, "bootCommand moved: schema says register 64");
+_Static_assert(offsetof(elsStop_t, bootSeq) == 130, "bootSeq moved: schema says register 65");
+_Static_assert(offsetof(elsStop_t, calMeasured) == 132, "calMeasured moved: schema says register 66");
+_Static_assert(offsetof(elsStop_t, calCeilingSteps) == 144, "calCeilingSteps moved: schema says register 72");
+_Static_assert(offsetof(elsStop_t, calMotionThreshCounts) == 148, "calMotionThreshCounts moved: schema says register 74");
+_Static_assert(offsetof(elsStop_t, executionCyclesPeak) == 152, "executionCyclesPeak moved: schema says register 76");
+_Static_assert(offsetof(elsStop_t, diagSchema) == 156, "diagSchema moved: schema says register 78");
+_Static_assert(offsetof(elsStop_t, diagBucketTicks) == 158, "diagBucketTicks moved: schema says register 79");
+_Static_assert(offsetof(elsStop_t, diagBucketCount) == 160, "diagBucketCount moved: schema says register 80");
+_Static_assert(offsetof(elsStop_t, diagSettleTicks) == 164, "diagSettleTicks moved: schema says register 82");
+_Static_assert(offsetof(elsStop_t, diagNetCounts) == 168, "diagNetCounts moved: schema says register 84");
+_Static_assert(offsetof(elsStop_t, diagTrace) == 172, "diagTrace moved: schema says register 86");
+_Static_assert(offsetof(elsStop_t, diagCaptureTicks) == 272, "diagCaptureTicks moved: schema says register 136");
+_Static_assert(offsetof(elsStop_t, diagEndReason) == 274, "diagEndReason moved: schema says register 137");
+_Static_assert(offsetof(elsStop_t, diagReserved) == 276, "diagReserved moved: schema says register 138");
+_Static_assert(sizeof(elsStop_t) == 284, "elsStop_t is not 142 registers");
 _Static_assert(ELS_STOP_HOT_REG_COUNT <= 75, "hot group exceeds its FC3 request budget");
 _Static_assert(ELS_STOP_COLD_REG_COUNT <= 125, "cold group exceeds its FC3 request budget");
 

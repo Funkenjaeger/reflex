@@ -83,7 +83,15 @@ STATE_NAMES = {0: "IDLE", 1: "BACKUP", 2: "COPY", 3: "TRIAL", 4: "REVERT", 5: "R
 # under protocolVersion 8 is unmoved. Same value, listed separately rather than
 # inferred -- the table is a whitelist of layouts that have been CHECKED, and a
 # guess about an unlisted one is how a flash lands on the wrong register.
-APP_BOOT_COMMAND_REG = {8: 232, 9: 232}
+# 10 (2026-09-07) MOVES it to 168. The hot/cold remap reordered the whole block,
+# so unlike 8 -> 9 this is a real move and the old value would land on
+# stopTriggerZSpeed. The number is not typed by hand: it is generated into
+# registers/offsets.json by tools/genregs.py from the same schema that lays out
+# the struct, and copied here. This table stays a WHITELIST of layouts that have
+# been checked -- an unlisted protocolVersion makes the client refuse and tell
+# the operator to flash over SWD once, which is the correct answer to "I do not
+# know where this register is".
+APP_BOOT_COMMAND_REG = {8: 232, 9: 232, 10: 168}
 BOOT_CMD_BOOTLOADER = 1
 
 CHUNK_BYTES = BL_DATA_REGS * 2   # 200

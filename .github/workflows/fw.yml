@@ -19,13 +19,40 @@ on:
   push:
     paths:
       - "fw/**"
+      - "registers/**"
+      - "tools/genregs.py"
       - ".github/workflows/fw.yml"
   pull_request:
     paths:
       - "fw/**"
+      - "registers/**"
+      - "tools/genregs.py"
       - ".github/workflows/fw.yml"
 
 jobs:
+  # The generated register map must match its schema. Runs FIRST and on its own
+  # because everything below compiles the generated header: a drifted map makes
+  # the other jobs fail in confusing places, and this one names the cause in a
+  # line.
+  #
+  # This is the gate that stops a hand-edit to a generated file quietly becoming
+  # a third source of truth -- the failure mode that kills codegen projects. It
+  # also verifies the absolute register modbus-flash.py hardcodes still matches
+  # the schema, because that number is copied by hand and a stale copy lands a
+  # field flash on the wrong register.
+  register-map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Check the generated map matches the schema
+        run: python tools/genregs.py --check
+
   emulator-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10

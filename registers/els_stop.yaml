@@ -107,41 +107,41 @@ types:
 fields:
 
   # --- job setup: written by the UI when a job is configured -----------------
-  - {id: 1,  name: enable,            type: uint16, access: sw_write,   group: hot, doc: "1 = enable ELS stop feature"}
-  - {id: 2,  name: scaleIndex,        type: uint16, access: sw_write,   group: hot, doc: "which scale (0-3) is the position reference (Z axis)"}
-  - {id: 3,  name: stopPosition,      type: int32,  access: sw_write,   group: hot, doc: "threshold in encoder counts"}
-  - {id: 4,  name: stopDirection,     type: int16,  access: sw_write,   group: hot, doc: "1 = stop when pos >= threshold, -1 = when pos <= threshold"}
-  - {id: 5,  name: active,            type: uint16, access: bidirectional, group: hot, doc: "firmware sets 1 when triggered; SW writes 0 to resume"}
-  - {id: 6,  name: threadPitchSteps,  type: float,  access: sw_write,   group: hot, doc: "leadscrew steps per thread pitch; 0.0f = turning"}
-  - {id: 7,  name: hysteresis,        type: int32,  access: sw_write,   group: hot, doc: "counts the carriage must retract before re-enabling"}
-  - {id: 8,  name: zCountsPerPitch,   type: float,  access: sw_write,   group: hot, doc: "Z scale counts per thread pitch; 0.0f = correction disabled"}
-  - {id: 9,  name: backlashSteps,     type: uint32, access: sw_write,   group: hot, doc: "leadscrew backlash take-up magnitude in servo steps"}
+  - {id: 1,  name: enable,            type: uint16, access: sw_write,   group: hot, doc: "SW write: 1 = enable ELS stop feature"}
+  - {id: 2,  name: scaleIndex,        type: uint16, access: sw_write,   group: hot, doc: "SW write: which scale (0\u20133) is the position reference (Z axis)"}
+  - {id: 3,  name: stopPosition,      type: int32,  access: sw_write,   group: hot, doc: "SW write: threshold in encoder counts"}
+  - {id: 4,  name: stopDirection,     type: int16,  access: sw_write,   group: hot, doc: "SW write: 1 = stop when pos >= threshold, -1 = stop when pos <= threshold"}
+  - {id: 5,  name: active,            type: uint16, access: bidirectional, group: hot, doc: "bidirectional: firmware sets to 1 when triggered; SW writes 0 to resume"}
+  - {id: 6,  name: threadPitchSteps,  type: float,  access: sw_write,   group: hot, doc: "SW write: leadscrew steps per thread pitch (float); 0.0f = turning (no correction)"}
+  - {id: 7,  name: hysteresis,        type: int32,  access: sw_write,   group: hot, doc: "SW write: encoder counts carriage must retract before re-enabling; 0 = no hysteresis"}
+  - {id: 8,  name: zCountsPerPitch,   type: float,  access: sw_write,   group: hot, doc: "SW write: Z scale encoder counts per thread pitch; 0.0f = correction disabled"}
+  - {id: 9,  name: backlashSteps,     type: uint32, access: sw_write,   group: hot, doc: "SW write: leadscrew backlash takeup magnitude in servo steps; direction derived from sign(syncRatioNum) \u00d7 sign(threadPitchSteps \u00d7 zCountsPerPitch); 0 = takeup disabled"}
 
   # --- live job state: the reason this block is polled at all ---------------
-  - {id: 10, name: latchedZ,          type: int32,  access: ro_firmware, group: hot, doc: "scales[scaleIndex].position at first trigger of the job"}
-  - {id: 11, name: latchedSpindle,    type: int32,  access: ro_firmware, group: hot, doc: "scales[0].position at first trigger of the job"}
-  - {id: 12, name: referenceLatched,  type: uint16, access: ro_firmware, group: hot, doc: "0 until the first trigger captures the reference"}
-  - {id: 13, name: takeupPending,     type: uint16, access: ro_firmware, group: hot, doc: "1 while the backlash take-up is in progress"}
-  - {id: 14, name: lastIdealAdvance,  type: float,  access: ro_firmware, group: hot, doc: "last resume's ideal advance"}
-  - {id: 15, name: lastActualAdvance, type: float,  access: ro_firmware, group: hot, doc: "last resume's actual advance"}
-  - {id: 16, name: lastPhaseError,    type: float,  access: ro_firmware, group: hot, doc: "last resume's phase error"}
-  - {id: 17, name: lastCorrection,    type: float,  access: ro_firmware, group: hot, doc: "last resume's correction added to stepsToGo (post-modulo)"}
+  - {id: 10, name: latchedZ,          type: int32,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): scales[scaleIndex].position at first trigger of the job"}
+  - {id: 11, name: latchedSpindle,    type: int32,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): scales[0].position at first trigger of the job"}
+  - {id: 12, name: referenceLatched,  type: uint16, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): 0 until first trigger captures the reference, 1 thereafter; reset on enable 0\u21921"}
+  - {id: 13, name: takeupPending,     type: uint16, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): 1 while the backlash take-up that starts EVERY pass (first pass and turning included since 2026-08-21) is executing or awaiting Z confirmation; gates sync off meanwhile"}
+  - {id: 14, name: lastIdealAdvance,  type: float,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): last resume's deltaSpindle \u00d7 syncRatioNum / syncRatioDen"}
+  - {id: 15, name: lastActualAdvance, type: float,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): last resume's deltaZ \u00d7 threadPitchSteps / zCountsPerPitch"}
+  - {id: 16, name: lastPhaseError,    type: float,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): last resume's idealAdvance \u2212 actualAdvance (pre-modulo)"}
+  - {id: 17, name: lastCorrection,    type: float,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): last resume's correction added to stepsToGo (post-modulo)"}
 
   # --- layout version: anchors every decode, so it stays hot -----------------
-  - {id: 18, name: protocolVersion,   type: uint16, access: ro_firmware, group: hot, doc: "register-layout version; the UI checks it at connect"}
+  - {id: 18, name: protocolVersion,   type: uint16, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): register-layout version, starts at 1. Bump whenever this struct changes; reflex-ui checks it at connect so a map mismatch names itself instead of surfacing as garbled reads"}
 
   # --- calibration + take-up command/ack pairs ------------------------------
-  - {id: 19, name: calCommand,        type: uint16, access: bidirectional, group: hot, kind: command, ack: calSeq, doc: "SW writes 1 to request a calibration run; firmware clears on consume"}
-  - {id: 20, name: calSeq,            type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [calResult, calMeasured], doc: "increments once per completed calibration run"}
-  - {id: 21, name: calResult,         type: uint16, access: ro_firmware, group: hot, doc: "ELS_CAL_* outcome code for the run counted by calSeq"}
+  - {id: 19, name: calCommand,        type: uint16, access: bidirectional, group: cold, kind: command, ack: calSeq, doc: "bidirectional: SW writes 1 to request a calibration run; FIRMWARE CLEARS IT on consume. This is the atomic hand-off. SW must NOT poll it for completion \u2014 it clears the instant the ISR picks it up, long before the run finishes. Edge-detect calSeq instead"}
+  - {id: 20, name: calSeq,            type: uint16, access: ro_firmware, group: cold, kind: seq, acks: [calResult, calMeasured], doc: "READ-ONLY (firmware-owned): increments once per finished run, success OR failure. Monotonic, so a host polling at Modbus rates cannot alias a fast run"}
+  - {id: 21, name: calResult,         type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): outcome of the run counted by calSeq. ELS_CAL_* in els_backlash_cal.h; 0 = OK"}
 
   # NOTE the ORDER CHANGE: takeupSeq now PRECEDES takeupResult. Under
   # protocolVersion 9 the payload sits at the lower address, which is the
   # 2026-08-22 torn-read bug. The remap is the cheapest moment to fix it, and
   # `invariants.seq_precedes_payload` makes it un-regressable.
-  - {id: 22, name: takeupSeq,         type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [takeupResult, lastTakeupZDelta], doc: "increments once per completed take-up confirmation"}
-  - {id: 23, name: takeupResult,      type: uint16, access: ro_firmware, group: hot, doc: "ELS_TAKEUP_* outcome code for the take-up counted by takeupSeq"}
-  - {id: 24, name: lastTakeupZDelta,  type: int32,  access: ro_firmware, group: hot, doc: "measured Z delta of the last take-up, encoder counts"}
+  - {id: 22, name: takeupSeq,         type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [takeupResult, lastTakeupZDelta], doc: "READ-ONLY (firmware-owned): increments once per take-up outcome; lets SW tell completed-normally from host-cleared, which takeupPending alone cannot"}
+  - {id: 23, name: takeupResult,      type: uint16, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): outcome of the last take-up. ELS_CAL_*/ELS_TAKEUP_* in els_backlash_cal.h; 0 = OK. Replaces a binary fault flag so \"carriage never moved\" and \"never reached target\" stay distinguishable"}
+  - {id: 24, name: lastTakeupZDelta,  type: int32,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): signed Z counts moved across the last take-up, projected onto the take-up direction. NEGATIVE means the carriage moved the WRONG way \u2014 a distinct fault signature from \"didn't move\""}
 
   # --- PROMOTED BY THE READER AUDIT, 2026-09-07 -----------------------------
   # These four were filed cold on the strength of their names and were WRONG.
@@ -149,60 +149,63 @@ fields:
   # snapshot and each of these turned up in one; the audit now runs as a gate,
   # so this class of mistake fails instead of shipping. See the audit output in
   # the wiki journal 2026-09-07.
-  - {id: 42, name: takeupThreshCounts, type: int32, access: sw_write, group: hot, doc: "counts that confirm a take-up. READ ON THE TICK PATH by TickReads, the flight recorder context, and the phase recorder -- a threshold is only meaningful recorded beside the delta it judged"}
-  - {id: 44, name: stepPulseMinCycles, type: uint32, access: ro_firmware, group: hot, doc: "narrowest step pulse observed, CPU cycles. Recorded per context change by BOTH recorders -- a decoupling that coincides with runts is a different finding from one that does not"}
-  - {id: 45, name: stepPulseRuntCount, type: uint32, access: ro_firmware, group: hot, doc: "count of step pulses below the drive minimum; recorded alongside stepPulseMinCycles"}
-  - {id: 47, name: diagSeq,           type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [diagBucketTicks, diagBucketCount, diagSettleTicks, diagNetCounts, diagTrace, diagCaptureTicks, diagEndReason], doc: "increments once per completed capture. Polled by TickReads; its PAYLOAD stays cold, which is exactly the seq-hot/payload-cold shape the ordering invariant permits -- the seq is at the lower address"}
+  - {id: 42, name: takeupThreshCounts, type: int32, access: sw_write, group: hot, doc: "READ-ONLY (firmware-DERIVED, not operator-set): Z counts the last take-up had to move to be confirmed. Derived from (backlashSteps - mean(calMeasured)) via elsTakeupConfirmThreshold(); falls back to calMotionThreshCounts with no calibration on file or in turning mode. Published so the UI can say \"moved 3, needed 4\" instead of just refusing"}
+  - {id: 44, name: stepPulseMinCycles, type: uint32, access: ro_firmware, group: hot, doc: "READ-ONLY except for reset: narrowest STEP pulse since host wrote 0. 0 = nothing measured yet"}
+  - {id: 45, name: stepPulseRuntCount, type: uint32, access: ro_firmware, group: hot, doc: "READ-ONLY except for reset: pulses narrower than ELS_STEP_RUNT_CYCLES since host wrote 0"}
+  - {id: 47, name: diagSeq,           type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [diagBucketTicks, diagBucketCount, diagSettleTicks, diagNetCounts, diagTrace, diagCaptureTicks, diagEndReason], doc: "READ-ONLY (firmware-owned): increments once per COMPLETED capture. Edge-detect this; there is deliberately no \"capture in progress\" register to poll. ORDERING INVARIANT: must stay at a LOWER address than the capture payload it counts -- see the calSeq comment above for why a reorder reintroduces the torn-read bug"}
 
   # --- operator-facing mode + the interactive command/ack pairs -------------
-  - {id: 25, name: machineMode,       type: uint16, access: ro_firmware, group: hot, doc: "firmware-owned machine mode"}
-  - {id: 26, name: latchCommand,      type: uint16, access: bidirectional, group: hot, kind: command, ack: latchSeq, doc: "SW writes 1 for a manual reference latch; consumed only while enable == 1"}
-  - {id: 27, name: latchSeq,          type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [], doc: "increments once per ACCEPTED manual latch; an absent ack IS the refusal"}
-  - {id: 28, name: phaseOffsetCommand, type: uint16, access: bidirectional, group: hot, kind: command, ack: phaseOffsetSeq, doc: "SW writes 1 to apply phaseOffsetPending"}
-  - {id: 29, name: phaseOffsetSeq,    type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [phaseOffsetSteps], doc: "increments once per accepted phase offset"}
-  - {id: 30, name: phaseOffsetPending, type: int32, access: sw_write,    group: hot, doc: "the offset SW wants applied, in servo steps"}
-  - {id: 31, name: phaseOffsetSteps,  type: int32,  access: ro_firmware, group: hot, doc: "the offset actually in force"}
+  - {id: 25, name: machineMode,       type: uint16, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): ELS_MMODE_* (els_machine_mode.h), republished every servoEnableTask tick in every build"}
+  - {id: 26, name: latchCommand,      type: uint16, access: bidirectional, group: cold, kind: command, ack: latchSeq, doc: "bidirectional: SW writes 1 to request a manual reference latch; FIRMWARE CLEARS IT on consume. Consumed ONLY while enable == 1 (a reference is meaningless outside a job and would be wiped by the next enable 0->1 anyway); when enable == 0 it is cleared with NO latchSeq increment, so an absent ack IS the refusal. SW must edge-detect latchSeq, never poll this"}
+  - {id: 27, name: latchSeq,          type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [], doc: "READ-ONLY (firmware-owned): increments once per ACCEPTED manual latch. Monotonic; the ack for latchCommand"}
+  - {id: 28, name: phaseOffsetCommand, type: uint16, access: bidirectional, group: cold, kind: command, ack: phaseOffsetSeq, doc: "bidirectional: SW writes 1 to apply phaseOffsetPending as the new total; FIRMWARE CLEARS IT on consume. Not a completion flag -- edge-detect phaseOffsetSeq"}
+  # PINNED HOT by the invariant, not by choice: it acks phaseOffsetSteps, which a
+  # tick reader touches, so a cold seq would sit ABOVE its payload. The generator
+  # REFUSED the demotion -- this is the invariant doing the remembering.
+  - {id: 29, name: phaseOffsetSeq,    type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [phaseOffsetSteps], doc: "READ-ONLY (firmware-owned): increments once per ACCEPTED apply. Monotonic; the ack for phaseOffsetCommand"}
+  - {id: 30, name: phaseOffsetPending, type: int32, access: sw_write,    group: cold, doc: "host-written candidate total, leadscrew steps. Read by the ISR ONLY under a nonzero phaseOffsetCommand; write it BEFORE the command, never after"}
+  - {id: 31, name: phaseOffsetSteps,  type: int32,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): the live cumulative total in leadscrew steps, applied at every phase correction. Cleared on the enable 0->1 edge that clears referenceLatched -- an offset is meaningless without the datum it offsets -- and survives per-pass stop/resume within a job"}
 
   # --- bootloader hand-off. Address is contractual: external tooling reaches
   #     for it by absolute register (modbus-flash.py APP_BOOT_COMMAND_REG).
   #     `export_offset: true` puts it in registers/offsets.json so that table is
   #     generated rather than hand-maintained per protocolVersion.
-  - {id: 32, name: bootCommand,       type: uint16, access: bidirectional, group: hot, kind: command, ack: bootSeq, export_offset: true, doc: "SW writes 1 to reboot into the bootloader; REFUSED with no ack while enable != 0"}
-  - {id: 33, name: bootSeq,           type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [], export_offset: true, doc: "increments once per accepted reboot request"}
+  - {id: 32, name: bootCommand,       type: uint16, access: bidirectional, group: cold, kind: command, ack: bootSeq, export_offset: true, doc: "bidirectional: SW writes ELS_BOOT_CMD_* (els_identity.h); FIRMWARE CLEARS IT on consume. 1 = reboot into the bootloader and stay resident, 2 = plain reboot. Refused (cleared, no ack) while enable != 0"}
+  - {id: 33, name: bootSeq,           type: uint16, access: ro_firmware, group: cold, kind: seq, acks: [], export_offset: true, doc: "READ-ONLY (firmware-owned): increments once per ACCEPTED boot command, immediately before the reset it triggers"}
 
   # --- trigger-instant snapshot (added protocolVersion 9, 2026-09-07) --------
-  - {id: 34, name: stopTriggerSeq,    type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [stopTriggerZ, stopTriggerZSpeed, stopTriggerStepsToGo, stopTriggerSpindleSpeed], doc: "increments once per stop trigger, immediately BEFORE the payload"}
-  - {id: 35, name: stopTriggerZ,      type: int32,  access: ro_firmware, group: hot, doc: "reference-scale position at the trigger; (settled Z) - this = the coast"}
-  - {id: 36, name: stopTriggerZSpeed, type: int32,  access: ro_firmware, group: hot, doc: "reference-scale speed at the trigger, counts/s -- the correction table's x-axis"}
-  - {id: 37, name: stopTriggerStepsToGo, type: int32, access: ro_firmware, group: hot, doc: "servo.stepsToGo at the trigger; nonzero = still commanding motion"}
-  - {id: 38, name: stopTriggerSpindleSpeed, type: int32, access: ro_firmware, group: hot, doc: "scales[0].speed at the trigger, counts/s"}
+  - {id: 34, name: stopTriggerSeq,    type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [stopTriggerZ, stopTriggerZSpeed, stopTriggerStepsToGo, stopTriggerSpindleSpeed], doc: "READ-ONLY (firmware-owned): increments once per stop trigger, immediately BEFORE the payload below. Monotonic; edge-detect it, and re-read on no edge"}
+  - {id: 35, name: stopTriggerZ,      type: int32,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): scales[scaleIndex].position at the trigger, and it is the SAME value the threshold comparison was made on, not a re-read. (settled Z) - this = the coast. NOTE it is the reference scale as of the PREVIOUS tick when scaleIndex is above the sync-enabled scale's index -- the trigger test runs inside that scale's loop iteration, before this one's position is updated. 10 us of lag, inherent to the DECISION rather than to this register (latchedZ has always had it), and the right endpoint precisely because overshoot is measured from where the firmware decided to stop"}
+  - {id: 36, name: stopTriggerZSpeed, type: int32,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): scales[scaleIndex].speed at the trigger, encoder counts/s -- the same register and units the DRO shows. The table's x-axis. Computed by updateSpeedTask over the 50 ms window ENDING BEFORE the trigger, so unlike a host estimate it cannot straddle the coast; it is up to 50 ms old, which on a constant-feed threading pass is the steady approach speed and is exactly what is wanted"}
+  - {id: 37, name: stopTriggerStepsToGo, type: int32, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): servo.stepsToGo at the trigger. NONZERO means the firmware was still commanding motion, so the overshoot is not purely mechanical coast -- the 2026-08-28 stop-overshoot captures found zero emitted steps after the trigger in 12 of 14 passes, and this makes that check automatic per pass instead of a one-off probe build"}
+  - {id: 38, name: stopTriggerSpindleSpeed, type: int32, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): scales[0].speed at the trigger, counts/s. Context, and enough for a host to reconstruct the commanded feed of a threading pass from the sync ratio"}
 
   # ===========================================================================
   # COLD. Nothing below is read on the tick path.
   # ===========================================================================
 
   # --- calibration results + machine-specific limits ------------------------
-  - {id: 39, name: calMeasured,       type: int32, count: 3, access: ro_firmware, group: cold, audit: unverified, doc: "per-leg measured take-up, read after a calibration run"}
-  - {id: 40, name: calCeilingSteps,   type: int32,  access: sw_write, group: cold, doc: "per-leg hard ceiling in servo steps; MACHINE-SPECIFIC, written at setup"}
-  - {id: 41, name: calMotionThreshCounts, type: int32, access: sw_write, group: cold, doc: "counts that constitute motion during calibration; written at setup"}
+  - {id: 39, name: calMeasured,       type: int32, count: 3, access: ro_firmware, group: cold, audit: unverified, doc: "READ-ONLY (firmware-owned): lash measured at each of the 3 reversals, in servo steps. The HOST judges whether the spread is acceptable \u2014 measurement lives here, policy lives in the UI"}
+  - {id: 40, name: calCeilingSteps,   type: int32,  access: sw_write, group: cold, doc: "SW write: per-leg hard ceiling in servo steps. Driving this far without Z moving IS the open-half-nut / uncoupled failure. MACHINE-SPECIFIC; size it comfortably past the largest credible lash"}
+  - {id: 41, name: calMotionThreshCounts, type: int32, access: sw_write, group: cold, doc: "SW write: Z scale counts that count as real motion. MACHINE-SPECIFIC \u2014 ~2 counts on elspi (200 counts/mm, so 1 count \u2248 2.5 servo steps); emulator is 400 counts/mm. 0 disables detection and FAILS CLOSED (never confirms) \u2014 deliberate: an unconfigured threshold must refuse, not wave everything through"}
 
   # --- performance counters: diagnostic, monotonic, never urgent ------------
-  - {id: 43, name: executionCyclesPeak, type: uint32, access: ro_firmware, group: cold, audit: unverified, doc: "peak ISR execution time in CPU cycles"}
+  - {id: 43, name: executionCyclesPeak, type: uint32, access: ro_firmware, group: cold, audit: unverified, doc: "READ-ONLY except for reset: highest executionCycles since the host last wrote 0 here. Compare against 1000 (the per-tick budget at 100 MHz / 10 us)"}
 
   # --- the diagnostic scratchpad: 64 registers, ZERO in any release build ----
   #     Reserved in every build, written only under ELS_DIAG_SCRATCH. This is
   #     the block that made the hot read two requests: it sat BETWEEN live
   #     registers, so skipping it saved nothing. Moving it here is most of the
   #     win, and nothing about the block itself changes.
-  - {id: 46, name: diagSchema,        type: uint16, access: ro_firmware, group: cold, doc: "which probe is compiled in; 0 = nothing here. A reader MUST check this before interpreting anything below"}
-  - {id: 48, name: diagBucketTicks,   type: uint16, access: ro_firmware, group: cold, doc: "ISR ticks summed into each diagTrace bucket; PUBLISHED so the host never assumes the ISR rate"}
-  - {id: 49, name: diagBucketCount,   type: uint16, access: ro_firmware, group: cold, doc: "populated diagTrace entries"}
-  - {id: 50, name: diagSettleTicks,   type: int32,  access: ro_firmware, group: cold, doc: "ticks to settle in the last capture"}
-  - {id: 51, name: diagNetCounts,     type: int32,  access: ro_firmware, group: cold, doc: "net dZ over the last capture"}
-  - {id: 52, name: diagTrace,         type: int16, count: ELS_DIAG_TRACE_BUCKETS, access: ro_firmware, group: cold, doc: "per-bucket SIGNED sum of dZ -- signed so encoder dither cancels and real motion does not"}
-  - {id: 53, name: diagCaptureTicks,  type: uint16, access: ro_firmware, group: cold, doc: "total ticks captured"}
-  - {id: 54, name: diagEndReason,     type: uint16, access: ro_firmware, group: cold, doc: "why the capture ended"}
-  - {id: 55, name: diagReserved,      type: uint16, count: 4, access: ro_firmware, group: cold, kind: reserved, doc: "reserved headroom for probe metadata; NOT alignment padding -- the generator emits alignment separately"}
+  - {id: 46, name: diagSchema,        type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): identifies the probe compiled into the block. 0 = none; do NOT interpret anything below it. Never assume a schema you did not read"}
+  - {id: 48, name: diagBucketTicks,   type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ISR ticks summed into each diagTrace bucket. PUBLISHED so the host never has to assume the ISR rate \u2014 the repo has disagreed with itself about that rate by 10x"}
+  - {id: 49, name: diagBucketCount,   type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): populated diagTrace entries, for the same reason"}
+  - {id: 50, name: diagSettleTicks,   type: int32,  access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ticks from capture start to the LAST tick that saw nonzero dZ. THE measurement ELS_SLIP_SETTLE_TICKS is a guess at \u2014 meaningful in v2, where the capture stops before the pass starts"}
+  - {id: 51, name: diagNetCounts,     type: int32,  access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): signed Z counts summed across the capture"}
+  - {id: 52, name: diagTrace,         type: int16, count: ELS_DIAG_TRACE_BUCKETS, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): per-bucket SIGNED sum of dZ. Signed rather than magnitude on purpose \u2014 encoder dither cancels, real motion does not, which is exactly the distinction a quiescence test needs and the reason to prefer net displacement over summed |dZ|"}
+  - {id: 53, name: diagCaptureTicks,  type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ticks the capture actually ran, i.e. how long the servo stayed silent after the take-up. Distinct from diagSettleTicks, which is when Z last MOVED"}
+  - {id: 54, name: diagEndReason,     type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ELS_DIAG_END_*. A window-full capture did not finish measuring; treat its tail as a floor, not a result"}
+  - {id: 55, name: diagReserved,      type: uint16, count: 4, access: ro_firmware, group: cold, kind: reserved, doc: "pads the block to a fixed 128 bytes so its size never depends on which probe is in it"}
 
 # -----------------------------------------------------------------------------
 # Named constants the schema depends on. Resolved from the C header so a change

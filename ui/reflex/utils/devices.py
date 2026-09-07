@@ -1,5 +1,6 @@
 from reflex.utils.base_device import BaseDevice, TypeDefinition
 from reflex.utils import communication
+from reflex.utils import els_stop_map
 SCALES_COUNT = 4
 SERVOS_COUNT = 3
 
@@ -176,74 +177,34 @@ class ElsStop(BaseDevice):
     increment — the absent ack IS the refusal.
     """
 
-    definition = """
-typedef struct {
-  uint16_t enable;
-  uint16_t scaleIndex;
-  int32_t  stopPosition;
-  int16_t  stopDirection;
-  uint16_t active;
-  float    threadPitchSteps;
-  int32_t  hysteresis;
-  float    zCountsPerPitch;
-  uint32_t backlashSteps;
-  int32_t  latchedZ;
-  int32_t  latchedSpindle;
-  uint16_t referenceLatched;
-  uint16_t takeupPending;
-  float    lastIdealAdvance;
-  float    lastActualAdvance;
-  float    lastPhaseError;
-  float    lastCorrection;
-  uint16_t protocolVersion;
-  uint16_t calCommand;
-  uint16_t calSeq;
-  uint16_t calResult;
-  uint16_t takeupResult;
-  uint16_t takeupSeq;
-  int32_t  calMeasured[3];
-  int32_t  calCeilingSteps;
-  int32_t  calMotionThreshCounts;
-  int32_t  lastTakeupZDelta;
-  int32_t  takeupThreshCounts;
-  uint16_t diagSchema;
-  uint16_t diagSeq;
-  uint16_t diagBucketTicks;
-  uint16_t diagBucketCount;
-  int32_t  diagSettleTicks;
-  int32_t  diagNetCounts;
-  int16_t  diagTrace[50];
-  uint16_t diagCaptureTicks;
-  uint16_t diagEndReason;
-  uint16_t diagReserved[4];
-  uint16_t machineMode;
-  uint16_t machineModeReserved;
-  uint16_t latchCommand;
-  uint16_t latchSeq;
-  uint16_t phaseOffsetCommand;
-  uint16_t phaseOffsetSeq;
-  int32_t  phaseOffsetPending;
-  int32_t  phaseOffsetSteps;
-  uint32_t executionCyclesPeak;
-  uint32_t stepPulseMinCycles;
-  uint32_t stepPulseRuntCount;
-  uint16_t bootCommand;
-  uint16_t bootSeq;
-  uint16_t stopTriggerSeq;
-  uint16_t stopTriggerReserved;
-  int32_t  stopTriggerZ;
-  int32_t  stopTriggerZSpeed;
-  int32_t  stopTriggerStepsToGo;
-  int32_t  stopTriggerSpindleSpeed;
-} elsStop_t;
-"""
+    # GENERATED. Was a hand-maintained mirror with hand-placed _pad fields;
+    # tools/genregs.py emits it from registers/els_stop.yaml, at offsets the
+    # target compiler has already agreed to via _Static_assert in
+    # fw/Core/Inc/Ramps_generated.h. Edit the schema, not this.
+    definition = els_stop_map.DEFINITION
+
+    def refresh_hot(self):
+        """Read the HOT group as ONE FC3 request and decode it.
+
+        The tick path's read. refresh() still reads the whole block in two
+        requests and is what an on-demand caller wants; this reads only the
+        registers a tick-driven reader can actually touch, which is the entire
+        return on the hot/cold split -- three exchanges per tick become two.
+
+        Both the span and the decoder come from the generated map, so they
+        cannot disagree about where a field is: a field added to the schema
+        moves the offsets, the format string and the field list together, or
+        generation fails.
+        """
+        raw = self.read_span(els_stop_map.HOT_BASE, els_stop_map.HOT_COUNT)
+        return els_stop_map.decode_hot(raw)
 
 
 # --- Frozen protocol constants -------------------------------------------
 # Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
 # Modbus contract; never renumber, only append.
 
-ELS_PROTOCOL_VERSION = 9        # elsStop.protocolVersion this UI is built against
+ELS_PROTOCOL_VERSION = els_stop_map.PROTOCOL_VERSION        # elsStop.protocolVersion this UI is built against
                                 # 3 (2026-08-22): machineMode promoted to a permanent
                                 # register so the rung-2 census collects in every build.
                                 # 4 (2026-08-22): latchCommand/latchSeq for the manual

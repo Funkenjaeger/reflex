@@ -5,13 +5,15 @@ address in rampsSharedData_t. No hand-placed padding: alignment pads are
 emitted into the format strings below, which is the whole point.
 """
 
+import struct
+
 PROTOCOL_VERSION = 10
 ELS_STOP_BASE = 104
-TOTAL_REGISTERS = 140
+TOTAL_REGISTERS = 142
 
 HOT_BASE = 0
-HOT_COUNT = 64
-HOT_FORMAT = "<HHihHfifIiiHHffffHHHHHHiiIIHHHHHHiiHHH2xiiii"
+HOT_COUNT = 56
+HOT_FORMAT = "<HHihHfifIiiHHffffHHH2xiiIIHHHHiH2xiiii"
 HOT_FIELDS = [
     "enable",
     "scaleIndex",
@@ -31,9 +33,6 @@ HOT_FIELDS = [
     "lastPhaseError",
     "lastCorrection",
     "protocolVersion",
-    "calCommand",
-    "calSeq",
-    "calResult",
     "takeupSeq",
     "takeupResult",
     "lastTakeupZDelta",
@@ -42,25 +41,64 @@ HOT_FIELDS = [
     "stepPulseRuntCount",
     "diagSeq",
     "machineMode",
-    "latchCommand",
     "latchSeq",
-    "phaseOffsetCommand",
     "phaseOffsetSeq",
-    "phaseOffsetPending",
     "phaseOffsetSteps",
-    "bootCommand",
-    "bootSeq",
     "stopTriggerSeq",
     "stopTriggerZ",
     "stopTriggerZSpeed",
     "stopTriggerStepsToGo",
     "stopTriggerSpindleSpeed",
 ]
+HOT_LAYOUT = [
+    ("enable", 1),
+    ("scaleIndex", 1),
+    ("stopPosition", 1),
+    ("stopDirection", 1),
+    ("active", 1),
+    ("threadPitchSteps", 1),
+    ("hysteresis", 1),
+    ("zCountsPerPitch", 1),
+    ("backlashSteps", 1),
+    ("latchedZ", 1),
+    ("latchedSpindle", 1),
+    ("referenceLatched", 1),
+    ("takeupPending", 1),
+    ("lastIdealAdvance", 1),
+    ("lastActualAdvance", 1),
+    ("lastPhaseError", 1),
+    ("lastCorrection", 1),
+    ("protocolVersion", 1),
+    ("takeupSeq", 1),
+    ("takeupResult", 1),
+    ("lastTakeupZDelta", 1),
+    ("takeupThreshCounts", 1),
+    ("stepPulseMinCycles", 1),
+    ("stepPulseRuntCount", 1),
+    ("diagSeq", 1),
+    ("machineMode", 1),
+    ("latchSeq", 1),
+    ("phaseOffsetSeq", 1),
+    ("phaseOffsetSteps", 1),
+    ("stopTriggerSeq", 1),
+    ("stopTriggerZ", 1),
+    ("stopTriggerZSpeed", 1),
+    ("stopTriggerStepsToGo", 1),
+    ("stopTriggerSpindleSpeed", 1),
+]
 
-COLD_BASE = 64
-COLD_COUNT = 76
-COLD_FORMAT = "<3iiiIHHH2xii50hHH4H"
+COLD_BASE = 56
+COLD_COUNT = 86
+COLD_FORMAT = "<HHHHH2xiHH3iiiIHHH2xii50hHH4H"
 COLD_FIELDS = [
+    "calCommand",
+    "calSeq",
+    "calResult",
+    "latchCommand",
+    "phaseOffsetCommand",
+    "phaseOffsetPending",
+    "bootCommand",
+    "bootSeq",
     "calMeasured",
     "calCeilingSteps",
     "calMotionThreshCounts",
@@ -74,6 +112,29 @@ COLD_FIELDS = [
     "diagCaptureTicks",
     "diagEndReason",
     "diagReserved",
+]
+COLD_LAYOUT = [
+    ("calCommand", 1),
+    ("calSeq", 1),
+    ("calResult", 1),
+    ("latchCommand", 1),
+    ("phaseOffsetCommand", 1),
+    ("phaseOffsetPending", 1),
+    ("bootCommand", 1),
+    ("bootSeq", 1),
+    ("calMeasured", 3),
+    ("calCeilingSteps", 1),
+    ("calMotionThreshCounts", 1),
+    ("executionCyclesPeak", 1),
+    ("diagSchema", 1),
+    ("diagBucketTicks", 1),
+    ("diagBucketCount", 1),
+    ("diagSettleTicks", 1),
+    ("diagNetCounts", 1),
+    ("diagTrace", 50),
+    ("diagCaptureTicks", 1),
+    ("diagEndReason", 1),
+    ("diagReserved", 4),
 ]
 
 OFFSETS = {
@@ -95,41 +156,136 @@ OFFSETS = {
     "lastPhaseError": 24,
     "lastCorrection": 26,
     "protocolVersion": 28,
-    "calCommand": 29,
-    "calSeq": 30,
-    "calResult": 31,
-    "takeupSeq": 32,
-    "takeupResult": 33,
-    "lastTakeupZDelta": 34,
-    "takeupThreshCounts": 36,
-    "stepPulseMinCycles": 38,
-    "stepPulseRuntCount": 40,
-    "diagSeq": 42,
-    "machineMode": 43,
-    "latchCommand": 44,
-    "latchSeq": 45,
-    "phaseOffsetCommand": 46,
-    "phaseOffsetSeq": 47,
-    "phaseOffsetPending": 48,
-    "phaseOffsetSteps": 50,
-    "bootCommand": 52,
-    "bootSeq": 53,
-    "stopTriggerSeq": 54,
-    "stopTriggerZ": 56,
-    "stopTriggerZSpeed": 58,
-    "stopTriggerStepsToGo": 60,
-    "stopTriggerSpindleSpeed": 62,
-    "calMeasured": 64,
-    "calCeilingSteps": 70,
-    "calMotionThreshCounts": 72,
-    "executionCyclesPeak": 74,
-    "diagSchema": 76,
-    "diagBucketTicks": 77,
-    "diagBucketCount": 78,
-    "diagSettleTicks": 80,
-    "diagNetCounts": 82,
-    "diagTrace": 84,
-    "diagCaptureTicks": 134,
-    "diagEndReason": 135,
-    "diagReserved": 136,
+    "takeupSeq": 29,
+    "takeupResult": 30,
+    "lastTakeupZDelta": 32,
+    "takeupThreshCounts": 34,
+    "stepPulseMinCycles": 36,
+    "stepPulseRuntCount": 38,
+    "diagSeq": 40,
+    "machineMode": 41,
+    "latchSeq": 42,
+    "phaseOffsetSeq": 43,
+    "phaseOffsetSteps": 44,
+    "stopTriggerSeq": 46,
+    "stopTriggerZ": 48,
+    "stopTriggerZSpeed": 50,
+    "stopTriggerStepsToGo": 52,
+    "stopTriggerSpindleSpeed": 54,
+    "calCommand": 56,
+    "calSeq": 57,
+    "calResult": 58,
+    "latchCommand": 59,
+    "phaseOffsetCommand": 60,
+    "phaseOffsetPending": 62,
+    "bootCommand": 64,
+    "bootSeq": 65,
+    "calMeasured": 66,
+    "calCeilingSteps": 72,
+    "calMotionThreshCounts": 74,
+    "executionCyclesPeak": 76,
+    "diagSchema": 78,
+    "diagBucketTicks": 79,
+    "diagBucketCount": 80,
+    "diagSettleTicks": 82,
+    "diagNetCounts": 84,
+    "diagTrace": 86,
+    "diagCaptureTicks": 136,
+    "diagEndReason": 137,
+    "diagReserved": 138,
 }
+
+
+def _decode(raw, fmt, layout):
+    """Turn one FC3 span into {field: value}, arrays regrouped.
+
+    A group is decoded from its OWN format string, so a field added to
+    the schema cannot shift the columns of a reader that was not
+    regenerated -- the format and the layout move together or not at all.
+    """
+    if len(raw) * 2 != struct.calcsize(fmt):
+        raise ValueError(
+            "span is %d registers, format wants %d -- refusing to decode"
+            % (len(raw), struct.calcsize(fmt) // 2))
+    values = list(struct.unpack(fmt, struct.pack("<%dH" % len(raw), *raw)))
+    out = {}
+    for name, count in layout:
+        if count > 1:
+            out[name] = [values.pop(0) for _ in range(count)]
+        else:
+            out[name] = values.pop(0)
+    if values:
+        raise ValueError("%d values left over after decode" % len(values))
+    return out
+
+
+def decode_hot(raw):
+    return _decode(raw, HOT_FORMAT, HOT_LAYOUT)
+
+
+def decode_cold(raw):
+    return _decode(raw, COLD_FORMAT, COLD_LAYOUT)
+
+DEFINITION = """
+typedef struct {
+  uint16_t enable;
+  uint16_t scaleIndex;
+  int32_t stopPosition;
+  int16_t stopDirection;
+  uint16_t active;
+  float threadPitchSteps;
+  int32_t hysteresis;
+  float zCountsPerPitch;
+  uint32_t backlashSteps;
+  int32_t latchedZ;
+  int32_t latchedSpindle;
+  uint16_t referenceLatched;
+  uint16_t takeupPending;
+  float lastIdealAdvance;
+  float lastActualAdvance;
+  float lastPhaseError;
+  float lastCorrection;
+  uint16_t protocolVersion;
+  uint16_t takeupSeq;
+  uint16_t takeupResult;
+  uint16_t _pad1;
+  int32_t lastTakeupZDelta;
+  int32_t takeupThreshCounts;
+  uint32_t stepPulseMinCycles;
+  uint32_t stepPulseRuntCount;
+  uint16_t diagSeq;
+  uint16_t machineMode;
+  uint16_t latchSeq;
+  uint16_t phaseOffsetSeq;
+  int32_t phaseOffsetSteps;
+  uint16_t stopTriggerSeq;
+  uint16_t _pad2;
+  int32_t stopTriggerZ;
+  int32_t stopTriggerZSpeed;
+  int32_t stopTriggerStepsToGo;
+  int32_t stopTriggerSpindleSpeed;
+  uint16_t calCommand;
+  uint16_t calSeq;
+  uint16_t calResult;
+  uint16_t latchCommand;
+  uint16_t phaseOffsetCommand;
+  uint16_t _pad3;
+  int32_t phaseOffsetPending;
+  uint16_t bootCommand;
+  uint16_t bootSeq;
+  int32_t calMeasured[3];
+  int32_t calCeilingSteps;
+  int32_t calMotionThreshCounts;
+  uint32_t executionCyclesPeak;
+  uint16_t diagSchema;
+  uint16_t diagBucketTicks;
+  uint16_t diagBucketCount;
+  uint16_t _pad4;
+  int32_t diagSettleTicks;
+  int32_t diagNetCounts;
+  int16_t diagTrace[50];
+  uint16_t diagCaptureTicks;
+  uint16_t diagEndReason;
+  uint16_t diagReserved[4];
+} elsStop_t;
+"""
