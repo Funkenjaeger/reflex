@@ -159,12 +159,20 @@ void blHwArmWatchdog(void)
    * the IWDG forces LSI on. Cannot be stopped afterwards: the app must kick
    * it (els_boot.h), and so must we while resident. Frozen while a debugger
    * halts the core, so an SWD session does not get reset mid-operation. */
+  /* ORDER IS LOAD-BEARING, and getting it wrong hangs forever rather than
+   * failing (found on the chip, 2026-09-07 bring-up: the bootloader spun in a
+   * two-instruction loop here, so it never reached its Modbus slave and never
+   * jumped -- nothing answered on the bus at all). SR's PVU/RVU bits are
+   * cleared by the IWDG's own LSI clock domain, and the LSI only runs once the
+   * IWDG has been STARTED. Waiting on SR before the 0xCCCC start is therefore
+   * a wait on a clock that is off. Start, unlock, write, wait, reload -- the
+   * RM0383 sequence. */
   DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_IWDG_STOP;
+  IWDG->KR  = 0xCCCCu;
   IWDG->KR  = 0x5555u;
   IWDG->PR  = 6u;
   IWDG->RLR = 0xFFFu;
   while (IWDG->SR) { }
-  IWDG->KR  = 0xCCCCu;
   IWDG->KR  = 0xAAAAu;
 }
 
