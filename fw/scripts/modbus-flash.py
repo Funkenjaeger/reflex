@@ -28,6 +28,10 @@ THE SEQUENCE (docs/decisions/els-modbus-register-map.md, Implemented):
 
 Every operation is edge-detected on blSeq and judged on blResult, never on
 blCommand (the firmware clears that the instant it consumes the command).
+
+blSeq is also what makes retry safe: on a lost frame the counter says whether
+the command ran, so a resend only happens when it demonstrably did not. See
+the retry notes above READ_ATTEMPTS.
 """
 
 from __future__ import annotations
@@ -84,6 +88,26 @@ BOOT_CMD_BOOTLOADER = 1
 
 CHUNK_BYTES = BL_DATA_REGS * 2   # 200
 
+# --- retry --------------------------------------------------------------------
+# A 222-chunk transfer is 222 chances to lose one frame, and until now a single
+# loss ended the flash. These are ATTEMPT counts, not retry counts: 4 means the
+# first try plus three more.
+#
+# What may be retried is decided by idempotency, not by convenience:
+#   * a READ changes nothing and is repeated freely;
+#   * a PARAMETER write (slot, length, CRC) carries no command, so the
+#     bootloader does not act on it and blSeq does not move -- writing the same
+#     values again is a no-op, and it is repeated freely too;
+#   * a COMMAND write is repeated only after blSeq has been read back and shown
+#     that it did not land. A WRITE of the same bytes to the same address is
+#     idempotent in itself, but ERASE and APPLY are emphatically not, so the
+#     rule is one rule for all of them and it is blSeq, not the function code;
+#   * JUMP is never retried. See Bootloader.jump.
+READ_ATTEMPTS = 4
+WRITE_ATTEMPTS = 4
+RETRY_PAUSE = 0.05      # a beat for the bootloader's next poll, small enough
+                        # that 222 chunks do not notice it
+
 
 class ModbusError(Exception):
     pass
@@ -113,6 +137,7 @@ class Rtu:
 
     def __init__(self, port: str, baud: int, address: int):
         self.address = address
+        self.retries = 0          # reads re-sent after a lost frame, for the verdict line
         self.ser = serial.Serial(port, baudrate=baud, bytesize=8, parity="N", stopbits=1,
                                  timeout=0.05, write_timeout=1.0)
 
@@ -149,10 +174,33 @@ class Rtu:
             raise ExceptionResponse(buf[1] & 0x7F, buf[2])
         return buf
 
-    def read(self, addr: int, count: int, timeout: float = 0.5) -> list[int]:
-        r = self._xact(struct.pack(">BBHH", self.address, 3, addr, count), timeout)
-        n = r[2] // 2
-        return list(struct.unpack(f">{n}H", r[3:3 + 2 * n]))
+    def read(self, addr: int, count: int, timeout: float = 0.5,
+             attempts: int = READ_ATTEMPTS) -> list[int]:
+        """Retries on a lost frame: a read changes nothing on the board.
+
+        An ExceptionResponse is NOT a lost frame -- the board answered, and
+        one of those answers (exception 2 at the bootloader window) is how the
+        caller tells the application from the bootloader. It is raised
+        immediately rather than retried four times.
+
+        `attempts` is 1 for the callers that are already a retry loop
+        (read_identity, wait_for_stage): nesting a retry inside a poll spends
+        the poll's deadline four times as fast for no extra chances."""
+        last: ModbusError | None = None
+        for attempt in range(attempts):
+            try:
+                r = self._xact(struct.pack(">BBHH", self.address, 3, addr, count), timeout)
+                n = r[2] // 2
+                return list(struct.unpack(f">{n}H", r[3:3 + 2 * n]))
+            except ExceptionResponse:
+                raise
+            except ModbusError as e:
+                last = e
+                if attempt + 1 < attempts:
+                    self.retries += 1
+                    time.sleep(RETRY_PAUSE)
+        assert last is not None
+        raise last
 
     def write_one(self, addr: int, value: int, timeout: float = 0.5) -> None:
         self._xact(struct.pack(">BBHH", self.address, 6, addr, value & 0xFFFF), timeout)
@@ -193,7 +241,7 @@ def read_identity(bus: Rtu, tries: int = 5) -> Identity:
     last = None
     for _ in range(tries):
         try:
-            regs = bus.read(ID_BASE, ID_SIZE)
+            regs = bus.read(ID_BASE, ID_SIZE, attempts=1)   # this loop IS the retry
             ident = Identity(regs)
             if ident.magic != ID_MAGIC:
                 raise SystemExit(f"REFUSING: idMagic 0x{ident.magic:04x} at register {ID_BASE}, "
@@ -211,7 +259,7 @@ def wait_for_stage(bus: Rtu, stage: int, timeout: float, rev: int | None = None)
     last = None
     while time.monotonic() < deadline:
         try:
-            regs = bus.read(ID_BASE, ID_SIZE, timeout=0.3)
+            regs = bus.read(ID_BASE, ID_SIZE, timeout=0.3, attempts=1)  # ditto
             ident = Identity(regs)
             if ident.magic == ID_MAGIC and ident.stage == stage and (rev is None or ident.build_rev == rev):
                 return ident
@@ -229,9 +277,11 @@ class Bootloader:
     def __init__(self, bus: Rtu, dry_run: bool):
         self.bus = bus
         self.dry_run = dry_run
+        self.retries = 0        # commands re-sent because they never landed
+        self.recovered = 0      # commands that HAD landed; only the reply was lost
 
-    def head(self) -> list[int]:
-        return self.bus.read(BL_BASE, 16)
+    def head(self, timeout: float = 0.5) -> list[int]:
+        return self.bus.read(BL_BASE, 16, timeout=timeout)
 
     def describe(self) -> str:
         h = self.head()
@@ -247,17 +297,85 @@ class Bootloader:
         if h[BL_RESULT] != 0:
             raise SystemExit(f"{what}: result {RESULT_NAMES.get(h[BL_RESULT], h[BL_RESULT])}; {self.describe()}")
 
+    def _params(self, write, what: str) -> None:
+        """A parameter write (slot, length, CRC) sets no command register, so
+        the bootloader never acts on it and blSeq does not move. Sending the
+        same values again is a no-op; retry it flat."""
+        last: ModbusError | None = None
+        for attempt in range(WRITE_ATTEMPTS):
+            try:
+                write()
+                return
+            except ExceptionResponse:
+                raise
+            except ModbusError as e:
+                last = e
+                if attempt + 1 < WRITE_ATTEMPTS:
+                    self.retries += 1
+                    time.sleep(RETRY_PAUSE)
+        raise SystemExit(f"{what}: {WRITE_ATTEMPTS} attempts, last: {last}")
+
+    def _commit(self, write, what: str) -> None:
+        """Send one blSeq-advancing transaction, and retry it when the wire
+        eats a frame.
+
+        blSeq is what makes this safe rather than reckless. The bootloader
+        increments it exactly once per command it executes, so after a loss the
+        counter says WHICH HALF was lost:
+
+          unchanged     the request never arrived, or arrived mangled and was
+                        dropped on its CRC. Nothing happened on the board.
+                        Re-send it.
+          advanced by 1 the command ran and the REPLY was lost. Re-sending
+                        would run it a SECOND time -- harmless for a WRITE of
+                        the same bytes to the same address, wrong for ERASE,
+                        very wrong for APPLY. Accept it as done and let
+                        _expect judge blResult.
+          anything else something is driving this bus that is not us. Stop.
+
+        So the decision is made on blSeq for every command alike, never on
+        which function code happens to be idempotent."""
+        seq = self.head()[BL_SEQ]
+        for attempt in range(WRITE_ATTEMPTS):
+            try:
+                write()
+                break
+            except ExceptionResponse:
+                raise
+            except ModbusError as e:
+                try:
+                    # Generous: a lost reply to ERASE or APPLY can leave the
+                    # board stalled in flash for seconds yet.
+                    now = self.head(timeout=2.0)[BL_SEQ]
+                except ModbusError as e2:
+                    raise SystemExit(f"{what}: lost the reply ({e}) and then could not read blSeq "
+                                     f"back either ({e2})") from e2
+                if now == (seq + 1) & 0xFFFF:
+                    self.recovered += 1
+                    print(f"  {what}: reply lost but blSeq moved {seq} -> {now}; the command ran ({e})")
+                    break
+                if now != seq:
+                    raise SystemExit(f"{what}: blSeq jumped {seq} -> {now} across a lost frame; "
+                                     f"another master on the bus? {self.describe()}")
+                if attempt + 1 >= WRITE_ATTEMPTS:
+                    raise SystemExit(f"{what}: {WRITE_ATTEMPTS} attempts, blSeq never moved from "
+                                     f"{seq}; last: {e}")
+                self.retries += 1
+                print(f"  {what}: no reply, blSeq still {seq}; resending "
+                      f"({attempt + 1}/{WRITE_ATTEMPTS - 1})")
+                time.sleep(RETRY_PAUSE)
+        self._expect(seq, what)
+
     def command(self, cmd: int, what: str, timeout: float) -> None:
         if self.dry_run:
             print(f"  dry-run: would send {what}")
             return
-        seq = self.head()[BL_SEQ]
-        self.bus.write_one(BL_BASE + BL_COMMAND, cmd, timeout=timeout)
-        self._expect(seq, what)
+        self._commit(lambda: self.bus.write_one(BL_BASE + BL_COMMAND, cmd, timeout=timeout), what)
 
     def erase(self) -> None:
         if not self.dry_run:
-            self.bus.write_one(BL_BASE + BL_SLOT, SLOT_STAGING)
+            self._params(lambda: self.bus.write_one(BL_BASE + BL_SLOT, SLOT_STAGING),
+                         "ERASE staging (slot register)")
         # A 128 KB sector erase stalls the whole chip for 1-4 s; the reply
         # comes after it. 10 s is the tolerance the task set.
         self.command(CMD_ERASE, "ERASE staging", timeout=10.0)
@@ -271,15 +389,15 @@ class Bootloader:
         regs += words
         if self.dry_run:
             return
-        seq = self.head()[BL_SEQ]
-        self.bus.write_many(BL_BASE + BL_COMMAND, regs, timeout=1.0)
-        self._expect(seq, f"WRITE at 0x{addr:08x}")
+        self._commit(lambda: self.bus.write_many(BL_BASE + BL_COMMAND, regs, timeout=1.0),
+                     f"WRITE at 0x{addr:08x}")
 
     def verify(self, image_len: int, image_crc: int) -> None:
         if not self.dry_run:
-            self.bus.write_many(BL_BASE + BL_LEN_LO,
-                                [image_len & 0xFFFF, image_len >> 16, image_crc & 0xFFFF, image_crc >> 16,
-                                 SLOT_STAGING])
+            self._params(lambda: self.bus.write_many(
+                BL_BASE + BL_LEN_LO,
+                [image_len & 0xFFFF, image_len >> 16, image_crc & 0xFFFF, image_crc >> 16,
+                 SLOT_STAGING]), "VERIFY staging (parameters)")
         self.command(CMD_VERIFY, "VERIFY staging", timeout=3.0)
 
     def apply(self) -> None:
@@ -291,6 +409,15 @@ class Bootloader:
                 raise SystemExit(f"APPLY left the board not ready: {self.describe()}")
 
     def jump(self) -> None:
+        """DELIBERATELY NOT RETRIED, and not through _commit.
+
+        JUMP is the one command whose reply is expected to go missing: the
+        board leaves immediately after sending it, and the blSeq read that
+        _commit would make to reconcile a loss is answered by whatever is
+        running afterwards -- the application, which does not serve the
+        bootloader window at all and answers exception 2 there. There is
+        nothing to reconcile against, so a lost reply is simply accepted, as
+        it always was, and the caller settles it by watching idStage."""
         if self.dry_run:
             print("  dry-run: would send JUMP")
             return
@@ -367,6 +494,11 @@ def flash(bus: Rtu, image_path: str, dry_run: bool) -> int:
         print(f"VERDICT: dry-run complete, nothing written ({time.monotonic() - t0:.1f}s)")
         return 0
     ident = wait_for_stage(bus, ID_STAGE_APP, timeout=15.0, rev=hdr.build_rev)
+    # Say the retry count out loud even when it is zero. A silent retry layer
+    # is how a link that has quietly started losing a tenth of its frames goes
+    # on looking healthy for months.
+    print(f"  link: {bus.retries} read retries, {bl.retries} commands resent, "
+          f"{bl.recovered} replies lost after the command had run")
     print(f"VERDICT: OK -- application {ident.rev_str} is running, protocolVersion {ident.app_protocol} "
           f"({time.monotonic() - t0:.1f}s)")
     return 0

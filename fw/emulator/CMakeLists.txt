@@ -582,6 +582,16 @@ if (REFLEX_TEST_PYTHON)
                 $<TARGET_FILE:lathe-emulator> ${FW_DIR}/scripts/modbus-flash.py ${REFLEX_BUILD_REV_H}
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     set_tests_properties(identity_window_pty_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+    # The host client's bounded retry (scripts/modbus-flash.py), against a fake
+    # board that drops requests and replies on demand. Asserts on how many times
+    # the BOARD executed a command, not on whether the client returned quietly:
+    # re-running an APPLY whose reply was lost is the failure this exists to
+    # prevent. Stubs `serial`, so it needs no pyserial and no hardware.
+    add_test(NAME bl_client_retry_test
+        COMMAND ${REFLEX_TEST_PYTHON} ${CMAKE_SOURCE_DIR}/test/bl_client_retry_test.py
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(bl_client_retry_test PROPERTIES TIMEOUT 60)
 endif()
 
 # The app's side of the bootloader hand-off: bootCommand/bootSeq consume in
