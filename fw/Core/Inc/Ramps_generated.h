@@ -13,8 +13,16 @@
 #ifndef RAMPS_GENERATED_H
 #define RAMPS_GENERATED_H
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/* static_assert, not _Static_assert: parts of the emulator suite compile
+ * this header as C++, where _Static_assert does not exist and the errors
+ * are unhelpful ("expected constructor, destructor, or type conversion").
+ * <assert.h> defines static_assert for C11 and it is a keyword in C++11,
+ * so this one spelling works for the ARM build, the host C build and the
+ * C++ translation units alike. */
 
 #ifndef ELS_DIAG_TRACE_BUCKETS
 #define ELS_DIAG_TRACE_BUCKETS 50  /* verified against fw/Core/Inc/Ramps.h */
@@ -377,63 +385,63 @@ typedef struct {
 } elsStop_t;
 
 /* ---- the compiler's vote ---- */
-_Static_assert(offsetof(elsStop_t, enable) == 0, "enable moved: schema says register 0");
-_Static_assert(offsetof(elsStop_t, scaleIndex) == 2, "scaleIndex moved: schema says register 1");
-_Static_assert(offsetof(elsStop_t, stopPosition) == 4, "stopPosition moved: schema says register 2");
-_Static_assert(offsetof(elsStop_t, stopDirection) == 8, "stopDirection moved: schema says register 4");
-_Static_assert(offsetof(elsStop_t, active) == 10, "active moved: schema says register 5");
-_Static_assert(offsetof(elsStop_t, threadPitchSteps) == 12, "threadPitchSteps moved: schema says register 6");
-_Static_assert(offsetof(elsStop_t, hysteresis) == 16, "hysteresis moved: schema says register 8");
-_Static_assert(offsetof(elsStop_t, zCountsPerPitch) == 20, "zCountsPerPitch moved: schema says register 10");
-_Static_assert(offsetof(elsStop_t, backlashSteps) == 24, "backlashSteps moved: schema says register 12");
-_Static_assert(offsetof(elsStop_t, latchedZ) == 28, "latchedZ moved: schema says register 14");
-_Static_assert(offsetof(elsStop_t, latchedSpindle) == 32, "latchedSpindle moved: schema says register 16");
-_Static_assert(offsetof(elsStop_t, referenceLatched) == 36, "referenceLatched moved: schema says register 18");
-_Static_assert(offsetof(elsStop_t, takeupPending) == 38, "takeupPending moved: schema says register 19");
-_Static_assert(offsetof(elsStop_t, lastIdealAdvance) == 40, "lastIdealAdvance moved: schema says register 20");
-_Static_assert(offsetof(elsStop_t, lastActualAdvance) == 44, "lastActualAdvance moved: schema says register 22");
-_Static_assert(offsetof(elsStop_t, lastPhaseError) == 48, "lastPhaseError moved: schema says register 24");
-_Static_assert(offsetof(elsStop_t, lastCorrection) == 52, "lastCorrection moved: schema says register 26");
-_Static_assert(offsetof(elsStop_t, protocolVersion) == 56, "protocolVersion moved: schema says register 28");
-_Static_assert(offsetof(elsStop_t, takeupSeq) == 58, "takeupSeq moved: schema says register 29");
-_Static_assert(offsetof(elsStop_t, takeupResult) == 60, "takeupResult moved: schema says register 30");
-_Static_assert(offsetof(elsStop_t, lastTakeupZDelta) == 64, "lastTakeupZDelta moved: schema says register 32");
-_Static_assert(offsetof(elsStop_t, takeupThreshCounts) == 68, "takeupThreshCounts moved: schema says register 34");
-_Static_assert(offsetof(elsStop_t, stepPulseMinCycles) == 72, "stepPulseMinCycles moved: schema says register 36");
-_Static_assert(offsetof(elsStop_t, stepPulseRuntCount) == 76, "stepPulseRuntCount moved: schema says register 38");
-_Static_assert(offsetof(elsStop_t, diagSeq) == 80, "diagSeq moved: schema says register 40");
-_Static_assert(offsetof(elsStop_t, machineMode) == 82, "machineMode moved: schema says register 41");
-_Static_assert(offsetof(elsStop_t, latchSeq) == 84, "latchSeq moved: schema says register 42");
-_Static_assert(offsetof(elsStop_t, phaseOffsetSeq) == 86, "phaseOffsetSeq moved: schema says register 43");
-_Static_assert(offsetof(elsStop_t, phaseOffsetSteps) == 88, "phaseOffsetSteps moved: schema says register 44");
-_Static_assert(offsetof(elsStop_t, stopTriggerSeq) == 92, "stopTriggerSeq moved: schema says register 46");
-_Static_assert(offsetof(elsStop_t, stopTriggerZ) == 96, "stopTriggerZ moved: schema says register 48");
-_Static_assert(offsetof(elsStop_t, stopTriggerZSpeed) == 100, "stopTriggerZSpeed moved: schema says register 50");
-_Static_assert(offsetof(elsStop_t, stopTriggerStepsToGo) == 104, "stopTriggerStepsToGo moved: schema says register 52");
-_Static_assert(offsetof(elsStop_t, stopTriggerSpindleSpeed) == 108, "stopTriggerSpindleSpeed moved: schema says register 54");
-_Static_assert(offsetof(elsStop_t, calCommand) == 112, "calCommand moved: schema says register 56");
-_Static_assert(offsetof(elsStop_t, calSeq) == 114, "calSeq moved: schema says register 57");
-_Static_assert(offsetof(elsStop_t, calResult) == 116, "calResult moved: schema says register 58");
-_Static_assert(offsetof(elsStop_t, latchCommand) == 118, "latchCommand moved: schema says register 59");
-_Static_assert(offsetof(elsStop_t, phaseOffsetCommand) == 120, "phaseOffsetCommand moved: schema says register 60");
-_Static_assert(offsetof(elsStop_t, phaseOffsetPending) == 124, "phaseOffsetPending moved: schema says register 62");
-_Static_assert(offsetof(elsStop_t, bootCommand) == 128, "bootCommand moved: schema says register 64");
-_Static_assert(offsetof(elsStop_t, bootSeq) == 130, "bootSeq moved: schema says register 65");
-_Static_assert(offsetof(elsStop_t, calMeasured) == 132, "calMeasured moved: schema says register 66");
-_Static_assert(offsetof(elsStop_t, calCeilingSteps) == 144, "calCeilingSteps moved: schema says register 72");
-_Static_assert(offsetof(elsStop_t, calMotionThreshCounts) == 148, "calMotionThreshCounts moved: schema says register 74");
-_Static_assert(offsetof(elsStop_t, executionCyclesPeak) == 152, "executionCyclesPeak moved: schema says register 76");
-_Static_assert(offsetof(elsStop_t, diagSchema) == 156, "diagSchema moved: schema says register 78");
-_Static_assert(offsetof(elsStop_t, diagBucketTicks) == 158, "diagBucketTicks moved: schema says register 79");
-_Static_assert(offsetof(elsStop_t, diagBucketCount) == 160, "diagBucketCount moved: schema says register 80");
-_Static_assert(offsetof(elsStop_t, diagSettleTicks) == 164, "diagSettleTicks moved: schema says register 82");
-_Static_assert(offsetof(elsStop_t, diagNetCounts) == 168, "diagNetCounts moved: schema says register 84");
-_Static_assert(offsetof(elsStop_t, diagTrace) == 172, "diagTrace moved: schema says register 86");
-_Static_assert(offsetof(elsStop_t, diagCaptureTicks) == 272, "diagCaptureTicks moved: schema says register 136");
-_Static_assert(offsetof(elsStop_t, diagEndReason) == 274, "diagEndReason moved: schema says register 137");
-_Static_assert(offsetof(elsStop_t, diagReserved) == 276, "diagReserved moved: schema says register 138");
-_Static_assert(sizeof(elsStop_t) == 284, "elsStop_t is not 142 registers");
-_Static_assert(ELS_STOP_HOT_REG_COUNT <= 75, "hot group exceeds its FC3 request budget");
-_Static_assert(ELS_STOP_COLD_REG_COUNT <= 125, "cold group exceeds its FC3 request budget");
+static_assert(offsetof(elsStop_t, enable) == 0, "enable moved: schema says register 0");
+static_assert(offsetof(elsStop_t, scaleIndex) == 2, "scaleIndex moved: schema says register 1");
+static_assert(offsetof(elsStop_t, stopPosition) == 4, "stopPosition moved: schema says register 2");
+static_assert(offsetof(elsStop_t, stopDirection) == 8, "stopDirection moved: schema says register 4");
+static_assert(offsetof(elsStop_t, active) == 10, "active moved: schema says register 5");
+static_assert(offsetof(elsStop_t, threadPitchSteps) == 12, "threadPitchSteps moved: schema says register 6");
+static_assert(offsetof(elsStop_t, hysteresis) == 16, "hysteresis moved: schema says register 8");
+static_assert(offsetof(elsStop_t, zCountsPerPitch) == 20, "zCountsPerPitch moved: schema says register 10");
+static_assert(offsetof(elsStop_t, backlashSteps) == 24, "backlashSteps moved: schema says register 12");
+static_assert(offsetof(elsStop_t, latchedZ) == 28, "latchedZ moved: schema says register 14");
+static_assert(offsetof(elsStop_t, latchedSpindle) == 32, "latchedSpindle moved: schema says register 16");
+static_assert(offsetof(elsStop_t, referenceLatched) == 36, "referenceLatched moved: schema says register 18");
+static_assert(offsetof(elsStop_t, takeupPending) == 38, "takeupPending moved: schema says register 19");
+static_assert(offsetof(elsStop_t, lastIdealAdvance) == 40, "lastIdealAdvance moved: schema says register 20");
+static_assert(offsetof(elsStop_t, lastActualAdvance) == 44, "lastActualAdvance moved: schema says register 22");
+static_assert(offsetof(elsStop_t, lastPhaseError) == 48, "lastPhaseError moved: schema says register 24");
+static_assert(offsetof(elsStop_t, lastCorrection) == 52, "lastCorrection moved: schema says register 26");
+static_assert(offsetof(elsStop_t, protocolVersion) == 56, "protocolVersion moved: schema says register 28");
+static_assert(offsetof(elsStop_t, takeupSeq) == 58, "takeupSeq moved: schema says register 29");
+static_assert(offsetof(elsStop_t, takeupResult) == 60, "takeupResult moved: schema says register 30");
+static_assert(offsetof(elsStop_t, lastTakeupZDelta) == 64, "lastTakeupZDelta moved: schema says register 32");
+static_assert(offsetof(elsStop_t, takeupThreshCounts) == 68, "takeupThreshCounts moved: schema says register 34");
+static_assert(offsetof(elsStop_t, stepPulseMinCycles) == 72, "stepPulseMinCycles moved: schema says register 36");
+static_assert(offsetof(elsStop_t, stepPulseRuntCount) == 76, "stepPulseRuntCount moved: schema says register 38");
+static_assert(offsetof(elsStop_t, diagSeq) == 80, "diagSeq moved: schema says register 40");
+static_assert(offsetof(elsStop_t, machineMode) == 82, "machineMode moved: schema says register 41");
+static_assert(offsetof(elsStop_t, latchSeq) == 84, "latchSeq moved: schema says register 42");
+static_assert(offsetof(elsStop_t, phaseOffsetSeq) == 86, "phaseOffsetSeq moved: schema says register 43");
+static_assert(offsetof(elsStop_t, phaseOffsetSteps) == 88, "phaseOffsetSteps moved: schema says register 44");
+static_assert(offsetof(elsStop_t, stopTriggerSeq) == 92, "stopTriggerSeq moved: schema says register 46");
+static_assert(offsetof(elsStop_t, stopTriggerZ) == 96, "stopTriggerZ moved: schema says register 48");
+static_assert(offsetof(elsStop_t, stopTriggerZSpeed) == 100, "stopTriggerZSpeed moved: schema says register 50");
+static_assert(offsetof(elsStop_t, stopTriggerStepsToGo) == 104, "stopTriggerStepsToGo moved: schema says register 52");
+static_assert(offsetof(elsStop_t, stopTriggerSpindleSpeed) == 108, "stopTriggerSpindleSpeed moved: schema says register 54");
+static_assert(offsetof(elsStop_t, calCommand) == 112, "calCommand moved: schema says register 56");
+static_assert(offsetof(elsStop_t, calSeq) == 114, "calSeq moved: schema says register 57");
+static_assert(offsetof(elsStop_t, calResult) == 116, "calResult moved: schema says register 58");
+static_assert(offsetof(elsStop_t, latchCommand) == 118, "latchCommand moved: schema says register 59");
+static_assert(offsetof(elsStop_t, phaseOffsetCommand) == 120, "phaseOffsetCommand moved: schema says register 60");
+static_assert(offsetof(elsStop_t, phaseOffsetPending) == 124, "phaseOffsetPending moved: schema says register 62");
+static_assert(offsetof(elsStop_t, bootCommand) == 128, "bootCommand moved: schema says register 64");
+static_assert(offsetof(elsStop_t, bootSeq) == 130, "bootSeq moved: schema says register 65");
+static_assert(offsetof(elsStop_t, calMeasured) == 132, "calMeasured moved: schema says register 66");
+static_assert(offsetof(elsStop_t, calCeilingSteps) == 144, "calCeilingSteps moved: schema says register 72");
+static_assert(offsetof(elsStop_t, calMotionThreshCounts) == 148, "calMotionThreshCounts moved: schema says register 74");
+static_assert(offsetof(elsStop_t, executionCyclesPeak) == 152, "executionCyclesPeak moved: schema says register 76");
+static_assert(offsetof(elsStop_t, diagSchema) == 156, "diagSchema moved: schema says register 78");
+static_assert(offsetof(elsStop_t, diagBucketTicks) == 158, "diagBucketTicks moved: schema says register 79");
+static_assert(offsetof(elsStop_t, diagBucketCount) == 160, "diagBucketCount moved: schema says register 80");
+static_assert(offsetof(elsStop_t, diagSettleTicks) == 164, "diagSettleTicks moved: schema says register 82");
+static_assert(offsetof(elsStop_t, diagNetCounts) == 168, "diagNetCounts moved: schema says register 84");
+static_assert(offsetof(elsStop_t, diagTrace) == 172, "diagTrace moved: schema says register 86");
+static_assert(offsetof(elsStop_t, diagCaptureTicks) == 272, "diagCaptureTicks moved: schema says register 136");
+static_assert(offsetof(elsStop_t, diagEndReason) == 274, "diagEndReason moved: schema says register 137");
+static_assert(offsetof(elsStop_t, diagReserved) == 276, "diagReserved moved: schema says register 138");
+static_assert(sizeof(elsStop_t) == 284, "elsStop_t is not 142 registers");
+static_assert(ELS_STOP_HOT_REG_COUNT <= 75, "hot group exceeds its FC3 request budget");
+static_assert(ELS_STOP_COLD_REG_COUNT <= 125, "cold group exceeds its FC3 request budget");
 
 #endif /* RAMPS_GENERATED_H */

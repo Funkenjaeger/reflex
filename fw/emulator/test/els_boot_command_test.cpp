@@ -99,20 +99,35 @@ int main() {
     servoCyclesCounter = 0;
 
     /* 6. layout facts */
-    check(offsetof(rampsSharedData_t, elsStop.bootCommand) == 464, "bootCommand at byte 464 = register 232");
-    check(offsetof(rampsSharedData_t, elsStop.bootSeq) == 466, "bootSeq at byte 466 = register 233");
-    check(sizeof(rampsSharedData_t) == 488,
-          "rampsSharedData_t is 488 bytes (468 + the 20-byte trigger-instant snapshot)");
-    check(ELS_PROTOCOL_VERSION == 9, "ELS_PROTOCOL_VERSION is 9");
-    /* The pair is no longer the tail -- the trigger-instant snapshot sits
-     * behind it -- so the no-phantom-register property is asserted against
-     * whatever ends the struct today. An implicit trailing pad would make a
-     * register reflex-ui cannot mirror and the contract test would report a
-     * size mismatch it could not name. */
+    /* 2026-09-07, protocolVersion 10: the hot/cold remap MOVED this pair.
+     * bootCommand went from register 232 to 168 -- and 232 under the new
+     * layout is stopTriggerZSpeed, so a stale client does not fail safe. That
+     * is why modbus-flash.py keys its address off the RUNNING protocolVersion
+     * and refuses an unlisted one, and why tools/genregs.py fails generation
+     * if that table disagrees with the schema.
+     *
+     * 488 -> 492 bytes: no content was added (still 140 registers of fields);
+     * the reorder costs two registers of alignment padding the old field order
+     * did not need. Confirmed against the compiler, and a deliberate wrong
+     * value (490) was checked to fail. */
+    check(offsetof(rampsSharedData_t, elsStop.bootCommand) == 336, "bootCommand at byte 336 = register 168");
+    check(offsetof(rampsSharedData_t, elsStop.bootSeq) == 338, "bootSeq at byte 338 = register 169");
+    check(sizeof(rampsSharedData_t) == 492,
+          "rampsSharedData_t is 492 bytes (140 register of fields + 2 of alignment)");
+    check(ELS_PROTOCOL_VERSION == 10, "ELS_PROTOCOL_VERSION is 10");
+    /* The no-phantom-register property, asserted against whatever ends the
+     * struct TODAY. An implicit trailing pad would make a register reflex-ui
+     * cannot mirror, and the contract test would report a size mismatch it
+     * could not name.
+     *
+     * What ends the struct has now changed twice: bootSeq, then
+     * stopTriggerSpindleSpeed, and since the hot/cold remap it is
+     * diagReserved[4] -- the cold group is laid out last. The PROPERTY is the
+     * point and it is unchanged; only the field it is anchored on moves. */
     check(sizeof(rampsSharedData_t) % 4 == 0
-          && offsetof(rampsSharedData_t, elsStop.stopTriggerSpindleSpeed) + 4
+          && offsetof(rampsSharedData_t, elsStop.diagReserved) + sizeof(uint16_t) * 4
              == sizeof(rampsSharedData_t),
-          "stopTriggerSpindleSpeed is the LAST register: no trailing padding, no phantom register");
+          "diagReserved ends the struct: no trailing padding, no phantom register");
 
     /* 5. idle */
     elsBootCommandTick(sh);

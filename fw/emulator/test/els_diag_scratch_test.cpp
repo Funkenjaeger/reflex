@@ -118,8 +118,13 @@ int main(void)
      * this assertion is what forced the renumber rather than letting two
      * distinct layouts quietly share a version number. 4 -> 5 when the
      * thread-phase offset block was appended for the groove-widening offset. */
-    check(data.shared.elsStop.protocolVersion == 9,
-          "protocolVersion is 9 (v8 map + the trigger-instant snapshot stopTriggerSeq/Z/ZSpeed/StepsToGo/SpindleSpeed)");
+    /* 9 -> 10 (2026-09-07): the hot/cold remap. Not an append this time -- the
+     * whole block was reordered into a tick-read group and an on-demand group,
+     * and takeupSeq moved ahead of takeupResult to fix the 2026-08-22 torn-read
+     * order. Every offset changed, which is exactly the case a version pin is
+     * for. */
+    check(data.shared.elsStop.protocolVersion == 10,
+          "protocolVersion is 10 (the hot/cold remap; every offset moved)");
     check(data.shared.elsStop.protocolVersion == ELS_PROTOCOL_VERSION,
           "RampsStart publishes the ELS_PROTOCOL_VERSION macro, not a drifting literal");
 
