@@ -13,7 +13,20 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/shim
     ${CMAKE_SOURCE_DIR}/src
     ${FW_DIR}/Core/Inc
+    ${CMAKE_BINARY_DIR}/generated
 )
+
+# Build identity for the identity window (Core/Inc/els_identity.h), the same
+# generator the ARM builds use, so the emulator answers a real git rev at
+# ELS_ID_BASE. Targets that do not depend on it compile with rev 0 / dirty 1
+# if they happen to build first; only lathe-emulator and the identity test
+# are ordered after it.
+set(REFLEX_BUILD_REV_H ${CMAKE_BINARY_DIR}/generated/reflex_build_rev.h)
+add_custom_target(reflex_build_rev
+    COMMAND ${CMAKE_COMMAND} -DOUT=${REFLEX_BUILD_REV_H} -DSRC=${FW_DIR}
+            -P ${FW_DIR}/cmake/BuildRev.cmake
+    BYPRODUCTS ${REFLEX_BUILD_REV_H}
+    COMMENT "Recording git rev for the identity window")
 
 # Preprocessor defines to match firmware expectations
 add_definitions(
@@ -75,6 +88,7 @@ target_link_libraries(lathe-emulator
     pthread
     m
 )
+add_dependencies(lathe-emulator reflex_build_rev)
 
 # Allow C++ files to include C headers
 set_source_files_properties(${FW_SOURCES} PROPERTIES LANGUAGE C)
@@ -491,3 +505,71 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
 add_test(NAME els_step_pulse_width_test COMMAND els_step_pulse_width_test)
 target_link_libraries(els_step_pulse_width_test m pthread)
 target_link_libraries(els_resync_powered_test m pthread)
+
+# ---------------------------------------------------------------------------
+# The Modbus field bootloader (fw/bootloader). Its core is portable C that
+# touches the chip only through bl_port.h, so these targets run it natively
+# over a mock flash with a power-loss injector (test/bl_mock_port.h). The
+# hardware port (bootloader/src/bl_hw.c), the UART timing and the jump are
+# NOT covered here and are listed as unverified in fw/todo.md.
+# ---------------------------------------------------------------------------
+set(BL_CORE_DIR ${FW_DIR}/bootloader/core)
+set(BL_CORE_SOURCES
+    ${BL_CORE_DIR}/bl_core.c
+    ${BL_CORE_DIR}/bl_image.c
+    ${BL_CORE_DIR}/bl_state.c
+    ${BL_CORE_DIR}/bl_modbus.c
+    ${BL_CORE_DIR}/bl_crc32_sw.c)
+set_source_files_properties(${BL_CORE_SOURCES} PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+
+# The address resolver both stages share (header-only).
+add_executable(modbus_window_test ${CMAKE_SOURCE_DIR}/test/modbus_window_test.cpp)
+add_test(NAME modbus_window_test COMMAND modbus_window_test)
+
+# CRC-32, STM32 CRC-unit variant, against Python-computed vectors.
+add_executable(bl_crc32_test ${CMAKE_SOURCE_DIR}/test/bl_crc32_test.cpp ${BL_CORE_DIR}/bl_crc32_sw.c)
+target_include_directories(bl_crc32_test PRIVATE ${BL_CORE_DIR})
+add_test(NAME bl_crc32_test COMMAND bl_crc32_test)
+
+# Image header validation: one distinct code per mutated field.
+add_executable(bl_image_test ${CMAKE_SOURCE_DIR}/test/bl_image_test.cpp
+    ${BL_CORE_DIR}/bl_image.c ${BL_CORE_DIR}/bl_crc32_sw.c)
+target_include_directories(bl_image_test PRIVATE ${BL_CORE_DIR})
+add_test(NAME bl_image_test COMMAND bl_image_test)
+
+# The copy-state journal in sector 1.
+add_executable(bl_state_test ${CMAKE_SOURCE_DIR}/test/bl_state_test.cpp
+    ${BL_CORE_DIR}/bl_state.c ${BL_CORE_DIR}/bl_crc32_sw.c)
+target_include_directories(bl_state_test PRIVATE ${BL_CORE_DIR})
+add_test(NAME bl_state_test COMMAND bl_state_test)
+
+# Boot decisions, the update over Modbus, strikes and swap-back, and the
+# power-loss sweep over every flash operation of an apply.
+add_executable(bl_core_test ${CMAKE_SOURCE_DIR}/test/bl_core_test.cpp ${BL_CORE_SOURCES})
+target_include_directories(bl_core_test PRIVATE ${BL_CORE_DIR})
+add_test(NAME bl_core_test COMMAND bl_core_test)
+
+# The identity window END TO END: the real lathe-emulator (real Modbus.c,
+# real Ramps.c) on a PTY, read by the real host client
+# (scripts/modbus-flash.py --identity) -- plus the app's exception-2 answer
+# at the bootloader window. Skips (not fails) without pyserial.
+find_program(REFLEX_TEST_PYTHON NAMES python3 python)
+if (REFLEX_TEST_PYTHON)
+    add_test(NAME identity_window_pty_test
+        COMMAND ${REFLEX_TEST_PYTHON} ${CMAKE_SOURCE_DIR}/test/identity_window_pty_test.py
+                $<TARGET_FILE:lathe-emulator> ${FW_DIR}/scripts/modbus-flash.py ${REFLEX_BUILD_REV_H}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(identity_window_pty_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+endif()
+
+# The app's side of the bootloader hand-off: bootCommand/bootSeq consume in
+# the task tick, the refusal under a live job, the register indexes the host
+# client hardcodes, and RampsStart's identity-window registration. Links the
+# real Ramps.c and overrides els_boot.h's weak emulator no-ops with counters.
+add_executable(els_boot_command_test
+    ${CMAKE_SOURCE_DIR}/test/els_boot_command_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_boot_command_test m pthread)
+add_test(NAME els_boot_command_test COMMAND els_boot_command_test)
