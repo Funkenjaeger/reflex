@@ -20,6 +20,8 @@
 #include "Scales.h"
 #include "els_isr_rate.h"
 #include "els_phase.h"
+#include "els_identity.h"
+#include "els_boot.h"
 
 /* Post-takeup settle dwell: after the backlash takeup reaches its commanded
  * target step count, the step/dir servo may still be closing following error /
@@ -227,6 +229,15 @@ static int32_t  emu_step6_prev_change_sign = 0;
 // This variable is the handler for the modbus communication
 modbusHandler_t RampsModbusData;
 
+/* The identity window (els_identity.h): magic, stage = application, window
+ * layout version, the git short rev this binary was built from (from the
+ * generated reflex_build_rev.h; 0 + dirty if that header was absent), and
+ * the protocolVersion of the struct above. Const, so it lives in flash and
+ * a torn read of it is impossible. Registered with the Modbus handler in
+ * RampsStart(). */
+const uint16_t rampsIdentityWindow[ELS_ID_SIZE] =
+    ELS_ID_WINDOW_INIT(ELS_ID_STAGE_APP, ELS_PROTOCOL_VERSION);
+
 uint16_t servoCycles = 0;
 uint16_t servoCyclesCounter = 0;
 
@@ -316,8 +327,16 @@ void RampsStart(rampsHandler_t *rampsData) {
    * 6 (2026-08-23): executionCyclesPeak, the ISR headroom measurement. Added
    * after the machine lost Modbus on 6 of 6 cuts and the counter that should
    * have shown why turned out to be a spot sampler that could not see the
-   * event. */
-  rampsData->shared.elsStop.protocolVersion = 7;
+   * event.
+   *
+   * 7 (2026-08-25): stepPulseMinCycles / stepPulseRuntCount, the STEP pulse
+   * width instrument.
+   *
+   * 8 (2026-09-06): bootCommand / bootSeq, the software path into the field
+   * bootloader. The identity window that ships with the bootloader is NOT
+   * part of this struct and does not bump this number -- see els_identity.h
+   * and the window registration at the end of this function. */
+  rampsData->shared.elsStop.protocolVersion = ELS_PROTOCOL_VERSION;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
    * explicitly zeroed when no probe is compiled in, rather than left to whatever
@@ -333,6 +352,8 @@ void RampsStart(rampsHandler_t *rampsData) {
   rampsData->shared.elsStop.phaseOffsetPending = 0;
   rampsData->shared.elsStop.phaseOffsetSteps   = 0;
   rampsData->shared.elsStop.executionCyclesPeak = 0;
+  rampsData->shared.elsStop.bootCommand = 0;
+  rampsData->shared.elsStop.bootSeq     = 0;
   rampsData->shared.elsStop.calResult    = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupResult = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupSeq    = 0;
@@ -372,6 +393,17 @@ void RampsStart(rampsHandler_t *rampsData) {
   RampsModbusData.u16regs = (uint16_t *) (&rampsData->shared);
   RampsModbusData.u16regsize = sizeof(rampsData->shared) / sizeof(uint16_t);
   RampsModbusData.xTypeHW = USART_HW;
+  /* The identity window, served OUTSIDE rampsSharedData_t at ELS_ID_BASE so
+   * the write-protected bootloader answers the same registers at the same
+   * address no matter how the struct above grows. Read-only. The bootloader
+   * control window at ELS_BL_BASE is deliberately NOT registered: the app
+   * answers exception 2 there, which is the client's "this is the app"
+   * signal alongside idStage. */
+  RampsModbusData.windows[0].base     = ELS_ID_BASE;
+  RampsModbusData.windows[0].size     = ELS_ID_SIZE;
+  RampsModbusData.windows[0].regs     = (uint16_t *)rampsIdentityWindow;
+  RampsModbusData.windows[0].readOnly = 1;
+  RampsModbusData.windowCount = 1;
   ModbusInit(&RampsModbusData);
   ModbusStart(&RampsModbusData);
 
@@ -1602,7 +1634,19 @@ _Noreturn void userLedTask(__attribute__((unused)) void *argument) {
       HAL_GPIO_TogglePin(USR_LED_GPIO_Port, USR_LED_Pin);
     }
 
+    /* The bootloader arms the IWDG (~32 s) before jumping here and it cannot
+     * be stopped, so this 50 ms loop refreshes it. It proves the scheduler is
+     * alive, nothing more; a hung app is reset and counted as a strike by
+     * the boot-attempt counter. No-op in the legacy (no-bootloader) build. */
+    elsBootWatchdogKick();
+
     if (oldInCnt != RampsModbusData.u16InCnt) {
+      /* MODBUS IS LIVE: the first frame the handler counted is the app's
+       * proof of life to the bootloader. Clears the boot-attempt counter
+       * (els_boot.h); without this, three boots strike out and the
+       * bootloader swaps the previous image back. Once per boot is enough,
+       * but the write is cheap and idempotent, so it rides every edge. */
+      elsBootAttemptsClear();
       oldInCnt = RampsModbusData.u16InCnt;
       HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_RESET);
       osDelay(25);
@@ -1717,5 +1761,28 @@ _Noreturn void servoEnableTask(void *argument) {
 
     if (shared->fastData.servoMode != 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_RESET);
     if (shared->fastData.servoMode == 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_SET);
+
+    /* Boot command intake, once per task tick. */
+    elsBootCommandTick(shared);
   }
+}
+
+/* The calCommand hand-off for bootCommand (see Ramps.h). Consumed and cleared
+ * in one pass; an accepted command acks on bootSeq and then resets the
+ * controller, so the ack mostly serves the refusal case: cleared with NO seq
+ * edge while a job is live. A function rather than inline in the task so
+ * the native tests can call it (els_boot_command_test). */
+void elsBootCommandTick(rampsSharedData_t *shared) {
+  uint16_t cmd = shared->elsStop.bootCommand;
+  if (cmd == 0u) return;
+  shared->elsStop.bootCommand = 0u;
+  if (shared->elsStop.enable != 0u) return;       /* job live: refused, no ack */
+  if (cmd == ELS_BOOT_CMD_BOOTLOADER) {
+    shared->elsStop.bootSeq++;
+    elsBootRequestStayAndReset();
+  } else if (cmd == ELS_BOOT_CMD_RESET) {
+    shared->elsStop.bootSeq++;
+    elsBootRequestReset();
+  }
+  /* unknown command: consumed, no ack */
 }

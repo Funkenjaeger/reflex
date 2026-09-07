@@ -10,6 +10,7 @@
 
 
 #include "ModbusConfig.h"
+#include "modbus_window.h"
 #include <inttypes.h>
 #include <stdbool.h>
 #include "FreeRTOS.h"
@@ -186,6 +187,12 @@ typedef struct
     uint16_t u16InCnt, u16OutCnt, u16errCnt; //keep statistics of Modbus traffic
     uint16_t u16timeOut;
     uint16_t u16regsize;
+    /* Auxiliary register WINDOWS served outside u16regs (2026-09-06): the
+     * identity window at ELS_ID_BASE lives here so its address is not a
+     * function of sizeof(rampsSharedData_t). Resolved by modbus_window.h;
+     * a range not wholly inside u16regs or one window is exception 2. */
+    mbWindow_t windows[MB_MAX_WINDOWS];
+    uint8_t windowCount;
     uint8_t dataRX;
     int8_t i8state;
 

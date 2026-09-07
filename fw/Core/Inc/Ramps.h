@@ -415,7 +415,36 @@ typedef struct {
    * writing-0 trade as executionCyclesPeak above. */
   uint32_t stepPulseMinCycles;    // READ-ONLY except for reset: narrowest STEP pulse since host wrote 0. 0 = nothing measured yet
   uint32_t stepPulseRuntCount;    // READ-ONLY except for reset: pulses narrower than ELS_STEP_RUNT_CYCLES since host wrote 0
+
+  /* Bootloader hand-off (2026-09-06, protocolVersion 8). elspi has no way to
+   * power-cycle the controller, so "reboot into the field bootloader and stay
+   * resident" has to be a software path the host can command over the link
+   * it already holds. The calCommand idiom exactly: the host writes the
+   * command, the firmware clears it the instant it consumes it, and bootSeq
+   * is the ack -- with the twist that an ACCEPTED command resets the board
+   * within the same task tick, so the host will normally never see the seq
+   * edge and should watch the identity window (els_identity.h, ELS_ID_BASE)
+   * for idStage flipping to 1 instead. What the seq DOES tell the host is a
+   * refusal: bootCommand cleared, bootSeq unmoved, idStage still 2.
+   *
+   * REFUSED while elsStop.enable != 0. A threading job is live; resetting the
+   * controller under it drops the servo and loses the thread reference.
+   * Consumed in servoEnableTask (~100 ms), never in the ISR: nothing about a
+   * reboot needs 10 us latency, and the ISR has no business in it.
+   *
+   * Appended at the tail per the reserved order above; two uint16s, 4 bytes,
+   * no padding. The identity window is deliberately NOT here -- it sits
+   * outside this struct at a fixed address so the write-protected bootloader
+   * can serve the same registers no matter how this struct grows. */
+  uint16_t bootCommand;           // bidirectional: SW writes ELS_BOOT_CMD_* (els_identity.h); FIRMWARE CLEARS IT on consume. 1 = reboot into the bootloader and stay resident, 2 = plain reboot. Refused (cleared, no ack) while enable != 0
+  uint16_t bootSeq;               // READ-ONLY (firmware-owned): increments once per ACCEPTED boot command, immediately before the reset it triggers
 } elsStop_t;
+
+/* Register-layout version published in elsStop.protocolVersion. Mirrored by
+ * reflex-ui's ELS_PROTOCOL_VERSION (ui/reflex/utils/devices.py); the UI checks
+ * it at connect. Bump it whenever rampsSharedData_t changes shape. The
+ * history of every bump is at the assignment in RampsStart(). */
+#define ELS_PROTOCOL_VERSION 8
 
 /* Runt threshold, CPU cycles. 250 = 2.5 us at 100 MHz -- the top of the
  * minimum-pulse range common step-servo drives specify. Deliberately the
@@ -507,6 +536,8 @@ _Noreturn void updateSpeedTask(void *argument);
  * does not run FreeRTOS tasks. Never call it from the ISR: it is double
  * arithmetic and this core has no FP64 hardware. */
 void elsRefreshSpindlePeriod(rampsSharedData_t *shared);
+/* bootCommand intake (Ramps.c), called from servoEnableTask every ~100 ms. */
+void elsBootCommandTick(rampsSharedData_t *shared);
 
 _Noreturn void userLedTask(__attribute__((unused)) void *argument);
 
