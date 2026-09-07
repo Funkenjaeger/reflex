@@ -482,6 +482,57 @@ firmware logic added later has the same gap.
 
 ---
 
+## Modbus field bootloader (2026-09-06) — BUILT, NOT HARDWARE-VERIFIED
+
+Branch `feat/modbus-bootloader`. Design and register contract:
+`Core/Inc/els_identity.h`, `docs/decisions/els-modbus-register-map.md`
+(Implemented section). Bring-up procedure: `bootloader/README.md`.
+
+### Landed (natively tested only)
+- `bootloader/` — bare-metal sector-0 bootloader, own Modbus slave, staging +
+  copy-to-RUN with BACKUP swap-back, flash journal for power-loss recovery,
+  IWDG + boot-attempt counter. 5.1 KB of the 16 KB sector.
+- App: identity window at 2048 (both stages), `bootCommand`/`bootSeq` tail
+  append (protocolVersion 8), IWDG kick + attempt-counter clear in userLedTask.
+- `-DREFLEX_APP_BASE=0x08020000` build with the image header; default build and
+  `scripts/flash.sh` untouched.
+- `scripts/modbus-flash.py` host client; `scripts/reflex_image.py` image tool.
+- Native: 43 ctest targets green incl. a power-loss sweep over every flash op
+  of an apply; 23/23 mutations killed; identity window end-to-end on the
+  emulator PTY via the real client.
+
+### NOT proven on hardware (every item needs the chip, none has run on it)
+- Flash controller sequence in `bootloader/src/bl_hw.c` (unlock, sector erase
+  PSIZE x32, word program, error flags), and the 1-4 s erase stall under a
+  polled UART.
+- CRC unit vs the software CRC (software one is pinned to Python and the
+  published 0xC704DD7B single-zero-word value).
+- USART1 from 16 MHz HSI (BRR 0x8B), the 1.5 ms DWT frame-gap detector on a
+  real RS-485 bus with the hardware-derived DE.
+- RTC backup register access (PWREN + DBP only, no RTCEN), the VBAT-less
+  power-cycle behaviour the design assumes.
+- IWDG arming, its freeze under SWD halt, and the app's 50 ms refresh keeping
+  up under a real cut.
+- The jump: peripheral deinit, VTOR, MSP, and the app's `SystemInit` VTOR set.
+- Option-byte WRP on sector 0 via openocd `flash protect`, and clearing it.
+- Anti-brick swap-back on the real board (deliberately NOT part of bring-up;
+  see the README for the payload-free way if it is ever wanted).
+
+### Open decision (UI, outside this branch)
+- `elsStop_t` grew 128 -> 130 registers, so the per-tick snapshot needs THREE
+  64-register reads. `ui/tests/fsms/test_els_stop_snapshot.py` fails twice by
+  design, asking for `BaseDevice.MAX_REGISTERS_PER_READ` to be raised
+  deliberately (FC3 allows 125; firmware `MAX_BUFFER` 256 fits 125). Decide and
+  land with the UI half of this feature.
+
+### Follow-ups
+- `flash.sh` records SWD flashes in `~/firmware/flashed.json`; `modbus-flash.py`
+  does not write there yet. Add a record line once the flow has run on elspi.
+- The bootloader ignores broadcast (address 0) frames entirely; fine for the UI
+  master, worth stating if another master ever shares the bus.
+
+---
+
 ## Emulator
 
 ### Model manual carriage movement with the half-nut open (TEST-INFRASTRUCTURE GAP)
