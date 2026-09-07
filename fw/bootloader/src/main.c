@@ -12,10 +12,15 @@
  *      resident loop answering Modbus on the identity window (idStage = 1)
  *      and the control window until a JUMP is accepted.
  *
- * There are no interrupts in this program. Frame boundaries come from
- * polling the UART with a cycle-counter gap; flash operations block, and
- * the reply to the command that started one is sent after it finishes, so
- * the host is never talking into a stalled flash interface.
+ * There are no interrupts in this program. Receive is DMA2 in circular mode
+ * filling a ring in SRAM, which keeps running while this loop is stalled --
+ * inside a blocking send, and through the seconds a flash erase holds up
+ * instruction fetch. Frame boundaries come from polling the USART's LATCHED
+ * IDLE flag, so a frame that completed during a stall is still there
+ * afterwards; the length is the movement of the DMA's remaining count
+ * (src/bl_hw.c, core/bl_rxring.c). Flash operations block, and the reply to
+ * the command that started one is sent after it finishes, so the host is
+ * never talking into a stalled flash interface.
  *
  * Bare-metal, no FreeRTOS, no HAL. Budget: sector 0, 16 KB.
  */

@@ -14,15 +14,12 @@
 #include "stm32f4xx.h"
 #include "bl_port.h"
 #include "bl_hw.h"
+#include "bl_rxring.h"
 #include "els_identity.h"
 
 /* HSI is 16 MHz, APB2 prescaler 1 at reset -> 115200 needs USARTDIV 8.6875:
  * mantissa 8, fraction 11/16 -> 0x8B (115108 baud, -0.08%). */
 #define BL_UART_BRR      0x8Bu
-/* Inter-frame silence that ends a frame: 1.5 ms at 16 MHz. Modbus asks for
- * 3.5 characters (~300 us at 115200); the client waits for our reply before
- * sending again, so a longer gap costs only latency. */
-#define BL_FRAME_GAP_CYC (16000u * 15u / 10u)
 
 /* ---- CRC unit ---------------------------------------------------------- */
 
@@ -178,14 +175,67 @@ void blHwArmWatchdog(void)
 
 /* ---- UART -------------------------------------------------------------- */
 
-static uint8_t  rxBuf[BL_HW_FRAME_MAX];
-static uint32_t rxLen;
-static uint32_t rxLastCyc;
+/*
+ * RECEIVE IS DMA, NOT POLLED BYTES, and that is the whole point of this
+ * section. The receiver this replaced read at most one byte per main-loop
+ * iteration, so every byte that arrived while the loop was somewhere else was
+ * simply gone: inside blHwUartSend's blocking TC wait, and above all during
+ * flash programming, which stalls instruction fetch on this single-bank F411
+ * because this code executes from the same flash it is writing. Measured on
+ * the board 2026-09-07 against that receiver: 31 of 222 chunk frames lost
+ * (14.0%) at 200 bytes of payload, 38 of 220 (17.3%) at 40 bytes. Loss that
+ * does not scale with frame length is a receiver missing TIME, not bytes.
+ *
+ * DMA2 keeps filling SRAM through both stalls; the main loop only has to
+ * notice afterwards that a frame happened. Still no interrupts anywhere in
+ * this program -- the IDLE flag and the DMA remaining-count register are both
+ * polled from the same loop, and the IDLE flag LATCHES, which is why a stall
+ * that outlasts a whole frame still ends with a frame in hand.
+ *
+ * USART1_RX is DMA2, channel 4, on stream 2 or stream 5 (RM0383 "DMA2 request
+ * mapping"). Stream 2 here; nothing else in this program uses DMA at all, so
+ * there is nothing to collide with.
+ *
+ * FIFO OFF -- direct mode, FCR = 0 -- is load-bearing, not tidiness. The frame
+ * length below is a difference of NDTR, and in FIFO mode NDTR counts bytes
+ * pulled out of DR into the FIFO rather than bytes landed in SRAM, so the
+ * length would run ahead of the data.
+ */
+#define BL_RX_DMA_STREAM DMA2_Stream2
+#define BL_RX_DMA_CHSEL  4u
+#define BL_RX_DMA_FLAGS  (DMA_LIFCR_CTCIF2 | DMA_LIFCR_CHTIF2 | DMA_LIFCR_CTEIF2 | \
+                          DMA_LIFCR_CDMEIF2 | DMA_LIFCR_CFEIF2)
+#define BL_RX_DMA_ERRS   (DMA_LISR_TEIF2 | DMA_LISR_DMEIF2 | DMA_LISR_FEIF2)
+
+static volatile uint8_t rxRing[BL_RX_RING_SIZE];
+static uint32_t         rxTail;
+
+/* (Re)arm the stream from index 0. Safe to call at any time: an enabled
+ * stream must be disabled and SEEN disabled before it is reconfigured. */
+static void rxDmaStart(void)
+{
+  BL_RX_DMA_STREAM->CR &= ~DMA_SxCR_EN;
+  while (BL_RX_DMA_STREAM->CR & DMA_SxCR_EN) { }
+  DMA2->LIFCR = BL_RX_DMA_FLAGS;
+
+  BL_RX_DMA_STREAM->PAR  = (uint32_t)&USART1->DR;
+  BL_RX_DMA_STREAM->M0AR = (uint32_t)rxRing;
+  BL_RX_DMA_STREAM->NDTR = BL_RX_RING_SIZE;
+  BL_RX_DMA_STREAM->FCR  = 0u;                  /* direct mode, see above */
+  /* Everything not named is zero and meant to be: DIR = peripheral-to-memory,
+   * PSIZE = MSIZE = byte, PINC off, double-buffer off, no interrupt enables. */
+  BL_RX_DMA_STREAM->CR   = (BL_RX_DMA_CHSEL << DMA_SxCR_CHSEL_Pos)
+                         | DMA_SxCR_PL_1        /* priority high */
+                         | DMA_SxCR_MINC
+                         | DMA_SxCR_CIRC;
+  BL_RX_DMA_STREAM->CR  |= DMA_SxCR_EN;
+  rxTail = 0u;
+}
 
 void blHwInit(void)
 {
-  /* Clocks: GPIOA, CRC, USART1, PWR. */
-  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_CRCEN;
+  /* Clocks: GPIOA, CRC, DMA2, USART1, PWR. */
+  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_CRCEN | RCC_AHB1ENR_DMA2EN;
   RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
   RCC->APB1ENR |= RCC_APB1ENR_PWREN;
   (void)RCC->APB1ENR;
@@ -203,38 +253,61 @@ void blHwInit(void)
   USART1->BRR = BL_UART_BRR;
   USART1->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
 
-  /* Cycle counter for frame-gap timing. */
-  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-  DWT->CYCCNT = 0u;
-  DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;
+  /* Empty DR and disarm any IDLE the line already latched before the DMA
+   * takes over. On this part IDLE is cleared ONLY by a read of SR followed by
+   * a read of DR -- there is no write-1-to-clear -- and a stale IDLE would
+   * make the very first poll report a frame that never arrived. */
+  (void)USART1->SR;
+  (void)USART1->DR;
 
-  rxLen = 0u;
-  rxLastCyc = DWT->CYCCNT;
+  rxDmaStart();
+  USART1->CR3 |= USART_CR3_DMAR;      /* stream armed first, then requests */
 }
 
 uint32_t blHwUartPoll(uint8_t *frame)
 {
   uint32_t sr = USART1->SR;
+
   if (sr & (USART_SR_ORE | USART_SR_FE | USART_SR_NE)) {
-    /* Cleared by SR read followed by DR read. Whatever we were collecting is
-     * now suspect: drop it, the client will time out and retry. */
+    /* ORE MEANS SOMETHING ELSE NOW. With the byte-polled receiver it meant
+     * "software was too slow", which was the normal case and the bug. With
+     * the DMA draining DR within a few cycles of every RXNE, one 115200
+     * stream cannot outrun it, so ORE now means the stream itself stopped --
+     * a transfer error, or an unarmed stream -- and that is worth restarting
+     * rather than just noting. FE/NE still mean a mangled character on the
+     * wire, which the DMA stores as garbage like any other byte.
+     *
+     * All three are cleared by the same SR-then-DR read that clears IDLE; sr
+     * above was the SR half. Either way the run sitting in the ring is
+     * suspect, so drop it and resynchronize -- the client retries. */
     (void)USART1->DR;
-    rxLen = 0u;
-    rxLastCyc = DWT->CYCCNT;
+    if ((DMA2->LISR & BL_RX_DMA_ERRS) != 0u ||
+        (BL_RX_DMA_STREAM->CR & DMA_SxCR_EN) == 0u) {
+      rxDmaStart();                          /* clears the flags, tail to 0 */
+    } else {
+      rxTail = blRxRingHead(BL_RX_DMA_STREAM->NDTR);
+    }
     return 0u;
   }
-  if (sr & USART_SR_RXNE) {
-    uint8_t b = (uint8_t)USART1->DR;
-    if (rxLen < BL_HW_FRAME_MAX) rxBuf[rxLen++] = b;
-    rxLastCyc = DWT->CYCCNT;
-    return 0u;
+
+  if (sr & USART_SR_IDLE) {
+    /* The frame boundary. Clearing IDLE needs SR read then DR read, and the
+     * DR read is the trap once the receiver is on DMA: a software read of DR
+     * steals the byte the DMA controller was about to fetch. So re-read SR
+     * and only clear while RXNE is down. The line has just been idle for a
+     * full character time, so RXNE down means DR is empty and the next start
+     * bit is at least a character away; if RXNE is up, leave IDLE latched and
+     * come back for it -- the flag does not expire.
+     *
+     * NDTR is read after the clear so the length covers everything received
+     * up to this instant, and the length is that count's movement since the
+     * last frame. */
+    if (USART1->SR & USART_SR_RXNE) return 0u;
+    (void)USART1->DR;
+    return blRxRingTake(rxRing, BL_RX_DMA_STREAM->NDTR, &rxTail,
+                        frame, BL_HW_FRAME_MAX);
   }
-  if (rxLen != 0u && (uint32_t)(DWT->CYCCNT - rxLastCyc) > BL_FRAME_GAP_CYC) {
-    uint32_t n = rxLen;
-    for (uint32_t i = 0; i < n; i++) frame[i] = rxBuf[i];
-    rxLen = 0u;
-    return n;
-  }
+
   return 0u;
 }
 
@@ -256,11 +329,23 @@ void blHwJump(uint32_t appBase)
 
   __disable_irq();
 
-  /* UART off and reset; drain nothing -- the last reply was waited to TC. */
+  /* Receive DMA off BEFORE the UART, so no request is left outstanding and
+   * nothing is still writing into rxRing when the app takes the SRAM back.
+   * Then UART off and reset; drain nothing -- the last reply was waited to
+   * TC. DMA2 goes back through its peripheral reset with its clock off,
+   * because the app configures no DMA at all (Core/Src/Ramps.c sets
+   * xTypeHW = USART_HW, so its Modbus receives one byte per USART interrupt)
+   * and would therefore never undo anything left behind here. */
+  USART1->CR3 &= ~USART_CR3_DMAR;
+  DMA2_Stream2->CR &= ~DMA_SxCR_EN;
+  while (DMA2_Stream2->CR & DMA_SxCR_EN) { }
+
   USART1->CR1 = 0u;
   RCC->APB2RSTR |=  RCC_APB2RSTR_USART1RST;
   RCC->APB2RSTR &= ~RCC_APB2RSTR_USART1RST;
   RCC->APB2ENR  &= ~RCC_APB2ENR_USART1EN;
+  RCC->AHB1RSTR |=  RCC_AHB1RSTR_DMA2RST;
+  RCC->AHB1RSTR &= ~RCC_AHB1RSTR_DMA2RST;
 
   /* GPIOA back to its reset image (RM0383 8.4: MODER 0xA8000000,
    * OSPEEDR 0x0C000000, PUPDR 0x64000000, OTYPER/AFR 0). */
@@ -273,11 +358,13 @@ void blHwJump(uint32_t appBase)
 
   CRC->CR = CRC_CR_RESET;
   PWR->CR &= ~PWR_CR_DBP;
-  RCC->AHB1ENR &= ~(RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_CRCEN);
+  RCC->AHB1ENR &= ~(RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_CRCEN | RCC_AHB1ENR_DMA2EN);
   RCC->APB1ENR &= ~RCC_APB1ENR_PWREN;
 
-  DWT->CTRL &= ~DWT_CTRL_CYCCNTENA_Msk;
-  CoreDebug->DEMCR &= ~CoreDebug_DEMCR_TRCENA_Msk;
+  /* Nothing here touches DWT or DEMCR any more: the cycle counter existed
+   * only for the old inter-frame gap timer, which the IDLE flag replaced.
+   * The APP still enables both for its own ISR timing (Core/Src/Ramps.c);
+   * that is its business and it does it after this jump. */
 
   FLASH->CR |= FLASH_CR_LOCK;
 

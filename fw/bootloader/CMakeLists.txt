@@ -73,6 +73,7 @@ add_executable(${PROJECT_NAME}.elf
     core/bl_image.c
     core/bl_state.c
     core/bl_modbus.c
+    core/bl_rxring.c
     ${FW_DIR}/Core/Startup/startup_stm32f411ceux.s
     ${LINKER_SCRIPT})
 add_dependencies(${PROJECT_NAME}.elf reflex_bl_build_rev)

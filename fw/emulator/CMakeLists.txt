@@ -531,6 +531,7 @@ set(BL_CORE_SOURCES
     ${BL_CORE_DIR}/bl_image.c
     ${BL_CORE_DIR}/bl_state.c
     ${BL_CORE_DIR}/bl_modbus.c
+    ${BL_CORE_DIR}/bl_rxring.c
     ${BL_CORE_DIR}/bl_crc32_sw.c)
 set_source_files_properties(${BL_CORE_SOURCES} PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
 
@@ -554,6 +555,15 @@ add_executable(bl_state_test ${CMAKE_SOURCE_DIR}/test/bl_state_test.cpp
     ${BL_CORE_DIR}/bl_state.c ${BL_CORE_DIR}/bl_crc32_sw.c)
 target_include_directories(bl_state_test PRIVATE ${BL_CORE_DIR})
 add_test(NAME bl_state_test COMMAND bl_state_test)
+
+# The DMA receiver's framing arithmetic: a circular ring plus the stream's
+# remaining count turned into Modbus frames, including the resynchronization
+# when a stall concatenates two frames under one IDLE. The DMA controller
+# itself is not testable natively and is not claimed here; see the file head.
+add_executable(bl_rxring_test ${CMAKE_SOURCE_DIR}/test/bl_rxring_test.cpp
+    ${BL_CORE_DIR}/bl_rxring.c)
+target_include_directories(bl_rxring_test PRIVATE ${BL_CORE_DIR})
+add_test(NAME bl_rxring_test COMMAND bl_rxring_test)
 
 # Boot decisions, the update over Modbus, strikes and swap-back, and the
 # power-loss sweep over every flash operation of an apply.

@@ -533,8 +533,16 @@ Branch `feat/modbus-bootloader`. Design and register contract:
   polled UART.
 - CRC unit vs the software CRC (software one is pinned to Python and the
   published 0xC704DD7B single-zero-word value).
-- USART1 from 16 MHz HSI (BRR 0x8B), the 1.5 ms DWT frame-gap detector on a
-  real RS-485 bus with the hardware-derived DE.
+- USART1 from 16 MHz HSI (BRR 0x8B) on a real RS-485 bus with the
+  hardware-derived DE, and the DMA receiver that replaced the byte poll
+  on 2026-09-07: DMA2 stream 2 channel 4 circular into a 1 KB ring,
+  frames closed by the polled USART IDLE flag and measured by the change
+  in NDTR (`bootloader/src/bl_hw.c`, arithmetic in
+  `bootloader/core/bl_rxring.c` which IS covered natively). The 1.5 ms
+  DWT frame-gap detector this replaced is gone, and so is the
+  TRCENA/CYCCNT enable that existed only to feed it. Acceptance: rerun
+  `bl_retry_probe.py 222 200` on elspi, which measured 14.0% frame loss
+  against the polled receiver.
 - RTC backup register access (PWREN + DBP only, no RTCEN), the VBAT-less
   power-cycle behaviour the design assumes.
 - IWDG arming, its freeze under SWD halt, and the app's 50 ms refresh keeping

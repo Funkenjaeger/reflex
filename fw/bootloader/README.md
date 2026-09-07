@@ -15,6 +15,15 @@ The register contract, flash geometry and image format are in
 * Its own Modbus RTU slave on the same UART pins, baud and slave address as
   the app (USART1, PA10 RX / PA15 TX, 115200 8N1, address 17). No DE handling:
   the RS-485 driver enable is derived from TXD in hardware on this board.
+* Receive is DMA2 stream 2 channel 4 in circular mode into a 1 KB ring, with
+  frame boundaries taken from the polled (never interrupting) USART IDLE flag
+  and the frame length from the change in the stream's remaining count. This
+  is not an optimization: the byte-at-a-time poll it replaced lost 14% of
+  incoming frames on the board, because a byte that arrives while the main
+  loop is inside a blocking send -- or inside a flash write, which stalls
+  instruction fetch on this single-bank part -- was simply never read. The
+  DMA fills SRAM through both, and the IDLE flag latches, so a frame that
+  completed during a multi-second erase is still there when the loop returns.
 * Serves the identity window at 2048 (`idStage` = 1) and the control window at
   2304. The app serves the identity window too (`idStage` = 2) and answers
   exception 2 at 2304.
