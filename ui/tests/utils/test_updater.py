@@ -367,6 +367,35 @@ def _session(runner, tmp_path, **kw):
     return s
 
 
+def test_the_fetch_never_uses_the_checkouts_own_remote(tmp_path):
+    """MUTATION EVIDENCE. Restoring ``origin`` in the fetch turns this red.
+
+    Found on the machine 2026-09-07, on the updater's first real run: elspi's
+    origin is `git@github.com-reflex:...`, an SSH alias in the *default* user's
+    ~/.ssh/config, and reflex-ui runs as ROOT -- so `git fetch origin` died with
+    "Could not resolve hostname github.com-reflex" before anything was flashed.
+
+    The deeper reason this is pinned rather than left to review: a user of the
+    lathe is not a developer and will never hold a GitHub SSH key, so an updater
+    that fetches over SSH can only work on a machine somebody provisioned by
+    hand. `origin` is whatever the clone happened to use; the updater must not
+    inherit it.
+    """
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    s = _session(r, tmp_path)
+    s.run(RELEASE)
+
+    fetches = r.ran("git", "fetch")
+    assert fetches, "no git fetch ran at all"
+    for argv in fetches:
+        assert "origin" not in argv, (
+            f"the fetch used the checkout's own remote: {argv}. On elspi that "
+            f"is an SSH alias root cannot resolve, and on a user's machine it "
+            f"needs a key they do not have.")
+        assert any(a.startswith("https://") for a in argv), (
+            f"the fetch must name an explicit HTTPS URL: {argv}")
+
+
 def test_happy_path_flashes_then_installs_in_that_order(tmp_path):
     r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
     s = _session(r, tmp_path)

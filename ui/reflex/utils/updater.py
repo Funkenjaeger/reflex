@@ -76,6 +76,26 @@ log = Logger.getChild(__name__)
 # which is what elspi logged as "[Selected release]" on every boot for weeks.
 GITHUB_RELEASES_URL = "https://api.github.com/repos/Funkenjaeger/reflex/releases"
 
+# FETCH OVER HTTPS, NOT THE CHECKOUT'S OWN `origin`, and this is about who the
+# operator is rather than about tidiness. `origin` is whatever provisioning
+# happened to set: on elspi it is `git@github.com-reflex:...`, an SSH alias
+# defined in the `default` user's ~/.ssh/config against a read-only deploy key.
+# reflex-ui runs as ROOT, which has no such config, so `git fetch origin` dies
+# with "Could not resolve hostname github.com-reflex" -- observed on the machine
+# 2026-09-07, on the updater's first real run.
+#
+# Fixing that by giving root the key would only make it work for a machine
+# somebody provisioned with a deploy key. A user of this lathe is not a
+# developer and will never have a GitHub SSH key at all, so an updater that
+# needs one is not an updater for them (Evan, 2026-09-07). The repo is public
+# and the firmware asset is already downloaded over plain HTTPS, so the git half
+# now matches: anonymous, credential-free, and independent of how the checkout
+# was cloned.
+#
+# If reflex ever goes private this breaks, loudly, and the fix is a token --
+# not a silent fallback to `origin`.
+GITHUB_FETCH_URL = "https://github.com/Funkenjaeger/reflex.git"
+
 RELEASE_LIST_LIMIT = 10
 
 # THE SLOTTED IMAGE, AND ONLY IT. A release publishes two firmware binaries
@@ -538,8 +558,8 @@ class UpdateSession:
                 f"{release.tag} could fail halfway or discard work. Nothing "
                 f"has been changed.\n{dirty[:400]}")
 
-        self.emit("Fetching tags.")
-        self._run(["git", "fetch", "--tags", "--force", "origin"],
+        self.emit(f"Fetching tags from {GITHUB_FETCH_URL}.")
+        self._run(["git", "fetch", "--tags", "--force", GITHUB_FETCH_URL],
                   cwd=self.checkout, timeout=300, what="git fetch")
         self._run(["git", "rev-parse", "--verify", f"{release.tag}^{{commit}}"],
                   cwd=self.checkout, what=f"resolving tag {release.tag}")
