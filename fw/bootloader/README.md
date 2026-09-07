@@ -89,7 +89,7 @@ every step that touches the serial port.
    Note the bootloader size printed by the link (`FLASH: ... 16 KB`).
 2. **Confirm the ROM-less recovery path before writing anything**: the only
    way back is SWD, so `openocd -f interface/stlink.cfg -f target/stm32f4x.cfg
-   -c "init; reset halt; flash info 0; flash protect_check 0; shutdown"` must
+   -c "init; reset halt; flash info 0; flash info 0; shutdown"` must
    work and show every sector unprotected. If sector 0 is already protected
    (a previous attempt), clear it first: step 9b.
 3. **Read what is there now** (UI stopped):
@@ -135,10 +135,10 @@ every step that touches the serial port.
    9b. **Write-protect the bootloader sector** (RDP stays level 0):
        ```
        openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
-         -c "init; reset halt; flash protect 0 0 0 on; flash protect_check 0; shutdown"
+         -c "init; reset halt; flash protect 0 0 0 on; flash info 0; shutdown"
        ```
        then **POWER CYCLE (Evan)** so the option bytes reload, and re-check
-       `flash protect_check 0` shows sector 0 protected. To clear it (needed
+       `flash info 0` shows sector 0 protected. To clear it (needed
        before any SWD reflash of sector 0, including a return to the legacy
        layout via `scripts/flash.sh`): the same command with `off`, and a
        power cycle.
