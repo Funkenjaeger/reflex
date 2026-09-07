@@ -49,7 +49,7 @@ contingency plan the superseded document preserved. Concretely, as executed 2026
   and the GitHub archive flag set on both.
 - CI: a minimal root workflow set (`fw.yml`, `system.yml`, `ui.yml`) runs the emulator, UI-default and
   system suites on every push, path-filtered by subtree. **Lockstep release tooling is not ported
-  yet** — see [Lockstep versioning — the part this record exists to preserve](#lockstep-versioning--the-part-this-record-exists-to-preserve)
+  yet** — see [Lockstep versioning — the part this record exists to preserve](#lockstep-versioning-the-part-this-record-exists-to-preserve)
   below, and the monorepo-transition task's own CI-refinement item.
 
 ## Why this reverses the 2026-08-12 call

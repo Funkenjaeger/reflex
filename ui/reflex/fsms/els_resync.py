@@ -143,16 +143,36 @@ class ThreadResync:
         self._latch_polls = 0
 
     # ── lifecycle ────────────────────────────────────────────────────
-    def begin_alignment(self, force: bool = False) -> bool:
-        """Operator finished the coarse jog; capture the Z baseline and start
-        the watch. False (state REFUSED) if preconditions fail."""
+    def entry_refusal(self) -> str | None:
+        """The four conditions under which this procedure cannot work at all.
+
+        Returns the refusal message, or None if the wizard may run.
+
+        SPLIT OUT OF begin_alignment 2026-08-31 so the refusal can arrive
+        BEFORE the operator touches the machine. All four are true or false
+        the moment the wizard is opened and none of them can change while a
+        modal is up, yet the only thing that consulted them was the Begin
+        button — at the far end of the jog step, which instructs the operator
+        to move the carriage by hand, CLOSE THE HALF NUT and haul the carriage
+        back against the flank. Doing all that and then being told there is no
+        thread pitch is the defect (Evan, bench run 2026-08-30: "it still went
+        to the first prompt and only after hitting the button did it refuse").
+
+        The alternative considered and rejected was greying the settings-menu
+        button, which els_settings_popup.open_thread_resync's own docstring
+        argued against and was right to: a disabled button cannot say WHICH of
+        these four it is. Refusing in the modal keeps the message.
+
+        begin_alignment still calls this, so the check is also live at Begin —
+        one copy of each condition, evaluated twice.
+        """
         if not self._hal.connected:
             # Four words with no next step used to be the whole message here,
             # while its five siblings below — and the phase-offset modal's
             # message for this identical condition — are sentences that say
             # what to do. The refusal CONDITION is unchanged; only what the
             # operator is told about it.
-            return self._refuse(
+            return (
                 "Not connected to the controller. The thread reference is "
                 "latched by the controller, so there is nothing here to latch "
                 "it in — reconnect and start the pick-up again."
@@ -163,7 +183,7 @@ class ThreadResync:
             # Same failure mode as calibration: on firmware predating the
             # latch registers the command write lands nowhere and the ack can
             # never come, which would misreport as a link problem.
-            return self._refuse(
+            return (
                 f"Controller firmware does not support thread re-sync "
                 f"(reports register version {version}, this UI needs "
                 f"{ELS_PROTOCOL_VERSION}). Flash the firmware to match this UI."
@@ -181,17 +201,26 @@ class ThreadResync:
             # condition since it was written. The two features now decline for
             # the same reason in the same words; until 2026-08-30 only one of
             # them declined at all.
-            return self._refuse(
+            return (
                 "No thread pitch is set — turning has no thread phase to pick "
                 "up. Choose a threading mode and a pitch, then engage the ELS "
                 "stop."
             )
 
         if not self._hal.read_enable():
-            return self._refuse(
+            return (
                 "No threading job is armed. Engage the ELS stop first — the "
                 "reference belongs to a job and is cleared when one starts."
             )
+
+        return None
+
+    def begin_alignment(self, force: bool = False) -> bool:
+        """Operator finished the coarse jog; capture the Z baseline and start
+        the watch. False (state REFUSED) if preconditions fail."""
+        refusal = self.entry_refusal()
+        if refusal is not None:
+            return self._refuse(refusal)
 
         if self._hal.read_reference_latched() and not force:
             # ASKED, NOT REFUSED (2026-08-24). The concern is real: a job that
@@ -370,10 +399,17 @@ class ThreadResync:
         if latch_seq == self._baseline_seq:
             self._latch_polls += 1
             if self._latch_polls >= self.LATCH_TIMEOUT_POLLS:
+                # TWO CAUSES NOW, and naming only the first sends the operator
+                # to the wrong control. The firmware consumes latchCommand
+                # without a seq edge when elsStop.enable == 0 (the job ended)
+                # OR when fastData.servoMode == 0 (2026-08-31: the drive is
+                # de-energised, so it has lost custody of the leadscrew and a
+                # reference taken now would be worthless). Both present here as
+                # the same silence.
                 self._refuse(
-                    "The controller never acknowledged the latch. The job may "
-                    "have disengaged — check the ELS stop is still engaged and "
-                    "retry."
+                    "The controller never acknowledged the latch. Either the "
+                    "job disengaged or the servo drive is off — check the ELS "
+                    "stop is still engaged and Sync Enable is on, then retry."
                 )
             return
 

@@ -99,12 +99,41 @@ jobs:
           sed -i -E '0,/^version = ".*"$/s//version = "${{ steps.v.outputs.version }}"/' ui/pyproject.toml
           grep -m1 '^version = ' ui/pyproject.toml
 
+      # THREE firmware binaries ship and they are NOT interchangeable. Until
+      # 2026-09-07 only the first was built, which meant the only firmware a
+      # release published was the one the field updater cannot flash.
+      #
+      #   build/         legacy monolith at 0x08000000, no image header. What
+      #                  scripts/flash.sh writes over SWD, and the only thing
+      #                  that runs on a board with nothing in sector 0. The
+      #                  recovery image.
+      #   build-slot/    the SAME application linked at the bootloader's RUN
+      #                  slot, 0x08020000, with the RFLX header at +0x200
+      #                  patched in post-build by scripts/reflex_image.py. This
+      #                  is the ONLY form fw/scripts/modbus-flash.py -- and so
+      #                  the in-app updater, ui/reflex/utils/updater.py -- will
+      #                  accept; a legacy binary is refused at its preflight.
+      #   bootloader/    sector 0 itself. A virgin board has no bootloader and
+      #                  flash.sh installs none, so without this asset the
+      #                  over-the-wire path cannot be reached at all.
+      #
+      # Separate build directories per configuration, the way DIAG.md keeps
+      # diagnostic builds apart: one directory reconfigured twice would leave
+      # a stale cache deciding what the second build meant.
       - name: Cross-build the release firmware
         working-directory: fw
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j
           test -f build/reflex-fw.bin && test -f build/reflex-fw.elf
+
+          cmake -S . -B build-slot -DCMAKE_BUILD_TYPE=Release -DREFLEX_APP_BASE=0x08020000
+          cmake --build build-slot -j
+          test -f build-slot/reflex-fw.bin && test -f build-slot/reflex-fw.elf
+
+          cmake -S bootloader -B bootloader/build -DCMAKE_BUILD_TYPE=MinSizeRel
+          cmake --build bootloader/build -j
+          test -f bootloader/build/reflex-bl.bin && test -f bootloader/build/reflex-bl.elf
 
       # A diagnostic probe must never ship. It is compile-time selected, so a
       # release build cannot contain one -- but "cannot" is worth checking on
@@ -121,16 +150,41 @@ jobs:
       #
       # The build CONFIGURATION is where the probe is genuinely selected, and it
       # does distinguish: 1 occurrence for a probe build, 0 for a release build,
-      # both measured.
+      # both measured. Re-measured 2026-09-07 on the slotted configuration --
+      # `cmake -S . -B <dir> -DREFLEX_APP_BASE=0x08020000
+      # -DCMAKE_C_FLAGS=-DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3`, the
+      # flags scripts/build.sh --diag passes -- also lands exactly 1.
+      #
+      # IT MUST COVER EVERY SHIPPED CONFIGURATION, and as of 2026-09-07 there
+      # are three. This step used to inspect build/ alone, which was total
+      # coverage when build/ was the only thing published; the same step left
+      # unchanged beside two new build directories would have been the worse
+      # thing than no guard -- a green check reading as "no diagnostic ships"
+      # while the probe with a path to the FIELD, the one in build-slot/ that
+      # the in-app updater flashes, went unexamined.
+      #
+      # And it asserts each cache EXISTS before grepping. `grep -q` over a
+      # missing file exits nonzero exactly like a clean cache does, so a
+      # renamed or unbuilt directory would otherwise turn a loop iteration
+      # into a silent pass -- the same "cannot fail" shape this comment was
+      # written about in the first place.
       - name: Refuse to ship a diagnostic build
         working-directory: fw
         run: |
-          if grep -q 'ELS_DIAG_PROBE' build/CMakeCache.txt; then
-            echo "::error::the shipped firmware was configured with a diagnostic probe."
-            grep 'ELS_DIAG_PROBE' build/CMakeCache.txt
-            exit 1
-          fi
-          echo "build configuration carries no ELS_DIAG_PROBE"
+          fail=0
+          for cache in build/CMakeCache.txt build-slot/CMakeCache.txt bootloader/build/CMakeCache.txt; do
+            if [ ! -f "$cache" ]; then
+              echo "::error::$cache does not exist -- the diagnostic guard cannot see the configuration behind a binary this release ships."
+              fail=1
+            elif grep -q 'ELS_DIAG_PROBE' "$cache"; then
+              echo "::error::$cache: this firmware was configured with a diagnostic probe."
+              grep 'ELS_DIAG_PROBE' "$cache"
+              fail=1
+            else
+              echo "ok: $cache carries no ELS_DIAG_PROBE"
+            fi
+          done
+          [ "$fail" = 0 ] || exit 1
 
       - name: Install uv and sync the UI
         working-directory: ui
@@ -159,15 +213,71 @@ jobs:
         working-directory: ui
         run: uv build
 
+      # THE NAMES ARE THE CONTRACT. Two firmware binaries built from the same
+      # source ship in the same release and only one of them can be flashed
+      # over the wire, so the names have to be un-confusable by a human reading
+      # the release page AND by a glob:
+      #
+      #   reflex-fw-<V>.bin   legacy 0x08000000, SWD/flash.sh. UNCHANGED in
+      #                       name and in meaning -- people and scripts
+      #                       downstream already expect exactly this.
+      #   reflex-app-<V>.bin  the RUN-slot image with the RFLX header. What
+      #                       modbus-flash.py and the in-app updater take.
+      #   reflex-bl-<V>.bin   the bootloader, sector 0.
+      #
+      # `reflex-app-` and not `reflex-fw-slot-`, which was the obvious name and
+      # is the wrong one: `reflex-fw-*.bin` -- the glob the updater used, the
+      # glob docs/setup/installing.md told operators to use, the glob anyone
+      # writes by hand -- matches it. No prefix can select one of these two and
+      # accidentally take the other, because neither is a prefix of the other.
+      # It is also the vocabulary the system already speaks: the identity
+      # window's two stages are `bootloader` and `application`, so bl/app names
+      # the pair the slotted layout actually has and reads correctly next to
+      # reflex-bl-<V>.bin.
+      #
+      # The bootloader ELF ships beside its .bin because fw/bootloader/README.md
+      # step 4 provisions a virgin board with `program reflex-bl.elf`. The
+      # slotted app ELF deliberately does NOT ship: it still holds the zero
+      # length/CRC placeholders that reflex_image.py patches into the .bin, so
+      # it is not a valid image, and the README says never to program it.
       - name: Collect the artifacts
         run: |
           mkdir -p dist
           V=${{ steps.v.outputs.version }}
           cp fw/build/reflex-fw.bin "dist/reflex-fw-$V.bin"
           cp fw/build/reflex-fw.elf "dist/reflex-fw-$V.elf"
+          cp fw/build-slot/reflex-fw.bin "dist/reflex-app-$V.bin"
+          cp fw/bootloader/build/reflex-bl.bin "dist/reflex-bl-$V.bin"
+          cp fw/bootloader/build/reflex-bl.elf "dist/reflex-bl-$V.elf"
           cp ui/dist/* dist/
           (cd dist && sha256sum * > SHA256SUMS)
           ls -la dist
+
+      # Gate on the BYTES THAT SHIP, not on the build log. reflex_image.py runs
+      # as a POST_BUILD command that only the slotted configuration attaches
+      # (fw/CMakeLists.txt, `if (REFLEX_SLOTTED)`). If that wiring ever comes
+      # loose the build still succeeds and still writes a .bin -- an unheadered
+      # one, which fails in the field at a stranger's preflight rather than
+      # here. Reading dist/ rather than fw/build-slot/ also means a swapped
+      # `cp` above is caught, which is the specific mistake this naming exists
+      # to make impossible.
+      #
+      # BOTH directions, because each assertion alone has a whole failure it
+      # structurally cannot see. "reflex-app is a valid image" never opens the
+      # legacy file, so publishing the SLOTTED binary under both names passes
+      # it -- and that one is silent until someone tries to recover a board
+      # over SWD with a 0x08020000 image. "reflex-fw has no header" is true of
+      # essentially any file, including an unheadered reflex-app. Only the pair
+      # pins one of each.
+      - name: Check each firmware asset is the layout its name claims
+        run: |
+          V=${{ steps.v.outputs.version }}
+          python3 fw/scripts/reflex_image.py info "dist/reflex-app-$V.bin"
+          if python3 fw/scripts/reflex_image.py info "dist/reflex-fw-$V.bin" >/dev/null 2>&1; then
+            echo "::error::dist/reflex-fw-$V.bin validates as a slotted image -- the legacy and slotted builds have been crossed."
+            exit 1
+          fi
+          echo "ok: reflex-fw-$V.bin is the legacy layout (no RFLX header), reflex-app-$V.bin is the slotted image"
 
       # ── Publish ───────────────────────────────────────────────────────────
       - name: Stop here (dry run)

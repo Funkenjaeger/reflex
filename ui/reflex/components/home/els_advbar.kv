@@ -323,21 +323,31 @@
 
         Widget: # spacer
 
+        # "Major ø" in wizard, "Safe ø" in stop + retract -- same value, named
+        # for the job it is doing. Visibility and label both come from single
+        # derived properties on the bar (show_start_dia / start_dia_label)
+        # rather than repeating the condition on three lines here.
         TextHeaderButton:
           id: btn_major_dia
-          text_header: "Major ø"
-          text_button: app.formats.position_format.format(root.controller.start_dia)
+          text_header: root.start_dia_label
+          # "--" until committed, like Stop Z and Start Z. 0.000 is a PERFECTLY
+          # REAL diameter depending on how X was referenced, so showing it for
+          # an unset field would claim a value that does not exist -- and this
+          # one gates Retract, so the claim would be that the gate is armed.
+          text_button: app.formats.position_format.format(root.controller.start_dia) if root.controller.start_dia_valid else "--"
           blink_enable: root.controller.active_input == "major_dia"
-          width: self.height if root.enable_wizard else 0
-          opacity: 1 if root.enable_wizard else 0
-          disabled: not ( root.controller.x_z_inputs_enabled and root.enable_wizard )
+          width: self.height if root.show_start_dia else 0
+          opacity: 1 if root.show_start_dia else 0
+          disabled: not ( root.controller.x_z_inputs_enabled and root.show_start_dia )
           on_short_press: root.on_value_button_released("major_dia")
           on_long_press: root.on_value_long_press("major_dia")
 
         TextHeaderButton:
           id: btn_minor_dia
           text_header: "Minor ø"
-          text_button: app.formats.position_format.format(root.controller.stop_dia)
+          # Same reason as Major/Safe ø above: 0.000 is a real diameter, so an
+          # uncommitted field must not display one.
+          text_button: app.formats.position_format.format(root.controller.stop_dia) if root.controller.stop_dia_valid else "--"
           blink_enable: root.controller.active_input == "minor_dia"
           width: self.height if root.enable_wizard else 0
           opacity: 1 if root.enable_wizard else 0

@@ -25,6 +25,7 @@
 
 #define T35  5              // Timer T35 period (in ticks) for end frame detection.
 #define MAX_BUFFER  256	    // Maximum size for the communication buffer in bytes.
+#define MB_MAX_WINDOWS 2    // Auxiliary register windows per handler (modbus_window.h).
 #define TIMEOUT_MODBUS 1000 // Timeout for master query (in ticks)
 #define MAX_M_HANDLERS 2    //Maximum number of modbus handlers that can work concurrently
 #define MAX_TELEGRAMS 2     //Max number of Telegrams in master queue

@@ -190,7 +190,29 @@ def els_stop_device():
 
 
 def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
-    """128 registers at 64 a request: two FULL requests, margin ZERO.
+    """140 registers at 72 a request: two requests (72 + 68), margin 4.
+
+    2026-09-07: the trigger-instant snapshot (protocolVersion 9) appended 10
+    registers -- stopTriggerSeq, an explicit pad, and four int32s -- taking the
+    block from 130 to 140. Re-derived rather than renumbered: two requests of
+    72 cover 144, so the block fits with 4 registers spare; the SECOND request
+    is 140 - 72 = 68; the chunk itself must be at least ceil(140/2) = 70 and at
+    most the 60%-of-125 rule's 75, and 72 still sits inside that band, so the
+    chunk does NOT move. What did move is the headroom: 14 registers of tail
+    growth became 4, and the next append of more than four registers has to
+    raise the chunk (72 -> 75 buys 150, i.e. six more) or accept a third
+    request. Neither is free and neither should happen by accident, which is
+    what the assertions below are for.
+
+    2026-09-06: bootCommand/bootSeq (protocolVersion 8) took the block from
+    128 to 130, past the old 2x64 boundary, exactly as the paragraph below
+    predicted. The chunk was re-derived, not just bumped: two requests need
+    ceil(130/2) = 65 or more; the 60%-of-ceiling rule in
+    test_the_chunk_size_keeps_real_headroom_against_the_firmware caps it at
+    75; 72 sits inside that band with 14 registers of tail growth left before
+    this case fires again. History below kept as written.
+
+    ORIGINAL (2026-08-25): 128 registers at 64 a request: two FULL requests, margin ZERO.
 
     The absolute number matters more than the ratio: this block is read once
     per board tick now, so every request in it is paid 30 times a second.
@@ -206,8 +228,8 @@ def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
     so headroom exists), rather than paying a silent third request.
     """
     device, transport = els_stop_device
-    assert device.size == 128, (
-        f"elsStop is {device.size} registers, not the 128 this case was "
+    assert device.size == 140, (
+        f"elsStop is {device.size} registers, not the 140 this case was "
         f"reasoned about -- re-check the chunk arithmetic, do not just "
         f"update the number")
 
@@ -215,13 +237,17 @@ def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
 
     base = device.base_address
     assert len(transport.requests) == 2
-    assert transport.requests == [(base, 64), (base + 64, 64)]
+    assert transport.requests == [(base, 72), (base + 72, 68)]
 
 
 def test_the_block_still_fits_in_two_requests_with_room_to_spare(els_stop_device):
     """The boundary, asserted rather than left in a comment: a block that
-    quietly grew past 128 would cost a third request on every one of 30 ticks a
-    second, and nothing else in the suite would notice."""
+    quietly grew past 2 x MAX_REGISTERS_PER_READ would cost a third request on
+    every one of 30 ticks a second, and nothing else in the suite would notice.
+
+    The ceiling is 2 x 72 = 144 and the block is 140 as of protocolVersion 9,
+    so there are FOUR registers of slack -- this is a live constraint on the
+    next append, not a formality."""
     device, _ = els_stop_device
     from reflex.utils.base_device import BaseDevice
 
@@ -281,11 +307,21 @@ def test_the_chunk_size_keeps_real_headroom_against_the_firmware():
         f"chunking at {n} registers is {n / ceiling:.0%} of what the firmware "
         f"can serve; the whole point of picking a conservative number was to "
         f"stay far from a cliff that fails silently")
-    # 64 of 125: 61 registers and 123 buffer bytes in hand. It must also still
-    # be worth doing -- below 61 the elsStop block needs three requests instead
-    # of two, which is the entire reason the number went up.
-    assert n >= 61, (
-        f"chunking at {n} registers puts elsStop back above two requests")
+    # 72 of 125: 53 registers and 106 buffer bytes in hand. It must also still
+    # be worth doing -- below ceil(size/2) the elsStop block needs three
+    # requests instead of two, which is the entire reason the number went up.
+    # Derived from the live block size rather than hard-coded: the floor was 61
+    # at 122 registers and 65 at 130, and a stale literal here would stop being
+    # the floor the moment the block grew again. 140 registers makes it 70.
+    from reflex.utils.communication import ConnectionManager
+    size = ConnectionManager(serial_device="/dev/null")['Global']['elsStop'].size
+    floor = -(-size // 2)          # ceil, so two requests still cover the block
+    assert floor == 70, (
+        f"the two-request floor is now {floor}, not the 70 that 140 registers "
+        f"gives -- re-derive the chunk size rather than editing this number")
+    assert n >= floor, (
+        f"chunking at {n} registers puts elsStop ({size} registers) back above "
+        f"two requests")
 
 
 # ─── 2. the board takes the snapshot ──────────────────────────────────────
