@@ -9,6 +9,7 @@ from reflex.fsms.ui_fsm import ElsUiFsm
 from reflex.fsms.els_fsm import ElsFsm
 from reflex.fsms.els_stop_hal import ElsStopHal
 from reflex.fsms.els_diag import ElsDiagRecorder
+from reflex.fsms.els_flight_recorder import FlightRecorder
 from reflex.fsms.els_phase_recorder import (
     PhaseCorrectionRecorder, PhaseLiveTracker, SpindleCountWatch)
 from reflex.fsms.els_mode_watch import ElsModeWatch
@@ -294,6 +295,22 @@ class ElsUiController(EventDispatcher):
         self._phase_recorder = PhaseCorrectionRecorder(board)
         self._phase_tracker = PhaseLiveTracker(board)
         self._spindle_watch = SpindleCountWatch(board)
+        # The whole poll stream, persisted rather than discarded. Unlike the
+        # three recorders above it is not scoped to one open question -- it
+        # exists so the NEXT question does not need a firmware probe and a
+        # bench session before it can be asked. Reads only the per-tick
+        # snapshots, so it adds no Modbus traffic. See els_flight_recorder.py,
+        # including what it deliberately cannot answer.
+        #
+        # `fsm_state` is a LAMBDA because _els_fsm does not exist yet at this
+        # point in __init__ and must not be captured by value; the recorder
+        # treats an unanswerable state as "unknown" rather than as a reason to
+        # stop recording the machine.
+        self._flight_recorder = FlightRecorder(
+            board,
+            fsm_state=lambda: self._els_fsm.state,
+            fsm_states=ElsFsm.STATES,
+        )
 
         # Built FIRST, before any FSM or poller exists, because `notify()` must
         # be safe to call from anywhere below -- including from construction, if
@@ -406,6 +423,11 @@ class ElsUiController(EventDispatcher):
         # Raw spindle counter, change-only, no job required -- the belt-off
         # EMI experiment's instrument. See SpindleCountWatch.
         self._board.bind(update_tick=self._poll_spindle_watch)
+        # The flight recorder. Bound LAST of the recorders deliberately: it
+        # samples what this tick's snapshot holds, and running after the pollers
+        # that may write registers means the row it files is the state the rest
+        # of the app acted on rather than the state it was about to change.
+        self._board.bind(update_tick=self._poll_flight_recorder)
         # Rung-2 mode sampler; equally dormant without the schema-4 probe.
         self._board.bind(update_tick=self._poll_mode_watch)
 
@@ -829,6 +851,22 @@ class ElsUiController(EventDispatcher):
         Never raises -- see SpindleCountWatch.poll().
         """
         self._spindle_watch.poll()
+
+    def _poll_flight_recorder(self, *args):
+        """Persist this tick's poll stream while the machine is doing something.
+
+        Separate from every recorder above it because it is not scoped to a
+        question. Those three each exist to settle one open bug and each stops
+        being worth its bytes when that bug closes; this one exists so that the
+        NEXT question -- the half-nut detector is the first known consumer --
+        can be answered from passes already cut instead of from a firmware probe
+        and another evening at the lathe.
+
+        Its own health is published to flight_status.json on every tick, because
+        a recorder that can silently record nothing is a check that cannot fail.
+        Never raises -- see FlightRecorder.poll().
+        """
+        self._flight_recorder.poll()
 
     # Every 5th update tick ≈ 6 Hz against the firmware's ~10 Hz publication:
     # fast enough that no dwell in a mode is missed, slow enough that the one
@@ -1693,6 +1731,59 @@ class ElsUiController(EventDispatcher):
             # A notice that cannot be drawn must not take the app down on startup.
             log.error(f"could not show interrupted-pass notice: {e}")
 
+    def _abandon_cut_on_sync_off(self):
+        """Sync Enable off mid-cut ends the cut, so disengage.
+
+        THE TRAP THIS CLEARS (Evan, bench, 2026-09-01). Turning sync off
+        mid-cut stopped the carriage correctly, but nothing took the domain FSM
+        out of 'cutting': the only exits were stop_active (the carriage
+        physically reaching the shoulder) and fault. So the machine sat
+        engaged, LED green "Armed", with the Disengage button greyed out by
+        in_cycle -- and the only way to clear it was to open the half nut and
+        push the carriage past the stop point by hand to publish stop_active.
+
+        WHY IT IS 'cutting' SPECIFICALLY, and this is the load-bearing reason
+        (Evan, 2026-09-01): elsStop.active is the HOLD. arm_idle_stop sets
+        active=1 BEFORE enable, so an engaged-idle machine is held and turning
+        sync on cannot move the carriage. on_enter_cutting then does
+        set_active(False) -- that release IS the cut. So mid-cut the hold is
+        OFF, and leaving the FSM there after a sync-off meant the next Sync
+        Enable press resumed motion immediately, with nothing between the press
+        and the carriage moving.
+
+        Disengaging restores the property by the same route the machine already
+        uses: re-engaging runs on_enter_stopped -> arm_idle_stop, which re-arms
+        held. Returning to 'stopped' directly would be wrong for a second
+        reason -- the drive is de-energized by now, so the leadscrew phase
+        reference is gone (firmware clears referenceLatched on servoMode 0,
+        Ramps.c 2026-08-31) and the cut cannot be resumed, only re-established.
+
+        NOT WIDENED TO EVERY SYNC-OFF, because in 'stopped' the hold is already
+        in place -- the property this exists to restore is not missing there, so
+        disengaging would be churn, and would make every reposition cost a
+        re-engage. (The stop POSITION also survives a de-energize either way:
+        it is anchored to the Z saddle scale, not the leadscrew.)
+
+        Both FSMs have to move. `engaged` follows the domain FSM but the
+        Disengage button is greyed by in_cycle, which follows the UI FSM, so
+        disabling one without cancelling the other leaves the button dead.
+        """
+        if self._els_fsm.state != "cutting":
+            return
+        log.info("Sync Enable off during a cut — abandoning the cut and "
+                 "disengaging (drive de-energized, thread reference lost)")
+        if self._ui_fsm.state.startswith("in_cycle"):
+            self._ui_fsm.cancel()
+        if self._els_fsm.may_disable():
+            self._els_fsm.disable()
+        else:
+            # Should be unreachable: 'cutting' is a valid disable source. Say so
+            # loudly rather than leaving the operator in the trap this exists to
+            # clear.
+            log.error("could not disengage after sync-off from "
+                      f"'{self._els_fsm.state}' — ELS may still read as armed")
+        self.notify("Cut abandoned — ELS disengaged", NOTICE_INFO)
+
     def request_feed_enable(self, confirmed: bool = False) -> bool:
         """Operator asked to toggle the sync/power feed (advanced ELS context).
 
@@ -1707,7 +1798,33 @@ class ElsUiController(EventDispatcher):
             # confirm callback is a no-op (the feed the operator wanted is on —
             # don't toggle it off just because it was enabled meanwhile).
             if not confirmed:
+                # CLEAR SYNC FIRST, THEN DROP THE MODE. This ordering is the
+                # whole fix, and it is not new: ElsStopHal.stop_sync's docstring
+                # spells out the race, and on_enter_disabled and on_enter_alarm
+                # both already do it. THIS BUTTON WAS THE THIRD CALL SITE AND
+                # NEVER GOT IT.
+                #
+                # servoEnableTask re-asserts servoMode = 1 every 100 ms while
+                # ANY scale still has syncEnable set and elsStop.active is 0 --
+                # and during a cut active IS 0. So dropping servoMode alone
+                # hands the firmware a window to switch the feed straight back
+                # on, and the only thing that eventually closed it was the
+                # servoMode -> syncEnable binding in dispatchers/els.py, which
+                # fires as a REACTION and therefore writes syncEnable LAST.
+                #
+                # Observed on the bench 2026-08-30: pressing Sync Enable
+                # mid-cut stopped the leadscrew but left sync active and the
+                # advanced bar dead; a second press was needed to make it
+                # stick. That second press worked because the binding had
+                # cleared syncEnable by then.
+                #
+                # SCOPE: the ELS path only. app.on_servo_enable_pressed calls
+                # servo.toggle_enable() directly for the plain power feed in
+                # non-ELS modes, which has no ELS stop and no sync to clear;
+                # that path is deliberately untouched.
+                self.hal.stop_sync()
                 servo.toggle_enable()
+                self._abandon_cut_on_sync_off()
             return True
         if not confirmed and self.feed_without_armed_stop():
             log.info("request_feed_enable: no armed ELS stop — confirmation required")

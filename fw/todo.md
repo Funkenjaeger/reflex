@@ -204,6 +204,32 @@ it.
 - **NOT proven on hardware.** The emulator has no servo dynamics, no Modbus timing
   and no metal. Do not treat 4/4 as a machine result.
 
+### Trigger-instant snapshot (2026-09-07) — BUILT, NOT FLASHED
+- **What:** `elsStop.stopTriggerSeq / stopTriggerZ / stopTriggerZSpeed /
+  stopTriggerStepsToGo / stopTriggerSpindleSpeed`, latched in the ISR at the stop
+  trigger (`Core/Src/Ramps.c`, the `shouldStop` block). protocolVersion **8 → 9**,
+  firmware and `ui/reflex/utils/devices.py` together. `elsStop_t` 130 → 140
+  registers; still two 72-register reads per board tick.
+- **Why:** overshoot = (settled Z) − (Z at the trigger), and the host cannot supply
+  the second term. Measured on elspi 2026-09-07: `elsStop.active` is polled at
+  30 Hz (33 ms) against a ~12 ms coast, so ~60% of the coast is over before the
+  host sees the latch and in 22% of passes all of it is. Substituting
+  `stopPosition` disagreed with the older diagnostic-build numbers by ~50%
+  (16 counts against 10–11 at the same feed).
+- **NOT proven on hardware, and deploying it needs a flash at the lathe** — a
+  separate decision. Emulator coverage is `els_stop_trigger_snapshot_test`
+  (latches once per trigger, never mirrors, re-captures per pass, seq before
+  payload) plus the abort half in `els_takeup_quiescence_window_test` T1.
+- **Deliberately NOT included:** a settled-position latch or any motion-ceased
+  detector. The host measures the settled end reliably; adding an ISR-side
+  detector would be new machine-behaviour code bought for nothing.
+- **Headroom, for whoever appends next:** the block is 140 of the 144 registers
+  two 72-register reads cover. Four registers left. The next append past that
+  either raises `BaseDevice.MAX_REGISTERS_PER_READ` (75 is the cap the 60%-of-125
+  rule allows, buying six more) or pays a third request on every one of 30 ticks
+  a second. `ui/tests/fsms/test_els_stop_snapshot.py` is where that arithmetic
+  lives and it fails rather than letting the cost land silently.
+
 ---
 
 ## ELS backlash: closed-loop calibration + take-up confirmation (2026-08-08)
@@ -479,6 +505,65 @@ firmware logic added later has the same gap.
 - The 1–3 count Z-hold tolerance and the spindle stillness dwell (~0.7 s,
   ±1 count) have never been exercised against real scale jitter — elspi's Z
   is 200 counts/mm, half the emulator's resolution.
+
+---
+
+## Modbus field bootloader (2026-09-06) — BUILT, NOT HARDWARE-VERIFIED
+
+Branch `feat/modbus-bootloader`. Design and register contract:
+`Core/Inc/els_identity.h`, `docs/decisions/els-modbus-register-map.md`
+(Implemented section). Bring-up procedure: `bootloader/README.md`.
+
+### Landed (natively tested only)
+- `bootloader/` — bare-metal sector-0 bootloader, own Modbus slave, staging +
+  copy-to-RUN with BACKUP swap-back, flash journal for power-loss recovery,
+  IWDG + boot-attempt counter. 5.1 KB of the 16 KB sector.
+- App: identity window at 2048 (both stages), `bootCommand`/`bootSeq` tail
+  append (protocolVersion 8), IWDG kick + attempt-counter clear in userLedTask.
+- `-DREFLEX_APP_BASE=0x08020000` build with the image header; default build and
+  `scripts/flash.sh` untouched.
+- `scripts/modbus-flash.py` host client; `scripts/reflex_image.py` image tool.
+- Native: 43 ctest targets green incl. a power-loss sweep over every flash op
+  of an apply; 23/23 mutations killed; identity window end-to-end on the
+  emulator PTY via the real client.
+
+### NOT proven on hardware (every item needs the chip, none has run on it)
+- Flash controller sequence in `bootloader/src/bl_hw.c` (unlock, sector erase
+  PSIZE x32, word program, error flags), and the 1-4 s erase stall under a
+  polled UART.
+- CRC unit vs the software CRC (software one is pinned to Python and the
+  published 0xC704DD7B single-zero-word value).
+- USART1 from 16 MHz HSI (BRR 0x8B) on a real RS-485 bus with the
+  hardware-derived DE, and the DMA receiver that replaced the byte poll
+  on 2026-09-07: DMA2 stream 2 channel 4 circular into a 1 KB ring,
+  frames closed by the polled USART IDLE flag and measured by the change
+  in NDTR (`bootloader/src/bl_hw.c`, arithmetic in
+  `bootloader/core/bl_rxring.c` which IS covered natively). The 1.5 ms
+  DWT frame-gap detector this replaced is gone, and so is the
+  TRCENA/CYCCNT enable that existed only to feed it. Acceptance: rerun
+  `bl_retry_probe.py 222 200` on elspi, which measured 14.0% frame loss
+  against the polled receiver.
+- RTC backup register access (PWREN + DBP only, no RTCEN), the VBAT-less
+  power-cycle behaviour the design assumes.
+- IWDG arming, its freeze under SWD halt, and the app's 50 ms refresh keeping
+  up under a real cut.
+- The jump: peripheral deinit, VTOR, MSP, and the app's `SystemInit` VTOR set.
+- Option-byte WRP on sector 0 via openocd `flash protect`, and clearing it.
+- Anti-brick swap-back on the real board (deliberately NOT part of bring-up;
+  see the README for the payload-free way if it is ever wanted).
+
+### Open decision (UI, outside this branch)
+- `elsStop_t` grew 128 -> 130 registers, so the per-tick snapshot needs THREE
+  64-register reads. `ui/tests/fsms/test_els_stop_snapshot.py` fails twice by
+  design, asking for `BaseDevice.MAX_REGISTERS_PER_READ` to be raised
+  deliberately (FC3 allows 125; firmware `MAX_BUFFER` 256 fits 125). Decide and
+  land with the UI half of this feature.
+
+### Follow-ups
+- `flash.sh` records SWD flashes in `~/firmware/flashed.json`; `modbus-flash.py`
+  does not write there yet. Add a record line once the flow has run on elspi.
+- The bootloader ignores broadcast (address 0) frames entirely; fine for the UI
+  master, worth stating if another master ever shares the bus.
 
 ---
 

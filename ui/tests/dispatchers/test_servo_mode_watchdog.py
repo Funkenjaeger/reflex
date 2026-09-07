@@ -1,4 +1,4 @@
-"""Log-only watchdog: firmware reports the servo running after the UI said stop.
+"""Watchdog: firmware reports the servo running after the UI said stop.
 
 The invariant is narrow and strong: nothing an operator can legitimately do makes
 the firmware disagree with the last servoMode the UI wrote. A persistent
@@ -6,16 +6,36 @@ disagreement is a defect somewhere -- a dropped write, servoEnableTask
 re-asserting on its own, a path that cleared elsStop.enable while sync was live.
 The watchdog does not care which; it reports the disagreement.
 
-LOG-ONLY on purpose, and not out of caution: faulting to alarm calls
-on_enter_alarm -> set_enable(False), which RELEASES the carriage hold. A false
-positive would trigger the very hazard this detects.
+IT NOW ALSO TELLS THE OPERATOR (2026-08-31, Evan's call). It logged and nothing
+else until today, which at a lathe with a touchscreen and no terminal means it
+told nobody. It posts a transient notice to the top status bar as well. The log
+line stays: the log is what makes an episode findable afterwards, the notice is
+what reaches the operator while it is happening.
+
+WHAT IT STILL DOES NOT DO is fault to alarm. A false positive there would stop
+the feed with the tool in the groove and the spindle turning -- and release the
+leadscrew as well.
+
+THE "RELEASES THE CARRIAGE HOLD" CLAIM, CORRECTED 2026-08-31 from the machine.
+This docstring used to attach the phrase to clearing enable. The phrase is
+true; the attribution was not. SYNC ENABLE CONTROLS THE SERVO DRIVE:
+servoEnableTask drives a real enable pin (Ramps.c:1672-1673), and servoMode ==
+0 takes ENA high, disabling the drive and leaving the leadscrew free to turn by
+hand. set_enable(False) never touches ENA -- it clears elsStop.active, which is
+a different hold entirely (it gates sync-step accumulation, so clearing it is
+the "go" for a pass).
+
+on_enter_alarm drops sync and the feed BEFORE clearing enable, so escalating
+really would de-energise the drive mid-pass. The rung stays closed for that
+reason rather than the old one.
 """
 import logging
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from reflex.dispatchers.servo import ServoDispatcher
+from reflex.utils.notices import NOTICE_WARNING
 from tests.dispatchers.conftest import MockBoard, MockFormats
 
 
@@ -148,3 +168,86 @@ def test_clearing_is_reported_too(servo, caplog):
     with caplog.at_level(logging.WARNING):
         _poll(servo, firmware_mode=0, times=1)
     assert any("CLEARED" in r.message for r in caplog.records)
+
+
+# ── the operator channel (2026-08-31) ────────────────────────────────
+#
+# The rung Evan chose. These are separated from the log tests above because
+# they are guarding a different property: not "did the watchdog notice" but
+# "did the noticing reach a human at the machine". The log tests passed for
+# the entire time this watchdog was telling nobody.
+
+def _diverge(servo, times=None):
+    servo.servoMode = 1
+    servo.servoMode = 0
+    _poll(servo, firmware_mode=1, times=N if times is None else times)
+
+
+def test_the_operator_is_told_not_just_the_log(servo):
+    with patch.object(ServoDispatcher, "_notify_operator") as notify:
+        _diverge(servo)
+    notify.assert_called_once_with(ServoDispatcher.DIVERGENCE_NOTICE,
+                                   NOTICE_WARNING)
+
+
+def test_the_notice_says_the_dangerous_thing(servo):
+    """The status bar is a one-liner at arm's length from a running lathe. It
+    has to carry the hazard, not a register name."""
+    text = ServoDispatcher.DIVERGENCE_NOTICE
+    assert "carriage" in text.lower()
+    assert "servoMode" not in text, "register names mean nothing at the machine"
+    assert len(text) < 90, "too long to read off the status bar"
+
+
+def test_the_notice_is_once_per_episode_like_the_log(servo):
+    """A notice surface that re-posts every poll is a permanent banner wearing
+    a timer, which is exactly what notices.MAX_SECONDS exists to prevent."""
+    with patch.object(ServoDispatcher, "_notify_operator") as notify:
+        _diverge(servo, times=N * 4)
+    assert notify.call_count == 1
+
+
+def test_no_notice_below_the_threshold(servo):
+    """Same transient-write tolerance as the log. An operator trained to
+    dismiss amber lines is worse off than one who never saw them."""
+    with patch.object(ServoDispatcher, "_notify_operator") as notify:
+        _diverge(servo, times=N - 1)
+    notify.assert_not_called()
+
+
+def test_no_notice_when_they_agree(servo):
+    """The negative control. A channel that fires unconditionally would pass
+    every assertion above."""
+    with patch.object(ServoDispatcher, "_notify_operator") as notify:
+        servo.servoMode = 1
+        servo.servoMode = 0
+        _poll(servo, firmware_mode=0, times=N * 2)
+    notify.assert_not_called()
+
+
+def test_the_log_still_fires_when_there_is_no_one_to_notify(servo, caplog):
+    """Previews, tests and early startup have no controller. The log is the
+    fallback channel and must not become conditional on the new one."""
+    with caplog.at_level(logging.WARNING):
+        _diverge(servo)          # real _notify_operator, no running app
+    assert any("DIVERGENCE" in r.message for r in caplog.records)
+
+
+def test_a_broken_notice_channel_cannot_take_the_watchdog_down(servo, caplog):
+    """At the lathe, a watchdog that raises is worse than one that cannot
+    speak. The exception is swallowed and named, never propagated."""
+    boom = MagicMock(side_effect=RuntimeError("status bar exploded"))
+    with patch.object(ServoDispatcher, "_notify_operator", boom):
+        with pytest.raises(RuntimeError):
+            boom("x", "y")       # the stub really does raise...
+    with caplog.at_level(logging.WARNING):
+        with patch("reflex.app.MainApp.get_running_app",
+                   side_effect=RuntimeError("no app")):
+            _diverge(servo)      # ...and the real guard still survives it
+    assert any("DIVERGENCE" in r.message for r in caplog.records)
+
+
+def test_notify_operator_reports_whether_anyone_saw_it(servo):
+    """False means swallowed, and a test can tell the difference. Without a
+    return value, 'the notice was posted' is unfalsifiable."""
+    assert servo._notify_operator("x", NOTICE_WARNING) is False

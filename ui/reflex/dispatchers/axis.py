@@ -41,6 +41,26 @@ class AxisDispatcher(SavingDispatcher):
 
     axis_name = StringProperty(UNPROVISIONED_NAME)
     axis_index = NumericProperty(0)
+
+    #: Does this axis's readout show DIAMETER rather than the distance it
+    #: physically travels? Only ever true for a lathe cross slide.
+    #:
+    #: STORED HERE, EDITED FROM ELS SETUP. It lives on the axis because an axis
+    #: can be a SUM of two inputs -- a per-input flag would give a summed cross
+    #: slide two flags and no defined answer -- and because an input is a
+    #: sensor, counts to millimetres, with no opinion about what the distance
+    #: MEANS. "This distance is a radius" is an interpretation.
+    #:
+    #: It is NOT offered on the axis screen. Radius/diameter is a property of
+    #: the CROSS-SLIDE ROLE, not of axes in general, and offering it on Z or
+    #: the spindle would be a trap. Editing lives under "Cross Slide Axis (X)"
+    #: in ELS setup; the axis screen shows it read-only when set, so an axis
+    #: that used to be X can never carry a hidden doubling.
+    #:
+    #: THE DOUBLING IS THE OUTERMOST OPERATION, symmetrically, on every path
+    #: below. Offsets stay in radius units, so zeroing and tool offsets are
+    #: unaffected and the encoder round trip stays exact.
+    diameter_mode = BooleanProperty(False)
     syncRatioNum = NumericProperty(360)
     syncRatioDen = NumericProperty(100)
     spindleMode = BooleanProperty(False)
@@ -188,7 +208,10 @@ class AxisDispatcher(SavingDispatcher):
                 else:
                     self.scaledPosition = 0
             else:
-                self.scaledPosition = raw * float(self.formats.factor)
+                # dia_factor last, so it is the OUTERMOST operation and the
+                # offsets folded into `raw` above stay in radius units.
+                self.scaledPosition = (raw * float(self.formats.factor)
+                                       * self.dia_factor)
 
             # Derive speed from primary input
             primary_idx = self._transform.primary_input
@@ -234,21 +257,35 @@ class AxisDispatcher(SavingDispatcher):
             else:
                 return float(sps * 60 * (1 / inp.stepsPerMM) * (1 / 1000) * (120 / 254))
             
+    @property
+    def dia_factor(self) -> float:
+        """2.0 when this axis reads diameter, else 1.0.
+
+        NEVER applies in spindle mode: that axis reads degrees, where a
+        diameter is meaningless. Guarded here rather than at each call site so
+        there is one place the exemption can be got wrong.
+        """
+        return 2.0 if (self.diameter_mode and not self.spindleMode) else 1.0
+
     def position_to_encoder(self, position: float) -> int:
         """Convert a display position (mm/in) to the raw encoder count
         the firmware would see at that indicated position.
 
         Derivation from _update_position:
-            scaledPosition = (raw + abs_offset + offsets) * factor
+            scaledPosition = (raw + abs_offset + offsets) * factor * D
             raw = encoder_counts * ratioNum / ratioDen
-            → encoder_counts = (position/factor - abs_offset - offsets) * ratioDen/ratioNum
+            → encoder_counts = (position/factor/D - abs_offset - offsets) * ratioDen/ratioNum
+
+        D is dia_factor. UNDONE FIRST, before the offsets come off, because it
+        is the outermost operation in _update_position -- that symmetry is what
+        keeps offsets in radius units and the round trip exact.
         """
         if self.spindleMode:
             log.warning("Cannot convert position to encoder value for spindle axis")
             return 0
         inp = self.inputs[self._transform.primary_input]
         factor = float(self.formats.factor)
-        p = position / factor  # display units → mm (same unit as abs_offset / offsets)
+        p = position / factor / self.dia_factor  # display → mm of travel
         current_offset = self.offset_provider.currentOffset
         p -= self.abs_offset
         p -= self.offsets[current_offset]
@@ -273,7 +310,7 @@ class AxisDispatcher(SavingDispatcher):
         p = encoder_counts * inp.ratioNum / inp.ratioDen
         p += self.abs_offset
         p += self.offsets[current_offset]
-        return p * factor
+        return p * factor * self.dia_factor
 
     # ── Sync ratio ───────────────────────────────────────────────────
 
@@ -362,6 +399,13 @@ class AxisDispatcher(SavingDispatcher):
         Offsets are stored in ratio-units (pre-factor). The value parameter
         is in display-units (post-factor), so we divide by factor first.
 
+        AND BY dia_factor, for the same reason position_to_encoder does. On a
+        diameter axis the operator typing 20.000 means "call this diameter 20",
+        not "call this radius 20" (Evan, 2026-09-01) -- so the typed number is
+        halved before it becomes an offset, and offsets stay in radius units
+        like every other consumer of them. Zeroing is unaffected either way,
+        since 0/2 is 0.
+
         In ABS mode, modifies abs_offset (calibration) so that the change
         applies uniformly across all tool offsets. In INC mode, modifies
         the current tool offset relative to the calibrated position.
@@ -372,6 +416,7 @@ class AxisDispatcher(SavingDispatcher):
         else:
             factor = self.formats.factor
             target_ratio_units = value / float(factor) if factor else value
+            target_ratio_units /= self.dia_factor
 
         raw = self._raw_axis_value()
         abs_mode = getattr(self.offset_provider, 'abs_mode', False)

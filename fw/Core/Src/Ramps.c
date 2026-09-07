@@ -20,6 +20,8 @@
 #include "Scales.h"
 #include "els_isr_rate.h"
 #include "els_phase.h"
+#include "els_identity.h"
+#include "els_boot.h"
 
 /* Post-takeup settle dwell: after the backlash takeup reaches its commanded
  * target step count, the step/dir servo may still be closing following error /
@@ -227,6 +229,15 @@ static int32_t  emu_step6_prev_change_sign = 0;
 // This variable is the handler for the modbus communication
 modbusHandler_t RampsModbusData;
 
+/* The identity window (els_identity.h): magic, stage = application, window
+ * layout version, the git short rev this binary was built from (from the
+ * generated reflex_build_rev.h; 0 + dirty if that header was absent), and
+ * the protocolVersion of the struct above. Const, so it lives in flash and
+ * a torn read of it is impossible. Registered with the Modbus handler in
+ * RampsStart(). */
+const uint16_t rampsIdentityWindow[ELS_ID_SIZE] =
+    ELS_ID_WINDOW_INIT(ELS_ID_STAGE_APP, ELS_PROTOCOL_VERSION);
+
 uint16_t servoCycles = 0;
 uint16_t servoCyclesCounter = 0;
 
@@ -316,8 +327,22 @@ void RampsStart(rampsHandler_t *rampsData) {
    * 6 (2026-08-23): executionCyclesPeak, the ISR headroom measurement. Added
    * after the machine lost Modbus on 6 of 6 cuts and the counter that should
    * have shown why turned out to be a spot sampler that could not see the
-   * event. */
-  rampsData->shared.elsStop.protocolVersion = 7;
+   * event.
+   *
+   * 7 (2026-08-25): stepPulseMinCycles / stepPulseRuntCount, the STEP pulse
+   * width instrument.
+   *
+   * 8 (2026-09-06): bootCommand / bootSeq, the software path into the field
+   * bootloader. The identity window that ships with the bootloader is NOT
+   * part of this struct and does not bump this number -- see els_identity.h
+   * and the window registration at the end of this function.
+   *
+   * 9 (2026-09-07): the trigger-instant snapshot (stopTriggerSeq / Z / ZSpeed /
+   * StepsToGo / SpindleSpeed), latched in the ISR at the stop trigger. The host
+   * polls at 30 Hz and the coast it is trying to measure lasts ~12 ms, so the
+   * trigger position was never obtainable from outside the ISR -- see the block
+   * comment on it in Ramps.h. */
+  rampsData->shared.elsStop.protocolVersion = ELS_PROTOCOL_VERSION;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
    * explicitly zeroed when no probe is compiled in, rather than left to whatever
@@ -333,6 +358,8 @@ void RampsStart(rampsHandler_t *rampsData) {
   rampsData->shared.elsStop.phaseOffsetPending = 0;
   rampsData->shared.elsStop.phaseOffsetSteps   = 0;
   rampsData->shared.elsStop.executionCyclesPeak = 0;
+  rampsData->shared.elsStop.bootCommand = 0;
+  rampsData->shared.elsStop.bootSeq     = 0;
   rampsData->shared.elsStop.calResult    = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupResult = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupSeq    = 0;
@@ -372,6 +399,17 @@ void RampsStart(rampsHandler_t *rampsData) {
   RampsModbusData.u16regs = (uint16_t *) (&rampsData->shared);
   RampsModbusData.u16regsize = sizeof(rampsData->shared) / sizeof(uint16_t);
   RampsModbusData.xTypeHW = USART_HW;
+  /* The identity window, served OUTSIDE rampsSharedData_t at ELS_ID_BASE so
+   * the write-protected bootloader answers the same registers at the same
+   * address no matter how the struct above grows. Read-only. The bootloader
+   * control window at ELS_BL_BASE is deliberately NOT registered: the app
+   * answers exception 2 there, which is the client's "this is the app"
+   * signal alongside idStage. */
+  RampsModbusData.windows[0].base     = ELS_ID_BASE;
+  RampsModbusData.windows[0].size     = ELS_ID_SIZE;
+  RampsModbusData.windows[0].regs     = (uint16_t *)rampsIdentityWindow;
+  RampsModbusData.windows[0].readOnly = 1;
+  RampsModbusData.windowCount = 1;
   ModbusInit(&RampsModbusData);
   ModbusStart(&RampsModbusData);
 
@@ -833,6 +871,40 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
 
   data->elsStopPreviousEnable = shared->elsStop.enable;
 
+  /* CUSTODY OF THE LEADSCREW. Evan, 2026-08-31: "the instant the drive is
+   * de-energized we've lost custody of the leadscrew position, period. That's
+   * when the ref is invalidated."
+   *
+   * That is the whole rule, and it needs no list of mechanisms to justify it.
+   * This firmware has no leadscrew feedback — it knows only the steps it
+   * commanded — so its model of leadscrew position is valid exactly as long as
+   * the drive is holding it. servoMode == 0 takes ENA high in servoEnableTask
+   * and de-energises the drive; from that instant the position is unknown, and
+   * a thread phase datum measured against it is worthless. Sub-pitch error is
+   * enough to matter, so "probably did not move" is not a defence.
+   *
+   * STATED AS A LEVEL, NOT AN EDGE, deliberately. Custody is a STATE, so the
+   * invariant is "no custody, no reference" — it cannot be defeated by a
+   * missed transition, where the edge form can. No legitimate latch happens
+   * with the drive off, so nothing wants the weaker form (see the servoMode
+   * gate on the manual latch below, which refuses that case out loud).
+   *
+   * The guard on referenceLatched keeps this a pure read in the common case:
+   * the ISR runs at 50 kHz and this must not become a store every tick.
+   *
+   * phaseOffsetSteps dies with it, following the enable-rising-edge precedent
+   * above — an offset is meaningless without the datum it offsets.
+   *
+   * Why this fires at DISABLE rather than at the next re-enable, also Evan:
+   * "it's a better cue for the operator to see the status indicate that
+   * there's no ref as soon as sync is disabled, rather than continuing to
+   * report a ref as latched (which technically it was, but it was unusable
+   * since it'd be cleared the moment they try to use it)." */
+  if (shared->fastData.servoMode == 0u && shared->elsStop.referenceLatched) {
+    shared->elsStop.referenceLatched = 0;
+    shared->elsStop.phaseOffsetSteps = 0;
+  }
+
   /* Manual reference latch (interactive re-sync to an existing thread). Same
    * command/ack split as calCommand: consumed and cleared in one ISR pass so a
    * host-side two-register write can never be seen half-applied, and the pair is
@@ -841,10 +913,22 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
    * 0->1 edge, so a latch while disabled is consumed WITHOUT the latchSeq ack
    * and the host reads the missing edge as the refusal. Setting referenceLatched
    * is also what suppresses the first-trigger auto-latch for the rest of the
-   * job: the trigger block only captures while referenceLatched == 0. */
+   * job: the trigger block only captures while referenceLatched == 0.
+   *
+   * THE servoMode GATE (2026-08-31) rides the same refusal channel. A latch
+   * taken with the drive de-energised would be cleared by the block above
+   * before anything could use it, so accepting it would ack a reference that
+   * does not exist. Refusing it here means the host sees no latchSeq edge and
+   * reports the refusal, instead of the reference silently evaporating.
+   *
+   * This does NOT interfere with picking up an existing thread: that procedure
+   * seats the carriage against a HELD leadscrew (the half nut is closed and
+   * pulled back until it seats on the flank the leadscrew pushes from), which
+   * requires the drive energised. Moving the carriage by hand happens with the
+   * half nut OPEN, where the drive is irrelevant. */
   if (shared->elsStop.latchCommand != 0u) {
     shared->elsStop.latchCommand = 0u;
-    if (shared->elsStop.enable != 0u) {
+    if (shared->elsStop.enable != 0u && shared->fastData.servoMode != 0u) {
       shared->elsStop.latchedZ         = shared->scales[shared->elsStop.scaleIndex].position;
       shared->elsStop.latchedSpindle   = shared->scales[0].position;
       shared->elsStop.referenceLatched = 1;
@@ -1114,6 +1198,12 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
             }
             data->elsStopTakeupLatched    = 1;
             shared->elsStop.takeupPending = 0;   /* stop holding the machine */
+            /* NOT a stop trigger, and so deliberately NOT a trigger-instant
+             * snapshot (stopTriggerSeq et al, Ramps.h). Nothing coasted here:
+             * this abort fires on a carriage that FAILED to move, and the two
+             * lines below force stepsToGo and currentSpeed to zero. Bumping
+             * the seq would hand the overshoot table a sample whose overshoot
+             * is not overshoot, indistinguishable from a real pass. */
             shared->elsStop.active        = 1;   /* back to stopped-at-shoulder */
             shared->servo.stepsToGo       = 0;
             shared->servo.currentSpeed    = 0;
@@ -1176,6 +1266,30 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
         if (shouldStop) {
           shared->elsStop.active = 1;
           data->elsStopHysteresisCleared = 0;
+          /* TRIGGER-INSTANT SNAPSHOT (2026-09-07, protocolVersion 9). The only
+           * place in the system that knows this instant; see the block comment
+           * in Ramps.h for why the host cannot reconstruct it at 30 Hz.
+           *
+           * SEQ FIRST, and it is not stylistic: it sits at a lower Modbus
+           * address than the payload, so incrementing it before the writes and
+           * having the host edge-detect it makes a torn FC3 frame read as
+           * (stale seq, new payload) -- re-read, no harm -- instead of an ack
+           * vouching for a stale capture.
+           *
+           * refPos rather than a fresh read of scales[scaleIndex].position:
+           * this must be the EXACT value shouldStop was decided on. A re-read
+           * cannot differ today (nothing between them writes it), and pinning
+           * it to the decision value means it still cannot if something ever
+           * does.
+           *
+           * Unconditional, unlike the referenceLatched block below: that one
+           * captures a per-JOB datum and must not be overwritten, this is a
+           * per-PASS measurement and every pass is a sample. */
+          shared->elsStop.stopTriggerSeq++;
+          shared->elsStop.stopTriggerZ            = refPos;
+          shared->elsStop.stopTriggerZSpeed       = shared->scales[shared->elsStop.scaleIndex].speed;
+          shared->elsStop.stopTriggerStepsToGo    = shared->servo.stepsToGo;
+          shared->elsStop.stopTriggerSpindleSpeed = shared->scales[0].speed;
           if (!shared->elsStop.referenceLatched) {
             shared->elsStop.latchedZ         = shared->scales[shared->elsStop.scaleIndex].position;
             shared->elsStop.latchedSpindle   = shared->scales[0].position;
@@ -1556,7 +1670,19 @@ _Noreturn void userLedTask(__attribute__((unused)) void *argument) {
       HAL_GPIO_TogglePin(USR_LED_GPIO_Port, USR_LED_Pin);
     }
 
+    /* The bootloader arms the IWDG (~32 s) before jumping here and it cannot
+     * be stopped, so this 50 ms loop refreshes it. It proves the scheduler is
+     * alive, nothing more; a hung app is reset and counted as a strike by
+     * the boot-attempt counter. No-op in the legacy (no-bootloader) build. */
+    elsBootWatchdogKick();
+
     if (oldInCnt != RampsModbusData.u16InCnt) {
+      /* MODBUS IS LIVE: the first frame the handler counted is the app's
+       * proof of life to the bootloader. Clears the boot-attempt counter
+       * (els_boot.h); without this, three boots strike out and the
+       * bootloader swaps the previous image back. Once per boot is enough,
+       * but the write is cheap and idempotent, so it rides every edge. */
+      elsBootAttemptsClear();
       oldInCnt = RampsModbusData.u16InCnt;
       HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_RESET);
       osDelay(25);
@@ -1671,5 +1797,28 @@ _Noreturn void servoEnableTask(void *argument) {
 
     if (shared->fastData.servoMode != 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_RESET);
     if (shared->fastData.servoMode == 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_SET);
+
+    /* Boot command intake, once per task tick. */
+    elsBootCommandTick(shared);
   }
+}
+
+/* The calCommand hand-off for bootCommand (see Ramps.h). Consumed and cleared
+ * in one pass; an accepted command acks on bootSeq and then resets the
+ * controller, so the ack mostly serves the refusal case: cleared with NO seq
+ * edge while a job is live. A function rather than inline in the task so
+ * the native tests can call it (els_boot_command_test). */
+void elsBootCommandTick(rampsSharedData_t *shared) {
+  uint16_t cmd = shared->elsStop.bootCommand;
+  if (cmd == 0u) return;
+  shared->elsStop.bootCommand = 0u;
+  if (shared->elsStop.enable != 0u) return;       /* job live: refused, no ack */
+  if (cmd == ELS_BOOT_CMD_BOOTLOADER) {
+    shared->elsStop.bootSeq++;
+    elsBootRequestStayAndReset();
+  } else if (cmd == ELS_BOOT_CMD_RESET) {
+    shared->elsStop.bootSeq++;
+    elsBootRequestReset();
+  }
+  /* unknown command: consumed, no ack */
 }

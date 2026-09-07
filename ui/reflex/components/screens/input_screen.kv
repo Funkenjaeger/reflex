@@ -1,13 +1,17 @@
 #: import NumberItem reflex.components.widgets.number_item
 #: import DualNumberItem reflex.components.widgets.dual_number_item
 #: import BooleanItem reflex.components.widgets.boolean_item
+#: import DropDownItem reflex.components.widgets.dropdown_item
 
 <InputScreen>:
   BoxLayout:
     orientation: "vertical"
     padding: 10
+    # Header names the axis this input feeds, so the operator does not have to
+    # go to the Axes screen to find out what they are editing. Read-only; see
+    # reflex/utils/input_axis_map.py.
     ScreenHeader:
-      text: "Scale Input {}".format(root.input.inputIndex)
+      text: "Scale Input {}{}".format(root.input.inputIndex, "  →  " + root.axis_label if root.axis_label else "")
 
     ScrollView:
       do_scroll_x: False
@@ -30,24 +34,51 @@
           value: root.input.reverse
           on_value: root.input.reverse = self.value
 
+        # HOW THE SCALE IS ENTERED. "Resolution" is the number printed on the
+        # scale itself (1um, 5um); "Ratio" is the stored mm-per-count pair and
+        # is how a real drive ratio is named by whoever specified it. Both
+        # write the same two registers -- see utils/scale_resolution.py.
+        DropDownItem:
+          name: "Scale entry"
+          help_file: "scales.md"
+          options: root.entry_modes
+          value: root.entry_mode
+          on_value: root.entry_mode = self.value
+          opacity: 0 if root.input.spindleMode else 1
+          height: 0 if root.input.spindleMode else 60
+          disabled: root.input.spindleMode
+
         NumberItem:
-          name: "Ratio Numerator"
+          name: "Resolution (um/count)"
+          value: root.get_resolution(root.input.ratioNum, root.input.ratioDen)
+          # Fixed decimals: a bare "2" reads as a count of something, "2.000"
+          # reads as a measurement. Three covers every real scale down to the
+          # sub-micron heads (0.1 um).
+          decimals: 3
+          help_file: "scales.md"
+          on_value: root.set_resolution(self.value)
+          opacity: 0 if (root.input.spindleMode or root.entry_mode != "Resolution") else 1
+          height: 0 if (root.input.spindleMode or root.entry_mode != "Resolution") else 60
+          disabled: root.input.spindleMode or root.entry_mode != "Resolution"
+
+        NumberItem:
+          name: "Ratio numerator (mm)"
           value: root.input.ratioNum
           integer: True
           help_file: "scales.md"
           on_value: root.input.ratioNum = int(self.value)
-          opacity: 0 if root.input.spindleMode else 1
-          height: 0 if root.input.spindleMode else 60
-          disabled: root.input.spindleMode
+          opacity: 0 if (root.input.spindleMode or root.entry_mode != "Ratio") else 1
+          height: 0 if (root.input.spindleMode or root.entry_mode != "Ratio") else 60
+          disabled: root.input.spindleMode or root.entry_mode != "Ratio"
         NumberItem:
-          name: "Ratio Denominator"
+          name: "Ratio denominator (counts)"
           value: root.input.ratioDen
           integer: True
           help_file: "scales.md"
           on_value: root.input.ratioDen = int(self.value)
-          opacity: 0 if root.input.spindleMode else 1
-          height: 0 if root.input.spindleMode else 60
-          disabled: root.input.spindleMode
+          opacity: 0 if (root.input.spindleMode or root.entry_mode != "Ratio") else 1
+          height: 0 if (root.input.spindleMode or root.entry_mode != "Ratio") else 60
+          disabled: root.input.spindleMode or root.entry_mode != "Ratio"
 
         NumberItem:
           name: "Encoder PPR"
