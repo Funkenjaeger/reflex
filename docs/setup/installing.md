@@ -335,9 +335,19 @@ That is the UI half only. If the release also moved the firmware, flash it too
 sudo systemctl stop reflex-ui.service
 cd ~/projects/reflex/fw
 python3 scripts/modbus-flash.py --identity --port /dev/serial0     # what is on there now
-python3 scripts/modbus-flash.py <the release's reflex-fw-*.bin> --port /dev/serial0
+python3 scripts/modbus-flash.py <the release's reflex-app-*.bin> --port /dev/serial0
 sudo systemctl start reflex-ui.service
 ```
+
+!!! warning "`reflex-app-*.bin`, not `reflex-fw-*.bin`"
+    A release publishes both, built from the same source and not
+    interchangeable. **`reflex-app-<version>.bin`** is linked at the
+    bootloader's RUN slot, `0x08020000`, and carries the image header a Modbus
+    flash checks — it is the only one `modbus-flash.py` will accept.
+    **`reflex-fw-<version>.bin`** is the legacy image at `0x08000000` for the
+    ST-Link procedure in step 6, and `modbus-flash.py` refuses it before
+    erasing anything. `reflex-bl-<version>.bin` / `.elf` is the bootloader
+    itself, for commissioning a virgin board.
 
 The ST-Link procedure in step 6 is still the answer for a virgin board, for
 option bytes, and for recovering a controller that will not answer over Modbus

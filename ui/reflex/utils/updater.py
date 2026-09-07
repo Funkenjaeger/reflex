@@ -78,8 +78,25 @@ GITHUB_RELEASES_URL = "https://api.github.com/repos/Funkenjaeger/reflex/releases
 
 RELEASE_LIST_LIMIT = 10
 
-# release.yml names the firmware asset "reflex-fw-<version>.bin".
-FIRMWARE_ASSET_RE = re.compile(r"^reflex-fw-.+\.bin$")
+# THE SLOTTED IMAGE, AND ONLY IT. A release publishes two firmware binaries
+# built from the same source, and exactly one of them can be delivered over the
+# wire:
+#
+#   reflex-app-<version>.bin  linked at the bootloader's RUN slot 0x08020000
+#                             with the RFLX header at +0x200. modbus-flash.py
+#                             takes this and nothing else.
+#   reflex-fw-<version>.bin   the legacy 0x08000000 monolith for SWD recovery
+#                             (fw/scripts/flash.sh). No header; the bootloader
+#                             refuses it, and preflight below refuses it first.
+#
+# This pattern matched `reflex-fw-` until 2026-09-07, when release.yml began
+# publishing both -- which is also why nothing before then is installable from
+# the machine at all: those releases carry only the legacy image. Picking the
+# wrong one is not dangerous (preflight's reflex_image.py check stops it before
+# the erase) but it is the whole class of mistake the two prefixes exist to
+# prevent, so the pattern is anchored and shares no prefix with the legacy name
+# rather than being a `reflex-fw-` glob narrowed by a suffix.
+FIRMWARE_ASSET_RE = re.compile(r"^reflex-app-.+\.bin$")
 
 SERVICE_NAME = "reflex-ui.service"
 
@@ -122,10 +139,11 @@ def select_releases(payload, *, allow_prerelease: bool,
     offered and could not be installed:
 
     * drafts are not published and have no downloadable assets;
-    * a release with no ``reflex-fw-*.bin`` asset cannot supply the firmware
+    * a release with no ``reflex-app-*.bin`` asset cannot supply the firmware
       half, so under the fw+ui model it is not an update at all. This is a
-      real exclusion, not a defensive one: every pre-2026-09 release predates
-      the slotted image format;
+      real exclusion, not a defensive one: every release before 2026-09-07
+      predates the slotted image format and published only the legacy
+      ``reflex-fw-*.bin``, which the bootloader cannot flash;
     * pre-releases unless ``allow_prerelease``.
 
     ``allow_prerelease`` is what the screen's "experimental versions" toggle

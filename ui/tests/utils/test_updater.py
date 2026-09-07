@@ -40,10 +40,23 @@ IMAGE_REV = "abc1234"
 # release list
 # ---------------------------------------------------------------------------
 
-def _payload_item(tag, *, prerelease=False, draft=False, fw=True):
+def _payload_item(tag, *, prerelease=False, draft=False, app=True, legacy=True):
+    """One GitHub release. Since 2026-09-07 a real one carries BOTH firmware
+    binaries -- the slotted ``reflex-app-*.bin`` the bootloader flashes and the
+    legacy ``reflex-fw-*.bin`` for SWD recovery -- so the fixture does too. A
+    payload carrying only the installable asset could not catch the selector
+    reaching for the wrong one, because there would be no wrong one present.
+
+    The slotted asset is listed FIRST, which is the unhelpful order: a selector
+    that just takes the first ``.bin`` it sees would pass. ``legacy`` first
+    would let that bug through.
+    """
+    v = tag.lstrip("v")
     assets = []
-    if fw:
-        v = tag.lstrip("v")
+    if app:
+        assets.append({"name": f"reflex-app-{v}.bin",
+                       "browser_download_url": f"https://example/{tag}/app.bin"})
+    if legacy:
         assets.append({"name": f"reflex-fw-{v}.bin",
                        "browser_download_url": f"https://example/{tag}/fw.bin"})
     assets.append({"name": f"reflex-{tag}-py3-none-any.whl",
@@ -56,7 +69,9 @@ PAYLOAD = [
     _payload_item("v1.2.0-rc.1", prerelease=True),
     _payload_item("v1.1.0"),
     _payload_item("v1.0.9", draft=True),
-    _payload_item("v1.0.0", fw=False),      # pre-slotted-image era
+    # Pre-slotted-image era: a legacy SWD binary and nothing the bootloader
+    # would take. Every release before 2026-09-07 looks exactly like this.
+    _payload_item("v1.0.0", app=False),
 ]
 
 
@@ -70,7 +85,7 @@ def test_experimental_adds_prereleases_newest_first():
     assert [r.tag for r in got] == ["v1.2.0-rc.1", "v1.1.0"]
 
 
-def test_a_release_with_no_firmware_asset_is_not_offered():
+def test_a_release_with_no_slotted_asset_is_not_offered():
     """v1.0.0 predates the slotted image format and cannot supply the fw half.
 
     Offering it would put a release in the dropdown whose install can only
@@ -78,6 +93,41 @@ def test_a_release_with_no_firmware_asset_is_not_offered():
     """
     assert "v1.0.0" not in [r.tag for r in
                             select_releases(PAYLOAD, allow_prerelease=True)]
+
+
+def test_the_selected_asset_is_the_slotted_image():
+    """The one the bootloader can flash: RUN slot 0x08020000, RFLX header."""
+    for r in select_releases(PAYLOAD, allow_prerelease=True):
+        assert r.firmware_name == f"reflex-app-{r.version}.bin"
+
+
+def test_the_legacy_swd_image_is_never_selected():
+    """SEEN RED against the pre-2026-09-07 selector, which matched
+    ``^reflex-fw-.+\\.bin$``. Two independent failures, and both are the same
+    mistake:
+
+    * v1.1.0 publishes both binaries, and the legacy one is the one that
+      selector took -- handing modbus-flash.py a 0x08000000 monolith with no
+      image header. Preflight refuses it, so the machine is safe, but the
+      operator is told a current release "is not a slotted application image"
+      and has no way to act on that;
+    * v1.0.0 publishes ONLY the legacy binary, so that selector offered it as
+      installable when nothing in it can be installed.
+
+    Neither is caught by asserting on tags alone -- v1.1.0 is a correct tag
+    with the wrong asset behind it -- which is why this asserts the NAME.
+    """
+    picked = select_releases(PAYLOAD, allow_prerelease=True)
+    assert [r.tag for r in picked] == ["v1.2.0-rc.1", "v1.1.0"]
+    for r in picked:
+        assert not r.firmware_name.startswith("reflex-fw-"), (
+            f"{r.tag}: selected the legacy SWD image {r.firmware_name}")
+        assert "/fw.bin" not in r.firmware_url, (
+            f"{r.tag}: url points at the legacy asset")
+
+    # A release that publishes only the legacy binary is not an update.
+    legacy_only = [_payload_item("v0.9.0", app=False)]
+    assert select_releases(legacy_only, allow_prerelease=True) == []
 
 
 def test_drafts_are_not_offered():
@@ -295,7 +345,7 @@ class FakeRunner:
 
 RELEASE = Release(tag="v1.2.0", prerelease=False,
                   firmware_url="https://example/fw.bin",
-                  firmware_name="reflex-fw-1.2.0.bin")
+                  firmware_name="reflex-app-1.2.0.bin")
 
 
 def _session(runner, tmp_path, **kw):
@@ -322,7 +372,7 @@ def test_happy_path_flashes_then_installs_in_that_order(tmp_path):
     s = _session(r, tmp_path)
     s.run(RELEASE)
 
-    flash_at = r.calls.index(r.ran("modbus-flash.py", "reflex-fw-1.2.0.bin")[0])
+    flash_at = r.calls.index(r.ran("modbus-flash.py", "reflex-app-1.2.0.bin")[0])
     checkout_at = r.calls.index(r.ran("git", "checkout")[0])
     assert flash_at < checkout_at, "the recoverable half goes first"
     assert r.ran("uv", "sync")
@@ -358,7 +408,7 @@ def test_a_protocol_mismatch_refuses_and_installs_nothing(tmp_path):
     with pytest.raises(ProtocolMismatch):
         s.run(RELEASE)
 
-    assert r.ran("modbus-flash.py", "reflex-fw-1.2.0.bin"), "it did flash"
+    assert r.ran("modbus-flash.py", "reflex-app-1.2.0.bin"), "it did flash"
     assert r.touched_the_ui_half == [], "and then installed nothing"
     assert s.restarts == []
 
@@ -408,11 +458,17 @@ def test_preflight_refuses_a_dirty_checkout_without_flashing(tmp_path):
 
 
 def test_preflight_refuses_a_non_slotted_firmware_asset(tmp_path):
-    """TODAY'S RELEASES LAND HERE, and that is the check working. release.yml
-    publishes fw/build/reflex-fw-<V>.bin from the default cmake configuration
-    -- the legacy 0x08000000 layout with no RFLX image header -- so v1.1.0's
-    asset is not something the bootloader would accept. Refusing at preflight
-    means the operator is told before the erase, not after.
+    """Every release up to 2026-09-07 landed here, because release.yml built
+    only the default cmake configuration -- the legacy 0x08000000 layout, no
+    RFLX header -- and published it as the sole firmware asset. release.yml now
+    builds and publishes reflex-app-<V>.bin from build-slot/ as well, and the
+    selector takes that one, so the normal path no longer reaches this refusal.
+
+    It stays because the NAME is not the evidence. reflex_image.py reading the
+    bytes is: a truncated download, a re-uploaded asset, a release assembled by
+    hand, or a future workflow whose post-build header patch silently stopped
+    running all produce a correctly-named file the bootloader would reject.
+    Refusing at preflight means the operator is told before the erase.
     """
     r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, image_valid=False)
     s = _session(r, tmp_path)
@@ -444,12 +500,12 @@ def test_refuses_a_machine_that_is_already_mismatched(tmp_path):
     with pytest.raises(UpdateRefused) as e:
         s.run(RELEASE)
     assert "ALREADY mismatched" in str(e.value)
-    assert r.ran("modbus-flash.py", "reflex-fw-1.2.0.bin") == []
+    assert r.ran("modbus-flash.py", "reflex-app-1.2.0.bin") == []
 
 
 def test_a_failed_flash_does_not_install_the_ui_half(tmp_path):
     r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
-                   fail={"reflex-fw-1.2.0.bin"})
+                   fail={"reflex-app-1.2.0.bin"})
     s = _session(r, tmp_path)
     with pytest.raises(UpdateRefused):
         s.run(RELEASE)

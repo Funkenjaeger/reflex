@@ -25,7 +25,7 @@ from reflex.utils.updater import Release
 def _release(tag, prerelease=False):
     return Release(tag=tag, prerelease=prerelease,
                    firmware_url=f"https://example/{tag}/fw.bin",
-                   firmware_name=f"reflex-fw-{tag.lstrip('v')}.bin")
+                   firmware_name=f"reflex-app-{tag.lstrip('v')}.bin")
 
 
 def _not_the_running_version(screen):
