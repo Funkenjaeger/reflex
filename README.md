@@ -10,7 +10,7 @@ can give you with what to do about it.
 
 | Path | What it is |
 |---|---|
-| [`fw/`](fw/) | STM32F411 firmware — 100 kHz motion ISR, FreeRTOS, Modbus RTU slave. Includes a native Linux emulator that compiles the real firmware sources against simulated lathe physics. |
+| [`fw/`](fw/) | STM32F411 firmware — 50 kHz motion ISR, FreeRTOS, Modbus RTU slave. Includes a native Linux emulator that compiles the real firmware sources against simulated lathe physics. |
 | [`ui/`](ui/) | Kivy DRO/ELS touchscreen app, Modbus master — Raspberry Pi at the machine, or desktop (Windows/macOS/Linux) for development. |
 
 ---
@@ -173,13 +173,17 @@ Reflex is a deliberate **hard fork** of
 diverged to focus on lathe use cases (the originals target CNC-style rotary
 tables). There is no upstream tracking; divergence is the point.
 
+**[What Reflex changes, in full →](https://funkenjaeger.github.io/reflex/vs-upstream/)**
+— the stop, thread phase as a re-derivable quantity, verify-don't-trust, the
+ISR rate that was inherited and then derived, and what is *not* claimed.
+
 The two halves lived as separate repositories (`reflex-fw`, `reflex-ui`) until
 2026-08-17, when they were welded into this monorepo with **full history
 preserved on both sides** — every historical commit is here, path-rewritten
 under `fw/` and `ui/`, so `git log -S` / `--follow` work scoped to either
 subtree across the whole lineage. Old-repo tags carry `fw-` / `ui-` prefixes.
 The old repositories remain frozen as archives. Rationale:
-`ui/docs/decisions/repo-structure-monorepo.md`.
+[`docs/decisions/repo-structure-monorepo.md`](docs/decisions/repo-structure-monorepo.md).
 
 ---
 

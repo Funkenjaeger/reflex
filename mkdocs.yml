@@ -70,6 +70,7 @@ plugins:
 
 nav:
   - Home: index.md
+  - What Reflex changes: vs-upstream.md
   - Getting started:
       - The screen: guide/the-screen.md
       - The three stop modes: guide/operator-modes.md

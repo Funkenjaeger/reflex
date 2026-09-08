@@ -3,7 +3,7 @@
 The **real-time half** of [Reflex](../README.md): STM32F411 firmware providing
 encoder capture, step generation, and all motion control the UI must never be
 trusted with — spindle-synchronized feed, the electronic stop, retract, jog
-profiles, and thread-phase re-sync all execute here, in a 100 kHz ISR with
+profiles, and thread-phase re-sync all execute here, in a 50 kHz ISR with
 FreeRTOS tasks alongside. The UI talks to it as a Modbus RTU master over
 RS-485; the register contract is defined in `Core/Inc/Ramps.h` and mirrored by
 `../ui/reflex/utils/devices.py`, guarded by `protocolVersion`.
