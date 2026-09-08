@@ -183,7 +183,7 @@ preserved on both sides** — every historical commit is here, path-rewritten
 under `fw/` and `ui/`, so `git log -S` / `--follow` work scoped to either
 subtree across the whole lineage. Old-repo tags carry `fw-` / `ui-` prefixes.
 The old repositories remain frozen as archives. Rationale:
-[`docs/decisions/repo-structure-monorepo.md`](docs/decisions/repo-structure-monorepo.md).
+[`decisions/repo-structure-monorepo.md`](decisions/repo-structure-monorepo.md).
 
 ---
 

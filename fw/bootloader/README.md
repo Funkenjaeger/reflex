@@ -4,7 +4,7 @@ Flash the application over the RS-485 Modbus link the UI already holds, so the
 ST-Link is needed only for virgin boards, option bytes, and disaster recovery.
 The register contract, flash geometry and image format are in
 `../Core/Inc/els_identity.h` and recorded in
-`../../docs/decisions/els-modbus-register-map.md` (Implemented section).
+`../../decisions/els-modbus-register-map.md` (Implemented section).
 
 **Status: hardware-verified on the machine 2026-09-07** (merge `8184c3a`). The
 bootloader boots, validates and jumps; the identity window reads from both

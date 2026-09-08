@@ -14,7 +14,7 @@ timeouts (a sector erase stalls the board for 1-4 s), and can send the one
     modbus-flash.py --enter-bootloader         reboot into the bootloader and stay
     modbus-flash.py --boot-app                 tell a resident bootloader to jump
 
-THE SEQUENCE (docs/decisions/els-modbus-register-map.md, Implemented):
+THE SEQUENCE (decisions/els-modbus-register-map.md, Implemented):
   1. read the identity window at 2048 FIRST, ALWAYS; refuse on any idMagic
      mismatch -- nothing else is known to be safe to read;
   2. if idStage == 2 (application): write bootCommand = 1 and wait for

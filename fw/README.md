@@ -117,7 +117,7 @@ boards, option bytes and recovery. Build the app for its slot with
 `--identity` reads back which stage and which git rev is running. The default
 build and `scripts/flash.sh` above are unchanged. Design, register map, and the
 bring-up procedure: `bootloader/README.md` and
-`../docs/decisions/els-modbus-register-map.md`.
+`../decisions/els-modbus-register-map.md`.
 
 ---
 
