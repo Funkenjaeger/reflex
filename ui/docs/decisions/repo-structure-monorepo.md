@@ -1,5 +1,12 @@
 # Decision doc: reflex-ui + reflex-fw repo structure (monorepo?)
 
+> **SUPERSEDED 2026-08-17 — the monorepo was adopted.** The "STAY SPLIT" status
+> below is historical and is not the current ruling. The current record is
+> [`docs/decisions/repo-structure-monorepo.md`](https://github.com/Funkenjaeger/reflex/blob/main/docs/decisions/repo-structure-monorepo.md).
+> The analysis below is retained deliberately as the reasoning trail — the
+> cost/benefit case, the three questions asked and answered, the options table,
+> and the lockstep-versioning design the monorepo still runs on.
+
 **Status:** **DECIDED 2026-08-12 — STAY SPLIT.** reflex-ui and reflex-fw remain two separate
 repositories. Not a monorepo, not a submodule. See [The decision](#the-decision-2026-08-12).
 **Date:** 2026-07-09 (analysis) / 2026-08-12 (decision)
