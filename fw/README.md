@@ -39,11 +39,27 @@ the `plugdev` group access, so flashing needs no `sudo`.
 
 ### Build and flash
 
+A **new board** gets provisioned once, over SWD:
+
 ```bash
-./scripts/flash.sh
+./scripts/provision.sh
 ```
 
-That builds, flashes over SWD, and records what it did.
+That builds both stages, programs the field bootloader into sector 0 and the
+slotted application into the RUN slot, erases the journal and the spare slots,
+and records what it did.
+
+After that the ST-Link stays in the drawer — application updates go over the
+RS-485 link the UI already holds:
+
+```bash
+python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
+```
+
+`./scripts/flash.sh` is the **legacy** path: it writes the application at
+`0x08000000` with no bootloader, which is what every board built before
+2026-09-07 has. It refuses to run against a board carrying the bootloader
+(`--force-legacy` overrides, and destroys it).
 
 > **Power-cycle the controller after flashing.** A reset alone does not reliably
 > start the new firmware on this board. openocd's `Verified OK` confirms the

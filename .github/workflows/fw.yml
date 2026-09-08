@@ -74,6 +74,16 @@ jobs:
         working-directory: fw
         run: bash scripts/lib/diag-test.sh
 
+      # The guard that stops flash.sh overwriting the field bootloader. It
+      # decides from a FILE -- a 16 KB dump of sector 0 -- precisely so it can
+      # be tested here, against fabricated dumps, instead of only against a
+      # board on a lathe that has to lose its bootloader for the assurance.
+      # The checks against the real built binaries inside it self-skip when
+      # the trees are absent, which they are in this job.
+      - name: Sector-0 bootloader guard
+        working-directory: fw
+        run: bash scripts/lib/sector0-test.sh
+
   arm-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -194,11 +194,33 @@ cannot be a different revision from what is in front of you.
 
 ```bash
 sudo apt install gcc-arm-none-eabi cmake build-essential openocd
-cd ~/projects/reflex/fw && ./scripts/flash.sh
+cd ~/projects/reflex/fw && ./scripts/provision.sh
 ```
 
 `openocd`'s packaging installs udev rules granting the `plugdev` group access,
 so the flash itself needs no `sudo`.
+
+**This is the only time you need the ST-Link.** `provision.sh` puts *two*
+things on the board: the field bootloader in sector 0, and the application in
+the RUN slot behind it. Once the bootloader is there, every later firmware
+update goes over the RS-485 link the UI already uses — no programmer, no
+power cycle, nothing to unplug at the machine:
+
+```bash
+python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
+```
+
+The layout, the anti-brick behavior and the optional step that write-protects
+the bootloader once the board is confirmed working are all in
+`fw/bootloader/README.md`.
+
+!!! warning "`flash.sh` is not this step"
+    The repo also has `scripts/flash.sh`. It writes the **legacy** layout —
+    the application at `0x08000000`, with no bootloader at all — and it exists
+    only for boards that are still on that layout. Run against a board
+    provisioned as above it would overwrite the bootloader, so it now reads
+    sector 0 first and refuses. Use `provision.sh` for a new board and
+    `modbus-flash.py` thereafter.
 
 !!! danger "Power-cycle the controller afterwards"
     A reset alone does not reliably start the new firmware on this board.
@@ -207,16 +229,27 @@ so the flash itself needs no `sudo`.
     success while the board keeps running the old firmware, with no error
     anywhere.
 
-Confirm it took by watching the UI log as it connects:
+Confirm the board came up *through the bootloader*, with the UI stopped:
+
+```bash
+cd ~/projects/reflex/fw
+python3 scripts/modbus-flash.py --identity --port /dev/ttyUSB0
+```
+
+You want `stage=application` and the revision you just built. `stage=bootloader`
+means the bootloader is alive but did not accept the image in RUN — the same
+output carries `blStatus` and `blRunValid`, which say why.
+
+Then start the UI and watch its log as it connects:
 
 ```bash
 journalctl -u reflex-ui.service -b --no-pager | grep -i "protocol version"
 ```
 
-You want `Firmware register protocol version 7 (expected 7)`. A mismatch names
-itself — the UI says whether the firmware or the UI is the older half — and it
-blocks calibration rather than letting you commission against a register map it
-does not understand.
+The two numbers in `Firmware register protocol version N (expected N)` must
+match. A mismatch names itself — the UI says whether the firmware or the UI is
+the older half — and it blocks calibration rather than letting you commission
+against a register map it does not understand.
 
 ---
 
@@ -275,7 +308,19 @@ cd ui && ~/.local/bin/uv sync   # only if dependencies changed
 sudo systemctl restart reflex-ui.service
 ```
 
-If the release also changed the firmware, reflash and power-cycle as in step 6.
-The protocol version check is what tells you whether you needed to — it is
-worth reading the log after every update rather than only when something looks
-wrong.
+If the release also changed the firmware, push it over the wire — the ST-Link
+was a step 6 thing only:
+
+```bash
+sudo systemctl stop reflex-ui.service        # it holds the serial port
+cd ~/projects/reflex/fw
+cmake -S . -B build-slot -DCMAKE_BUILD_TYPE=Release -DREFLEX_APP_BASE=0x08020000
+cmake --build build-slot
+python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
+sudo systemctl start reflex-ui.service
+```
+
+No programmer and no power cycle: the bootloader stages the image, verifies it,
+keeps the previous one as a backup and jumps. The protocol version check is what
+tells you whether you needed to update at all — it is worth reading the log after
+every update rather than only when something looks wrong.

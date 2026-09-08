@@ -61,6 +61,27 @@ and for any `modbus-flash.py` run, and `reflex-fw-<V>.bin` is the legacy
 `0x08000000` image that `scripts/flash.sh` writes — which is a different
 layout, not a different build of the same thing.
 
+> **`reflex-fw-<V>.bin` is deprecated, and it has an end condition.**
+>
+> It exists for one population: boards still running the legacy no-bootloader
+> layout, which is every board built before 2026-09-07 and any board a
+> `--force-legacy` run has taken back there. It is not what a new board gets —
+> `scripts/provision.sh` programs `reflex-bl` + `reflex-app` — and nothing
+> built from it can be updated over the wire.
+>
+> **It ships until no board on the legacy layout remains, and then it stops.**
+> That is the whole condition; there is no other reason to keep building it.
+> Retiring it is four edits in `release.yml` — the legacy `cmake -S . -B build`
+> in "Cross-build the release firmware", the two `cp fw/build/reflex-fw.*`
+> lines in "Collect the artifacts", and the legacy half of "Check each firmware
+> asset is the layout its name claims" — plus retiring `scripts/flash.sh`, since
+> the asset and the script are the same layout wearing two hats.
+>
+> **Known legacy boards as of 2026-09-08: elspi.** It ran this bootloader on
+> 2026-09-07 (the hardware verification above) and is back on the legacy layout
+> today, which is exactly the loss the sector-0 guard in `scripts/flash.sh` now
+> exists to prevent. Keep this list current; when it empties, the asset goes.
+
 `build-slot/reflex-fw.bin` is the image: `scripts/reflex_image.py` patches its
 length and CRC32 in post-build and re-validates it. The ELF still carries zero
 placeholders -- program the `.bin` (or the `.hex` made from it), never the ELF,

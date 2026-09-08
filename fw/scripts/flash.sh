@@ -1,11 +1,38 @@
 #!/usr/bin/env bash
-# Build and flash the firmware, in one command.
+# ############################################################################
+# #  THIS IS THE LEGACY / RECOVERY TOOL. IT IS NOT HOW YOU SET UP A BOARD.   #
+# ############################################################################
+#
+# It writes the LEGACY layout: the application linked at 0x08000000, no image
+# header, no bootloader anywhere. That was the only layout there was until
+# 2026-09-07. It is not the layout a board should be built with now.
+#
+#   NEW BOARD, or a board that should have the field bootloader:
+#       ./scripts/provision.sh          bootloader + slotted app, both slots
+#
+#   EXISTING BOARD that already has the bootloader, new application:
+#       python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port ...
+#       -- over the RS-485 link, no programmer, no power cycle
+#
+# This script remains for exactly two cases: a board still on the legacy
+# layout, and deliberately taking a board back to it. On a board carrying the
+# bootloader it would overwrite sector 0 with the application's vector table
+# and destroy it, so it now READS SECTOR 0 FIRST AND REFUSES -- see
+# --force-legacy below, and lib/sector0.sh for how it decides.
+#
+# Build and flash the LEGACY firmware, in one command.
 #
 #   ./scripts/flash.sh              release build, flash locally
 #   ./scripts/flash.sh --diag=NAME  diagnostic build carrying ONE probe (DIAG.md)
 #   ./scripts/flash.sh --no-build   flash what is already built
 #   ./scripts/flash.sh --dry-run    everything except the write
 #   ./scripts/flash.sh --host NAME  build here, flash on NAME over ssh
+#   ./scripts/flash.sh --force-legacy
+#                                   program the legacy layout even though the
+#                                   board is carrying the bootloader. DESTROYS
+#                                   IT. Clear its write protection first
+#                                   (bootloader/README.md step 9b, 'off') or
+#                                   openocd fails on sector 0 regardless.
 #
 # LOCAL IS THE DEFAULT, and that is the whole point. Run this on the machine
 # with the ST-Link plugged in -- which for this project is the Pi that also runs
@@ -27,6 +54,7 @@
 # archaeology across build-artifact timestamps on a machine that was powered
 # off. One line of JSON per flash makes that a lookup. Nothing reads it yet; it
 # exists so the question has an answer.
+# END-HELP
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,6 +62,8 @@ cd "$REPO"
 
 # shellcheck source=lib/diag.sh
 . "$REPO/scripts/lib/diag.sh"
+# shellcheck source=lib/sector0.sh
+. "$REPO/scripts/lib/sector0.sh"
 
 VARIANT=release
 BUILD_DIR=build
@@ -41,6 +71,7 @@ PROBE=""
 HOST=""          # empty = flash on this machine
 DO_BUILD=1
 DRY=0
+FORCE_LEGACY=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -65,8 +96,13 @@ while [ $# -gt 0 ]; do
         --no-build) DO_BUILD=0 ;;
         --host)     HOST="${2:?--host needs a value}"; shift ;;
         --dry-run)  DRY=1 ;;
+        --force-legacy) FORCE_LEGACY=1 ;;
         -h|--help)
-            sed -n '2,29p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+            # Sentinel rather than a line number. The old '2,29p' was correct
+            # only until the header changed length, and a --help that silently
+            # stops mid-sentence is how a warning stops being read.
+            sed -n '2,/^# END-HELP/{/^# END-HELP/!p}' "${BASH_SOURCE[0]}" \
+              | sed 's/^# \?//'
             diag_usage_probes "$REPO"
             exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -127,6 +163,85 @@ else
     TARGET_ELF="$REPO/$ELF"
     RUN=(bash -c)
     WHERE="this machine"
+fi
+
+# ---------------------------------------------------------------------------
+# SECTOR-0 PREFLIGHT. Read what is on the board before writing over it.
+#
+# This is a READ, so it runs on --dry-run too: a dry run that skipped it would
+# report "would now program ..." for a board this script must not touch, which
+# is worse than not offering the preview at all.
+#
+# FAIL-CLOSED. A dump we could not take is not evidence of an empty sector 0.
+# openocd not installed, no probe, target held in reset, WRP on sector 0 -- all
+# land here, and all of them mean "unknown", which this treats as "do not
+# write". --force-legacy is the way past it, and it is the same flag as for a
+# confirmed bootloader on purpose: both are the operator saying they know what
+# is on the board and this script does not.
+# ---------------------------------------------------------------------------
+DUMP_LOCAL="$(mktemp)"
+trap 'rm -f "$DUMP_LOCAL"' EXIT
+
+if [ "$FORCE_LEGACY" = 1 ]; then
+    echo "--force-legacy: skipping the sector-0 preflight."
+    echo "  If this board has the field bootloader, this WILL destroy it."
+    echo
+else
+    DUMP_REMOTE="firmware/sector0-preflight.bin"
+    if [ -n "$HOST" ]; then
+        ssh "$HOST" 'mkdir -p ~/firmware'
+        DUMP_PATH="$DUMP_REMOTE"
+    else
+        DUMP_PATH="$DUMP_LOCAL"
+    fi
+
+    # 'reset halt' because dump_image needs the core stopped; the write step
+    # below issues its own 'reset' and leaves the target running, so a halt
+    # here is not left behind.
+    DUMP_CMD="openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
+    -c 'transport select swd' \
+    -c 'init; reset halt; dump_image $DUMP_PATH $SECTOR0_BASE $SECTOR0_SIZE; shutdown'"
+
+    echo "reading sector 0 (${SECTOR0_BASE}, ${SECTOR0_SIZE} bytes) from the board on ${WHERE}"
+    DUMP_OK=1
+    "${RUN[@]}" "$DUMP_CMD" >/dev/null 2>&1 || DUMP_OK=0
+    if [ "$DUMP_OK" = 1 ] && [ -n "$HOST" ]; then
+        scp -q "$HOST:$DUMP_REMOTE" "$DUMP_LOCAL" || DUMP_OK=0
+    fi
+    # A dump of the wrong length is as unknown as no dump at all.
+    if [ "$DUMP_OK" = 1 ]; then
+        [ "$(stat -c %s "$DUMP_LOCAL" 2>/dev/null || echo 0)" = "$SECTOR0_SIZE" ] || DUMP_OK=0
+    fi
+
+    if [ "$DUMP_OK" != 1 ]; then
+        cat >&2 <<EOF
+
+REFUSING TO FLASH: could not read sector 0 from the board on ${WHERE}.
+
+Every reason for that -- no openocd, no ST-Link, the target held in reset, or
+sector 0 write-protected -- leaves this script unable to tell whether the field
+bootloader is on this board. It will not write the legacy layout over an
+unknown sector 0.
+
+Re-run the read on its own to see openocd's own message:
+
+  $DUMP_CMD
+
+If you know this board is on the legacy layout, or you mean to take it back
+there and have already cleared the bootloader's write protection:
+
+  ./scripts/flash.sh --force-legacy
+EOF
+        exit 1
+    fi
+
+    if sector0_has_bootloader "$DUMP_LOCAL"; then
+        echo >&2
+        sector0_refuse_message --force-legacy >&2
+        exit 1
+    fi
+    echo "  no bootloader in sector 0 -- legacy layout, safe to program"
+    echo
 fi
 
 echo "flashing ${VARIANT^^} (${REV}$([ "$DIRTY" = true ] && echo -dirty)) on ${WHERE}"

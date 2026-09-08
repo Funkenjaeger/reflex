@@ -221,6 +221,8 @@ jobs:
       #   reflex-fw-<V>.bin   legacy 0x08000000, SWD/flash.sh. UNCHANGED in
       #                       name and in meaning -- people and scripts
       #                       downstream already expect exactly this.
+      #                       DEPRECATED since 2026-09-08; see the end
+      #                       condition further down this block.
       #   reflex-app-<V>.bin  the RUN-slot image with the RFLX header. What
       #                       modbus-flash.py and the in-app updater take.
       #   reflex-bl-<V>.bin   the bootloader, sector 0.
@@ -240,6 +242,34 @@ jobs:
       # slotted app ELF deliberately does NOT ship: it still holds the zero
       # length/CRC placeholders that reflex_image.py patches into the .bin, so
       # it is not a valid image, and the README says never to program it.
+      #
+      # --------------------------------------------------------------------
+      # reflex-fw-<V>.bin AND .elf ARE DEPRECATED, AND THEY HAVE AN END
+      # CONDITION. Added 2026-09-08.
+      #
+      # They are the legacy no-bootloader layout, and they exist for exactly
+      # one population: boards built before 2026-09-07, plus any board a
+      # `flash.sh --force-legacy` run has deliberately taken back there. A new
+      # board does NOT get them -- fw/scripts/provision.sh programs reflex-bl
+      # + reflex-app -- and a board built from them cannot be updated over the
+      # wire at all, which is the entire reason the slotted layout exists.
+      #
+      # THEY SHIP UNTIL NO BOARD ON THE LEGACY LAYOUT REMAINS, AND THEN THEY
+      # STOP. That is the whole condition. Known legacy boards as of
+      # 2026-09-08: elspi. The list is kept in fw/bootloader/README.md next to
+      # the same note; when it empties, retire these four things together:
+      #
+      #   1. the legacy `cmake -S . -B build ...` in "Cross-build the release
+      #      firmware" above,
+      #   2. the two `cp fw/build/reflex-fw.*` lines in this step,
+      #   3. the legacy half of "Check each firmware asset is the layout its
+      #      name claims" below -- the reflex-fw-must-NOT-validate check,
+      #   4. fw/scripts/flash.sh, which writes this same layout and is the only
+      #      thing that consumes it.
+      #
+      # Do not retire them one at a time. An asset with no script to flash it,
+      # or a script with no asset to feed it, is worse than either half.
+      # --------------------------------------------------------------------
       - name: Collect the artifacts
         run: |
           mkdir -p dist
