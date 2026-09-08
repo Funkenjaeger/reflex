@@ -42,8 +42,11 @@ typedef struct {
    * Read as ONE FC3 request every board tick (30 Hz) by
    * Board._refresh_els_stop_snapshot. The quantity being minimised is
    * REQUESTS, not bytes -- each request is an independent chance for the
-   * firmware to miss its answering window while the 100 kHz ISR is saturated
-   * (2026-08-23: six of six cuts lost comms, every drop a timeout).
+   * firmware to miss its answering window while the motion ISR is saturated
+   * (2026-08-23: six of six cuts lost comms, every drop a timeout). That
+   * measurement was taken at the old 100 kHz tick; the ISR has run at 50 kHz
+   * since 2026-08-28, which relieves the pressure without changing the
+   * argument.
    */
   uint16_t enable;                                  /* reg 0  SW write: 1 = enable ELS stop feature */
   uint16_t scaleIndex;                              /* reg 1  SW write: which scale (0–3) is the position reference (Z axis) */
