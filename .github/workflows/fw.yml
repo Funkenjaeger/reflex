@@ -84,6 +84,17 @@ jobs:
         working-directory: fw
         run: bash scripts/lib/sector0-test.sh
 
+      # The other half of that guard: the plumbing in flash.sh that PRODUCES
+      # the dump the check above decides from, and acts on the answer. Fake
+      # openocd/ssh/scp on PATH, so it runs here with no probe and no board --
+      # and it asserts the fakes are what resolve before every run, because a
+      # test that quietly fell through to a real toolchain would be worse than
+      # none. Runs on a fresh checkout: it stands in an ELF when build/ is
+      # empty, which it is in this job.
+      - name: Sector-0 preflight plumbing in flash.sh
+        working-directory: fw
+        run: bash scripts/lib/flash-preflight-test.sh
+
   arm-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
