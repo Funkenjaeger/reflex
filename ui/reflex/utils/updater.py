@@ -40,7 +40,12 @@ pair. Comparing the flashed firmware against the RUNNING UI's
 ``ELS_PROTOCOL_VERSION`` would pass whenever the release did not move the
 protocol and fail whenever it did -- i.e. it would refuse precisely the updates
 that are correct. The target UI's value is read out of the tag itself, with
-``git show <tag>:ui/reflex/utils/devices.py``, before anything is checked out.
+``git show <tag>:ui/reflex/utils/els_stop_map.py``, before anything is checked
+out. That is the GENERATED register map, not ``devices.py``: devices.py's
+``ELS_PROTOCOL_VERSION`` is an alias (``= els_stop_map.PROTOCOL_VERSION``) and
+so is not a literal a text scan can read, whereas els_stop_map.py is written by
+``tools/genregs.py`` from ``registers/els_stop.yaml`` and states
+``PROTOCOL_VERSION = <int>`` as a bare literal by construction.
 
 WHAT CANNOT BE PRE-CHECKED. The firmware image header (``fw/scripts/
 reflex_image.py``: magic, header version, length, CRC32, build rev) carries no
@@ -270,11 +275,24 @@ def parse_image_info(text: str) -> ImageInfo:
     return ImageInfo(rev=m.group("rev"), length=int(m.group("len")))
 
 
-_PROTOCOL_RE = re.compile(r"^ELS_PROTOCOL_VERSION\s*=\s*(\d+)", re.M)
+# Anchored, and the value must be a bare integer that ENDS the statement -- an
+# optional trailing comment is all that may follow. Anything else (an alias, an
+# expression, a suffixed token) fails to match and is refused rather than
+# half-read. ``^`` also keeps this off devices.py's ``ELS_PROTOCOL_VERSION``,
+# which is a different name with a different, non-literal right-hand side.
+_PROTOCOL_RE = re.compile(r"^PROTOCOL_VERSION\s*=\s*(\d+)\s*(?:#.*)?$", re.M)
 
 
-def parse_protocol_version(devices_source: str) -> int:
-    """``ELS_PROTOCOL_VERSION`` out of a ``reflex/utils/devices.py`` SOURCE text.
+def parse_protocol_version(map_source: str) -> int:
+    """``PROTOCOL_VERSION`` out of a ``reflex/utils/els_stop_map.py`` SOURCE text.
+
+    THE GENERATED MAP, NOT ``devices.py``. devices.py exports the same number
+    as ``ELS_PROTOCOL_VERSION``, but as an alias -- ``ELS_PROTOCOL_VERSION =
+    els_stop_map.PROTOCOL_VERSION`` -- and an alias is not something a text
+    scan can resolve. els_stop_map.py is emitted by ``tools/genregs.py`` from
+    ``registers/els_stop.yaml`` and says ``PROTOCOL_VERSION = <int>``, a bare
+    literal, because a generator wrote it; that form is stable by construction
+    rather than by convention, which is the whole reason the scan points here.
 
     Deliberately a text scan and not an import. The source being read is the
     TARGET release's, fetched with ``git show <tag>:...`` while a different
@@ -282,12 +300,15 @@ def parse_protocol_version(devices_source: str) -> int:
     in ``sys.modules`` or execute code from a tag nobody has reviewed yet, on a
     machine, to answer a question one regex answers.
     """
-    m = _PROTOCOL_RE.search(devices_source)
+    m = _PROTOCOL_RE.search(map_source)
     if not m:
         raise UpdateRefused(
-            "Could not find ELS_PROTOCOL_VERSION in the target release's "
-            "devices.py. Without it there is nothing to check the firmware "
-            "against, so the update is refused.")
+            "Could not read PROTOCOL_VERSION as a plain number from the target "
+            "release's ui/reflex/utils/els_stop_map.py. Without it there is "
+            "nothing to check the firmware against, so the update is refused "
+            "and nothing has been changed. The machine is safe to keep using "
+            "on the version it is running; update from the command line "
+            "instead -- see the Installing page.")
     return int(m.group(1))
 
 
@@ -506,7 +527,7 @@ class UpdateSession:
 
         For commands whose OUTPUT is data rather than progress -- ``git show``
         of a source file being the one that matters, since streaming it would
-        dump the whole of devices.py into the operator's status box.
+        dump the whole of els_stop_map.py into the operator's status box.
         """
         rc, out = self._runner(argv, cwd=cwd, timeout=timeout,
                                emit=None if quiet else self._emit)
@@ -565,11 +586,12 @@ class UpdateSession:
                   cwd=self.checkout, what=f"resolving tag {release.tag}")
 
         # The target UI's expectation, read out of the tag itself. This is the
-        # number the gate compares the flashed firmware against.
+        # number the gate compares the flashed firmware against. The generated
+        # register map is the source of it -- see parse_protocol_version.
         source = self._run(
-            ["git", "show", f"{release.tag}:ui/reflex/utils/devices.py"],
+            ["git", "show", f"{release.tag}:ui/reflex/utils/els_stop_map.py"],
             cwd=self.checkout, quiet=True,
-            what=f"reading devices.py from {release.tag}")
+            what=f"reading els_stop_map.py from {release.tag}")
         target_protocol = parse_protocol_version(source)
         self.emit(f"{release.tag} UI expects register protocol version "
                   f"{target_protocol} (this UI: {self.current_protocol}).")

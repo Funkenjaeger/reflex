@@ -191,7 +191,7 @@ def test_unreadable_image_info_refuses():
 
 
 def test_parse_protocol_version_from_source_text():
-    src = "x = 1\nELS_PROTOCOL_VERSION = 12        # comment\ny = 2\n"
+    src = "x = 1\nPROTOCOL_VERSION = 12        # comment\ny = 2\n"
     assert parse_protocol_version(src) == 12
 
 
@@ -200,10 +200,34 @@ def test_target_protocol_missing_refuses():
         parse_protocol_version("nothing to see here")
 
 
-def test_this_checkouts_own_devices_py_parses():
+@pytest.mark.parametrize("src", [
+    # devices.py's alias: the exact shape that made this scan match nothing
+    # after the 2026-09-10 refactor, which refused every update.
+    "ELS_PROTOCOL_VERSION = els_stop_map.PROTOCOL_VERSION\n",
+    # the same name, but no longer a literal
+    "PROTOCOL_VERSION = some.other.NAME\n",
+    "PROTOCOL_VERSION = _BASE + 1\n",
+    # a literal with something stuck to it is NOT a partial match
+    "PROTOCOL_VERSION = 10beta\n",
+])
+def test_target_protocol_non_literal_refuses(src):
+    """A non-literal must REFUSE, never half-match. Reading `10` out of
+    `10beta`, or the alias's name as if it were a number, would put a wrong
+    expectation into the firmware gate -- worse than refusing."""
+    with pytest.raises(UpdateRefused):
+        parse_protocol_version(src)
+
+
+def test_this_checkouts_own_els_stop_map_parses():
     """The parse must work on the real file, not only a synthetic one -- it is
-    read out of a git tag whose formatting nobody controls at install time."""
-    src = (Path(updater.__file__).parent / "devices.py").read_text(encoding="utf-8")
+    read out of a git tag whose formatting nobody controls at install time.
+
+    els_stop_map.py is GENERATED, which is why the scan points at it; this is
+    what notices if the generator ever stops emitting a bare literal."""
+    src = (Path(updater.__file__).parent / "els_stop_map.py").read_text(encoding="utf-8")
+    from reflex.utils.els_stop_map import PROTOCOL_VERSION
+    assert parse_protocol_version(src) == PROTOCOL_VERSION
+    # and it is still the number the gate is supposed to compare against
     from reflex.utils.devices import ELS_PROTOCOL_VERSION
     assert parse_protocol_version(src) == ELS_PROTOCOL_VERSION
 
@@ -324,7 +348,8 @@ class FakeRunner:
         if argv[:2] == ["git", "status"]:
             return 0, self.dirty
         if argv[:2] == ["git", "show"]:
-            return 0, f"ELS_PROTOCOL_VERSION = {self.target_protocol}\n"
+            # what `git show <tag>:ui/reflex/utils/els_stop_map.py` yields
+            return 0, f"PROTOCOL_VERSION = {self.target_protocol}\n"
         if argv[0] == "git":
             return 0, ""
         if argv[0].endswith("uv"):
@@ -408,11 +433,24 @@ def test_happy_path_flashes_then_installs_in_that_order(tmp_path):
     assert s.restarts == [1]
 
 
+def test_preflight_reads_the_generated_map_from_the_tag(tmp_path):
+    """WHICH FILE is asked of the tag, pinned. The FakeRunner answers any
+    ``git show`` alike, so nothing else here would notice the path drifting
+    back to devices.py -- where the value is an alias and the scan matches
+    nothing, refusing every update.
+    """
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    s = _session(r, tmp_path)
+    s.run(RELEASE)
+    assert r.ran("git", "show", f"{RELEASE.tag}:ui/reflex/utils/els_stop_map.py")
+    assert not r.ran("git", "show", "devices.py")
+
+
 def test_a_release_that_moves_the_protocol_is_the_normal_case(tmp_path):
     """MUTATION EVIDENCE #1. The gate compares the flashed firmware against
-    the TARGET UI's ELS_PROTOCOL_VERSION, read from the tag -- not against the
-    RUNNING UI's. Changing ``prepared.target_protocol`` to
-    ``self.current_protocol`` in flash_firmware turns this test red, because
+    the TARGET UI's protocol version, read from the tag's generated register
+    map -- not against the RUNNING UI's. Changing ``prepared.target_protocol``
+    to ``self.current_protocol`` in flash_firmware turns this test red, because
     the whole point of a protocol-bumping release is that the two differ.
 
     A gate built the obvious way would refuse exactly the updates that are
