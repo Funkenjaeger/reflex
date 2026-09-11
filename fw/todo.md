@@ -512,7 +512,7 @@ firmware logic added later has the same gap.
 
 Branch `feat/modbus-bootloader`, merged at `8184c3a`. Design and register
 contract: `Core/Inc/els_identity.h`,
-`docs/decisions/els-modbus-register-map.md` (Implemented section). Bring-up
+`decisions/els-modbus-register-map.md` (Implemented section). Bring-up
 procedure: `bootloader/README.md`.
 
 **Bring-up result, on the machine 2026-09-07:** boots, validates and jumps; the

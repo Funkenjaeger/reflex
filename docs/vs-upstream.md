@@ -146,7 +146,7 @@ Alongside it, a fixed **identity window** — magic, stage, build revision, dirt
 flag — at an address deliberately outside the growing application struct, so a
 client can ask *which program is answering and which build it is*, and keeps
 getting a correct answer as the application map grows.
-([ADR](decisions/els-modbus-register-map.md))
+([ADR](https://github.com/Funkenjaeger/reflex/blob/integration/decisions/els-modbus-register-map.md))
 
 ## 8. Documentation is part of the product
 
@@ -162,7 +162,7 @@ than surviving as folklore.
 both sides**, path-rewritten so `git log -S` and `--follow` work across the
 whole lineage. They release together, on one version number — which is what
 makes the contract test in §5 possible at all.
-([ADR](decisions/repo-structure-monorepo.md))
+([ADR](https://github.com/Funkenjaeger/reflex/blob/integration/decisions/repo-structure-monorepo.md))
 
 ---
 

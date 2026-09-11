@@ -9,6 +9,9 @@
     padding: 10
     ScreenHeader:
       text: "Software Update"
+      # No wandering off to a Home screen whose DRO is frozen because THIS
+      # screen released the serial port.
+      back_disabled: root.busy
 
     ScrollView:
       do_scroll_x: False
@@ -27,16 +30,25 @@
           help_file: "software_update.md"
         ButtonItem:
           height: 60
+          name: "Controller firmware"
+          # Not decoration. An update replaces BOTH halves, so the number the
+          # gate will check is worth having on screen before it is checked.
+          value: ("protocol v%d, %s" % (app.board.protocol_version, "matched" if not app.board.protocol_mismatch else "MISMATCHED")) if app.board.connected else ("link released for update" if app.board.link_paused else "not connected")
+          help_file: "software_update.md"
+        ButtonItem:
+          height: 60
           name: "Refresh available releases"
           value: "Refresh"
+          disabled: root.busy
           help_file: "software_update.md"
           on_release:
             root.schedule_refresh_releases()
 
         BooleanItem:
           height: 60
-          name: "Allow installation of experimental versions"
+          name: "Offer pre-releases (experimental)"
           value: root.allow_experimental
+          disabled: root.busy
           help_file: "software_update.md"
           on_value: root.allow_experimental = self.value
 
@@ -45,6 +57,7 @@
           name: "Available releases"
           options: root.releases
           value: root.selected_release
+          disabled: root.busy
           help_file: "software_update.md"
           on_value: root.selected_release = self.value
         BoxLayout:
@@ -52,14 +65,27 @@
           size_hint_y: None
           orientation: "horizontal"
           Button:
-            text: "Install Selected Release"
-            disabled: not root.enable_update_button
+            text: "Install Selected Release" if not root.busy else "Updating..."
+            disabled: not root.enable_update_button or root.busy
             on_press: app.beep()
             on_release: root.install_release()
           Button:
             text: "Exit Application"
+            disabled: root.busy
             on_press: app.beep()
             on_release: app.stop()
+
+        # Only while an update is running. The serial link is down for the
+        # firmware half, so the DRO stops and the board reads as disconnected;
+        # without this the operator sees the same picture a broken cable makes.
+        Label:
+          size_hint_y: None
+          height: 60 if root.busy else 0
+          opacity: 1 if root.busy else 0
+          color: app.theme.warning
+          font_name: app.theme.font_bold
+          font_size: app.formats.font_size
+          text: "Update in progress -- DO NOT POWER OFF THE MACHINE. The DRO is stopped while the controller is flashed."
 
         TitleItem:
           name: "Update Status"

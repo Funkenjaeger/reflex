@@ -3,7 +3,8 @@
 **Status:** proposed 2026-09-04; IMPLEMENTED 2026-09-06 on branch
 `feat/modbus-bootloader` (see the Implemented section at the end, which is
 written from `fw/Core/Inc/els_identity.h` and supersedes the draft tables
-where they differ). Built and natively tested; NOT hardware-verified.
+where they differ). Hardware-verified on the machine 2026-09-07
+(reflex `8184c3a`).
 Drafted in a `/closeloops` session at Evan's request, jointly for the two
 tasks that each specified half of it: the Modbus field bootloader and the
 firmware build-identity register.

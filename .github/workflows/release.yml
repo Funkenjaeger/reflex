@@ -1,6 +1,6 @@
 # Lockstep release: ONE version, ONE tag, ONE release carrying BOTH halves.
 #
-# This is the flow docs/decisions/repo-structure-monorepo.md specifies and the
+# This is the flow decisions/repo-structure-monorepo.md specifies and the
 # monorepo has been missing since the 2026-08-17 weld. Its whole point is that
 # `v1.4.0` names a known-good FIRMWARE + UI PAIR, so "which firmware does this
 # UI expect?" is answered by the version number instead of tribal knowledge.
