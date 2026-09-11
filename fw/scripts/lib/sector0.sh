@@ -1,5 +1,5 @@
-# Sector-0 occupancy check. Sourced by scripts/flash.sh and
-# scripts/provision.sh; not executable.
+# What is at 0x08000000, and may the legacy layout be written over it?
+# Sourced by scripts/flash.sh and scripts/provision.sh; not executable.
 #
 # THE PROBLEM. Two different things are legitimately programmed at 0x08000000
 # on this board and only one of them can be there at a time:
@@ -14,106 +14,108 @@
 # bootloader is gone -- silently, because openocd reports "Verified OK" for
 # exactly what it was asked to write. The board still runs; it has simply lost
 # the ability to be flashed over the wire, and the only way back is the ST-Link
-# that was just used to destroy it. That happened to elspi on 2026-09-07.
+# that was just used to destroy it.
 #
-# THE SIGNATURE. fw/bootloader/src/main.c declares
+# THE DECISION lives in lib/sector0.py, which classifies a dump of the whole
+# legacy region (0x08000000 up to the RUN slot, 128 KB) as LEGACY, ERASED,
+# BOOTLOADER or UNKNOWN, and flash.sh proceeds on the first two ONLY. That is
+# an ALLOWLIST: until 2026-09-11 this file grepped sector 0 for one six-byte
+# bootloader signature and proceeded when it was absent, which failed dangerous
+# on a window-version bump, on any sector-0 content that was not exactly that
+# bootloader, and on a stale dump. sector0.py's docstring has the rules and the
+# one residual case they cannot see.
 #
-#   static const uint16_t blIdentityWindow[ELS_ID_SIZE] =
-#       ELS_ID_WINDOW_INIT(ELS_ID_STAGE_BOOTLOADER, 0u);
-#
-# `const`, so it is in .rodata, so it is IN SECTOR 0 -- not a runtime value we
-# would need a live Modbus link to read. Its first three words are fixed by
-# Core/Inc/els_identity.h and are the same for every bootloader build:
-#
-#   [0] ELS_ID_MAGIC          0x454C   -> bytes 4c 45
-#   [1] ELS_ID_STAGE_BOOTLOADER   1    -> bytes 01 00
-#   [2] ELS_ID_WINDOW_VERSION     1    -> bytes 01 00
-#
-# The words after those three are the build rev and dirty flag, which vary, so
-# the signature stops at six bytes: 4c 45 01 00 01 00.
-#
-# Why the STAGE word is load-bearing. The application declares the same window
-# (Core/Src/Ramps.c) with ELS_ID_STAGE_APP = 2, so its bytes are 4c 45 02 00
-# 01 00. Matching on the magic alone would fire on an application image and
-# refuse to flash the very board this script exists for. Measured against the
-# binaries built on 2026-09-07:
-#
-#   bootloader/build/reflex-bl.bin   5264 B   stage-1 sig at 0x1478, no stage-2
-#   build/reflex-fw.bin  (legacy)   41892 B   no stage-1 sig; stage-2 at 0x9a84
-#   build-slot/reflex-fw.bin        42036 B   no stage-1 sig; stage-2 at 0x9b14
-#
-# Note where the legacy application's own window sits: 0x9a84 is past the end
-# of sector 0 (0x4000), so scanning only the 16 KB of sector 0 never sees it
-# at all. The stage discrimination is belt and braces on top of that.
-#
-# WHY A SEPARATE FILE. The scan takes a FILE, not a target, so it can be
-# exercised against hand-made dumps with no board, no ST-Link and no openocd
-# in the room -- see lib/sector0-test.sh. A guard that has only ever been run
-# against hardware nobody dares reproduce the failure on is a guard nobody
+# WHY A FILE. The classifier takes a FILE, not a target, so it can be exercised
+# against fabricated and real-binary dumps with no board, no ST-Link and no
+# openocd in the room -- lib/sector0-test.sh. A guard that has only ever been
+# run against hardware nobody dares reproduce the failure on is a guard nobody
 # knows the state of.
 
-# The stage-1 identity window prefix, as the lower-case hex byte string that
-# sector0_scan_hex produces. Six bytes; see above for why not more and not
-# fewer.
-SECTOR0_BL_SIGNATURE_HEX=4c4501000100
+SECTOR0_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sector0.py"
 
-# Size of sector 0 on the STM32F411CE, matching ELS_BL_SECTOR_SIZE.
-SECTOR0_SIZE=16384
-SECTOR0_BASE=0x08000000
+# Exit codes of `sector0.py classify`, named once. Callers must treat any
+# status NOT listed as proceed-able as a refusal -- 127 (no python3) included.
+SECTOR0_LEGACY=0
+SECTOR0_ERASED=10
+SECTOR0_BOOTLOADER=20
 
-# Render a binary file as one unbroken lower-case hex string.
-#
-# od rather than xxd: od is coreutils and is on the Pi already, xxd ships with
-# vim and is not guaranteed to be.
-#
-# -v because without it od replaces runs of identical OUTPUT LINES with '*',
-# and sector 0 of a board carrying the 5 KB bootloader is ~11 KB of 0xff.
-# Measured 2026-09-08: dropping -v does NOT break the substring search, and
-# the test says so -- a collapsed run is by definition all-identical lines, so
-# the line holding the signature is never one of the ones elided, and no false
-# negative is reachable that way. What it does break is the promise this
-# function's name makes: the output stops being a faithful byte-for-byte
-# rendering, it gains a literal '*', and any future caller that measures a
-# length or an offset from it is silently wrong. lib/sector0-test.sh asserts
-# the rendering is complete rather than merely searchable, so -v has a test
-# that goes red for it.
-sector0_scan_hex() {
-    od -An -v -tx1 -- "$1" | tr -d ' \n'
+# Set SECTOR0_REGION_BASE / SECTOR0_REGION_SIZE from the firmware headers, the
+# same values the classifier checks the dump against. Returns nonzero, with the
+# reason on stderr, when they cannot be derived; the caller refuses.
+sector0_load_region() {
+    local out
+    out="$(python3 "$SECTOR0_PY" constants)" || return 1
+    SECTOR0_REGION_BASE="$(printf '%s\n' "$out" | sed -n 's/^ELS_FLASH_BASE=//p')"
+    SECTOR0_REGION_SIZE="$(printf '%s\n' "$out" | sed -n 's/^REGION_SIZE=//p')"
+    [ -n "$SECTOR0_REGION_BASE" ] && [ -n "$SECTOR0_REGION_SIZE" ] || return 1
+    # openocd takes the hex base as-is; the length check wants decimal.
+    SECTOR0_REGION_SIZE=$((SECTOR0_REGION_SIZE))
 }
 
-# True if the dump in $1 carries the bootloader's identity window.
-#
-# The match is on a hex STRING, so in principle it could land on an odd byte
-# boundary. Six specific bytes straddling a byte boundary by chance is not a
-# risk worth code to exclude, and the error it would cause is a refusal to
-# flash -- the safe direction. A false NEGATIVE would be the dangerous one, and
-# a substring search cannot produce one.
-sector0_has_bootloader() {
-    local dump="$1"
-    [ -r "$dump" ] || return 2
-    sector0_scan_hex "$dump" | grep -q "$SECTOR0_BL_SIGNATURE_HEX"
+# Classify the dump in $1. Prints the verdict and its reasons; returns the
+# classifier's exit code.
+sector0_classify() {
+    python3 "$SECTOR0_PY" classify "$1"
 }
 
-# The refusal text, printed by both callers so the wording only exists once.
-# $1 is the name of the override flag the calling script offers.
+# True if openocd's `flash info 0` output in $1 reports sector 0 protected.
+#
+# openocd prints each sector as `#  0: 0x00000000 (0x4000 16kB) <state>`, where
+# <state> is "protected", "not protected" or "protection state unknown". A
+# grep for the bare word "protected" matches the SECOND of those, so the
+# warning it guarded fired on every unprotected board -- and a warning that
+# always fires is one nobody reads. This matches sector 0's line only, and only
+# when the state is exactly "protected".
+sector0_wrp_reported() {
+    grep -Eq '#[[:space:]]*0:[[:space:]].*\)[[:space:]]+protected[[:space:]]*$' "$1"
+}
+
+# The bootloader refusal, printed by both callers so the wording only exists
+# once. $1 is the name of the override flag the calling script offers.
 sector0_refuse_message() {
     cat <<EOF
 REFUSING TO FLASH: this board is carrying the field bootloader.
 
-Sector 0 (${SECTOR0_BASE}, 16 KB) holds the bootloader's identity window, so
-the application on this board lives in the RUN slot at 0x08020000 behind it.
-Programming the legacy 0x08000000 image over the top would overwrite the
-bootloader's vector table and destroy it. openocd would report success.
+Sector 0 holds the bootloader's identity window, so the application on this
+board lives in the RUN slot at 0x08020000 behind it. Programming the legacy
+0x08000000 image over the top would overwrite the bootloader's vector table
+and destroy it. openocd would report success.
 
 What you almost certainly want instead:
 
   ./scripts/provision.sh              rebuild and reprogram bootloader + app
-  python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
+  python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/serial0
                                       update the app over RS-485, no programmer
+                                      (stop reflex-ui first; it holds the port)
 
 If you really are taking this board BACK to the legacy no-bootloader layout --
 a deliberate act, and the bootloader's write protection has to be cleared for
 it to even succeed (fw/bootloader/README.md step 9b with 'off') -- then say so:
+
+  ./scripts/flash.sh $1
+EOF
+}
+
+# The refusal for everything the allowlist does not recognize. $1 is the
+# override flag; $2 is the classifier's own output, which says which test the
+# region failed.
+sector0_unknown_message() {
+    cat <<EOF
+REFUSING TO FLASH: the flash at 0x08000000 is not a layout this script
+recognizes, so it cannot tell whether writing over it destroys something.
+
+It writes only over two things: the legacy application (vectors for an image
+linked at 0x08000000, a Reflex application identity window, and a sector 0
+filled by the image), or an erased sector 0. What it read:
+
+$(printf '%s\n' "$2" | sed 's/^/  /')
+
+A bootloader this project does not know, a half-written image, and a slotted
+application programmed at the wrong address all land here, and none of them is
+safe to assume is disposable.
+
+If you have identified what is on this board and mean to replace it with the
+legacy layout:
 
   ./scripts/flash.sh $1
 EOF

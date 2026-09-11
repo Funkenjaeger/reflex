@@ -75,12 +75,13 @@ jobs:
         run: bash scripts/lib/diag-test.sh
 
       # The guard that stops flash.sh overwriting the field bootloader. It
-      # decides from a FILE -- a 16 KB dump of sector 0 -- precisely so it can
-      # be tested here, against fabricated dumps, instead of only against a
-      # board on a lathe that has to lose its bootloader for the assurance.
-      # The checks against the real built binaries inside it self-skip when
-      # the trees are absent, which they are in this job.
-      - name: Sector-0 bootloader guard
+      # decides from a FILE -- a 128 KB dump of the legacy region -- precisely
+      # so it can be tested here, against fabricated dumps, instead of only
+      # against a board on a lathe that has to lose its bootloader for the
+      # assurance. The checks against the REAL built binaries inside it
+      # self-skip here, where nothing is built; arm-build below runs the same
+      # test with them made mandatory.
+      - name: Sector-0 allowlist (fabricated dumps)
         working-directory: fw
         run: bash scripts/lib/sector0-test.sh
 
@@ -94,6 +95,7 @@ jobs:
       - name: Sector-0 preflight plumbing in flash.sh
         working-directory: fw
         run: bash scripts/lib/flash-preflight-test.sh
+
 
   arm-build:
     runs-on: ubuntu-latest
@@ -125,3 +127,24 @@ jobs:
       - name: ISR cost guard (no softfp in the 100 kHz ISR)
         working-directory: fw
         run: ./scripts/check-isr-cost.sh build/reflex-fw.elf
+
+      # The other two images release.yml ships, built the same way, so the
+      # sector-0 allowlist can be checked against the bytes the toolchain
+      # really emits rather than only against fabricated dumps.
+      - name: Cross-build the slotted application and the bootloader
+        working-directory: fw
+        run: |
+          cmake -S . -B build-slot -DCMAKE_BUILD_TYPE=Release -DREFLEX_APP_BASE=0x08020000
+          cmake --build build-slot -j
+          cmake -S bootloader -B bootloader/build -DCMAKE_BUILD_TYPE=MinSizeRel
+          cmake --build bootloader/build -j
+
+      # SECTOR0_REQUIRE_REAL=1 turns a skipped real-binary check into a
+      # failure. Until 2026-09-11 nothing in CI built the bootloader, so the
+      # one assertion tying the guard to the real bootloader's identity window
+      # self-skipped on every run and had executed exactly once, by hand. A
+      # change to the window's magic or stage, or a legacy build that stops
+      # being recognizable as one, now fails HERE instead of at the lathe.
+      - name: Sector-0 allowlist against the real images
+        working-directory: fw
+        run: SECTOR0_REQUIRE_REAL=1 bash scripts/lib/sector0-test.sh

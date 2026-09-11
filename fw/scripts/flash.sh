@@ -17,8 +17,13 @@
 # This script remains for exactly two cases: a board still on the legacy
 # layout, and deliberately taking a board back to it. On a board carrying the
 # bootloader it would overwrite sector 0 with the application's vector table
-# and destroy it, so it now READS SECTOR 0 FIRST AND REFUSES -- see
-# --force-legacy below, and lib/sector0.sh for how it decides.
+# and destroy it, so it now READS THE BOARD FIRST, and writes only over a
+# legacy application it positively recognizes or an erased sector 0. Anything
+# else -- the bootloader, or content it cannot identify -- refuses. See
+# --force-legacy below, and lib/sector0.py for the rules.
+#
+# The read RESETS THE CONTROLLER: openocd halts the core to take the dump and
+# then lets it run from reset. That happens on --dry-run too, and on a refusal.
 #
 # Build and flash the LEGACY firmware, in one command.
 #
@@ -52,8 +57,9 @@
 # IT RECORDS WHAT IT FLASHED, in ~/firmware/flashed.json on the probe host.
 # Working out what firmware was on this lathe once took an afternoon of
 # archaeology across build-artifact timestamps on a machine that was powered
-# off. One line of JSON per flash makes that a lookup. Nothing reads it yet; it
-# exists so the question has an answer.
+# off. One line of JSON per flash makes that a lookup. provision.sh and
+# modbus-flash.py append to the same file; the estate's ot-state reads its last
+# line as "what firmware this lathe runs".
 # END-HELP
 set -euo pipefail
 
@@ -166,16 +172,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# SECTOR-0 PREFLIGHT. Read what is on the board before writing over it.
+# PREFLIGHT. Read what is on the board before writing over it.
 #
 # This is a READ, so it runs on --dry-run too: a dry run that skipped it would
 # report "would now program ..." for a board this script must not touch, which
 # is worse than not offering the preview at all.
 #
-# FAIL-CLOSED. A dump we could not take is not evidence of an empty sector 0.
-# openocd not installed, no probe, target held in reset, WRP on sector 0 -- all
-# land here, and all of them mean "unknown", which this treats as "do not
-# write". --force-legacy is the way past it, and it is the same flag as for a
+# IT IS AN ALLOWLIST. The dump covers the whole legacy region, 0x08000000 up
+# to the RUN slot -- not just sector 0, because recognizing the legacy
+# application positively needs its identity window, which sits past sector 0.
+# lib/sector0.py classifies it, and this proceeds on LEGACY or ERASED only.
+# Every other outcome refuses: the bootloader, content it cannot identify, a
+# classifier that could not run, and a verdict code this script has never
+# heard of. The `case` below is written so that a new code lands on refusal.
+#
+# FAIL-CLOSED. A dump we could not take is not evidence of anything. openocd
+# not installed, no probe, target held in reset, read protection -- all land
+# here, and all of them mean "unknown", which this treats as "do not write".
+# --force-legacy is the way past it, and it is the same flag as for a
 # confirmed bootloader on purpose: both are the operator saying they know what
 # is on the board and this script does not.
 # ---------------------------------------------------------------------------
@@ -187,41 +201,60 @@ if [ "$FORCE_LEGACY" = 1 ]; then
     echo "  If this board has the field bootloader, this WILL destroy it."
     echo
 else
+    if ! sector0_load_region; then
+        echo >&2
+        echo "REFUSING TO FLASH: could not derive the flash region to read from" >&2
+        echo "Core/Inc/els_identity.h (needs python3). Nothing was read or written." >&2
+        exit 1
+    fi
+
+    DUMP_OK=1
     DUMP_REMOTE="firmware/sector0-preflight.bin"
     if [ -n "$HOST" ]; then
-        ssh "$HOST" 'mkdir -p ~/firmware'
+        # A FIXED remote path is a stale-file hazard: if openocd ever exited 0
+        # without writing, the previous run's dump -- right length, possibly
+        # another board -- would be copied back and decided on. So the old file
+        # is deleted first, and the deletion is checked rather than assumed.
+        # The local path cannot have this problem: DUMP_LOCAL is a fresh,
+        # EMPTY mktemp, and an unwritten one fails the length check below.
+        ssh "$HOST" "mkdir -p ~/firmware && rm -f $DUMP_REMOTE && test ! -e $DUMP_REMOTE" \
+            || DUMP_OK=0
         DUMP_PATH="$DUMP_REMOTE"
     else
         DUMP_PATH="$DUMP_LOCAL"
     fi
 
-    # 'reset halt' because dump_image needs the core stopped; the write step
-    # below issues its own 'reset' and leaves the target running, so a halt
-    # here is not left behind.
+    # 'reset halt' because dump_image needs the core stopped. 'reset run'
+    # afterwards because nothing else would restart it: on a refusal and on
+    # --dry-run there is no write step to issue its own reset, and openocd
+    # exiting does not resume a halted core -- the controller would sit
+    # halted with the UI polling it, which looks like a comms fault.
     DUMP_CMD="openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
     -c 'transport select swd' \
-    -c 'init; reset halt; dump_image $DUMP_PATH $SECTOR0_BASE $SECTOR0_SIZE; shutdown'"
+    -c 'init; reset halt; dump_image $DUMP_PATH $SECTOR0_REGION_BASE $SECTOR0_REGION_SIZE; reset run; shutdown'"
 
-    echo "reading sector 0 (${SECTOR0_BASE}, ${SECTOR0_SIZE} bytes) from the board on ${WHERE}"
-    DUMP_OK=1
-    "${RUN[@]}" "$DUMP_CMD" >/dev/null 2>&1 || DUMP_OK=0
+    echo "reading ${SECTOR0_REGION_BASE} + ${SECTOR0_REGION_SIZE} bytes from the board on ${WHERE}"
+    echo "  (this resets the controller)"
+    if [ "$DUMP_OK" = 1 ]; then
+        "${RUN[@]}" "$DUMP_CMD" >/dev/null 2>&1 || DUMP_OK=0
+    fi
     if [ "$DUMP_OK" = 1 ] && [ -n "$HOST" ]; then
         scp -q "$HOST:$DUMP_REMOTE" "$DUMP_LOCAL" || DUMP_OK=0
+        ssh "$HOST" "rm -f $DUMP_REMOTE" || true
     fi
     # A dump of the wrong length is as unknown as no dump at all.
     if [ "$DUMP_OK" = 1 ]; then
-        [ "$(stat -c %s "$DUMP_LOCAL" 2>/dev/null || echo 0)" = "$SECTOR0_SIZE" ] || DUMP_OK=0
+        [ "$(stat -c %s "$DUMP_LOCAL" 2>/dev/null || echo 0)" = "$SECTOR0_REGION_SIZE" ] || DUMP_OK=0
     fi
 
     if [ "$DUMP_OK" != 1 ]; then
         cat >&2 <<EOF
 
-REFUSING TO FLASH: could not read sector 0 from the board on ${WHERE}.
+REFUSING TO FLASH: could not read the flash from the board on ${WHERE}.
 
-Every reason for that -- no openocd, no ST-Link, the target held in reset, or
-sector 0 write-protected -- leaves this script unable to tell whether the field
-bootloader is on this board. It will not write the legacy layout over an
-unknown sector 0.
+Every reason for that -- no openocd, no ST-Link, the target held in reset, read
+protection -- leaves this script unable to tell what is on this board. It will
+not write the legacy layout over something it has not seen.
 
 Re-run the read on its own to see openocd's own message:
 
@@ -235,13 +268,41 @@ EOF
         exit 1
     fi
 
-    if sector0_has_bootloader "$DUMP_LOCAL"; then
-        echo >&2
-        sector0_refuse_message --force-legacy >&2
-        exit 1
-    fi
-    echo "  no bootloader in sector 0 -- legacy layout, safe to program"
-    echo
+    VERDICT_OUT="$(sector0_classify "$DUMP_LOCAL")" && VERDICT_RC=0 || VERDICT_RC=$?
+    case "$VERDICT_RC" in
+        "$SECTOR0_LEGACY")
+            echo "  legacy application recognized at 0x08000000 -- safe to program"
+            printf '%s\n' "$VERDICT_OUT" | sed -n '2,$p'
+            echo ;;
+        "$SECTOR0_ERASED")
+            echo "  sector 0 is erased -- nothing there to destroy"
+            echo "  NOTE: a new board should be PROVISIONED (./scripts/provision.sh),"
+            echo "        not given the legacy layout, or it can never be updated"
+            echo "        over the wire. Continuing because you asked for flash.sh."
+            echo ;;
+        "$SECTOR0_BOOTLOADER")
+            echo >&2
+            sector0_refuse_message --force-legacy >&2
+            if [ "$VARIANT" = diagnostic ]; then
+                cat >&2 <<EOF
+
+For a DIAGNOSTIC build on this board, build the probe for the RUN slot and
+send it over the wire instead (DIAG.md, "On a board with the bootloader"):
+
+  cmake -S . -B build-slot-diag-${PROBE} -DCMAKE_BUILD_TYPE=Release \\
+      -DREFLEX_APP_BASE=0x08020000 \\
+      -DCMAKE_C_FLAGS=-DELS_DIAG_PROBE=$(diag_resolve "$REPO" "$PROBE")
+  cmake --build build-slot-diag-${PROBE}
+  python3 scripts/modbus-flash.py build-slot-diag-${PROBE}/reflex-fw.bin \\
+      --port /dev/serial0 --record-variant diagnostic
+EOF
+            fi
+            exit 1 ;;
+        *)
+            echo >&2
+            sector0_unknown_message --force-legacy "$VERDICT_OUT" >&2
+            exit 1 ;;
+    esac
 fi
 
 echo "flashing ${VARIANT^^} (${REV}$([ "$DIRTY" = true ] && echo -dirty)) on ${WHERE}"

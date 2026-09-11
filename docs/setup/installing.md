@@ -223,9 +223,10 @@ the bootloader once the board is confirmed working are all in
     The repo also has `scripts/flash.sh`. It writes the **legacy** layout —
     the application at `0x08000000`, with no bootloader at all — and it exists
     only for boards that are still on that layout. Run against a board
-    provisioned as above it would overwrite the bootloader, so it now reads
-    sector 0 first and refuses. Use `provision.sh` for a new board and
-    `modbus-flash.py` thereafter.
+    provisioned as above it would overwrite the bootloader, so it reads the
+    board first and writes only over a legacy application it recognizes or an
+    erased sector 0 — anything else, the bootloader included, is a refusal.
+    Use `provision.sh` for a new board and `modbus-flash.py` thereafter.
 
 !!! danger "Power-cycle the controller afterwards"
     A reset alone does not reliably start the new firmware on this board.

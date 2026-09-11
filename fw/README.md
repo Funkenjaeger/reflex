@@ -58,8 +58,10 @@ python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
 
 `./scripts/flash.sh` is the **legacy** path: it writes the application at
 `0x08000000` with no bootloader, which is what every board built before
-2026-09-07 has. It refuses to run against a board carrying the bootloader
-(`--force-legacy` overrides, and destroys it).
+2026-09-07 has. It reads the board first and writes only over a legacy
+application it positively recognizes, or an erased sector 0; the bootloader,
+or anything it cannot identify, is a refusal (`--force-legacy` overrides, and
+destroys whatever was there). The rules are in `scripts/lib/sector0.py`.
 
 > **Power-cycle the controller after flashing.** A reset alone does not reliably
 > start the new firmware on this board. openocd's `Verified OK` confirms the

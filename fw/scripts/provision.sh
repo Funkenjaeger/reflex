@@ -26,7 +26,10 @@
 # ONCE THIS HAS RUN, YOU DO NOT NEED IT AGAIN. Further application updates go
 # over the wire:
 #
-#   python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
+#   python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/serial0
+#
+# (on the Pi, with reflex-ui stopped -- it holds that port -- or from the
+# touchscreen's Setup -> Update, which does the same thing)
 #
 # This script is for a virgin board, for a board being converted from the
 # legacy layout, and for recovering one whose sector 0 has been damaged.
@@ -202,7 +205,10 @@ OCD="openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c 'transport select
 # what it finds: programming a bootloader over an existing bootloader, or over
 # a legacy application, is exactly what this script is for.
 # ---------------------------------------------------------------------------
-PROBE_CMD="$OCD -c 'init; reset halt; flash info 0; shutdown'"
+# 'reset run' after the read, for the reason flash.sh's preflight has one:
+# openocd exiting does not resume a halted core, and on --dry-run or an abort
+# below there is no later write step to reset it.
+PROBE_CMD="$OCD -c 'init; reset halt; flash info 0; reset run; shutdown'"
 echo "checking the ST-Link can reach the target from ${WHERE}"
 PROBE_OUT="$(mktemp)"
 trap 'rm -f "$PROBE_OUT"' EXIT
@@ -222,10 +228,11 @@ fi
 
 # WRP on sector 0 is a legitimate state -- a commissioned board has it -- and
 # it makes the bootloader write below fail. Say so now rather than after the
-# erase. Not fatal: openocd's wording for protection varies between versions,
-# so treating a missed match as a refusal would block provisioning on an
-# unprotected board.
-if grep -qi 'protect.*: *1\|protected' "$PROBE_OUT"; then
+# erase. Not fatal: a wording this does not recognize must not block
+# provisioning an unprotected board. The match itself is in lib/sector0.sh and
+# tested there; the grep it replaced also matched "not protected", so this
+# warning fired on every board and meant nothing.
+if sector0_wrp_reported "$PROBE_OUT"; then
     cat <<EOF
 
 NOTE: openocd reports write protection on flash bank 0. If that covers sector
@@ -308,7 +315,7 @@ cat <<'EOF'
 
   Then confirm BOTH stages, with the UI stopped:
 
-    python3 scripts/modbus-flash.py --identity --port /dev/ttyUSB0
+    python3 scripts/modbus-flash.py --identity --port /dev/serial0
 
   Expect stage=application and the rev this script just built. If it says
   stage=bootloader instead, the bootloader is alive but did not accept the
