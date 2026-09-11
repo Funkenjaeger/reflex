@@ -24,7 +24,11 @@ THE SEQUENCE (decisions/els-modbus-register-map.md, Implemented):
      before replying); VERIFY against the header and the host's own numbers;
      APPLY (backup + copy, journaled in flash); JUMP;
   4. poll the identity window until idStage == 2 and idBuildRev matches the
-     image header; print one verdict line.
+     image header; print one verdict line;
+  5. on that verdict, and only on it, append a record to the flash manifest
+     (flash_manifest.py; default ~/firmware/flashed.json, --manifest to say
+     where, --no-manifest to skip). It records what the board was SEEN
+     running, not merely what was sent.
 
 Every operation is edge-detected on blSeq and judged on blResult, never on
 blCommand (the firmware clears that the instant it consumes the command).
@@ -37,12 +41,14 @@ the retry notes above READ_ATTEMPTS.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import struct
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import flash_manifest  # noqa: E402
 import reflex_image as ri  # noqa: E402
 
 try:
@@ -463,7 +469,31 @@ def enter_bootloader(bus: Rtu, ident: Identity, dry_run: bool) -> Identity:
     return ident
 
 
-def flash(bus: Rtu, image_path: str, dry_run: bool) -> int:
+def record_flash(manifest, image_path: str, data: bytes, hdr, ident,
+                 variant: str, tag: str | None) -> None:
+    """Append the manifest record for a flash the board has CONFIRMED.
+
+    A failure here is reported, not raised: the board is already running the
+    new image, and an exit code saying the flash failed would be a lie that
+    sends someone to reflash a good board. ot-state reporting a stale rev is
+    the loud signal that the record did not land.
+    """
+    extra = {"image": os.path.basename(image_path), "protocol": ident.app_protocol}
+    if tag:
+        extra["tag"] = tag
+    rec = flash_manifest.record(
+        variant=variant, probe=None if variant == "release" else "unknown",
+        rev=f"{hdr.build_rev:07x}", dirty=hdr.dirty,
+        md5=hashlib.md5(data).hexdigest(), via="modbus", **extra)
+    try:
+        where = flash_manifest.append(manifest, rec)
+        print(f"  recorded in {where}")
+    except OSError as e:
+        print(f"WARNING: the flash succeeded but was NOT recorded in {manifest}: {e}")
+
+
+def flash(bus: Rtu, image_path: str, dry_run: bool, manifest=None,
+          variant: str = "unknown", tag: str | None = None) -> int:
     with open(image_path, "rb") as f:
         data = f.read()
     try:
@@ -509,6 +539,8 @@ def flash(bus: Rtu, image_path: str, dry_run: bool) -> int:
           f"{bl.recovered} replies lost after the command had run")
     print(f"VERDICT: OK -- application {ident.rev_str} is running, protocolVersion {ident.app_protocol} "
           f"({time.monotonic() - t0:.1f}s)")
+    if manifest:
+        record_flash(manifest, image_path, data, hdr, ident, variant, tag)
     return 0
 
 
@@ -522,6 +554,14 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--dry-run", action="store_true", help="everything except writes")
     ap.add_argument("--enter-bootloader", action="store_true", help="reboot into the bootloader and stay")
     ap.add_argument("--boot-app", action="store_true", help="tell a resident bootloader to JUMP")
+    ap.add_argument("--manifest", default=flash_manifest.DEFAULT_PATH,
+                    help="flash manifest to append to on a confirmed flash (default: "
+                         "%(default)s -- as ROOT that is /root; pass the login user's)")
+    ap.add_argument("--no-manifest", action="store_true", help="do not record this flash")
+    ap.add_argument("--record-variant", default="unknown",
+                    help="what the image is, for the record: 'release' for a published "
+                         "release asset (implies no diagnostic probe)")
+    ap.add_argument("--record-tag", default=None, help="release tag, for the record")
     args = ap.parse_args(argv[1:])
 
     bus = Rtu(args.port, args.baud, args.address)
@@ -553,7 +593,9 @@ def main(argv: list[str]) -> int:
             return 0
         if not args.image:
             ap.error("an image, --identity, --enter-bootloader or --boot-app is required")
-        return flash(bus, args.image, args.dry_run)
+        return flash(bus, args.image, args.dry_run,
+                     manifest=None if args.no_manifest else args.manifest,
+                     variant=args.record_variant, tag=args.record_tag)
     finally:
         bus.close()
 

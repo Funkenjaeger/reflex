@@ -573,9 +573,9 @@ restored the backup image after three watchdog strikes.
   land with the UI half of this feature.
 
 ### Follow-ups
-- `flash.sh` records SWD flashes in `~/firmware/flashed.json`; `modbus-flash.py`
-  does not write there yet. The flow has now run on elspi (2026-09-07), so the
-  record line is due.
+- ~~`modbus-flash.py` does not write `~/firmware/flashed.json` yet.~~ DONE
+  2026-09-11: it appends after the board confirms the new rev, and the in-app
+  updater passes the login user's manifest path (`scripts/flash_manifest.py`).
 - The bootloader ignores broadcast (address 0) frames entirely; fine for the UI
   master, worth stating if another master ever shares the bus.
 

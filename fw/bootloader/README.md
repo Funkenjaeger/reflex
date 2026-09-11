@@ -185,8 +185,11 @@ every step that touches the serial port.
        before any SWD reflash of sector 0, including a return to the legacy
        layout via `scripts/flash.sh`): the same command with `off`, and a
        power cycle.
-10. **Record** in `~/firmware/flashed.json` by hand what `flash.sh` would have
-    recorded (rev, dirty, md5 of `reflex-fw.bin`, "via modbus-flash").
+10. **Record.** `modbus-flash.py` appends to `~/firmware/flashed.json` itself
+    once the board reports the new revision (since 2026-09-11; before that this
+    step was by hand). Check the last line names the rev you flashed. Run as
+    root, pass `--manifest /home/<user>/firmware/flashed.json` — root's `~` is
+    not where the record is read.
 
 Anti-brick is deliberately NOT exercised in bring-up: proving the swap-back
 means running a deliberately hung image on the lathe controller for ~100 s

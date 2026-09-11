@@ -99,9 +99,13 @@ can be compiled in at a time: **[DIAG.md](DIAG.md)**. `./scripts/build.sh --diag
 with no name lists them.
 
 **Every flash is recorded** in `~/firmware/flashed.json` on the probe host: UTC
-timestamp, variant, git revision, whether the tree was dirty, and the ELF's MD5.
-Working out what firmware was on this lathe once took an afternoon of forensics
-across build-artifact timestamps; this makes it a lookup.
+timestamp, variant, git revision, whether the tree was dirty, and an MD5 of what
+was written. `flash.sh`, `provision.sh` and `modbus-flash.py` all append to it —
+the last only once the board reports the new revision running, and the in-app
+updater through it. One JSON object per line. Working out what firmware was on
+this lathe once took an afternoon of forensics across build-artifact
+timestamps; this makes it a lookup, and it is what the estate's ot-state reads
+as "what the lathe runs".
 
 ### Underneath
 

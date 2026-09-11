@@ -370,6 +370,23 @@ def find_uv(env_path: str | None = None) -> str:
         "again -- nothing has been changed.")
 
 
+def manifest_path_for(checkout: Path) -> Path:
+    """``<home of the checkout's OWNER>/firmware/flashed.json``.
+
+    The flash manifest is the login user's file: ot-state reads it from
+    ``/home/default/firmware``, and ``flash.sh`` run by that user appends to it.
+    This process is reflex-ui, which runs as ROOT, so its own ``~`` is
+    ``/root`` -- a record written there is a record nothing ever reads, and it
+    would look exactly like success. The checkout's owner is the user this
+    machine was installed as, which is the home ``fw/scripts`` belongs to.
+    Same trap as the fetch-over-origin one (``test_the_fetch_never_uses_the_
+    checkouts_own_remote``): root is not the user whose files these are.
+    """
+    import pwd   # POSIX only; imported here so the module still loads on Windows
+    owner = Path(checkout).stat().st_uid
+    return Path(pwd.getpwuid(owner).pw_dir) / "firmware" / "flashed.json"
+
+
 # --------------------------------------------------------------------------
 # The gate
 # --------------------------------------------------------------------------
@@ -502,8 +519,10 @@ class UpdateSession:
                  workdir: Path, runner=subprocess_runner,
                  download=urllib_download, fetch_json=urllib_fetch_json,
                  emit=None, uv_finder=find_uv, service: str = SERVICE_NAME,
-                 python: str | None = None, restart=None):
+                 python: str | None = None, restart=None,
+                 manifest: Path | None = None):
         self.checkout = Path(checkout)
+        self._manifest = manifest
         self.port = port
         self.current_protocol = current_protocol
         self.workdir = Path(workdir)
@@ -643,8 +662,14 @@ class UpdateSession:
 
         self.emit(f"Flashing {prepared.release.tag} firmware. "
                   f"DO NOT POWER OFF THE MACHINE.")
+        # modbus-flash.py records the flash in the manifest once the board
+        # reports the new rev. The path is explicit because this runs as
+        # root -- see manifest_path_for.
+        manifest = self._manifest or manifest_path_for(self.checkout)
         self._run([self.python, self._modbus_flash, prepared.image_path,
-                   "--port", self.port], timeout=600,
+                   "--port", self.port, "--manifest", manifest,
+                   "--record-variant", "release",
+                   "--record-tag", prepared.release.tag], timeout=600,
                   what="flashing the controller")
 
         after = self.read_identity()

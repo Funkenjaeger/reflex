@@ -96,6 +96,12 @@ jobs:
         working-directory: fw
         run: bash scripts/lib/flash-preflight-test.sh
 
+      # The flash manifest (~/firmware/flashed.json) is written after a
+      # confirmed over-the-wire flash, and only then. Stubbed pyserial, faked
+      # board conversation; stdlib only, so no install step.
+      - name: Flash manifest writer
+        working-directory: fw
+        run: python3 scripts/lib/flash-manifest-test.py
 
   arm-build:
     runs-on: ubuntu-latest

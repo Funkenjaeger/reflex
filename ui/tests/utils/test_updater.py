@@ -375,8 +375,9 @@ RELEASE = Release(tag="v1.2.0", prerelease=False,
 
 def _session(runner, tmp_path, **kw):
     restarts = []
+    kw.setdefault("manifest", tmp_path / "home" / "firmware" / "flashed.json")
+    kw.setdefault("checkout", tmp_path / "checkout")
     s = UpdateSession(
-        checkout=tmp_path / "checkout",
         port="/dev/serial0",
         current_protocol=CURRENT_PROTOCOL,
         workdir=tmp_path / "work",
@@ -431,6 +432,49 @@ def test_happy_path_flashes_then_installs_in_that_order(tmp_path):
     assert flash_at < checkout_at, "the recoverable half goes first"
     assert r.ran("uv", "sync")
     assert s.restarts == [1]
+
+
+def test_the_flash_is_recorded_in_the_login_users_manifest(tmp_path):
+    """The flash command carries the manifest path and says what it is
+    flashing. Without ``--manifest``, modbus-flash.py's default ``~`` is ROOT's
+    home here, and ot-state -- which reads /home/default/firmware -- would go
+    on reporting UNKNOWN while every test stayed green."""
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    s = _session(r, tmp_path)
+    s.run(RELEASE)
+    [flash] = r.ran("modbus-flash.py", "reflex-app-1.2.0.bin")
+    manifest = str(tmp_path / "home" / "firmware" / "flashed.json")
+    assert flash[flash.index("--manifest") + 1] == manifest
+    assert flash[flash.index("--record-variant") + 1] == "release"
+    assert flash[flash.index("--record-tag") + 1] == RELEASE.tag
+
+
+def test_manifest_path_is_the_checkout_owners_home_not_the_process(tmp_path, monkeypatch):
+    """MUTATION EVIDENCE. The UI runs as root; the manifest is the login
+    user's. Deriving the path from ``Path.home()`` / ``~`` instead of the
+    checkout's owner turns this red: HOME here is /root, as it is under
+    reflex-ui.service, and the owner resolves to /home/default."""
+    import pwd
+    checkout = tmp_path / "projects" / "reflex"
+    checkout.mkdir(parents=True)
+    owner = checkout.stat().st_uid
+    real = pwd.getpwuid
+
+    def getpwuid(uid):
+        if uid == owner:
+            return type("pw", (), {"pw_dir": "/home/default"})()
+        return real(uid)
+
+    monkeypatch.setattr(pwd, "getpwuid", getpwuid)
+    monkeypatch.setenv("HOME", "/root")
+    assert updater.manifest_path_for(checkout) == Path("/home/default/firmware/flashed.json")
+
+    # And a session given no explicit manifest uses exactly that.
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    s = _session(r, tmp_path, checkout=checkout, manifest=None)
+    s.run(RELEASE)
+    [flash] = r.ran("modbus-flash.py", "reflex-app-1.2.0.bin")
+    assert flash[flash.index("--manifest") + 1] == "/home/default/firmware/flashed.json"
 
 
 def test_preflight_reads_the_generated_map_from_the_tag(tmp_path):
