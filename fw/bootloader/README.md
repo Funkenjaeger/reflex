@@ -6,7 +6,7 @@ The register contract, flash geometry and image format are in
 `../Core/Inc/els_identity.h` and recorded in
 `../../decisions/els-modbus-register-map.md` (Implemented section).
 
-**Status: hardware-verified on the machine 2026-09-07** (merge `8184c3a`). The
+**Status: hardware-verified on the machine 2026-09-07** (merge `fe9e8dc`). The
 bootloader boots, validates and jumps; the identity window reads from both
 stages; field flashing moved 44,868 bytes over RS-485 in 12.9 s with no
 programmer and no power cycle; and the anti-brick swap-back restored the backup

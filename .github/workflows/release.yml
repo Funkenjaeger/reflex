@@ -111,7 +111,7 @@ jobs:
       # only wrote VERSION and ui/pyproject.toml, the build ran, and the commit
       # came at the very end. So every official image was built from a dirty
       # tree at the commit BEFORE the version bump, and said so: v1.2.0-rc.1
-      # reports 5da4a81-dirty while its tag points at a85a5d1. -dirty is meant
+      # reports f8dcb82-dirty while its tag points at c387940. -dirty is meant
       # to be the loud "this came off someone's working tree" signal, and it
       # was set on 100% of releases.
       #

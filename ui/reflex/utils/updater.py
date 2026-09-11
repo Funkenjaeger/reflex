@@ -237,7 +237,7 @@ def parse_identity(text: str) -> Identity:
     """Read ``modbus-flash.py --identity`` output.
 
     Its format is ``Identity.__str__`` in that script:
-    ``idMagic=0x454c stage=application windowVersion=1 rev=3315608 appProtocol=9``
+    ``idMagic=0x454c stage=application windowVersion=1 rev=fe9e8dc appProtocol=9``
     """
     m = _IDENTITY_RE.search(text)
     if not m:
