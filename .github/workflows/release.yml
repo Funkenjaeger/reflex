@@ -50,12 +50,24 @@ jobs:
       # ── Guards, before anything is built ──────────────────────────────────
       # A release is a promise about a branch that has been through the ladder.
       # integration and feature branches have not.
+      #
+      # A DRY RUN promises nothing -- both publishing steps are skipped -- so it
+      # may run from any branch. That is how a change to THIS workflow gets
+      # tested before it is promoted: dispatch the branch with dry_run, and it
+      # builds, stamps and checks exactly what a real run would, without a tag,
+      # a release, or a commit reaching origin. The version/branch pairing
+      # below only binds main and dev, so it does not apply here.
       - name: Check the branch is releasable
         run: |
           case "${{ github.ref_name }}" in
             main) echo "main: full release" ;;
             dev)  echo "dev: pre-release" ;;
-            *)    echo "::error::release can only run from main or dev; got '${{ github.ref_name }}'. Promote through the ladder first." ; exit 1 ;;
+            *)
+              if [ "${{ inputs.dry_run }}" = "true" ]; then
+                echo "::notice::dry run from '${{ github.ref_name }}': builds and checks everything, publishes nothing. A real release still needs main or dev."
+              else
+                echo "::error::release can only run from main or dev; got '${{ github.ref_name }}'. Promote through the ladder first (a dry run may run from any branch)." ; exit 1
+              fi ;;
           esac
 
       - name: Check the version and match it to the branch
@@ -91,13 +103,59 @@ jobs:
             libstdc++-arm-none-eabi-dev libstdc++-arm-none-eabi-newlib \
             libnewlib-arm-none-eabi
 
-      - name: Stamp the version
+      # THE STAMP IS COMMITTED BEFORE ANYTHING IS BUILT. The firmware's
+      # identity -- the rev and dirty flag in the identity window, and in the
+      # slotted image's RFLX header -- is read from git at BUILD time by
+      # fw/cmake/BuildRev.cmake: `git rev-parse --short=7 HEAD`, plus "does
+      # the tree have uncommitted tracked changes". Until 2026-09-11 this step
+      # only wrote VERSION and ui/pyproject.toml, the build ran, and the commit
+      # came at the very end. So every official image was built from a dirty
+      # tree at the commit BEFORE the version bump, and said so: v1.2.0-rc.1
+      # reports 5da4a81-dirty while its tag points at a85a5d1. -dirty is meant
+      # to be the loud "this came off someone's working tree" signal, and it
+      # was set on 100% of releases.
+      #
+      # Committing here means the build sees a clean tree at the exact commit
+      # the tag will point at. The commit stays LOCAL to this runner until the
+      # publish step pushes it together with the tag, so a failure anywhere in
+      # between is discarded with the runner: nothing reaches origin that no
+      # release goes with. A dry run makes the commit too, so it builds and
+      # checks exactly what a real run would publish.
+      #
+      # If the tree already says this version there is nothing to commit and
+      # HEAD already IS the stamp, so it is tagged as is rather than failing on
+      # an empty commit. That is the re-run after a publish that pushed the
+      # stamp and tag but failed to create the release: delete the tag,
+      # dispatch the same version again.
+      - name: Stamp the version and commit it, before the build
+        id: stamp
         run: |
           echo "${{ steps.v.outputs.version }}" > VERSION
           # ui is a Python package and carries its own version field; keep it
           # equal to the repo's rather than letting the two drift.
           sed -i -E '0,/^version = ".*"$/s//version = "${{ steps.v.outputs.version }}"/' ui/pyproject.toml
-          grep -m1 '^version = ' ui/pyproject.toml
+          grep -qx 'version = "${{ steps.v.outputs.version }}"' ui/pyproject.toml \
+            || { echo "::error::the version stamp did not land in ui/pyproject.toml"; exit 1; }
+          # NOT the inherited identity. reflex-fw's split-era release workflow
+          # tagged as bartei81@gmail.com, carried over from the upstream fork --
+          # releases signed by someone who has never worked on this project.
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION ui/pyproject.toml
+          if git diff --cached --quiet; then
+            echo "VERSION and ui/pyproject.toml already say ${{ steps.v.outputs.version }}; HEAD is the stamp, nothing to commit"
+          else
+            git commit -q -m "chore(release): v${{ steps.v.outputs.version }} [skip ci]"
+          fi
+          # The exact test BuildRev.cmake applies. Anything tracked still
+          # modified here would make every image below say -dirty again.
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "::error::the tree is not clean after the stamp commit; the firmware would be built -dirty."
+            git status --short
+            exit 1
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "stamp commit: $(git log -1 --format='%h %s')"
 
       # THREE firmware binaries ship and they are NOT interchangeable. Until
       # 2026-09-07 only the first was built, which meant the only firmware a
@@ -309,25 +367,60 @@ jobs:
           fi
           echo "ok: reflex-fw-$V.bin is the legacy layout (no RFLX header), reflex-app-$V.bin is the slotted image"
 
+      # EVERY IMAGE MUST NAME THE COMMIT THE TAG POINTS AT, CLEAN -- read from
+      # the bytes that ship. fw/scripts/release_identity.py finds the identity
+      # window each firmware stage compiles into flash (the eight registers
+      # the board answers at address 2048, which modbus-flash.py prints as
+      # rev=<sha>[-dirty]) and, for the slotted image, the RFLX header's
+      # buildRev and dirty flag as well. All three shipped images, for the
+      # same reason the diagnostic guard covers all three. Not finding a
+      # window, or finding two, is a failure: a check that cannot see the
+      # identity cannot vouch for it.
+      #
+      # The self-test runs first, against synthetic images: a clean one that
+      # must pass, and dirty / wrong-commit / wrong-stage / missing / doubled
+      # windows that must each fail. A guard that cannot fail is worse than
+      # none -- the diagnostic guard above shipped that way once -- so every
+      # release re-proves this one can. Seen red on REAL images 2026-09-11:
+      # the three configurations built in the old order (stamp, build, then
+      # commit) were all refused, reading <parent>-dirty instead of the stamp
+      # commit; built in this order, all three passed.
+      - name: Refuse to ship an image that is not the tagged commit, clean
+        run: |
+          V=${{ steps.v.outputs.version }}
+          REV=${{ steps.stamp.outputs.sha }}
+          python3 fw/scripts/release_identity.py self-test
+          fail=0
+          python3 fw/scripts/release_identity.py check "dist/reflex-fw-$V.bin"  --stage app        --rev "$REV"           || fail=1
+          python3 fw/scripts/release_identity.py check "dist/reflex-app-$V.bin" --stage app        --rev "$REV" --slotted || fail=1
+          python3 fw/scripts/release_identity.py check "dist/reflex-bl-$V.bin"  --stage bootloader --rev "$REV"           || fail=1
+          if [ "$fail" != 0 ]; then
+            echo "::error::a shipped firmware image does not identify as ${REV:0:7}, clean -- it was not built from the commit this release tags."
+            exit 1
+          fi
+
       # ── Publish ───────────────────────────────────────────────────────────
       - name: Stop here (dry run)
         if: ${{ inputs.dry_run }}
         run: |
           echo "dry run — built and checked v${{ steps.v.outputs.version }}, publishing nothing"
 
-      - name: Commit the version, tag it, push
+      # The stamp commit was made before the build. Tag THAT commit, by sha,
+      # rather than whatever HEAD is by now, and push branch and tag in ONE
+      # atomic push: origin gets both or neither. The old two-push form could
+      # land the stamp commit on the branch and then fail the tag push,
+      # leaving a version bump on dev that no tag or release goes with.
+      #
+      # Still not atomic with the push: `gh release create` below. If it fails,
+      # the tag and stamp are on origin with no release; delete the tag and
+      # dispatch the same version again (the stamp step then finds nothing to
+      # commit and tags HEAD as is).
+      - name: Tag the stamp commit and push both
         if: ${{ !inputs.dry_run }}
         run: |
-          # NOT the inherited identity. reflex-fw's split-era release workflow
-          # tagged as bartei81@gmail.com, carried over from the upstream fork --
-          # releases signed by someone who has never worked on this project.
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add VERSION ui/pyproject.toml
-          git commit -m "chore(release): v${{ steps.v.outputs.version }} [skip ci]"
-          git tag -a "v${{ steps.v.outputs.version }}" -m "reflex v${{ steps.v.outputs.version }}"
-          git push origin HEAD:${{ github.ref_name }}
-          git push origin "v${{ steps.v.outputs.version }}"
+          SHA=${{ steps.stamp.outputs.sha }}
+          git tag -a "v${{ steps.v.outputs.version }}" -m "reflex v${{ steps.v.outputs.version }}" "$SHA"
+          git push --atomic origin "$SHA:refs/heads/${{ github.ref_name }}" "refs/tags/v${{ steps.v.outputs.version }}"
 
       - name: Publish the release
         if: ${{ !inputs.dry_run }}
