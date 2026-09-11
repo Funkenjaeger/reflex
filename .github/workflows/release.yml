@@ -50,12 +50,24 @@ jobs:
       # ── Guards, before anything is built ──────────────────────────────────
       # A release is a promise about a branch that has been through the ladder.
       # integration and feature branches have not.
+      #
+      # A DRY RUN promises nothing -- both publishing steps are skipped -- so it
+      # may run from any branch. That is how a change to THIS workflow gets
+      # tested before it is promoted: dispatch the branch with dry_run, and it
+      # builds, stamps and checks exactly what a real run would, without a tag,
+      # a release, or a commit reaching origin. The version/branch pairing
+      # below only binds main and dev, so it does not apply here.
       - name: Check the branch is releasable
         run: |
           case "${{ github.ref_name }}" in
             main) echo "main: full release" ;;
             dev)  echo "dev: pre-release" ;;
-            *)    echo "::error::release can only run from main or dev; got '${{ github.ref_name }}'. Promote through the ladder first." ; exit 1 ;;
+            *)
+              if [ "${{ inputs.dry_run }}" = "true" ]; then
+                echo "::notice::dry run from '${{ github.ref_name }}': builds and checks everything, publishes nothing. A real release still needs main or dev."
+              else
+                echo "::error::release can only run from main or dev; got '${{ github.ref_name }}'. Promote through the ladder first (a dry run may run from any branch)." ; exit 1
+              fi ;;
           esac
 
       - name: Check the version and match it to the branch
