@@ -87,6 +87,8 @@ def _snap(enable=0, active=0, takeupPending=0, takeupSeq=0, **over):
         "lastPhaseError": 0.0, "lastCorrection": 0.0,
         "machineMode": 0, "protocolVersion": 7,
         "stepPulseMinCycles": 900, "stepPulseRuntCount": 0,
+        "stopTriggerSeq": 0, "stopTriggerZ": 0, "stopTriggerZSpeed": 0,
+        "stopTriggerStepsToGo": 0, "stopTriggerSpindleSpeed": 0,
     }
     snap.update(over)
     return snap
@@ -514,6 +516,30 @@ def test_context_is_emitted_on_a_seq_edge_not_every_tick(tmp_path):
     assert len(ctx) == 2
     assert ctx[-1]["takeupSeq"] == 1
     assert set(CONTEXT_FIELDS) <= set(ctx[-1])       # whole block, not a delta
+
+
+def test_each_stop_trigger_lands_its_own_context_record(tmp_path):
+    """The overshoot analysis needs the Z the firmware latched AT the trigger,
+    per stop. stopTriggerSeq edges once per trigger, so each stop must emit a
+    context record carrying the snapshot -- not merely the latest one at the
+    next job boundary. Seen red 2026-09-12 by removing the five names from
+    CONTEXT_FIELDS: the edge then emits nothing and stopTriggerZ is absent."""
+    clock, board = _Clock(), _Board()
+    rec = _recorder(tmp_path, board, clock)
+    live = _fast(servoMode=1)
+    _pump(rec, clock, board, 20, state="cutting", snap=_snap(enable=1), fast=live)
+    _pump(rec, clock, board, 20, snap=_snap(enable=1, active=1, stopTriggerSeq=1,
+                                           stopTriggerZ=-40210, stopTriggerZSpeed=2512,
+                                           stopTriggerStepsToGo=-7))
+    _pump(rec, clock, board, 20, snap=_snap(enable=1, active=1, stopTriggerSeq=2,
+                                           stopTriggerZ=-38100, stopTriggerZSpeed=1498))
+    records, _ = _all(tmp_path)
+    ctx = _kinds(records, "context")
+    trig = [c for c in ctx if c.get("stopTriggerSeq", 0) > 0]
+    assert [c["stopTriggerSeq"] for c in trig] == [1, 2], "one context record per trigger"
+    assert trig[0]["stopTriggerZ"] == -40210 and trig[0]["stopTriggerZSpeed"] == 2512
+    assert trig[0]["stopTriggerStepsToGo"] == -7, "signed, as the generated map declares"
+    assert trig[1]["stopTriggerZ"] == -38100
 
 
 def test_fsm_transitions_are_their_own_records(tmp_path):
