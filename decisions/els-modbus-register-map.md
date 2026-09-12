@@ -182,9 +182,9 @@ write does) cannot leave a lie behind.
 
 | Register | Values |
 |---|---|
-| `blCommand` | 1 ERASE, 2 WRITE, 3 VERIFY, 4 APPLY, 5 JUMP, 6 STAY. Cleared on consume. **Executed to completion BEFORE the reply is sent**, so the host is never mid-request while an erase stalls the flash interface; the arrival of the reply means the operation finished, and `blSeq`/`blResult` say how. |
+| `blCommand` | 1 ERASE, 2 WRITE, 3 VERIFY, 4 APPLY, 5 JUMP, 6 STAY, 7 REVERT (appended 2026-09-12, below). Cleared on consume. **Executed to completion BEFORE the reply is sent**, so the host is never mid-request while an erase stalls the flash interface; the arrival of the reply means the operation finished, and `blSeq`/`blResult` say how. |
 | `blStatus` | 0 IDLE, 1 ERASING, 2 WRITING, 3 VERIFYING, 4 BAD_IMAGE, 5 STAGED, 6 APPLYING, 7 READY_TO_JUMP, 8 STRUCK_OUT |
-| `blResult` | 0 OK; 1 BAD_COMMAND, 2 SLOT, 3 ADDR_RANGE, 4 WRITE_LEN, 5 FLASH_ERASE, 6 FLASH_PROG, 7 FLASH_VERIFY, 8 HDR_MAGIC, 9 HDR_VERSION, 10 HDR_LENGTH, 11 HDR_CRC, 12 HOST_LEN, 13 HOST_CRC, 14 NOT_STAGED, 15 NO_RUN_IMAGE, 16 VECTORS, 17 JOURNAL, 18 BACKUP_FAILED, 19 COPY_FAILED |
+| `blResult` | 0 OK; 1 BAD_COMMAND, 2 SLOT, 3 ADDR_RANGE, 4 WRITE_LEN, 5 FLASH_ERASE, 6 FLASH_PROG, 7 FLASH_VERIFY, 8 HDR_MAGIC, 9 HDR_VERSION, 10 HDR_LENGTH, 11 HDR_CRC, 12 HOST_LEN, 13 HOST_CRC, 14 NOT_STAGED, 15 NO_RUN_IMAGE, 16 VECTORS, 17 JOURNAL, 18 BACKUP_FAILED, 19 COPY_FAILED, 20 NO_BACKUP |
 | `blCopyState` | 0 IDLE, 1 BACKUP, 2 COPY, 3 TRIAL, 4 REVERT, 5 REVERTED |
 
 The per-chunk transfer is ONE FC16 from `blCommand` (+3) through the end of
@@ -291,3 +291,48 @@ implementation (the software one is checked against Python and the published
 RS-485 bus, the backup-register access sequence, the IWDG arming and its
 freeze-under-debug, the jump hygiene, and the option-byte WRP procedure. The
 bring-up procedure is in `fw/bootloader/README.md`.
+
+## Appended 2026-09-12: `REVERT`, the update gate's rollback
+
+**`blCommand` 7 REVERT** copies BACKUP into RUN on demand and journals
+`REVERTED`. **`blResult` 20 NO_BACKUP** refuses it, touching no flash, when
+BACKUP does not validate or holds the same image as RUN. Both are appends;
+nothing was renumbered.
+
+**Why a command and not a read-flash verb.** The in-app updater refuses to
+install a UI whose protocol the just-flashed firmware does not speak, which
+leaves new firmware under the old UI. On 2026-09-08 the rollback was decided
+as a bootloader read-flash verb (read the outgoing image out of RUN before
+overwriting it), chosen over keeping the image on disk because a board last
+flashed over SWD has nothing on disk. Reading `doApply` while starting that
+build showed both options were solving a problem the bootloader had already
+solved: APPLY's first step copies RUN into BACKUP, verified by readback and
+header CRC, before STAGING is copied over RUN. Nothing else writes sector 7,
+and confirming the new image does not touch it. So when the gate refuses,
+BACKUP holds exactly the outgoing image -- including an SWD-flashed one,
+since the first APPLY backs that up like any other -- and the journaled
+BACKUP -> RUN path already existed as the strike-out swap-back, verified on
+the machine 2026-09-07. It was only unreachable by command. Evan chose the
+command over the read verb on 2026-09-12.
+
+What it deliberately is not: a way to go back more than one step (after a
+REVERT, BACKUP equals RUN), or an off-board copy of the running image. A
+read verb would still be the tool for the latter, and for reading sector 0
+without an ST-Link; neither is the rollback.
+
+**The limit on the host side.** Reaching the bootloader goes through the
+running application's `bootCommand`, whose register depends on its
+`protocolVersion` -- in this case the REFUSED image's. `modbus-flash.py`
+keeps a whitelist of checked layouts and refuses an unlisted one rather than
+guess, so a refused image at a layout the machine's checkout has never seen
+cannot be reverted from the touchscreen; the refusal message then stands as
+it did before. The likely mismatch -- a wrong or older asset -- is at a
+known layout.
+
+Tests: `bl_core_test` G (refusals, rollback after a confirmed update and
+from an unconfirmed TRIAL, no ping-pong on strike-out) and H (power-loss
+sweep over REVERT); `bl_client_retry_test` (lost reply reconciled on
+`blSeq`, the flow, the manifest record, the unknown-layout refusal);
+`ui/tests/utils/test_updater.py` (rollback only on the protocol refusal,
+success claimed only on a fresh identity read). Not verified on hardware:
+see `fw/todo.md`.

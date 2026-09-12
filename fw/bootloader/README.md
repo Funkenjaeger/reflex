@@ -107,6 +107,13 @@ BACKUP, STAGING copied to RUN, journaled in flash); jumps; then polls until the
 app answers with the image's build rev. `--dry-run` does everything except the
 writes; `--enter-bootloader` and `--boot-app` are the two halves on their own.
 
+`--revert [--expect-rev REV]` puts back the image the last APPLY displaced:
+into the bootloader, `blCommand` 7 (BACKUP copied into RUN, journaled), jump,
+wait for the application at `REV`, and append a `"variant": "revert"` record
+to the manifest. It is how the in-app updater rolls back firmware its gate
+refused. One step only: afterwards BACKUP and RUN hold the same image and a
+second REVERT answers `NO_BACKUP`.
+
 ## Anti-brick
 
 * The bootloader arms the IWDG (~32 s) before every jump and the app refreshes
@@ -185,6 +192,14 @@ every step that touches the serial port.
        before any SWD reflash of sector 0, including a return to the legacy
        layout via `scripts/flash.sh`): the same command with `off`, and a
        power cycle.
+   9c. **Prove REVERT** (needs a bootloader built with `blCommand` 7, i.e. from
+       2026-09-12 on). BACKUP now holds step 9's dirty rev, RUN the clean one:
+       `modbus-flash.py --revert --expect-rev <step 9 dirty rev> --manifest
+       /home/<user>/firmware/flashed.json` -> `VERDICT: OK -- reverted`, and
+       `--identity` agrees. Then `--revert` again must refuse with
+       `NO_BACKUP` and change nothing. Finish by repeating 9a, so the board
+       ends on the clean rev with the dirty one in BACKUP. WRP from 9b covers
+       sector 0 only, so it does not stand in the way.
 10. **Record.** `modbus-flash.py` appends to `~/firmware/flashed.json` itself
     once the board reports the new revision (since 2026-09-11; before that this
     step was by hand). Check the last line names the rev you flashed. Run as
@@ -202,6 +217,9 @@ the previous rev. Decide that separately.
 
 * Bootloader wedged or WRP-protected garbage in sector 0: clear WRP (9b with
   `off`), power cycle, reprogram (step 4).
+* Firmware an update installed is wrong for this UI (the updater's gate
+  refused it and could not roll back on its own): `modbus-flash.py --revert`
+  from the command line, with the UI stopped.
 * App in RUN invalid and nothing in BACKUP: the bootloader stays resident
   (`runValid=0`); `modbus-flash.py <image>` from the bootloader works with no
   SWD at all -- that is the point.

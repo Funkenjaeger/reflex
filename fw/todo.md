@@ -558,6 +558,12 @@ restored the backup image after three watchdog strikes.
   the design assumes was not separately exercised.
 
 ### Still not proven on hardware
+- `blCommand` 7 REVERT (2026-09-12, branch `feat/update-rollback`): the
+  on-demand BACKUP -> RUN copy, its `NO_BACKUP` refusal, and the in-app
+  updater's rollback through it. Emulator + host tests only (bl_core_test G/H,
+  bl_client_retry_test, test_updater); the REVERT copy path itself is the
+  swap-back verified 2026-09-07, but the command entry is not. Bench step 9c
+  in `bootloader/README.md`.
 - Option-byte WRP on sector 0 via openocd `flash protect`, and clearing it.
 - IWDG freeze under SWD halt, and the app's 50 ms refresh keeping up under a
   real cut.
