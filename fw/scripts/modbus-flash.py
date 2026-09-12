@@ -13,6 +13,7 @@ timeouts (a sector erase stalls the board for 1-4 s), and can send the one
     modbus-flash.py IMAGE.bin --dry-run        everything except writes
     modbus-flash.py --enter-bootloader         reboot into the bootloader and stay
     modbus-flash.py --boot-app                 tell a resident bootloader to jump
+    modbus-flash.py --revert [--expect-rev R]  put the previous image back (see revert())
 
 THE SEQUENCE (decisions/els-modbus-register-map.md, Implemented):
   1. read the identity window at 2048 FIRST, ALWAYS; refuse on any idMagic
@@ -70,6 +71,7 @@ BL_BASE = 2304
 BL_DATA = 16
 BL_DATA_REGS = 100
 CMD_ERASE, CMD_WRITE, CMD_VERIFY, CMD_APPLY, CMD_JUMP, CMD_STAY = 1, 2, 3, 4, 5, 6
+CMD_REVERT = 7
 SLOT_RUN, SLOT_STAGING, SLOT_BACKUP = 0, 1, 2
 
 STATUS_NAMES = {0: "IDLE", 1: "ERASING", 2: "WRITING", 3: "VERIFYING", 4: "BAD_IMAGE",
@@ -78,7 +80,8 @@ RESULT_NAMES = {0: "OK", 1: "BAD_COMMAND", 2: "SLOT", 3: "ADDR_RANGE", 4: "WRITE
                 5: "FLASH_ERASE", 6: "FLASH_PROG", 7: "FLASH_VERIFY", 8: "HDR_MAGIC",
                 9: "HDR_VERSION", 10: "HDR_LENGTH", 11: "HDR_CRC", 12: "HOST_LEN",
                 13: "HOST_CRC", 14: "NOT_STAGED", 15: "NO_RUN_IMAGE", 16: "VECTORS",
-                17: "JOURNAL", 18: "BACKUP_FAILED", 19: "COPY_FAILED"}
+                17: "JOURNAL", 18: "BACKUP_FAILED", 19: "COPY_FAILED",
+                20: "NO_BACKUP"}
 STATE_NAMES = {0: "IDLE", 1: "BACKUP", 2: "COPY", 3: "TRIAL", 4: "REVERT", 5: "REVERTED"}
 
 # The app-side command register lives in rampsSharedData_t and so moves with
@@ -422,6 +425,17 @@ class Bootloader:
             if h[BL_COPY_STATE] != 3 or h[BL_RUN_VALID] != 1:
                 raise SystemExit(f"APPLY left the board not ready: {self.describe()}")
 
+    def revert(self) -> None:
+        """Copy BACKUP -> RUN. Not idempotent -- a second REVERT has nothing
+        different to go to and answers NO_BACKUP -- so it goes through _commit
+        like APPLY: a lost reply is reconciled on blSeq, never resent blind."""
+        # One 128 KB erase, one copy, two journal records: APPLY's budget.
+        self.command(CMD_REVERT, "REVERT (backup -> run)", timeout=15.0)
+        if not self.dry_run:
+            h = self.head()
+            if h[BL_COPY_STATE] != 5 or h[BL_RUN_VALID] != 1:
+                raise SystemExit(f"REVERT left the board without a valid restored image: {self.describe()}")
+
     def jump(self) -> None:
         """DELIBERATELY NOT RETRIED, and not through _commit.
 
@@ -544,6 +558,70 @@ def flash(bus: Rtu, image_path: str, dry_run: bool, manifest=None,
     return 0
 
 
+def revert(bus: Rtu, dry_run: bool, manifest=None, expect_rev: str | None = None) -> int:
+    """Put back the image the last APPLY displaced. The in-app updater's
+    rollback when its gate refuses the firmware it just flashed.
+
+    APPLY copies RUN into BACKUP before overwriting it, so the previous image
+    is already on the board however it got there -- nothing is read over the
+    wire and nothing has to be kept on disk. One step back only: after a
+    REVERT, BACKUP and RUN hold the same image and another is refused.
+
+    Getting INTO the bootloader goes through the running application's
+    bootCommand register, whose address depends on its protocolVersion. When
+    the image being reverted speaks a layout this checkout has never seen,
+    enter_bootloader refuses rather than guess, and the rollback cannot start.
+    That is the correct answer to 'I do not know where this register is'.
+
+    ``expect_rev`` (the rev the board ran before the update) makes the wait
+    for the application also a check that the right image came back."""
+    want = int(expect_rev.split("-")[0], 16) if expect_rev else None
+    ident = read_identity(bus)
+    print(f"board: {ident}")
+    reverted_from = ident.rev_str if ident.stage == ID_STAGE_APP else None
+    ident = enter_bootloader(bus, ident, dry_run)
+    if dry_run and ident.stage != ID_STAGE_BOOTLOADER:
+        print("dry-run: stopping before any write (board is still in the application)")
+        return 0
+
+    bl = Bootloader(bus, dry_run)
+    print(f"bootloader: {bl.describe()}")
+    t0 = time.monotonic()
+    print("  reverting (copy the backup image into the run slot)...")
+    bl.revert()
+    print(f"  {bl.describe()}")
+    print("  jumping...")
+    bl.jump()
+    if dry_run:
+        print(f"VERDICT: dry-run complete, nothing written ({time.monotonic() - t0:.1f}s)")
+        return 0
+    ident = wait_for_stage(bus, ID_STAGE_APP, timeout=15.0, rev=want)
+    print(f"  link: {bus.retries} read retries, {bl.retries} commands resent, "
+          f"{bl.recovered} replies lost after the command had run")
+    print(f"VERDICT: OK -- reverted; application {ident.rev_str} is running, "
+          f"protocolVersion {ident.app_protocol} ({time.monotonic() - t0:.1f}s)")
+    if manifest:
+        record_revert(manifest, ident, reverted_from)
+    return 0
+
+
+def record_revert(manifest, ident, reverted_from: str | None) -> None:
+    """ot-state takes the manifest's LAST line as what the lathe runs, so a
+    revert that wrote nothing would leave it reporting the refused image.
+    No image file was sent, so md5 is stated null rather than invented, and
+    whether the restored image carries a probe is unknown here. Reported,
+    not raised, for the reason record_flash gives."""
+    rec = flash_manifest.record(
+        variant="revert", probe="unknown", rev=f"{ident.build_rev:07x}",
+        dirty=ident.dirty, md5=None, via="modbus",
+        protocol=ident.app_protocol, reverted_from=reverted_from)
+    try:
+        where = flash_manifest.append(manifest, rec)
+        print(f"  recorded in {where}")
+    except OSError as e:
+        print(f"WARNING: the revert succeeded but was NOT recorded in {manifest}: {e}")
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("image", nargs="?", help="slotted reflex-fw.bin (built with REFLEX_APP_BASE=0x08020000)")
@@ -554,6 +632,10 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--dry-run", action="store_true", help="everything except writes")
     ap.add_argument("--enter-bootloader", action="store_true", help="reboot into the bootloader and stay")
     ap.add_argument("--boot-app", action="store_true", help="tell a resident bootloader to JUMP")
+    ap.add_argument("--revert", action="store_true",
+                    help="copy the backup image (the one the last update displaced) back into the run slot")
+    ap.add_argument("--expect-rev", default=None,
+                    help="with --revert: the rev that must come back (the board's rev before the update)")
     ap.add_argument("--manifest", default=flash_manifest.DEFAULT_PATH,
                     help="flash manifest to append to on a confirmed flash (default: "
                          "%(default)s -- as ROOT that is /root; pass the login user's)")
@@ -591,8 +673,12 @@ def main(argv: list[str]) -> int:
             ident = wait_for_stage(bus, ID_STAGE_APP, timeout=15.0)
             print(f"VERDICT: OK -- application {ident.rev_str} is running")
             return 0
+        if args.revert:
+            return revert(bus, args.dry_run,
+                          manifest=None if args.no_manifest else args.manifest,
+                          expect_rev=args.expect_rev)
         if not args.image:
-            ap.error("an image, --identity, --enter-bootloader or --boot-app is required")
+            ap.error("an image, --identity, --enter-bootloader, --boot-app or --revert is required")
         return flash(bus, args.image, args.dry_run,
                      manifest=None if args.no_manifest else args.manifest,
                      variant=args.record_variant, tag=args.record_tag)

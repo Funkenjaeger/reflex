@@ -139,6 +139,25 @@ class ProtocolMismatch(UpdateRefused):
     """
 
 
+class FirmwareProtocolMismatch(ProtocolMismatch):
+    """The flashed image RUNS, is the one we sent, and speaks a different
+    register protocol than the target UI.
+
+    Split out because it is the one gate refusal the bootloader can undo. The
+    other two are not: a board left in the bootloader has no application to
+    pair, and a rev that is not the image's means the bootloader's own
+    swap-back ALREADY put the previous image back.
+    """
+
+
+class RolledBack(ProtocolMismatch):
+    """Refused, and the previous firmware is back on the controller and
+    CONFIRMED there -- the application runs the rev it ran before the update,
+    at this UI's protocol. The machine is as it was. Only raised after that
+    identity read, never on the rollback command's exit status alone.
+    """
+
+
 # --------------------------------------------------------------------------
 # Release list
 # --------------------------------------------------------------------------
@@ -443,7 +462,7 @@ def verify_firmware_half(identity: Identity, target_protocol: int,
             f"each other.")
 
     if identity.app_protocol != target_protocol:
-        raise ProtocolMismatch(
+        raise FirmwareProtocolMismatch(
             f"REFUSED: the firmware now on the controller speaks register "
             f"protocol version {identity.app_protocol}, but the {target_tag} "
             f"UI expects {target_protocol}. Installing it would produce "
@@ -674,13 +693,71 @@ class UpdateSession:
 
         after = self.read_identity()
         self.emit(f"Controller after: {after}.")
-        verdict = verify_firmware_half(
-            after, prepared.target_protocol, prepared.release.tag,
-            expected_rev=prepared.image.rev)
+        try:
+            verdict = verify_firmware_half(
+                after, prepared.target_protocol, prepared.release.tag,
+                expected_rev=prepared.image.rev)
+        except FirmwareProtocolMismatch as refused:
+            self._roll_back(prepared, before, after, refused)   # always raises
         self.emit(f"Firmware half verified: protocol version "
                   f"{verdict.identity.app_protocol} matches the "
                   f"{verdict.target_tag} UI.")
         return verdict
+
+    def _roll_back(self, prepared: Prepared, before: Identity,
+                   after: Identity, refused: FirmwareProtocolMismatch):
+        """Put the previous firmware back, prove it, and raise.
+
+        The bootloader kept the outgoing image: APPLY copies RUN into BACKUP
+        before overwriting it, whether that image arrived over Modbus or SWD.
+        ``modbus-flash.py --revert`` copies it back (journaled, power-loss
+        safe) and waits for ``before``'s rev to come up.
+
+        Success is decided by a FRESH identity read, not by the revert's exit
+        status: :class:`RolledBack` tells the operator the machine is as it
+        was, and that is only true if the board says so. Every other outcome
+        keeps ``refused``'s own message -- new firmware under the old UI --
+        with what the rollback attempt saw appended.
+        """
+        tag = prepared.release.tag
+        self.emit(f"REFUSED: the {tag} firmware speaks protocol version "
+                  f"{after.app_protocol}, its UI expects "
+                  f"{prepared.target_protocol}. Restoring the previous "
+                  f"firmware ({before.build_rev}). DO NOT POWER OFF THE MACHINE.")
+        manifest = self._manifest or manifest_path_for(self.checkout)
+        rc, out = self._runner(
+            [self.python, self._modbus_flash, "--revert", "--port", self.port,
+             "--manifest", manifest, "--expect-rev", before.build_rev],
+            cwd=None, timeout=300, emit=self._emit)
+        if rc != 0:
+            raise ProtocolMismatch(
+                f"{refused}\n\nRestoring the previous firmware "
+                f"({before.build_rev}) was attempted and FAILED, so the state "
+                f"above still stands.\n{out.strip()[-600:]}") from refused
+        try:
+            restored = self.read_identity()
+        except UpdateRefused as unreadable:
+            raise ProtocolMismatch(
+                f"{refused}\n\nA rollback to {before.build_rev} reported "
+                f"success, but the controller could not be read afterwards, so "
+                f"what it runs is UNKNOWN.\n{unreadable}") from refused
+        self.emit(f"Controller after rollback: {restored}.")
+        if (restored.stage != STAGE_APPLICATION
+                or restored.build_rev != before.build_rev
+                or restored.app_protocol != self.current_protocol):
+            raise ProtocolMismatch(
+                f"{refused}\n\nA rollback to {before.build_rev} reported "
+                f"success, but the controller now reports {restored}, not the "
+                f"previous firmware at protocol version "
+                f"{self.current_protocol}. Treat the machine as mismatched.") from refused
+        raise RolledBack(
+            f"REFUSED: the {tag} firmware speaks register protocol version "
+            f"{after.app_protocol}, but the {tag} UI expects "
+            f"{prepared.target_protocol}, so the two halves of that release do "
+            f"not match each other. Nothing from {tag} was kept: the previous "
+            f"firmware ({before.build_rev}) has been restored and confirmed "
+            f"running, and the UI was never changed. Do not retry this "
+            f"release.") from refused
 
     # -- 3. the UI half, reachable only with a verdict ---------------------
 

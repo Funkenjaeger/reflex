@@ -149,6 +149,10 @@ def test_the_gate_raises_rather_than_logging():
     src = _updater_src()
     gate = src[src.index("def verify_firmware_half"):
                src.index("# ---", src.index("def verify_firmware_half"))]
-    assert gate.count("raise ProtocolMismatch(") == 3
+    # Three refusals, one per condition. The protocol one raises the
+    # FirmwareProtocolMismatch subclass -- the kind the session rolls back --
+    # and must stay the ONLY one that does.
+    assert gate.count("raise ProtocolMismatch(") == 2
+    assert gate.count("raise FirmwareProtocolMismatch(") == 1
     assert "log.warning" not in gate
     assert "log.error" not in gate

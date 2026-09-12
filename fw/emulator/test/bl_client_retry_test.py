@@ -126,6 +126,8 @@ class Board:
             self.regs[self.COMMAND] = 0
             self.regs[self.SEQ] = (self.regs[self.SEQ] + 1) & 0xFFFF
             self.regs[self.RESULT] = 0
+            if self.executed[-1][0] == 7:        # REVERT: restored and valid
+                self.regs[14], self.regs[15] = 5, 1
 
 
 class FakeSerial:
@@ -148,6 +150,41 @@ class FakeSerial:
 
     def close(self):
         pass
+
+
+class FlowBoard(Board):
+    """Board plus the identity window at 2048 and the two stage changes the
+    revert flow drives: bootCommand=1 in the application -> bootloader, and
+    JUMP -> application, running whatever REVERT left in RUN."""
+
+    def __init__(self, *, app_rev, backup_rev, protocol, boot_reg=168):
+        super().__init__()
+        self.stage, self.rev, self.backup_rev = 2, app_rev, backup_rev
+        self.protocol, self.boot_reg = protocol, boot_reg
+
+    def handle(self, frame: bytes) -> bytes:
+        if struct.unpack("<H", frame[-2:])[0] != crc16(frame[:-2]):
+            return b""
+        addr, fc = frame[0], frame[1]
+        reg = struct.unpack(">H", frame[2:4])[0]
+        if fc == 3 and reg == 2048:
+            ident = [0x454C, self.stage, 1, self.rev & 0xFFFF, self.rev >> 16, 0,
+                     self.protocol if self.stage == 2 else 0, 0]
+            return self._reply(bytes([addr, 3, 16]) + struct.pack(">8H", *ident))
+        if self.stage == 2:
+            if fc == 6 and reg == self.boot_reg and struct.unpack(">H", frame[4:6])[0] == 1:
+                self.stage = 1
+                return self._reply(frame[:6])
+            body = bytes([addr, fc | 0x80, 2])        # the app has no BL window
+            return self._reply(body)
+        n = len(self.executed)
+        out = super().handle(frame)
+        for cmd, _ in self.executed[n:]:
+            if cmd == 7:
+                self.rev = self.backup_rev
+            elif cmd == 5:
+                self.stage = 2
+        return out
 
 
 def load_client():
@@ -211,6 +248,17 @@ def main():
           f"lost reply to APPLY: applied once, not twice ({err or 'no error'}, "
           f"executed {len(b.executed)}x)")
 
+    # --- REVERT is not idempotent either: a second one answers NO_BACKUP -------
+    b = Board()
+    b.drop_reply = {2}
+    bus, bl = make(mf, b)
+    err = guarded(mf, lambda: bl.revert())
+    check(err is None and b.executed == [(mf.CMD_REVERT, [0, 0, 0, 0])],
+          f"lost reply to REVERT: reverted once, not twice ({err or 'no error'}, "
+          f"executed {len(b.executed)}x)")
+    check(bl.recovered == 1 and bl.retries == 0,
+          "lost reply to REVERT: counted as recovered, not as a resend")
+
     # --- a read is retried and succeeds --------------------------------------
     b = Board()
     b.drop_reply = {1}
@@ -244,6 +292,43 @@ def main():
     check(raised, "an exception response propagates")
     check(b.received == 1 and bus.retries == 0,
           "...on the first try, not after four (this is how the app is detected)")
+
+    # --- the revert FLOW: app -> bootloader -> REVERT -> JUMP -> record -------
+    import json
+    import tempfile
+    b = FlowBoard(app_rev=0xABC1234, backup_rev=0x0000001, protocol=10)
+    bus, _ = make(mf, b)
+    with tempfile.TemporaryDirectory() as d:
+        manifest = os.path.join(d, "firmware", "flashed.json")
+        rc = []
+        err = guarded(mf, lambda: rc.append(mf.revert(
+            bus, False, manifest=manifest, expect_rev="0000001")))
+        check(err is None and rc == [0],
+              f"revert flow: returns 0 with the previous rev running ({err or 'no error'})")
+        check([c for c, _ in b.executed] == [mf.CMD_REVERT, mf.CMD_JUMP],
+              f"revert flow: exactly REVERT then JUMP -- no erase, write or apply "
+              f"(executed {[c for c, _ in b.executed]})")
+        rec = None
+        if os.path.exists(manifest):
+            with open(manifest) as f:
+                lines = [l for l in f.read().splitlines() if l.strip()]
+            rec = json.loads(lines[-1]) if lines else None
+        check(rec is not None and rec.get("variant") == "revert" and rec.get("rev") == "0000001"
+              and rec.get("reverted_from") == "abc1234" and rec.get("md5") is None
+              and rec.get("protocol") == 10 and rec.get("via") == "modbus",
+              f"revert flow: the manifest's LAST line names the restored rev, for ot-state ({rec})")
+
+    # --- a layout this checkout has never seen: refuse before touching anything
+    b = FlowBoard(app_rev=0xABC1234, backup_rev=0x0000001, protocol=99)
+    bus, _ = make(mf, b)
+    try:
+        mf.revert(bus, False, manifest=None, expect_rev="0000001")
+        refused = False
+    except SystemExit as e:
+        refused = "SWD" in str(e)
+    check(refused, "revert of an app at an unknown protocolVersion refuses, naming SWD")
+    check(b.executed == [] and b.stage == 2,
+          "...having written nothing: no bootCommand guess, no REVERT")
 
     print("FAILURES" if failures else "all passed")
     return 1 if failures else 0

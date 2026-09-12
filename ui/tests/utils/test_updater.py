@@ -19,8 +19,10 @@ import pytest
 from reflex.utils import updater
 from reflex.utils.updater import (
     Identity,
+    FirmwareProtocolMismatch,
     ProtocolMismatch,
     Release,
+    RolledBack,
     UpdateRefused,
     UpdateSession,
     parse_identity,
@@ -286,6 +288,21 @@ def test_gate_refuses_a_protocol_mismatch():
     assert "NOT installed" in str(e.value)
 
 
+def test_only_the_protocol_refusal_is_the_revertible_kind():
+    """The rollback keys on the exception TYPE. A board left in the
+    bootloader has no application to pair, and a foreign rev means the
+    bootloader's swap-back already reverted -- reverting again would be
+    refused by the bootloader, or worse, undo a swap-back that saved it."""
+    with pytest.raises(FirmwareProtocolMismatch):
+        verify_firmware_half(_ident(protocol=TARGET_PROTOCOL - 1),
+                             TARGET_PROTOCOL, "v1.2.0", expected_rev=IMAGE_REV)
+    for ident in (_ident(stage="bootloader"), _ident(rev="0000001")):
+        with pytest.raises(ProtocolMismatch) as e:
+            verify_firmware_half(ident, TARGET_PROTOCOL, "v1.2.0",
+                                 expected_rev=IMAGE_REV)
+        assert not isinstance(e.value, FirmwareProtocolMismatch), ident
+
+
 def test_gate_refuses_a_board_left_in_the_bootloader():
     with pytest.raises(ProtocolMismatch):
         verify_firmware_half(_ident(stage="bootloader"), TARGET_PROTOCOL,
@@ -310,7 +327,7 @@ class FakeRunner:
     def __init__(self, *, board_protocol_after, board_protocol_before=CURRENT_PROTOCOL,
                  target_protocol=TARGET_PROTOCOL, image_rev=IMAGE_REV,
                  board_rev_after=IMAGE_REV, image_valid=True, dirty="",
-                 fail=None):
+                 fail=None, board_after_revert=None):
         self.calls = []
         self.board_protocol_before = board_protocol_before
         self.board_protocol_after = board_protocol_after
@@ -321,6 +338,10 @@ class FakeRunner:
         self.dirty = dirty
         self.fail = fail or set()
         self.flashed = False
+        self.reverted = False
+        # (rev, protocol) the board reports after a revert; default: exactly
+        # what it ran before the update, i.e. the revert worked
+        self.board_after_revert = board_after_revert or ("0000001", board_protocol_before)
 
     def __call__(self, argv, cwd=None, timeout=None, emit=None):
         argv = [str(a) for a in argv]
@@ -335,8 +356,13 @@ class FakeRunner:
             protocol = (self.board_protocol_after if self.flashed
                         else self.board_protocol_before)
             rev = self.board_rev_after if self.flashed else "0000001"
+            if self.reverted:
+                rev, protocol = self.board_after_revert
             return 0, (f"idMagic=0x454c stage=application windowVersion=1 "
                        f"rev={rev} appProtocol={protocol}")
+        if "modbus-flash.py" in joined and "--revert" in argv:
+            self.reverted = True
+            return 0, "VERDICT: OK -- reverted"
         if "modbus-flash.py" in joined:
             self.flashed = True
             return 0, "VERDICT: OK"
@@ -522,6 +548,67 @@ def test_a_protocol_mismatch_refuses_and_installs_nothing(tmp_path):
     assert r.ran("modbus-flash.py", "reflex-app-1.2.0.bin"), "it did flash"
     assert r.touched_the_ui_half == [], "and then installed nothing"
     assert s.restarts == []
+
+
+def test_a_protocol_mismatch_rolls_the_firmware_back(tmp_path):
+    """THE ROLLBACK. The refused firmware is reverted -- after the flash, to
+    the rev the board ran before, recorded in the login user's manifest --
+    and the refusal says the machine is as it was, because the board was
+    READ back and said so."""
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL + 1)
+    s = _session(r, tmp_path)
+    with pytest.raises(RolledBack) as e:
+        s.run(RELEASE)
+
+    flash = r.ran("modbus-flash.py", "reflex-app-1.2.0.bin")
+    revert = r.ran("modbus-flash.py", "--revert")
+    assert flash and len(revert) == 1, "flashed, then reverted exactly once"
+    assert r.calls.index(flash[0]) < r.calls.index(revert[0])
+    argv = revert[0]
+    assert argv[argv.index("--expect-rev") + 1] == "0000001", "back to BEFORE's rev"
+    assert argv[argv.index("--manifest") + 1] == str(tmp_path / "home" / "firmware" / "flashed.json")
+    last_identity = max(i for i, c in enumerate(r.calls) if "--identity" in c)
+    assert last_identity > r.calls.index(revert[0]), \
+        "the success claim rests on an identity read AFTER the revert"
+    assert "restored" in str(e.value) and "0000001" in str(e.value)
+    assert r.touched_the_ui_half == [] and s.restarts == []
+
+
+def test_a_failed_rollback_keeps_the_mismatch_message(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL + 1, fail={"--revert"})
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert not isinstance(e.value, RolledBack)
+    msg = str(e.value)
+    assert "under the previous UI" in msg, "the refusal's own account of the state survives"
+    assert "FAILED" in msg
+    assert r.touched_the_ui_half == []
+
+
+def test_a_rollback_is_not_believed_on_its_exit_status(tmp_path):
+    """MUTATION EVIDENCE: deleting the post-revert identity check in
+    ``_roll_back`` turns this red. The revert exits 0 but the board comes
+    back on some other rev; claiming 'restored' would be the lie that sends
+    the operator to run a mismatched machine."""
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL + 1,
+                   board_after_revert=("deadbee", CURRENT_PROTOCOL))
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert not isinstance(e.value, RolledBack)
+    assert "mismatched" in str(e.value)
+
+
+def test_no_rollback_when_the_bootloader_already_reverted(tmp_path):
+    """The board came back on a rev that is not the image's: the swap-back
+    already restored the previous firmware. A second revert has nothing to
+    do, and must not be attempted."""
+    r = FakeRunner(board_protocol_after=CURRENT_PROTOCOL, board_rev_after="0000001")
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch):
+        s.run(RELEASE)
+    assert r.ran("--revert") == []
 
 
 def test_a_mismatch_resumes_the_link_so_the_operator_can_see_why(tmp_path):
