@@ -1774,6 +1774,15 @@ class ElsUiController(EventDispatcher):
                  "disengaging (drive de-energized, thread reference lost)")
         if self._ui_fsm.state.startswith("in_cycle"):
             self._ui_fsm.cancel()
+            # ...and re-land (2026-09-12). Idle is a resting state only in
+            # wizard mode, where the Start button leaves it. Non-wizard mode
+            # hides that button (els_advbar.kv) and nothing else calls
+            # start() until a mode change, so a bar left in idle is an
+            # empty, dark action button that no disengage / re-engage, sync
+            # toggle or hand-cranking recovers -- Evan, bench, 2026-09-12,
+            # cleared only by a UI restart. The alarm path in
+            # _on_state_changed already does exactly this.
+            self._sync_ui_state_to_modes()
         if self._els_fsm.may_disable():
             self._els_fsm.disable()
         else:

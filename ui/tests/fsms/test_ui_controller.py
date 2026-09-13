@@ -1292,7 +1292,11 @@ def test_sync_off_mid_cut_frees_the_disengage_button(ctrl):
     c.request_feed_enable()
     _pump()
 
-    assert c._ui_fsm.state == "idle"
+    # Was `== "idle"` until 2026-09-12. Idle is where b56d2ac parked the
+    # cycle, and in non-wizard mode it was the next trap -- see the
+    # 2026-09-12 block at the end of this file. What this test is about
+    # is leaving the cutting sub-state.
+    assert c._ui_fsm.state != "in_cycle.cutting"
     assert c.in_cycle is False, "the Disengage button is still greyed"
 
 
@@ -1394,3 +1398,47 @@ def test_flight_recorder_survives_a_board_with_no_snapshot(ctrl):
     assert rec.ticks_seen >= 5
     assert rec.recording is False
     assert rec.disabled is False
+
+
+# ─── Sync Enable off mid-cut: the bar has to come back to life (2026-09-12) ─
+#
+# b56d2ac freed the Disengage button by cancelling the UI cycle to idle. On
+# the bench 2026-09-12 (Job 2: half nut opened mid-pass, then Sync Enable off)
+# that idle was the NEXT trap. Non-wizard mode has no Start button --
+# els_advbar.kv hides it (`hidden: not root.enable_wizard`) -- and the only
+# callers of start() are _sync_ui_state_to_modes (startup, mode changes) and
+# that button. So the action button read "" and stayed dark through
+# disengage / re-engage, sync on / off and pushing the carriage by hand; only a
+# UI restart cleared it. The alarm path (domain 'disabled' with the UI in
+# 'alarm') already re-lands through _sync_ui_state_to_modes; the abort path
+# did not. Z is a static fake here, which is the half-nut-open case: the
+# carriage is not following the leadscrew when sync goes off.
+
+
+def test_sync_off_mid_cut_lands_the_bar_back_in_waiting_to_cut(ctrl):
+    """Non-wizard mode's resting state is in_cycle.waiting_to_cut, never
+    idle: idle has no button that leaves it."""
+    c = _cutting_rig(ctrl)
+
+    c.request_feed_enable()
+    _pump()
+
+    assert c._ui_fsm.state == "in_cycle.waiting_to_cut", c._ui_fsm.state
+
+
+def test_re_engaging_after_a_sync_off_abort_offers_cut_again(ctrl):
+    """THE OPERATOR-VISIBLE PROPERTY: the button on the bar, after the thing
+    Evan did next (re-engage), four times over."""
+    c = _cutting_rig(ctrl)
+
+    c.request_feed_enable()
+    _pump()
+    assert c.engaged is False, "the abort did not disengage"
+
+    c.toggle_engage()
+    _pump()
+
+    assert c.engaged is True, "re-engage refused"
+    assert c.action_button_text == "Cut", (
+        c._ui_fsm.state, c.action_button_text, c.instruction_text)
+    assert c.action_allowed is True, c.instruction_text

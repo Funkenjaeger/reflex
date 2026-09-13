@@ -3,7 +3,7 @@
 The **real-time half** of [Reflex](../README.md): STM32F411 firmware providing
 encoder capture, step generation, and all motion control the UI must never be
 trusted with — spindle-synchronized feed, the electronic stop, retract, jog
-profiles, and thread-phase re-sync all execute here, in a 100 kHz ISR with
+profiles, and thread-phase re-sync all execute here, in a 50 kHz ISR with
 FreeRTOS tasks alongside. The UI talks to it as a Modbus RTU master over
 RS-485; the register contract is defined in `Core/Inc/Ramps.h` and mirrored by
 `../ui/reflex/utils/devices.py`, guarded by `protocolVersion`.
@@ -39,11 +39,29 @@ the `plugdev` group access, so flashing needs no `sudo`.
 
 ### Build and flash
 
+A **new board** gets provisioned once, over SWD:
+
 ```bash
-./scripts/flash.sh
+./scripts/provision.sh
 ```
 
-That builds, flashes over SWD, and records what it did.
+That builds both stages, programs the field bootloader into sector 0 and the
+slotted application into the RUN slot, erases the journal and the spare slots,
+and records what it did.
+
+After that the ST-Link stays in the drawer — application updates go over the
+RS-485 link the UI already holds:
+
+```bash
+python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
+```
+
+`./scripts/flash.sh` is the **legacy** path: it writes the application at
+`0x08000000` with no bootloader, which is what every board built before
+2026-09-07 has. It reads the board first and writes only over a legacy
+application it positively recognizes, or an erased sector 0; the bootloader,
+or anything it cannot identify, is a refusal (`--force-legacy` overrides, and
+destroys whatever was there). The rules are in `scripts/lib/sector0.py`.
 
 > **Power-cycle the controller after flashing.** A reset alone does not reliably
 > start the new firmware on this board. openocd's `Verified OK` confirms the
@@ -81,9 +99,13 @@ can be compiled in at a time: **[DIAG.md](DIAG.md)**. `./scripts/build.sh --diag
 with no name lists them.
 
 **Every flash is recorded** in `~/firmware/flashed.json` on the probe host: UTC
-timestamp, variant, git revision, whether the tree was dirty, and the ELF's MD5.
-Working out what firmware was on this lathe once took an afternoon of forensics
-across build-artifact timestamps; this makes it a lookup.
+timestamp, variant, git revision, whether the tree was dirty, and an MD5 of what
+was written. `flash.sh`, `provision.sh` and `modbus-flash.py` all append to it —
+the last only once the board reports the new revision running, and the in-app
+updater through it. One JSON object per line. Working out what firmware was on
+this lathe once took an afternoon of forensics across build-artifact
+timestamps; this makes it a lookup, and it is what the estate's ot-state reads
+as "what the lathe runs".
 
 ### Underneath
 
@@ -117,7 +139,7 @@ boards, option bytes and recovery. Build the app for its slot with
 `--identity` reads back which stage and which git rev is running. The default
 build and `scripts/flash.sh` above are unchanged. Design, register map, and the
 bring-up procedure: `bootloader/README.md` and
-`../docs/decisions/els-modbus-register-map.md`.
+`../decisions/els-modbus-register-map.md`.
 
 ---
 

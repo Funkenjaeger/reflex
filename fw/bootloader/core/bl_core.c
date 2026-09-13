@@ -294,6 +294,31 @@ static uint16_t cmdApply(blCore_t *c)
   return result;
 }
 
+/* REVERT ON DEMAND. The host's rollback for an update the UI gate refused:
+ * the new image RUNS, so the strike-out swap-back never fires, but APPLY
+ * copied the outgoing image into BACKUP before overwriting RUN -- so the
+ * image to go back to is already on the board, however the old one got
+ * there (an SWD-flashed RUN is backed up by the first APPLY like any other).
+ *
+ * This enters the SAME journaled REVERT state the strike-out uses: the
+ * record lands before the copy, so a power loss mid-copy resumes at boot.
+ * Refused, touching nothing, unless BACKUP validates and differs from RUN:
+ * a second REVERT, or one on a board whose BACKUP was erased by SWD, has
+ * nothing to go back to. REVERTED then blocks the strike-out from swapping
+ * back to the refused image if the restored one also fails to come up. */
+static uint16_t cmdRevert(blCore_t *c)
+{
+  uint16_t result;
+  if (!backupIsDifferentAndValid()) return ELS_BL_ERR_NO_BACKUP;
+  c->regs[ELS_BL_STATUS] = ELS_BL_STATUS_APPLYING;
+  if (blStateEnsureRoom(BL_STATE_APPLY_RECORDS) != 0) return ELS_BL_ERR_JOURNAL;
+  if (!journal(c, ELS_BL_STATE_REVERT)) return ELS_BL_ERR_JOURNAL;
+  c->copyState = doApply(c, ELS_BL_STATE_REVERT, &result);
+  c->runValid = runUsable() ? 1u : 0u;
+  if (result == ELS_BL_OK && c->copyState != ELS_BL_STATE_REVERTED) result = ELS_BL_ERR_COPY_FAILED;
+  return result;
+}
+
 static uint16_t cmdJump(blCore_t *c)
 {
   c->runValid = runUsable() ? 1u : 0u;
@@ -319,6 +344,7 @@ void blCoreService(blCore_t *c)
     case ELS_BL_CMD_APPLY:  result = cmdApply(c);  break;
     case ELS_BL_CMD_JUMP:   result = cmdJump(c);   break;
     case ELS_BL_CMD_STAY:   result = ELS_BL_OK;    break;
+    case ELS_BL_CMD_REVERT: result = cmdRevert(c); break;
     default:                result = ELS_BL_ERR_BAD_COMMAND; break;
   }
 

@@ -9,10 +9,32 @@ reserved in **every** build, so its offset never moves, but written only in a
 diagnostic build. In a release build the whole block reads zero.
 
 ```bash
-./scripts/build.sh --diag=takeup-settle-v2     # build with one probe
-./scripts/flash.sh --diag=takeup-settle-v2     # build it and flash it
+./scripts/build.sh --diag=takeup-settle-v3     # build with one probe
+./scripts/flash.sh --diag=takeup-settle-v3     # build it and flash it (LEGACY board only)
 ./scripts/build.sh --diag                      # lists what is available
 ```
+
+### On a board with the bootloader
+
+`flash.sh` writes the legacy layout, so on a board carrying the field
+bootloader it **refuses** — `--diag` included. Build the probe for the RUN slot
+instead and send it over the wire, with the UI stopped:
+
+```bash
+cmake -S . -B build-slot-diag-takeup-settle-v3 -DCMAKE_BUILD_TYPE=Release \
+    -DREFLEX_APP_BASE=0x08020000 \
+    -DCMAKE_C_FLAGS=-DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
+cmake --build build-slot-diag-takeup-settle-v3
+python3 scripts/modbus-flash.py build-slot-diag-takeup-settle-v3/reflex-fw.bin \
+    --port /dev/serial0 --record-variant diagnostic
+```
+
+The macro is the probe's `ELS_DIAG_SCHEMA_*` name from `Core/Inc/Ramps.h`;
+`flash.sh`'s refusal prints the exact commands for the probe you asked for.
+Going back to a release build is the same thing with `build-slot/`. The
+manifest records these as `variant: diagnostic, probe: unknown` —
+`modbus-flash.py` cannot see which probe an image carries, so it says so
+rather than guessing.
 
 Never on `dev-staging`, `dev` or `main`.
 
@@ -56,7 +78,9 @@ meaning.
 
 reflex-ui mirrors these ids and logs the schema at connect. `scripts/flash.sh`
 records the probe in `~/firmware/flashed.json` alongside the git revision, so a
-capture pulled later can be traced to what was measuring it.
+capture pulled later can be traced to what was measuring it. An over-the-wire
+flash records `probe: unknown`; the `diagSchema` the UI logs at connect is then
+the authority.
 
 Schema ids are a wire contract: **append only, never renumber.** A retired id is
 never reissued to a different probe — a stale reader that still recognises an old

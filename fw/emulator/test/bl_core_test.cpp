@@ -22,6 +22,12 @@
  *      produce is produced by exactly the situation it names.
  *   F. blSeq-before-payload: register offsets and the write order the host
  *      relies on, observed through a real FC3 frame.
+ *   G. REVERT on demand (the update gate's rollback): refused with no flash
+ *      touched when BACKUP is erased or equals RUN; after a confirmed update
+ *      it restores the outgoing image even when that image was SWD-flashed;
+ *      it works from an unconfirmed TRIAL; and a restored image that strikes
+ *      out stays resident instead of swapping back to the refused one.
+ *   H. THE POWER-LOSS SWEEP over REVERT, same invariants as D.
  *
  * MUTATIONS (seen red 2026-09-06, each applied alone and reverted):
  *   M1 bl_core.c doApply: journal TRIAL BEFORE copySlot instead of after
@@ -42,6 +48,14 @@
  *   M5 cmdApply without stagedOk check -> E NOT_STAGED fails
  *   M6 backupIsDifferentAndValid always true -> C "REVERTED then strikes ->
  *      STRUCK_OUT, no ping-pong" fails
+ *   (seen red 2026-09-12, ELS_BL_CMD_REVERT, each applied alone and reverted:)
+ *   M9 cmdRevert without the backupIsDifferentAndValid gate -> G1 and G3 fail:
+ *      a REVERT onto an erased BACKUP, and a second REVERT, both touch flash
+ *   M10 cmdRevert without journaling REVERT before the copy -> H2, H4 fail.
+ *      H1 (no JUMP into a torn RUN) stays GREEN under it, because runUsable()
+ *      gates the jump on its own; the hazard shows as non-convergence -- a
+ *      board left resident on a torn RUN with no record to resume from
+ *   M11 REVERT not dispatched in blCoreService -> 13 checks in G and H fail
  */
 #include <cstdio>
 #include <vector>
@@ -517,6 +531,138 @@ int main() {
         blCoreService(&c);
         check(c.regs[ELS_BL_SEQ] == (uint16_t)(seq1 + 1) && c.regs[ELS_BL_RESULT] == ELS_BL_OK,
               "F STAY: seq +1 with result OK (result replaced the BAD_COMMAND before the edge)");
+    }
+
+    /* ================= G. REVERT on demand ================= */
+    {
+        /* G1. A board flashed over SWD: RUN holds image A, BACKUP is erased.
+         * There is nothing to go back to, and the refusal touches no flash. */
+        mock::reset();
+        uint32_t crcA = mock::writeImage(ELS_RUN_SLOT_BASE, LEN, 50, 0x0A0A0A0u);
+        mock::bkp[1] = ELS_BOOT_REQ_STAY;
+        blCore_t c; blCoreInit(&c); blCoreBoot(&c);
+        mock::opsCount = 0;
+        Outcome o = command(&c, ELS_BL_CMD_REVERT);
+        check(o.acked && o.result == ELS_BL_ERR_NO_BACKUP, "G1 REVERT with an erased BACKUP -> NO_BACKUP");
+        check(mock::opsCount == 0, "G1 ...and not one flash operation");
+        check(blStateRead() == ELS_BL_STATE_IDLE && mock::slotCrc(ELS_RUN_SLOT_BASE) == crcA,
+              "G1 ...journal IDLE, RUN still image A");
+
+        /* G2. THE ROLLBACK. First update after that SWD flash: B applied, booted,
+         * confirmed by the app, then refused by the UI gate. The host brings the
+         * board back to the bootloader and sends REVERT. BACKUP holds A because
+         * APPLY backed RUN up -- the SWD-flashed image included. */
+        uint32_t crcB; auto imgB = hostImage(LEN, 51, 0x0B0B0B0u, &crcB);
+        check(fullUpdate(&c, imgB, crcB, "G2"), "G2 update to B applied");
+        check(mock::slotCrc(ELS_BACKUP_SLOT_BASE) == crcA, "G2 ...BACKUP holds the SWD-flashed image A");
+        command(&c, ELS_BL_CMD_JUMP); blCoreCountAttempt(&c);
+        mock::bkp[0] = ELS_BOOT_ATTEMPTS_WORD(0);          /* B came alive */
+        mock::bkp[1] = ELS_BOOT_REQ_STAY;                  /* host: reboot into the BL */
+        blCoreInit(&c);
+        check(blCoreBoot(&c) == BL_BOOT_STAY && blStateRead() == ELS_BL_STATE_IDLE,
+              "G2 resident again, confirmed B promoted to IDLE");
+        o = command(&c, ELS_BL_CMD_REVERT);
+        check(o.acked && o.result == ELS_BL_OK, "G2 REVERT -> OK");
+        check(mock::slotCrc(ELS_RUN_SLOT_BASE) == crcA, "G2 ...RUN holds image A again");
+        check(blStateRead() == ELS_BL_STATE_REVERTED, "G2 ...journal REVERTED");
+        { auto h = readRegs(&c, ELS_BL_BASE, 16);
+          check(h[ELS_BL_COPY_STATE] == ELS_BL_STATE_REVERTED && h[ELS_BL_RUN_VALID] == 1,
+                "G2 ...blCopyState publishes REVERTED, blRunValid 1");
+          check(h[ELS_BL_STATUS] == ELS_BL_STATUS_IDLE, "G2 ...status IDLE, not READY_TO_JUMP (there is no trial)"); }
+        check(mock::slotCrc(ELS_BACKUP_SLOT_BASE) == crcA, "G2 ...BACKUP untouched");
+
+        /* G3. A second REVERT has nothing different to go to. */
+        mock::opsCount = 0;
+        o = command(&c, ELS_BL_CMD_REVERT);
+        check(o.acked && o.result == ELS_BL_ERR_NO_BACKUP, "G3 second REVERT -> NO_BACKUP");
+        check(mock::opsCount == 0 && blStateRead() == ELS_BL_STATE_REVERTED &&
+              mock::slotCrc(ELS_RUN_SLOT_BASE) == crcA, "G3 ...no flash operation, journal and RUN unchanged");
+
+        /* G4. The restored image boots and is confirmed like any other. */
+        o = command(&c, ELS_BL_CMD_JUMP);
+        check(o.acked && o.result == ELS_BL_OK && c.jumpPending, "G4 JUMP after REVERT accepted");
+        blCoreCountAttempt(&c);
+        mock::bkp[0] = ELS_BOOT_ATTEMPTS_WORD(0);
+        blCoreInit(&c);
+        check(blCoreBoot(&c) == BL_BOOT_JUMP && blStateRead() == ELS_BL_STATE_IDLE,
+              "G4 ...confirmed REVERTED -> IDLE, jumps");
+
+        /* G5. REVERT from an UNCONFIRMED trial: C applied, power cycled before
+         * the app ever confirmed (untagged counter), host reverts. */
+        mock::bkp[1] = ELS_BOOT_REQ_STAY;
+        blCoreInit(&c); blCoreBoot(&c);
+        uint32_t crcC; auto imgC = hostImage(LEN, 52, 0x0C0C0C0u, &crcC);
+        check(fullUpdate(&c, imgC, crcC, "G5"), "G5 update to C applied");
+        mock::bkp[0] = 0;                                  /* power cycle: not a confirmation */
+        mock::bkp[1] = ELS_BOOT_REQ_STAY;
+        blCoreInit(&c);
+        check(blCoreBoot(&c) == BL_BOOT_STAY && blStateRead() == ELS_BL_STATE_TRIAL, "G5 resident with C still in TRIAL");
+        o = command(&c, ELS_BL_CMD_REVERT);
+        check(o.acked && o.result == ELS_BL_OK && mock::slotCrc(ELS_RUN_SLOT_BASE) == crcA &&
+              blStateRead() == ELS_BL_STATE_REVERTED, "G5 REVERT from TRIAL -> OK, RUN is A, REVERTED");
+
+        /* G6. The restored image then fails to come alive three times: stay
+         * resident. No ping-pong back to the image the gate refused. */
+        command(&c, ELS_BL_CMD_JUMP); blCoreCountAttempt(&c);
+        blCoreInit(&c); blCoreBoot(&c); blCoreCountAttempt(&c);
+        blCoreInit(&c); blCoreBoot(&c); blCoreCountAttempt(&c);
+        blCoreInit(&c);
+        check(blCoreBoot(&c) == BL_BOOT_STAY && c.regs[ELS_BL_STATUS] == ELS_BL_STATUS_STRUCK_OUT,
+              "G6 restored image strikes out -> STRUCK_OUT");
+        check(mock::slotCrc(ELS_RUN_SLOT_BASE) == crcA, "G6 ...RUN still A, not swapped back to C");
+    }
+
+    /* ================= H. the power-loss sweep over REVERT ================= */
+    {
+        mock::reset();
+        uint32_t oldCrc = mock::writeImage(ELS_BACKUP_SLOT_BASE, LEN, 60, 0x0D0D0D0u, true, ELS_RUN_SLOT_BASE);
+        uint32_t newCrc = mock::writeImage(ELS_RUN_SLOT_BASE, LEN, 61, 0x0E0E0E0u);
+        check(blImageValidate(ELS_BACKUP_SLOT_BASE, nullptr) == ELS_BL_OK && oldCrc != newCrc,
+              "H0 setup: RUN = new, BACKUP = a different valid old image");
+        blCore_t c; mock::bkp[1] = ELS_BOOT_REQ_STAY; blCoreInit(&c); blCoreBoot(&c);
+        std::vector<uint8_t> before(mock::flash, mock::flash + sizeof mock::flash);
+        mock::opsCount = 0;
+        Outcome o = command(&c, ELS_BL_CMD_REVERT);
+        unsigned revertOps = mock::opsCount;
+        check(o.result == ELS_BL_OK && revertOps > LEN / 4, "H0 uninterrupted REVERT succeeds; op count recorded");
+        printf("  revert = %u flash operations\n", revertOps);
+
+        unsigned jumpsIntoTorn = 0, nonConverged = 0, tornAtInterrupt = 0, endedNew = 0, endedOld = 0;
+        for (unsigned n = 0; n < revertOps; n++) {
+            memcpy(mock::flash, before.data(), sizeof mock::flash);
+            memset(mock::bkp, 0, sizeof mock::bkp);
+            blCoreInit(&c);
+            mock::powerLossIn = (long)n;
+            if (setjmp(mock::powerLossJmp) == 0) {
+                c.regs[ELS_BL_COMMAND] = ELS_BL_CMD_REVERT;
+                blCoreService(&c);
+                printf("  n=%u: revert completed without power loss?!\n", n);
+                failures++;
+                continue;
+            }
+            if (blImageValidate(ELS_RUN_SLOT_BASE, nullptr) != ELS_BL_OK) tornAtInterrupt++;
+            mock::powerLossIn = -1;
+            blCoreInit(&c);
+            blBootDecision_t d = blCoreBoot(&c);
+            bool runOk = blImageValidate(ELS_RUN_SLOT_BASE, nullptr) == ELS_BL_OK &&
+                         blImageVectorsPlausible(ELS_RUN_SLOT_BASE) == ELS_BL_OK;
+            if (d == BL_BOOT_JUMP && !runOk) { jumpsIntoTorn++; printf("  n=%u: JUMP into an invalid RUN\n", n); }
+            blCoreInit(&c);
+            d = blCoreBoot(&c);
+            uint8_t st = blStateRead();
+            uint32_t runCrc = mock::slotCrc(ELS_RUN_SLOT_BASE);
+            bool settled = runOk && d == BL_BOOT_JUMP &&
+                           ((st == ELS_BL_STATE_IDLE && runCrc == newCrc) ||
+                            (st == ELS_BL_STATE_REVERTED && runCrc == oldCrc));
+            if (!settled) { nonConverged++; printf("  n=%u: not converged: state %u run ok %d crc %08x\n", n, st, runOk, runCrc); }
+            else if (runCrc == newCrc) endedNew++; else endedOld++;
+        }
+        printf("  sweep: %u interruptions, RUN torn at %u of them, ended new %u / old %u\n",
+               revertOps, tornAtInterrupt, endedNew, endedOld);
+        check(jumpsIntoTorn == 0, "H1 no interruption of a REVERT yields a JUMP into an invalid RUN");
+        check(nonConverged == 0, "H2 every interruption converges: untouched new image (IDLE) or the old one (REVERTED)");
+        check(tornAtInterrupt > 0, "H3 the sweep actually tore RUN (the injector is live)");
+        check(endedNew > 0 && endedOld > 0, "H4 both outcomes occur: interrupted before the record, and resumed after it");
     }
 
     printf("%s\n", failures ? "FAILURES" : "all passed");

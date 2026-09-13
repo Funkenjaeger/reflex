@@ -377,6 +377,15 @@ FAST_FIELDS = (
 CONTEXT_FIELDS = (
     # which counter is Z, which way the pass runs, and where it stops
     "scaleIndex", "stopDirection", "stopPosition", "hysteresis",
+    # the trigger instant the firmware latches in the ISR when the stop fires
+    # (protocolVersion 9+). Overshoot measured from stopTriggerZ is what the
+    # diag probe counted; measured from stopPosition it also carries whatever
+    # sits between the command and the trigger. Recording both is how the
+    # 2026-09-07 fifty-percent disagreement between the two methods gets
+    # settled. stopTriggerSeq edges once per trigger, so each stop lands its
+    # own context record by construction.
+    "stopTriggerSeq", "stopTriggerZ", "stopTriggerZSpeed",
+    "stopTriggerStepsToGo", "stopTriggerSpindleSpeed",
     # the take-up: what was commanded, what happened, what Z saw
     "backlashSteps", "takeupSeq", "takeupResult", "lastTakeupZDelta",
     "takeupThreshCounts",

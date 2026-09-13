@@ -23,11 +23,13 @@ Usage: identity_window_pty_test.py <lathe-emulator> <modbus-flash.py> <reflex_bu
 """
 
 import importlib.util
+import json
 import os
 import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 
 def load_client(path):
@@ -40,6 +42,10 @@ def load_client(path):
 
 def main(argv):
     emulator, client_path, rev_header = argv[1], argv[2], argv[3]
+    # <repo>/fw/scripts/modbus-flash.py -> <repo>. Derived from the client
+    # path the harness already passes rather than from this file's own
+    # location, so moving the test does not silently point it elsewhere.
+    REPO_ROOT = Path(client_path).resolve().parents[2]
     try:
         import serial  # noqa: F401
     except ImportError:
@@ -113,19 +119,28 @@ def main(argv):
         tail = bus.read(boot_reg, 2)
         check(tail == [0, 0], "bootCommand/bootSeq read as 0 at the client's register index")
 
-        # Where the struct ENDS. Until protocolVersion 9 the pair WAS the tail,
-        # so this read 3 registers from boot_reg and expected a refusal. The
-        # trigger-instant snapshot (stopTriggerSeq + pad + four int32s = 10
-        # registers) now sits behind it, so the end moved and the number is
-        # derived rather than re-guessed: rampsSharedData_t is 488 bytes = 244
-        # registers, bootCommand is register 232, so 244 - 232 = 12 registers
-        # remain -- exactly the pair plus the snapshot. Reading those 12 must
-        # answer; reading one more must not.
-        STRUCT_REGISTERS = 488 // 2
+        # Where the struct ENDS. This number is now READ FROM THE GENERATED MAP
+        # rather than written here.
+        #
+        # It was a literal, and it had already been re-derived by hand twice
+        # (468 -> 488 bytes) before the hot/cold remap moved it a third time to
+        # 492. Each of those re-derivations was correct and carefully explained,
+        # and the third one still broke this test -- because the literal cannot
+        # know the layout changed, only a human noticing can. The generator
+        # knows exactly, so it emits struct_registers and this reads it.
+        #
+        # What is still asserted is the PROPERTY, not the number: everything
+        # from bootCommand to the struct end must answer, and one register past
+        # it must be refused. That is the check worth having, and it survives
+        # the map moving again.
+        offsets = json.loads(
+            (REPO_ROOT / "registers" / "offsets.json").read_text())
+        STRUCT_REGISTERS = offsets["struct_registers"]
         to_end = STRUCT_REGISTERS - boot_reg
-        check(to_end == 12,
-              f"{to_end} registers from bootCommand to the struct end "
-              f"(want 12: the boot pair + the 10-register trigger snapshot)")
+        check(to_end > 0,
+              f"{to_end} registers from bootCommand (reg {boot_reg}) to the "
+              f"struct end (reg {STRUCT_REGISTERS}) -- bootCommand must lie "
+              f"inside the struct")
         check(len(bus.read(boot_reg, to_end)) == to_end,
               "a read to exactly the struct end still answers")
         try:
@@ -133,8 +148,7 @@ def main(argv):
             check(False, "a read past the end of the struct answers")
         except mf.ExceptionResponse as e:
             check(e.code == 2,
-                  "a read straddling the struct end -> exception 2 "
-                  "(stopTriggerSpindleSpeed IS the last register)")
+                  "a read straddling the struct end -> exception 2")
 
         # --identity as the user runs it
         rc = mf.main(["modbus-flash.py", "--identity", "--port", pty])

@@ -4,9 +4,14 @@ Flash the application over the RS-485 Modbus link the UI already holds, so the
 ST-Link is needed only for virgin boards, option bytes, and disaster recovery.
 The register contract, flash geometry and image format are in
 `../Core/Inc/els_identity.h` and recorded in
-`../../docs/decisions/els-modbus-register-map.md` (Implemented section).
+`../../decisions/els-modbus-register-map.md` (Implemented section).
 
-**Status: built and natively tested, NOT hardware-verified.** See `../todo.md`.
+**Status: hardware-verified on the machine 2026-09-07** (merge `fe9e8dc`). The
+bootloader boots, validates and jumps; the identity window reads from both
+stages; field flashing moved 44,868 bytes over RS-485 in 12.9 s with no
+programmer and no power cycle; and the anti-brick swap-back restored the backup
+image after three watchdog strikes. What that run did *not* cover is listed
+under "Not proven on hardware" in `../todo.md`.
 
 ## What it is
 
@@ -56,6 +61,29 @@ and for any `modbus-flash.py` run, and `reflex-fw-<V>.bin` is the legacy
 `0x08000000` image that `scripts/flash.sh` writes — which is a different
 layout, not a different build of the same thing.
 
+> **`reflex-fw-<V>.bin` is deprecated, and it has an end condition.**
+>
+> It exists for one population: boards still running the legacy no-bootloader
+> layout, which is every board built before 2026-09-07 and any board a
+> `--force-legacy` run has taken back there. It is not what a new board gets —
+> `scripts/provision.sh` programs `reflex-bl` + `reflex-app` — and nothing
+> built from it can be updated over the wire.
+>
+> **It ships until no board on the legacy layout remains, and then it stops.**
+> That is the whole condition; there is no other reason to keep building it.
+> Retiring it is four edits in `release.yml` — the legacy `cmake -S . -B build`
+> in "Cross-build the release firmware", the two `cp fw/build/reflex-fw.*`
+> lines in "Collect the artifacts", and the legacy half of "Check each firmware
+> asset is the layout its name claims" — plus retiring `scripts/flash.sh`, since
+> the asset and the script are the same layout wearing two hats.
+>
+> **Known legacy boards as of 2026-09-12: none.** This line said elspi from
+> 2026-09-08, and that was wrong: on 2026-09-12 a sector-0 dump over the real
+> ST-Link classified elspi BOOTLOADER, `flash.sh` refused, and `--enter-bootloader`
+> answered as bootloader `8b6f5c3`. It was never returned to the legacy layout.
+> It now runs bootloader and app `2bf5539`. With the list empty, the legacy
+> asset's end condition is met; retiring it is the four `release.yml` edits above.
+
 `build-slot/reflex-fw.bin` is the image: `scripts/reflex_image.py` patches its
 length and CRC32 in post-build and re-validates it. The ELF still carries zero
 placeholders -- program the `.bin` (or the `.hex` made from it), never the ELF,
@@ -75,11 +103,19 @@ python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
 ```
 
 The client reads the identity window first and refuses on any `idMagic`
-mismatch; asks the app to reboot into the bootloader (`bootCommand` = 1); erases
+mismatch; asks the app to enter the bootloader (`bootCommand` = 1, a jump, not a
+reset, since 2026-09-12); erases
 STAGING; streams 200 bytes per FC16; verifies; applies (RUN is backed up to
 BACKUP, STAGING copied to RUN, journaled in flash); jumps; then polls until the
 app answers with the image's build rev. `--dry-run` does everything except the
 writes; `--enter-bootloader` and `--boot-app` are the two halves on their own.
+
+`--revert [--expect-rev REV]` puts back the image the last APPLY displaced:
+into the bootloader, `blCommand` 7 (BACKUP copied into RUN, journaled), jump,
+wait for the application at `REV`, and append a `"variant": "revert"` record
+to the manifest. It is how the in-app updater rolls back firmware its gate
+refused. One step only: afterwards BACKUP and RUN hold the same image and a
+second REVERT answers `NO_BACKUP`.
 
 ## Anti-brick
 
@@ -159,8 +195,19 @@ every step that touches the serial port.
        before any SWD reflash of sector 0, including a return to the legacy
        layout via `scripts/flash.sh`): the same command with `off`, and a
        power cycle.
-10. **Record** in `~/firmware/flashed.json` by hand what `flash.sh` would have
-    recorded (rev, dirty, md5 of `reflex-fw.bin`, "via modbus-flash").
+   9c. **Prove REVERT** (needs a bootloader built with `blCommand` 7, i.e. from
+       2026-09-12 on). BACKUP now holds step 9's dirty rev, RUN the clean one:
+       `modbus-flash.py --revert --expect-rev <step 9 dirty rev> --manifest
+       /home/<user>/firmware/flashed.json` -> `VERDICT: OK -- reverted`, and
+       `--identity` agrees. Then `--revert` again must refuse with
+       `NO_BACKUP` and change nothing. Finish by repeating 9a, so the board
+       ends on the clean rev with the dirty one in BACKUP. WRP from 9b covers
+       sector 0 only, so it does not stand in the way.
+10. **Record.** `modbus-flash.py` appends to `~/firmware/flashed.json` itself
+    once the board reports the new revision (since 2026-09-11; before that this
+    step was by hand). Check the last line names the rev you flashed. Run as
+    root, pass `--manifest /home/<user>/firmware/flashed.json` — root's `~` is
+    not where the record is read.
 
 Anti-brick is deliberately NOT exercised in bring-up: proving the swap-back
 means running a deliberately hung image on the lathe controller for ~100 s
@@ -173,6 +220,9 @@ the previous rev. Decide that separately.
 
 * Bootloader wedged or WRP-protected garbage in sector 0: clear WRP (9b with
   `off`), power cycle, reprogram (step 4).
+* Firmware an update installed is wrong for this UI (the updater's gate
+  refused it and could not roll back on its own): `modbus-flash.py --revert`
+  from the command line, with the UI stopped.
 * App in RUN invalid and nothing in BACKUP: the bootloader stays resident
   (`runValid=0`); `modbus-flash.py <image>` from the bootloader works with no
   SWD at all -- that is the point.

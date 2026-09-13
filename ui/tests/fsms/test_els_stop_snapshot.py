@@ -83,10 +83,21 @@ class FakeStruct:
         self.refresh_count = 0
 
     def refresh(self):
+        """The whole-block read. fastData still uses this; so does an
+        on-demand elsStop caller."""
         self.refresh_count += 1
         if self.fail:
             raise RuntimeError("no communication with the instrument (no answer)")
         return dict(self.values)
+
+    def refresh_hot(self):
+        """The TICK path's read -- the HOT group only, one FC3 request.
+
+        Shares the counter and the failure mode with refresh() because from a
+        board's point of view it is the same event: one block read per tick,
+        which either produced a snapshot or did not.
+        """
+        return self.refresh()
 
     def __getitem__(self, key):
         """A LIVE per-field read -- what the snapshot exists to replace."""
@@ -189,47 +200,57 @@ def els_stop_device():
     return cm['Global']['elsStop'], cm.device
 
 
-def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
-    """140 registers at 72 a request: two requests (72 + 68), margin 4.
+def test_the_hot_group_is_read_in_exactly_one_request(els_stop_device):
+    """THE POINT OF THE 2026-09-07 SPLIT, and the case that guards it.
 
-    2026-09-07: the trigger-instant snapshot (protocolVersion 9) appended 10
-    registers -- stopTriggerSeq, an explicit pad, and four int32s -- taking the
-    block from 130 to 140. Re-derived rather than renumbered: two requests of
-    72 cover 144, so the block fits with 4 registers spare; the SECOND request
-    is 140 - 72 = 68; the chunk itself must be at least ceil(140/2) = 70 and at
-    most the 60%-of-125 rule's 75, and 72 still sits inside that band, so the
-    chunk does NOT move. What did move is the headroom: 14 registers of tail
-    growth became 4, and the next append of more than four registers has to
-    raise the chunk (72 -> 75 buys 150, i.e. six more) or accept a third
-    request. Neither is free and neither should happen by accident, which is
-    what the assertions below are for.
+    The tick path reads the HOT group only. 56 registers is one FC3 request, so
+    a board tick costs fastData(1) + elsStop(1) = TWO exchanges where it used to
+    cost three. Requests are the quantity that fails -- see the module docstring
+    and the 2026-08-23 comms loss -- so this is a 33% cut in the thing that
+    actually breaks, not in bytes.
 
-    2026-09-06: bootCommand/bootSeq (protocolVersion 8) took the block from
-    128 to 130, past the old 2x64 boundary, exactly as the paragraph below
-    predicted. The chunk was re-derived, not just bumped: two requests need
-    ceil(130/2) = 65 or more; the 60%-of-ceiling rule in
-    test_the_chunk_size_keeps_real_headroom_against_the_firmware caps it at
-    75; 72 sits inside that band with 14 registers of tail growth left before
-    this case fires again. History below kept as written.
+    Asserted as ONE request rather than "at most two": the moment it becomes two
+    the split has bought nothing and the failure should say so loudly, at the
+    boundary, rather than showing up as a timeout during a cut.
+    """
+    from reflex.utils import els_stop_map
+    device, transport = els_stop_device
 
-    ORIGINAL (2026-08-25): 128 registers at 64 a request: two FULL requests, margin ZERO.
+    device.refresh_hot()
 
-    The absolute number matters more than the ratio: this block is read once
-    per board tick now, so every request in it is paid 30 times a second.
+    base = device.base_address
+    assert transport.requests == [(base + els_stop_map.HOT_BASE,
+                                   els_stop_map.HOT_COUNT)], (
+        f"the hot group must be ONE request; got {transport.requests}")
+    assert els_stop_map.HOT_COUNT <= BaseDevice.MAX_REGISTERS_PER_READ, (
+        f"the hot group is {els_stop_map.HOT_COUNT} registers against a "
+        f"{BaseDevice.MAX_REGISTERS_PER_READ}-register chunk -- it no longer "
+        f"fits one request, which is the whole return on the split")
 
-    THE MARGIN IS NOW EXACTLY ZERO. The block was 122 when this case was
-    first written, 124 after executionCyclesPeak (2026-08-23), and 128 after
-    the STEP pulse width instrument (2026-08-25) -- which lands PRECISELY on
-    the 2x64 boundary. The NEXT register appended, even one, makes this THREE
-    requests and raises the per-tick cost by 50%. That is not a reason to
-    avoid appending -- it is a reason the next append MUST come with the
-    chunk-size decision made deliberately, with the same firmware-buffer
-    arithmetic that chose 64 (Modbus FC3 tops out at 125 registers a request,
-    so headroom exists), rather than paying a silent third request.
+
+def test_the_whole_block_refresh_is_still_two_requests(els_stop_device):
+    """The ON-DEMAND path, which still reads everything.
+
+    142 registers at 72 a request: two requests (72 + 70), margin 2.
+
+    2026-09-07 (protocolVersion 10): the block was split into a hot group read
+    on the tick and a cold group read on demand, and the two hand-placed pads
+    (machineModeReserved, stopTriggerReserved) became generator-emitted
+    alignment, so the block is 142 registers -- 140 of content plus two pads.
+    A whole-block read is no longer on the tick path, so this number governs
+    only what an on-demand caller pays; the tick is guarded by
+    test_the_hot_group_is_read_in_exactly_one_request above.
+
+    History kept because the arithmetic is the point: the block was 122 when
+    this case was written, 128 at the STEP pulse instrument (2026-08-25) which
+    landed exactly on the old 2x64 boundary, 130 at bootCommand/bootSeq
+    (2026-09-06), and 140 at the trigger snapshot (2026-09-07) -- which left
+    FOUR registers of tail growth against an auto-start feature that needs ten,
+    and is what forced the split.
     """
     device, transport = els_stop_device
-    assert device.size == 140, (
-        f"elsStop is {device.size} registers, not the 140 this case was "
+    assert device.size == 142, (
+        f"elsStop is {device.size} registers, not the 142 this case was "
         f"reasoned about -- re-check the chunk arithmetic, do not just "
         f"update the number")
 
@@ -237,7 +258,7 @@ def test_the_els_stop_block_is_read_in_two_requests(els_stop_device):
 
     base = device.base_address
     assert len(transport.requests) == 2
-    assert transport.requests == [(base, 72), (base + 72, 68)]
+    assert transport.requests == [(base, 72), (base + 72, 70)]
 
 
 def test_the_block_still_fits_in_two_requests_with_room_to_spare(els_stop_device):
@@ -311,13 +332,22 @@ def test_the_chunk_size_keeps_real_headroom_against_the_firmware():
     # be worth doing -- below ceil(size/2) the elsStop block needs three
     # requests instead of two, which is the entire reason the number went up.
     # Derived from the live block size rather than hard-coded: the floor was 61
-    # at 122 registers and 65 at 130, and a stale literal here would stop being
-    # the floor the moment the block grew again. 140 registers makes it 70.
+    # at 122 registers, 65 at 130, and 70 at 140; a stale literal here would
+    # stop being the floor the moment the block grew again.
+    #
+    # 2026-09-07: protocolVersion 10 split the block into a HOT group read on
+    # the tick and a COLD group read on demand, and the block became 142
+    # registers (140 of content plus two generator-emitted alignment pads),
+    # making the floor 71. This assertion now governs only the WHOLE-BLOCK
+    # refresh() -- the tick path reads HOT_COUNT registers in ONE request and
+    # is guarded by test_the_hot_group_is_one_request instead. The chunk still
+    # matters because an on-demand whole-block read paying three requests
+    # instead of two is still worth not doing by accident.
     from reflex.utils.communication import ConnectionManager
     size = ConnectionManager(serial_device="/dev/null")['Global']['elsStop'].size
     floor = -(-size // 2)          # ceil, so two requests still cover the block
-    assert floor == 70, (
-        f"the two-request floor is now {floor}, not the 70 that 140 registers "
+    assert floor == 71, (
+        f"the two-request floor is now {floor}, not the 71 that 142 registers "
         f"gives -- re-derive the chunk size rather than editing this number")
     assert n >= floor, (
         f"chunking at {n} registers puts elsStop ({size} registers) back above "

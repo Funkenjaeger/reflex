@@ -255,9 +255,22 @@ def test_round_trips_per_tick_idle_and_cut_start(harness, capsys):
     #   cut-start, steady   6.20 -> 3.00   (1 block + 5.20 field -> 3 block)
     #   cut-start, PEAK    14.00 -> 5.00   (5 block + 9 field -> 5 block)
     #
-    # The three "after" numbers are all block reads: fastData (1) + the elsStop
-    # snapshot (2, at 64 registers a request), plus on the peak tick the
-    # diagnostic capture that is deliberately still read live (2).
+    # 2026-09-07, protocolVersion 10 -- the hot/cold register split:
+    #
+    #   idle connected      3.00 -> 2.00
+    #   cut-start, steady   3.00 -> 2.00
+    #   cut-start, PEAK     5.00 -> 4.00
+    #
+    # The elsStop snapshot became ONE request instead of two: the tick reads
+    # only the hot group (56 registers), which fits a single FC3. So a tick is
+    # fastData (1) + elsStop hot (1), and the peak tick adds the diagnostic
+    # capture that is deliberately still read live (2).
+    #
+    # THIS IS THE MEASUREMENT THE SPLIT WAS FOR, taken under the cut-start
+    # scenario with every poller running -- the condition that lost comms on six
+    # of six cuts on 2026-08-23. Requests, not bytes, are what time out when the
+    # firmware's 100 kHz ISR is saturated, so a third off the request rate at
+    # cut-start is the whole return.
     #
     # BOUNDS, NOT EQUALITIES -- but tight ones. Half a round-trip of slack is
     # enough for the mode-watch sampler's 1-in-5 duty cycle and not enough to
@@ -267,12 +280,12 @@ def test_round_trips_per_tick_idle_and_cut_start(harness, capsys):
     # legitimately adds a block read (another struct getting its own snapshot)
     # will trip these too, and should -- that is a decision worth re-blessing
     # rather than absorbing silently.
-    assert idle_per_tick <= 3.5, (
+    assert idle_per_tick <= 2.5, (
         f"idle traffic regressed to {idle_per_tick:.2f} round-trips/tick"
     )
-    assert cut_per_tick <= 3.5, (
+    assert cut_per_tick <= 2.5, (
         f"cut-start traffic regressed to {cut_per_tick:.2f} round-trips/tick"
     )
-    assert peak_per_tick <= 6.0, (
+    assert peak_per_tick <= 5.0, (
         f"peak-tick traffic regressed to {peak_per_tick:.2f} round-trips"
     )
