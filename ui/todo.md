@@ -645,3 +645,28 @@ proving value.
   particular the Z-resolution claim ("a fine feed needs a ten-sample window")
   is arithmetic, not a measurement — check it against the first recorded turning
   pass before any derived check is tuned against it.
+
+## Network screen degradation — open ends after the polkit-refusal fix (2026-09-13)
+
+Context: `fix/network-screen-nmcli-refusal`. An unprivileged service user made
+polkit refuse `nmcli radio wifi on`, the exception left `NetworkScreen.__init__`
+and took down `App.build()`. Construction and every nmcli call site now degrade
+instead of raising, and `tests/screens/test_network_screen_nmcli.py` pins it.
+
+- **`SsidPopup`'s refusal path has no unit test.** Its scan was already inside a
+  `try/except`, so the fix there was only to warn with the exception text and
+  latch `nmcli_usable`. Testing it means constructing a `ModalView` whose
+  `__init__` calls `MainApp.get_running_app()` and reads `app.formats`, i.e. the
+  `running_app` fixture pattern from `tests/components/conftest.py` moved or
+  duplicated into `tests/screens`. Worth doing when something else needs that
+  fixture there.
+- **`nmcli_usable` latches for the life of the process.** A polkit refusal is
+  permanent for a given user, so there is deliberately no retry and no way back
+  short of a restart. If the deployment ever gains a *transient* nmcli failure
+  mode (NetworkManager restarting under the app), this wants a manual retry on
+  the screen rather than a timer — a timer is how a refusing polkit gets asked
+  once a second.
+- **Not verified on the machine.** The refusal was observed on the lathe; the fix
+  is emulator- and unit-tested only. Confirm on the elspi card that the Network
+  screen now opens as the service user, shows the refusal in its Status box, and
+  that the rest of the UI comes up.
