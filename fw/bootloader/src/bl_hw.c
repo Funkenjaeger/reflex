@@ -368,6 +368,18 @@ void blHwJump(uint32_t appBase)
 
   FLASH->CR |= FLASH_CR_LOCK;
 
+  /* ART caches reset, CONTENTS included, because this program just wrote
+   * the RUN slot. The caches are off in here (reset state, or the app's
+   * jump cleared ACR), but off is not empty: when the app was entered by
+   * a JUMP rather than a reset, its lines at RUN-slot addresses survived
+   * into this program, and the image about to run re-enables the caches
+   * in HAL_Init. RM0383 3.4.3: ICRST/DCRST with the cache disabled. The
+   * app-side jump does the same before entering here; doing it on both
+   * sides of the flash write means neither has to trust the other. */
+  FLASH->ACR &= ~(FLASH_ACR_ICEN | FLASH_ACR_DCEN);
+  FLASH->ACR |=  (FLASH_ACR_ICRST | FLASH_ACR_DCRST);
+  FLASH->ACR &= ~(FLASH_ACR_ICRST | FLASH_ACR_DCRST);
+
   /* No interrupt was ever enabled here, but leave nothing to chance: SysTick
    * off, every NVIC line disabled and unpended, so nothing can fire into the
    * app's table before the app has installed its handlers. */
