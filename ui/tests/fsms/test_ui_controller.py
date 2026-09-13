@@ -39,6 +39,10 @@ def _engage(ctrl):
     need this — the bar refuses to enable Start/Stop or action until the
     operator has hit Engage, since the underlying FSM triggers have no
     valid source from 'disabled'."""
+    # Sync on as well: since 2026-09-12 Cut is gated on the feed being on
+    # (the lathe's order is Engage, Sync Enable, Cut), so a rig that wants
+    # the action button allowed needs both.
+    ctrl._board.servo.servoMode = 1
     ctrl.toggle_engage()
     _pump()
 
@@ -314,6 +318,10 @@ def test_disengaging_mid_cycle_disables_action(ctrl, els_forward, stop_z):
     ctrl.commit_standalone_stop_z(stop_z)  # Z=0 on safe side of stop_z
     _engage(ctrl)
     assert ctrl.action_allowed is True
+    # Sync off first: _engage leaves sync on, the mock spindle reads as
+    # running, and toggle_engage rightly refuses to disengage a feeding
+    # machine. The operator's order is sync off, then Disengage.
+    ctrl._board.servo.servoMode = 0
     ctrl.toggle_engage()   # back to disabled
     _pump()
     assert ctrl.engaged is False
@@ -540,6 +548,7 @@ def test_on_action_button_clicked_in_waiting_to_cut_enters_cutting(ctrl, els_for
     z.scaledPosition = 0.0
     ctrl.els_forward = els_forward
     ctrl.commit_standalone_stop_z(stop_z)  # Z=0 on safe side of stop_z
+    ctrl._board.servo.servoMode = 1        # sync on before Cut
     ctrl.toggle_engage()
     _pump()
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
@@ -733,7 +742,9 @@ def test_action_button_disabled_when_z_past_stop_in_stop_only_mode(els_forward, 
     _pump()
     # Non-wizard mode auto-advances to in_cycle.waiting_to_cut at startup.
     assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
-    # Engage domain FSM so action button is not blocked by "not engaged"
+    # Engage domain FSM so action button is not blocked by "not engaged",
+    # sync on so it is not blocked by the feed gate either.
+    board.servo.servoMode = 1
     c.toggle_engage()
     _pump()
     # Z past stop_z in the cutting direction → button disabled
@@ -898,6 +909,7 @@ def test_action_button_disabled_when_z_at_stop_in_stop_only_mode(els_forward, sa
     c.els_forward = els_forward
     c.commit_standalone_stop_z(10.0)
     _pump()
+    board.servo.servoMode = 1               # sync on before Cut
     c.toggle_engage()
     _pump()
     # Non-wizard mode auto-advances to in_cycle.waiting_to_cut at startup.
@@ -1258,11 +1270,12 @@ def _cutting_rig(ctrl):
     ctrl.commit_standalone_stop_z(10.0)      # Z=0 is on the safe side
     ctrl.toggle_engage()
     _pump()
+    _arm_toggle_enable(ctrl).servoMode = 1    # sync on FIRST: Cut is gated on it
+    ctrl._apply_policy()
     ctrl.on_action_button_clicked()
     _pump()
     assert ctrl._els_fsm.state == "cutting", "the rig never reached a cut"
     assert ctrl._ui_fsm.state == "in_cycle.cutting"
-    _arm_toggle_enable(ctrl).servoMode = 1    # feed running
     return ctrl
 
 
@@ -1441,4 +1454,70 @@ def test_re_engaging_after_a_sync_off_abort_offers_cut_again(ctrl):
     assert c.engaged is True, "re-engage refused"
     assert c.action_button_text == "Cut", (
         c._ui_fsm.state, c.action_button_text, c.instruction_text)
+    # Sync is off after the abort, so the button is there but not yet
+    # allowed -- Evan, lathe, 2026-09-12: lighting Cut on re-engage,
+    # before sync, "doesn't make sense". It says what to do instead.
+    assert c.action_allowed is False, c.instruction_text
+    assert "sync" in c.instruction_text.lower(), c.instruction_text
+
+    c._board.servo.servoMode = 1
+    c._apply_policy()
+
     assert c.action_allowed is True, c.instruction_text
+
+
+# ─── Cut only while sync is on (2026-09-12) ─────────────────────────────────
+#
+# on_enter_cutting releases the hold (set_active(False)): that release IS the
+# cut. With sync off, a Cut press leaves the engaged machine held by nothing,
+# and the next Sync Enable press moves the carriage with no Cut between the
+# two -- the hazard b56d2ac's docstring describes. The action button never had
+# a feed gate; the abort fix made it visible: after re-engaging, Cut lit up
+# before sync was back on. Evan, at the lathe: "that doesn't make sense, and
+# it doesn't work nicely." The policy re-runs every board tick
+# (_poll_apply_policy), so flipping servoMode is enough to refresh it.
+
+
+def test_cut_waits_for_sync_on(ctrl):
+    """Engaged, stop set, Z safe, sync OFF: the button reads Cut but is not
+    allowed, and the instruction says what to do. Sync on: allowed."""
+    ctrl._els.get_z_axis().scaledPosition = 0.0
+    ctrl.els_forward = False
+    ctrl.commit_standalone_stop_z(10.0)
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
+    assert ctrl._board.servo.servoMode == 0
+
+    assert ctrl.action_button_text == "Cut"
+    assert ctrl.action_allowed is False, ctrl.instruction_text
+    assert "sync" in ctrl.instruction_text.lower(), ctrl.instruction_text
+
+    ctrl._board.servo.servoMode = 1
+    ctrl._apply_policy()
+
+    assert ctrl.action_allowed is True, ctrl.instruction_text
+
+
+def test_cut_press_with_sync_off_does_not_start_a_cut(ctrl):
+    """The click path honours the gate: no domain cut, hold kept."""
+    ctrl._els.get_z_axis().scaledPosition = 0.0
+    ctrl.els_forward = False
+    ctrl.commit_standalone_stop_z(10.0)
+    ctrl.toggle_engage()
+    _pump()
+
+    ctrl.on_action_button_clicked()
+    _pump()
+
+    assert ctrl._els_fsm.state == "stopped", ctrl._els_fsm.state
+    assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
+
+
+def test_missing_stop_z_still_wins_over_the_sync_message(ctrl):
+    """Ordering of the instruction text: a missing Stop Z is the first thing
+    to say; the sync message only appears once the cut is otherwise ready."""
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl.action_allowed is False
+    assert "Stop Z" in ctrl.instruction_text, ctrl.instruction_text

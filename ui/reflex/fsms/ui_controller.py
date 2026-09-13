@@ -1050,6 +1050,18 @@ class ElsUiController(EventDispatcher):
             # stop_z — same check as the domain FSM's is_ready_to_cut.
             if allowed and not self.retract_enabled:
                 allowed = self._z_safe_for_cut()
+            # SYNC ON BEFORE CUT (2026-09-12). on_enter_cutting releases the
+            # hold (set_active(False)) -- that release IS the cut -- so a Cut
+            # with sync off leaves the engaged machine held by nothing, and
+            # the next Sync Enable press moves the carriage with no Cut
+            # between the two: the hazard _abandon_cut_on_sync_off describes.
+            # The button never had a feed gate; the abort fix made that
+            # visible when Cut lit on re-engage, before sync (Evan, lathe).
+            # Checked last so a missing Stop Z or an unsafe Z is still the
+            # first thing said. Refreshes every board tick (_poll_apply_policy).
+            sync_off = allowed and not self.is_feeding
+            if sync_off:
+                allowed = False
             if not allowed:
                 missing = []
                 if not self.stop_z_valid:
@@ -1058,6 +1070,8 @@ class ElsUiController(EventDispatcher):
                     missing.append("Start Z")
                 if missing:
                     text = f"Enter {' and '.join(missing)} to begin cutting"
+                elif sync_off:
+                    text = "Turn Sync Enable on, then Cut"
                 elif not self.retract_enabled and not allowed:
                     text = "Move Z to safe side of stop position"
         elif state == "in_cycle.waiting_to_retract":
