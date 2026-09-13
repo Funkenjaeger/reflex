@@ -169,9 +169,12 @@ makes the contract test in §5 possible at all.
 ## What is not claimed
 
 - **The hardware is still upstream's.** Reflex runs on the
-  `rotary-controller-pcb` design, boots from upstream's OSPI image, uses the
-  same Kivy stack and the same RS-485 UART, and the UI still runs as root for
-  KMS/DRM. The control-board respin is the first thing that needs new hardware.
+  `rotary-controller-pcb` design and uses the same Kivy stack and the same
+  RS-485 UART. Since 2026-09-13 the reference machine boots the
+  [elspi image](https://github.com/Funkenjaeger/elspi) rather than upstream's
+  OSPI, and the UI runs as an unprivileged service user (DRM master by first
+  open, a polkit grant for NetworkManager) instead of root. The control-board
+  respin is the first thing that needs new hardware.
 - **One servo, on the leadscrew.** Backing off in X is your hand, in every
   mode.
 - **No multi-start threading**, and it cannot exist before the respin — it
