@@ -77,10 +77,12 @@ layout, not a different build of the same thing.
 > asset is the layout its name claims" — plus retiring `scripts/flash.sh`, since
 > the asset and the script are the same layout wearing two hats.
 >
-> **Known legacy boards as of 2026-09-08: elspi.** It ran this bootloader on
-> 2026-09-07 (the hardware verification above) and is back on the legacy layout
-> today, which is exactly the loss the sector-0 guard in `scripts/flash.sh` now
-> exists to prevent. Keep this list current; when it empties, the asset goes.
+> **Known legacy boards as of 2026-09-12: none.** This line said elspi from
+> 2026-09-08, and that was wrong: on 2026-09-12 a sector-0 dump over the real
+> ST-Link classified elspi BOOTLOADER, `flash.sh` refused, and `--enter-bootloader`
+> answered as bootloader `8b6f5c3`. It was never returned to the legacy layout.
+> It now runs bootloader and app `2bf5539`. With the list empty, the legacy
+> asset's end condition is met; retiring it is the four `release.yml` edits above.
 
 `build-slot/reflex-fw.bin` is the image: `scripts/reflex_image.py` patches its
 length and CRC32 in post-build and re-validates it. The ELF still carries zero
