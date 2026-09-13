@@ -390,15 +390,28 @@ No programmer and no power cycle: the bootloader stages the image, verifies it,
 keeps the previous one as a backup and jumps.
 
 !!! warning "`reflex-app-*.bin`, not `reflex-fw-*.bin`"
-    A release publishes both, built from the same source and not
-    interchangeable. **`reflex-app-<version>.bin`** is linked at the
-    bootloader's RUN slot, `0x08020000`, and carries the image header a Modbus
-    flash checks — it is the only one `modbus-flash.py` will accept.
-    **`reflex-fw-<version>.bin`** is the legacy image at `0x08000000`, for
-    boards still on the legacy layout and `scripts/flash.sh` only; it is
-    deprecated, and `modbus-flash.py` refuses it before erasing anything.
+    A release publishes two firmware assets.
+    **`reflex-app-<version>.bin`** is the application, linked at the
+    bootloader's RUN slot, `0x08020000`, and carrying the image header a
+    Modbus flash checks — it is the only one `modbus-flash.py` will accept.
     `reflex-bl-<version>.bin` / `.elf` is the bootloader itself, which
     `provision.sh` in step 6 installs.
+
+    **`reflex-fw-<version>.bin` was retired on 2026-09-13 and is no longer
+    published.** It was the legacy no-bootloader image at `0x08000000`, kept
+    only for boards still on that layout; the known-legacy list in
+    `fw/bootloader/README.md` emptied on 2026-09-12, when elspi turned out to
+    have been on the bootloader layout all along, so the asset's end
+    condition was met. Releases tagged before 2026-09-13 still carry it, and
+    the name is still worth knowing for one reason: it is the glob anyone
+    writes by hand, it matches nothing you can flash over the wire, and
+    `modbus-flash.py` refuses it before erasing anything — reach for **app**,
+    not **fw**.
+
+    Retiring the asset did not retire `scripts/flash.sh`. That script builds
+    the legacy image locally and programs it over SWD; it never downloaded a
+    release asset, and it is still the recovery tool for a board that will
+    not answer over Modbus.
 
 The ST-Link in step 6 is still the answer for a virgin board, for option bytes,
 and for recovering a controller that will not answer over Modbus at all.
