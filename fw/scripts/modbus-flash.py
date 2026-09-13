@@ -271,14 +271,32 @@ def read_identity(bus: Rtu, tries: int = 5) -> Identity:
     raise SystemExit(f"no identity window at {ID_BASE}: {last}")
 
 
+# How long to wait for the APPLICATION to answer after a jump. Longer than one
+# IWDG period (~32 s, LSI/256/4096), on purpose: an image whose first start
+# hangs is reset by the watchdog and gets a second attempt from the
+# bootloader, and a trial that comes good on that attempt is still a good
+# image -- it must not be reported as a failed flash. Measured 2026-09-13:
+# the first in-app update to v1.2.0-rc.2 answered about 30 s after the jump
+# and the old 15 s wait declared it failed while the update had in fact
+# completed. A late answer is SAID, below, so it is never silent.
+APP_START_WAIT_S = 45.0
+APP_START_NORMAL_S = 5.0
+
+
 def wait_for_stage(bus: Rtu, stage: int, timeout: float, rev: int | None = None) -> Identity:
-    deadline = time.monotonic() + timeout
+    t0 = time.monotonic()
+    deadline = t0 + timeout
     last = None
     while time.monotonic() < deadline:
         try:
             regs = bus.read(ID_BASE, ID_SIZE, timeout=0.3, attempts=1)  # ditto
             ident = Identity(regs)
             if ident.magic == ID_MAGIC and ident.stage == stage and (rev is None or ident.build_rev == rev):
+                took = time.monotonic() - t0
+                if stage == ID_STAGE_APP and took > APP_START_NORMAL_S:
+                    print(f"  NOTE: the application answered {took:.1f} s after the jump; a normal start"
+                          f" is under {APP_START_NORMAL_S:.0f} s and one IWDG period is ~32 s. It is"
+                          f" running, but its first start may have hung and been reset.")
                 return ident
             last = str(ident)
         except ModbusError as e:
@@ -545,7 +563,7 @@ def flash(bus: Rtu, image_path: str, dry_run: bool, manifest=None,
     if dry_run:
         print(f"VERDICT: dry-run complete, nothing written ({time.monotonic() - t0:.1f}s)")
         return 0
-    ident = wait_for_stage(bus, ID_STAGE_APP, timeout=15.0, rev=hdr.build_rev)
+    ident = wait_for_stage(bus, ID_STAGE_APP, timeout=APP_START_WAIT_S, rev=hdr.build_rev)
     # Say the retry count out loud even when it is zero. A silent retry layer
     # is how a link that has quietly started losing a tenth of its frames goes
     # on looking healthy for months.
@@ -595,7 +613,7 @@ def revert(bus: Rtu, dry_run: bool, manifest=None, expect_rev: str | None = None
     if dry_run:
         print(f"VERDICT: dry-run complete, nothing written ({time.monotonic() - t0:.1f}s)")
         return 0
-    ident = wait_for_stage(bus, ID_STAGE_APP, timeout=15.0, rev=want)
+    ident = wait_for_stage(bus, ID_STAGE_APP, timeout=APP_START_WAIT_S, rev=want)
     print(f"  link: {bus.retries} read retries, {bl.retries} commands resent, "
           f"{bl.recovered} replies lost after the command had run")
     print(f"VERDICT: OK -- reverted; application {ident.rev_str} is running, "
@@ -670,7 +688,7 @@ def main(argv: list[str]) -> int:
             Bootloader(bus, args.dry_run).jump()
             if args.dry_run:
                 return 0
-            ident = wait_for_stage(bus, ID_STAGE_APP, timeout=15.0)
+            ident = wait_for_stage(bus, ID_STAGE_APP, timeout=APP_START_WAIT_S)
             print(f"VERDICT: OK -- application {ident.rev_str} is running")
             return 0
         if args.revert:

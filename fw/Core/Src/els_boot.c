@@ -119,6 +119,18 @@ static void enterBootloader(void)
   while ((RCC->CR & RCC_CR_PLLRDY) != 0u) { }
   RCC->PLLCFGR = 0x24003010u;
   RCC->CIR = 0u;
+  /* ART accelerator back to reset, CONTENTS included. Disabling the
+   * caches (ACR = 0) leaves their lines valid, and the lines hold THIS
+   * image's instructions at RUN-slot addresses. The bootloader is about
+   * to write a different image there and jump into it, and that image
+   * re-enables the caches in HAL_Init: a stale hit would execute the old
+   * image's words inside the new one. A real reset clears the cache; a
+   * jump must do it by hand (RM0383 3.4.3: ICRST/DCRST, written with the
+   * cache disabled). Added 2026-09-13 after the first in-app update to a
+   * differently-laid-out image answered ~30 s late, one IWDG period. */
+  FLASH->ACR &= ~(FLASH_ACR_ICEN | FLASH_ACR_DCEN);
+  FLASH->ACR |=  (FLASH_ACR_ICRST | FLASH_ACR_DCRST);
+  FLASH->ACR &= ~(FLASH_ACR_ICRST | FLASH_ACR_DCRST);
   FLASH->ACR = 0u;
   FLASH->CR |= FLASH_CR_LOCK;
 
