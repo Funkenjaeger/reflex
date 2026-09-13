@@ -7,6 +7,7 @@ from kivy.logger import Logger
 from kivy.event import EventDispatcher
 from kivy.properties import StringProperty, NumericProperty, BooleanProperty, ObservableList, partial
 
+from reflex.utils import commissioning_ledger
 from reflex.utils.paths import config_dir
 
 log = Logger.getChild(__name__)
@@ -113,11 +114,19 @@ def read_settings(file: str):
 
 def write_settings(file: str, data, triggered_by: Optional[str] = ""):
     log.info(f"Saving {triggered_by}: {file}")
+    # Read the outgoing state BEFORE overwriting it -- this is the last moment
+    # it exists. `None` when the file is new, which the ledger treats as the
+    # commissioning event for that dispatcher.
+    previous = read_settings(file)
     try:
         with open(file, "w") as f:
             yaml.dump(data, f)
-        return True
 
     except (OSError, yaml.YAMLError) as e:
         log.error(str(e))
         return False
+
+    # After a SUCCESSFUL write only, and OUTSIDE the try so it cannot turn a
+    # written file into a `False` return. record() swallows its own failures.
+    commissioning_ledger.record(file, previous, data, triggered_by or "")
+    return True
