@@ -233,13 +233,19 @@ def test_real_machine_config_wizard_threading_retract(harness):
     # _poll_apply_policy on every board tick) -- poll for the settled value
     # rather than trusting a single bare pump (see the longer note at the
     # X-clear gate below, which hit this race directly in development).
-    settled = h.wait_until(lambda: h.controller.instruction_text == "Ready to cut",
+    # Sync is still off here, and since 2026-09-12 Cut is gated on it: the
+    # bar names the missing step instead of offering the cut.
+    settled = h.wait_until(lambda: h.controller.instruction_text == "Turn Sync Enable on, then Cut",
                             timeout_s=3.0)
     assert settled, f"policy did not settle: instruction_text={h.controller.instruction_text!r}"
-    assert h.controller.action_allowed is True
+    assert h.controller.action_allowed is False
 
     # ── Start the cut: sync feed on, then the action button ─────────────────
     h.enable_sync()
+    settled = h.wait_until(lambda: h.controller.instruction_text == "Ready to cut",
+                            timeout_s=3.0)
+    assert settled, f"policy did not settle after sync on: instruction_text={h.controller.instruction_text!r}"
+    assert h.controller.action_allowed is True
     assert h.els_fsm.is_ready_to_cut(), "retract mode: Z should read as retracted pre-cut"
     h.cut()
     assert h.ui_fsm.state == "in_cycle.cutting"
