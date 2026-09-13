@@ -28,7 +28,7 @@ STM32F411 hardware
 
 The heart of the firmware.
 
-- **`SynchroRefreshTimerIsr()`** — high-priority TIM9 ISR running every ~10 µs (100 kHz). Reads all 4 encoder counters, computes deltas with fractional error tracking, applies sync ratios, and generates step/direction pulses on PA0/PB14. Uses the Cortex-M4 DWT cycle counter to measure its own execution time.
+- **`SynchroRefreshTimerIsr()`** — high-priority TIM9 ISR running every 20 µs (50 kHz; the rate and every tick constant derived from it are declared in `Core/Inc/els_isr_rate.h`). Reads all 4 encoder counters, computes deltas with fractional error tracking, applies sync ratios, and generates step/direction pulses on PA0/PB14. Uses the Cortex-M4 DWT cycle counter to measure its own execution time.
 - **`updateIndexingPosition()`** — trapezoidal ramp (accel/cruise/decel) for indexed moves.
 - **`updateJogPosition()`** — continuous speed control for jogging.
 - Three FreeRTOS tasks: `userLedTask`, `updateSpeedTask`, `servoEnableTask`.
@@ -229,7 +229,7 @@ confirmation, and never trim the take-up toward the minimum.
 #### Calibration run
 
 Host-requested via `calCommand`, executed in the ISR (Modbus polling at tens of
-Hz cannot observe a transition that happens at 100 kHz). Seat against a flank;
+Hz cannot observe a transition the 50 kHz ISR sees). Seat against a flank;
 reverse three times, each leg counting servo steps until Z moves; then a final
 unmeasured re-seat in the cutting direction so the machine is left with lash
 loaded on the side a pass starts from. The host judges consistency and writes

@@ -63,13 +63,16 @@ class Manager(ScreenManager):
         from reflex.components.screens.els_setup_screen import ElsSetupScreen
         self.add_widget(ElsSetupScreen(name="els_setup", els=self.app.els))
 
-        # UpdateScreen is deliberately NOT registered for 1.1.0. It queried
-        # the ARCHIVED Funkenjaeger/reflex-ui (so it offered v1.0.0) and
-        # installed into /reflex-ui, deleted at the monorepo cutover -- and a
-        # UI-only updater no longer fits releases that are lockstep fw+ui
-        # pairs needing an ST-Link for the firmware half. The screen is kept
-        # in the tree as the starting point for that redesign; nothing reaches
-        # it. See tests/components/test_update_screen_unwired.py.
+        # REGISTERED AGAIN since 2026-09-07, unwired for 1.1.0. What changed
+        # is the Modbus field bootloader: the firmware half of a release is
+        # now flashable over the RS-485 link the UI already holds, so an
+        # in-app update can be the fw+ui PAIR a release actually is rather
+        # than the UI-only half that broke the pairing by design. The repo and
+        # install path faults that came with it are fixed in
+        # reflex/utils/updater.py; the protocol gate there is what makes it
+        # safe. See tests/components/test_update_screen_wired.py.
+        from reflex.components.screens.update_screen import UpdateScreen
+        self.add_widget(UpdateScreen(name="update"))
 
         from reflex.components.screens.system_screen import SystemScreen
         self.add_widget(SystemScreen(name="system"))

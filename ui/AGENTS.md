@@ -317,7 +317,7 @@ Every UI component follows this structure:
   file, mirrored into `ui/pyproject.toml`'s `version` by the release workflow.
   Both halves carry the same version even when only one changed: `v1.4.0` names
   a known-good FIRMWARE + UI PAIR, which is the point of the monorepo
-  (`docs/decisions/repo-structure-monorepo.md`). Do not bump either by hand.
+  (`decisions/repo-structure-monorepo.md`, at the repo root). Do not bump either by hand.
 
 - **CI/CD — CORRECTED 2026-08-22 for the monorepo. The split-era rule that
   "on any given branch exactly one of the two exists" is no longer true, and

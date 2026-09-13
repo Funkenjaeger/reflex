@@ -194,11 +194,39 @@ cannot be a different revision from what is in front of you.
 
 ```bash
 sudo apt install gcc-arm-none-eabi cmake build-essential openocd
-cd ~/projects/reflex/fw && ./scripts/flash.sh
+cd ~/projects/reflex/fw && ./scripts/provision.sh
 ```
 
 `openocd`'s packaging installs udev rules granting the `plugdev` group access,
 so the flash itself needs no `sudo`.
+
+**This is the only time you need the ST-Link.** `provision.sh` puts *two*
+things on the board: the field bootloader in sector 0, and the application in
+the RUN slot behind it. Once the bootloader is there, every later firmware
+update goes over the RS-485 link the UI already uses — no programmer, no
+power cycle, nothing to unplug at the machine:
+
+```bash
+sudo systemctl stop reflex-ui.service        # it holds the serial port
+python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/serial0
+sudo systemctl start reflex-ui.service
+```
+
+In practice that is the touchscreen's *Setup → Update* — see
+[Updating later](#updating-later).
+
+The layout, the anti-brick behavior and the optional step that write-protects
+the bootloader once the board is confirmed working are all in
+`fw/bootloader/README.md`.
+
+!!! warning "`flash.sh` is not this step"
+    The repo also has `scripts/flash.sh`. It writes the **legacy** layout —
+    the application at `0x08000000`, with no bootloader at all — and it exists
+    only for boards that are still on that layout. Run against a board
+    provisioned as above it would overwrite the bootloader, so it reads the
+    board first and writes only over a legacy application it recognizes or an
+    erased sector 0 — anything else, the bootloader included, is a refusal.
+    Use `provision.sh` for a new board and `modbus-flash.py` thereafter.
 
 !!! danger "Power-cycle the controller afterwards"
     A reset alone does not reliably start the new firmware on this board.
@@ -207,16 +235,28 @@ so the flash itself needs no `sudo`.
     success while the board keeps running the old firmware, with no error
     anywhere.
 
-Confirm it took by watching the UI log as it connects:
+Confirm the board came up *through the bootloader*, with the UI stopped:
+
+```bash
+cd ~/projects/reflex/fw
+python3 scripts/modbus-flash.py --identity --port /dev/serial0
+```
+
+You want `stage=application` and the revision you just built. `stage=bootloader`
+means the bootloader is alive but did not accept the image in RUN — the same
+output carries `blStatus` and `blRunValid`, which say why.
+
+Then start the UI and watch its log as it connects:
 
 ```bash
 journalctl -u reflex-ui.service -b --no-pager | grep -i "protocol version"
 ```
 
-You want `Firmware register protocol version 7 (expected 7)`. A mismatch names
-itself — the UI says whether the firmware or the UI is the older half — and it
-blocks calibration rather than letting you commission against a register map it
-does not understand.
+The two numbers in `Firmware register protocol version N (expected N)` must
+match. The number itself moves with the register map, so read it as "these
+agree", not as a particular value. A mismatch names itself — the UI says whether
+the firmware or the UI is the older half — and it blocks calibration rather than
+letting you commission against a register map it does not understand.
 
 ---
 
@@ -269,13 +309,100 @@ checkout.
 
 ## Updating later
 
+**From the touchscreen is the normal path.** *Setup → Update* lists the
+releases published on GitHub, and installing one replaces **both** halves: it
+flashes the controller firmware over the RS-485 link — no ST-Link, no power
+cycle, about thirteen seconds — and then checks out the matching UI tag. You
+do not need SSH, and you do not need to work out whether the firmware half
+changed.
+
+A release is one version covering both halves, so the two are only ever
+installed together:
+
+1. **Before anything is touched** the machine checks that it can finish —
+   a clean checkout, `uv` present, the tag fetched, and the release's firmware
+   image downloaded and validated. Anything missing stops it here, with
+   nothing changed.
+2. **The controller is flashed**, and the DRO stops for the duration because
+   the flasher needs the serial port the UI normally holds. The screen says so.
+   **Do not power the machine off while it is flashing.**
+3. **The firmware is then asked what it speaks.** If the register protocol
+   version it reports is not the one the new UI expects, the update **stops
+   there** and the UI half is not installed. There is no way to click past
+   that — a UI and a firmware that disagree about the register layout read
+   every register after the point of divergence as plausible nonsense, and
+   preventing exactly that is what a paired release is for.
+4. **The UI half is checked out**, the environment synced, and the service
+   restarted.
+
+!!! note "Pre-releases"
+    *Offer pre-releases (experimental)* adds release candidates to the list.
+    They are built by the same workflow and carry both halves, so they install
+    the same way; they are simply less tested, and the screen asks before
+    installing one.
+
+!!! warning "Two things it needs, and a fresh install has neither by default"
+    **A git checkout.** The UI half is installed by checking out a tag in
+    `/home/default/projects/reflex`, so this works only where Reflex was
+    installed from a clone, as in step 3. It refuses, and says so, otherwise.
+
+    **The Modbus bootloader on the controller.** Step 6 installs it. A board
+    set up before 2026-09-08, when step 6 still ran `flash.sh`, carries the
+    legacy layout — one image at `0x08000000`, no bootloader — so there is
+    nothing on it for a Modbus flash to talk to. Converting it is a one-time
+    run of `scripts/provision.sh` with the ST-Link, exactly as step 6; until
+    that is done, the Update screen will read the controller, find no identity
+    window, and refuse. Nothing is harmed by trying.
+
+### From the command line
+
+Still supported, and the fallback when the machine has no route to GitHub, when
+the checkout has local changes, or when an update refused and you want to see
+why.
+
 ```bash
-cd ~/projects/reflex && git pull
-cd ui && ~/.local/bin/uv sync   # only if dependencies changed
+cd ~/projects/reflex && git fetch --tags && git checkout v1.2.0
+cd ui && ~/.local/bin/uv sync
 sudo systemctl restart reflex-ui.service
 ```
 
-If the release also changed the firmware, reflash and power-cycle as in step 6.
-The protocol version check is what tells you whether you needed to — it is
-worth reading the log after every update rather than only when something looks
-wrong.
+That is the UI half only. If the release also moved the firmware, flash it too
+— over Modbus, with the UI stopped so the port is free. Either the release's
+image:
+
+```bash
+sudo systemctl stop reflex-ui.service
+cd ~/projects/reflex/fw
+python3 scripts/modbus-flash.py --identity --port /dev/serial0     # what is on there now
+python3 scripts/modbus-flash.py <the release's reflex-app-*.bin> --port /dev/serial0
+sudo systemctl start reflex-ui.service
+```
+
+or one built from the checkout you just moved to:
+
+```bash
+cmake -S . -B build-slot -DCMAKE_BUILD_TYPE=Release -DREFLEX_APP_BASE=0x08020000
+cmake --build build-slot
+python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/serial0
+```
+
+No programmer and no power cycle: the bootloader stages the image, verifies it,
+keeps the previous one as a backup and jumps.
+
+!!! warning "`reflex-app-*.bin`, not `reflex-fw-*.bin`"
+    A release publishes both, built from the same source and not
+    interchangeable. **`reflex-app-<version>.bin`** is linked at the
+    bootloader's RUN slot, `0x08020000`, and carries the image header a Modbus
+    flash checks — it is the only one `modbus-flash.py` will accept.
+    **`reflex-fw-<version>.bin`** is the legacy image at `0x08000000`, for
+    boards still on the legacy layout and `scripts/flash.sh` only; it is
+    deprecated, and `modbus-flash.py` refuses it before erasing anything.
+    `reflex-bl-<version>.bin` / `.elf` is the bootloader itself, which
+    `provision.sh` in step 6 installs.
+
+The ST-Link in step 6 is still the answer for a virgin board, for option bytes,
+and for recovering a controller that will not answer over Modbus at all.
+
+Either way, the protocol version check is what tells you the two halves agree
+— it is worth reading the log after every update rather than only when
+something looks wrong.

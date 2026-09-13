@@ -802,3 +802,72 @@ class TestAbsOffset:
         axis.set_current_position(0)
         axis._update_position()
         assert axis.scaledPosition == pytest.approx(0.0, abs=0.1)
+
+
+class TestInitConnectionOnDisconnect:
+    """Regression: ``_init_connection`` is bound to ``board.connected`` and
+    fires on EVERY transition, not just False -> True.
+
+    ``Board.pause_polling()`` (the in-app updater's serial-port handover,
+    reflex/dispatchers/board.py) calls ``connection_manager.disconnect()`` --
+    which sets the underlying minimalmodbus device to None -- BEFORE it sets
+    ``connected = False``. Before the fix, ``_init_connection`` reached for
+    ``self.board.device['scales'][idx]['syncEnable']`` unconditionally on
+    every call, including this one, on a device that had just gone away.
+
+    In production ``reflex.utils.communication``'s read helpers catch the
+    resulting ``AttributeError`` and return a fallback, so nothing crashed --
+    but it logged a bare ``'NoneType' object has no attribute
+    'read_register'`` line, observed on elspi 2026-09-07 right next to the
+    update screen's "DO NOT POWER OFF THE MACHINE" warning (task
+    6a9f27b68f08ecb120c218a6).
+
+    This test does not need the real communication stack to prove the point:
+    it is enough that ``_init_connection`` must not touch ``board.device`` AT
+    ALL on the way down, only on the way back up -- exactly the guard already
+    used by its sibling, ``InputDispatcher._write_scale_dir_on_connect``.
+    """
+
+    def test_does_not_read_device_when_becoming_disconnected(self, axis, board):
+        board.connected = True  # start connected so the next line is a real edge
+
+        accesses = []
+
+        class ExplodingScales:
+            """Stands in for a live register: any access to it means the
+            code reached for the controller, which is exactly what must not
+            happen while disconnected."""
+
+            def __getitem__(self, key):
+                accesses.append(key)
+                raise AttributeError(
+                    "'NoneType' object has no attribute 'read_register'")
+
+        exploding_device = MagicMock()
+        exploding_device.__getitem__ = MagicMock(
+            side_effect=lambda key: ExplodingScales() if key == "scales" else MagicMock())
+        board.device = exploding_device
+
+        # This is the pause_polling() moment: connected flips to False while
+        # the device is already unusable. Must not raise, must not read.
+        board.connected = False
+
+        assert accesses == [], (
+            "_init_connection touched board.device while disconnected -- "
+            "this is the 'NoneType' object has no attribute 'read_register' "
+            "regression from task 6a9f27b68f08ecb120c218a6")
+
+    def test_still_reads_syncenable_on_reconnect(self, axis, board):
+        """The guard must only skip the disconnected edge, not break the
+        real reconnect path that re-teaches syncEnable and the sync ratio."""
+        board.connected = False
+
+        live_device = MagicMock()
+        scales_row = {"syncEnable": 1}
+        live_device.__getitem__ = MagicMock(
+            side_effect=lambda key: [scales_row] if key == "scales" else MagicMock())
+        board.device = live_device
+
+        board.connected = True
+
+        assert axis.syncEnable == 1  # device rows carry ints; the property stores what it is given

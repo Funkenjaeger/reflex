@@ -176,24 +176,20 @@ typedef struct {
   uint16_t servoMode;                  // SW write: 0=disabled, 1=sync/index (also set by firmware), 2=jog
 } fastData_t;
 
-typedef struct {
-  uint16_t enable;            // SW write: 1 = enable ELS stop feature
-  uint16_t scaleIndex;        // SW write: which scale (0–3) is the position reference (Z axis)
-  int32_t  stopPosition;      // SW write: threshold in encoder counts
-  int16_t  stopDirection;     // SW write: 1 = stop when pos >= threshold, -1 = stop when pos <= threshold
-  uint16_t active;            // bidirectional: firmware sets to 1 when triggered; SW writes 0 to resume
-  float    threadPitchSteps;  // SW write: leadscrew steps per thread pitch (float); 0.0f = turning (no correction)
-  int32_t  hysteresis;        // SW write: encoder counts carriage must retract before re-enabling; 0 = no hysteresis
-  float    zCountsPerPitch;   // SW write: Z scale encoder counts per thread pitch; 0.0f = correction disabled
-   uint32_t backlashSteps;     // SW write: leadscrew backlash takeup magnitude in servo steps; direction derived from sign(syncRatioNum) × sign(threadPitchSteps × zCountsPerPitch); 0 = takeup disabled
-  int32_t  latchedZ;          // READ-ONLY (firmware-owned): scales[scaleIndex].position at first trigger of the job
-  int32_t  latchedSpindle;    // READ-ONLY (firmware-owned): scales[0].position at first trigger of the job
-  uint16_t referenceLatched;  // READ-ONLY (firmware-owned): 0 until first trigger captures the reference, 1 thereafter; reset on enable 0→1
-  uint16_t takeupPending;     // READ-ONLY (firmware-owned): 1 while the backlash take-up that starts EVERY pass (first pass and turning included since 2026-08-21) is executing or awaiting Z confirmation; gates sync off meanwhile
-  float    lastIdealAdvance;  // READ-ONLY (firmware-owned): last resume's deltaSpindle × syncRatioNum / syncRatioDen
-  float    lastActualAdvance; // READ-ONLY (firmware-owned): last resume's deltaZ × threadPitchSteps / zCountsPerPitch
-  float    lastPhaseError;    // READ-ONLY (firmware-owned): last resume's idealAdvance − actualAdvance (pre-modulo)
-  float    lastCorrection;    // READ-ONLY (firmware-owned): last resume's correction added to stepsToGo (post-modulo)
+/* ---------------------------------------------------------------------------
+ * elsStop_t IS GENERATED. Its definition, its per-field documentation and the
+ * _Static_asserts that prove its layout live in Ramps_generated.h, emitted by
+ * tools/genregs.py from registers/els_stop.yaml. Do not add a field here --
+ * add it to the schema and regenerate, or CI's `genregs.py --check` fails.
+ *
+ * WHAT FOLLOWS IS DESIGN HISTORY, kept verbatim from the hand-written struct
+ * this replaced. It explains the SHAPE of the block -- the append-at-tail
+ * convention, the reserved diagnostic scratchpad, why an implicit pad is a
+ * phantom register -- rather than any one field, so it has no home in the
+ * schema and would otherwise have been lost in the swap.
+ * ---------------------------------------------------------------------------
+ */
+
   /* --- Backlash calibration + closed-loop take-up confirmation. APPENDED AT THE
    * TAIL of elsStop_t, which is itself the last member of rampsSharedData_t, so
    * every pre-existing Modbus register offset is unchanged. uint16s are grouped
@@ -202,24 +198,7 @@ typedef struct {
    * the auto-start plan: re-sync latchCommand/latchSeq, then the auto-start
    * block). Algorithm, units, and the physics that constrain all of this live in
    * Core/Inc/els_backlash_cal.h — read that before changing anything here. */
-  uint16_t protocolVersion;       // READ-ONLY (firmware-owned): register-layout version, starts at 1. Bump whenever this struct changes; reflex-ui checks it at connect so a map mismatch names itself instead of surfacing as garbled reads
-  uint16_t calCommand;            // bidirectional: SW writes 1 to request a calibration run; FIRMWARE CLEARS IT on consume. This is the atomic hand-off. SW must NOT poll it for completion — it clears the instant the ISR picks it up, long before the run finishes. Edge-detect calSeq instead
-  // ORDERING INVARIANT (do not reorder these fields): calSeq must sit at a LOWER address than
-  // calResult/calMeasured. Modbus FC3 copies the block one register at a time in ascending address
-  // order and the 100 kHz ISR can land between any two -- seq-first makes a torn read come out as
-  // (stale seq, new payload), which edge-detection harmlessly re-reads, instead of (new seq, stale
-  // payload), which a host acts on. That inverted shape was the 2026-08-22 takeupSeq/takeupResult
-  // bug on elspi (fixed host-side in 947ef4b); this field order is what makes it structurally
-  // impossible for the calibration trio. Same rule for diagSeq below.
-  uint16_t calSeq;                // READ-ONLY (firmware-owned): increments once per finished run, success OR failure. Monotonic, so a host polling at Modbus rates cannot alias a fast run
-  uint16_t calResult;             // READ-ONLY (firmware-owned): outcome of the run counted by calSeq. ELS_CAL_* in els_backlash_cal.h; 0 = OK
-  uint16_t takeupResult;          // READ-ONLY (firmware-owned): outcome of the last take-up. ELS_CAL_*/ELS_TAKEUP_* in els_backlash_cal.h; 0 = OK. Replaces a binary fault flag so "carriage never moved" and "never reached target" stay distinguishable
-  uint16_t takeupSeq;             // READ-ONLY (firmware-owned): increments once per take-up outcome; lets SW tell completed-normally from host-cleared, which takeupPending alone cannot
-  int32_t  calMeasured[3];        // READ-ONLY (firmware-owned): lash measured at each of the 3 reversals, in servo steps. The HOST judges whether the spread is acceptable — measurement lives here, policy lives in the UI
-  int32_t  calCeilingSteps;       // SW write: per-leg hard ceiling in servo steps. Driving this far without Z moving IS the open-half-nut / uncoupled failure. MACHINE-SPECIFIC; size it comfortably past the largest credible lash
-  int32_t  calMotionThreshCounts; // SW write: Z scale counts that count as real motion. MACHINE-SPECIFIC — ~2 counts on elspi (200 counts/mm, so 1 count ≈ 2.5 servo steps); emulator is 400 counts/mm. 0 disables detection and FAILS CLOSED (never confirms) — deliberate: an unconfigured threshold must refuse, not wave everything through
-  int32_t  lastTakeupZDelta;      // READ-ONLY (firmware-owned): signed Z counts moved across the last take-up, projected onto the take-up direction. NEGATIVE means the carriage moved the WRONG way — a distinct fault signature from "didn't move"
-  int32_t  takeupThreshCounts;    // READ-ONLY (firmware-DERIVED, not operator-set): Z counts the last take-up had to move to be confirmed. Derived from (backlashSteps - mean(calMeasured)) via elsTakeupConfirmThreshold(); falls back to calMotionThreshCounts with no calibration on file or in turning mode. Published so the UI can say "moved 3, needed 4" instead of just refusing
+
   /* --- DIAGNOSTIC SCRATCHPAD — RESERVED, AND NEVER MEANINGFUL IN A BASELINE ---
    * A fixed 64-register (128-byte) block for temporary firmware-side
    * instrumentation, so a throwaway probe never has to change the register
@@ -248,16 +227,6 @@ typedef struct {
    * a permanent 40% tax on every poll cycle, for a block that is empty in every
    * production build. reflex-ui reads this only when a diagnostic view is open.
    */
-  uint16_t diagSchema;         // READ-ONLY (firmware-owned): identifies the probe compiled into the block. 0 = none; do NOT interpret anything below it. Never assume a schema you did not read
-  uint16_t diagSeq;            // READ-ONLY (firmware-owned): increments once per COMPLETED capture. Edge-detect this; there is deliberately no "capture in progress" register to poll. ORDERING INVARIANT: must stay at a LOWER address than the capture payload it counts -- see the calSeq comment above for why a reorder reintroduces the torn-read bug
-  uint16_t diagBucketTicks;    // READ-ONLY (firmware-owned): ISR ticks summed into each diagTrace bucket. PUBLISHED so the host never has to assume the ISR rate — the repo has disagreed with itself about that rate by 10x
-  uint16_t diagBucketCount;    // READ-ONLY (firmware-owned): populated diagTrace entries, for the same reason
-  int32_t  diagSettleTicks;    // READ-ONLY (firmware-owned): ticks from capture start to the LAST tick that saw nonzero dZ. THE measurement ELS_SLIP_SETTLE_TICKS is a guess at — meaningful in v2, where the capture stops before the pass starts
-  int32_t  diagNetCounts;      // READ-ONLY (firmware-owned): signed Z counts summed across the capture
-  int16_t  diagTrace[ELS_DIAG_TRACE_BUCKETS];  // READ-ONLY (firmware-owned): per-bucket SIGNED sum of dZ. Signed rather than magnitude on purpose — encoder dither cancels, real motion does not, which is exactly the distinction a quiescence test needs and the reason to prefer net displacement over summed |dZ|
-  uint16_t diagCaptureTicks;   // READ-ONLY (firmware-owned): ticks the capture actually ran, i.e. how long the servo stayed silent after the take-up. Distinct from diagSettleTicks, which is when Z last MOVED
-  uint16_t diagEndReason;      // READ-ONLY (firmware-owned): ELS_DIAG_END_*. A window-full capture did not finish measuring; treat its tail as a floor, not a result
-  uint16_t diagReserved[4];    // pads the block to a fixed 128 bytes so its size never depends on which probe is in it
 
   /* --- MACHINE MODE. PERMANENT, and deliberately NOT in the scratchpad above.
    *
@@ -279,7 +248,7 @@ typedef struct {
    * APPENDED AFTER the diagnostic block on purpose: the block's whole value is
    * a stable offset, so nothing is inserted ahead of it. This is a real
    * register-map change and it bumps protocolVersion. */
-  uint16_t machineMode;        // READ-ONLY (firmware-owned): ELS_MMODE_* (els_machine_mode.h), republished every servoEnableTask tick in every build
+
   /* EXPLICIT pad, not decoration. elsStop_t is 4-aligned (it holds int32/float),
    * so a lone trailing uint16 makes the compiler add two bytes of IMPLICIT
    * padding -- and this struct is cast wholesale into uint16 Modbus holding
@@ -292,15 +261,13 @@ typedef struct {
    * KEPT even though the re-sync pair below now happens to restore alignment
    * on its own: this block must not depend on what follows it. Delete the pad
    * and the padding comes back the moment anything after it is removed. */
-  uint16_t machineModeReserved;
+
   /* --- Interactive re-sync to an existing thread. The manual latch is the SAME
    * capture as the first-trigger auto-latch, at an operator-chosen point where
    * lash state was established by a cutting-direction jog. It sets
    * referenceLatched, which is exactly what suppresses the auto-latch for the
    * rest of the job. Appended at the tail per the reserved order above; the pair
    * is 4 bytes so no padding. Next append is the auto-start block. */
-  uint16_t latchCommand;          // bidirectional: SW writes 1 to request a manual reference latch; FIRMWARE CLEARS IT on consume. Consumed ONLY while enable == 1 (a reference is meaningless outside a job and would be wiped by the next enable 0->1 anyway); when enable == 0 it is cleared with NO latchSeq increment, so an absent ack IS the refusal. SW must edge-detect latchSeq, never poll this
-  uint16_t latchSeq;              // READ-ONLY (firmware-owned): increments once per ACCEPTED manual latch. Monotonic; the ack for latchCommand
 
   /* --- THREAD-PHASE OFFSET. Deliberately displaces where the tool re-enters
    * the thread by a chosen distance. The operator-facing job it was built for
@@ -359,10 +326,6 @@ typedef struct {
    * NOT FOLDED HERE. The total is stored exactly as the host wrote it; the fold
    * to mod-pitch happens at use, inside the primitive. Folding on write would
    * make the register silently disagree with the number the host displays. */
-  uint16_t phaseOffsetCommand;    // bidirectional: SW writes 1 to apply phaseOffsetPending as the new total; FIRMWARE CLEARS IT on consume. Not a completion flag -- edge-detect phaseOffsetSeq
-  uint16_t phaseOffsetSeq;        // READ-ONLY (firmware-owned): increments once per ACCEPTED apply. Monotonic; the ack for phaseOffsetCommand
-  int32_t  phaseOffsetPending;    // host-written candidate total, leadscrew steps. Read by the ISR ONLY under a nonzero phaseOffsetCommand; write it BEFORE the command, never after
-  int32_t  phaseOffsetSteps;      // READ-ONLY (firmware-owned): the live cumulative total in leadscrew steps, applied at every phase correction. Cleared on the enable 0->1 edge that clears referenceLatched -- an offset is meaningless without the datum it offsets -- and survives per-pass stop/resume within a job
 
   /* --- WORST ISR DURATION SEEN, in CPU cycles. The headroom measurement.
    *
@@ -389,7 +352,6 @@ typedef struct {
    * lands between the ISR's compare and its store is lost, which costs one
    * repeat of the write and nothing else -- the alternative, a command/ack pair,
    * is a lot of machinery for a diagnostic counter. */
-  uint32_t executionCyclesPeak;   // READ-ONLY except for reset: highest executionCycles since the host last wrote 0 here. Compare against 1000 (the per-tick budget at 100 MHz / 10 us)
 
   /* STEP pulse width instrument (2026-08-25, the dropped-step investigation).
    *
@@ -413,8 +375,6 @@ typedef struct {
    * stepPulseRuntCount counts pulses under ELS_STEP_RUNT_CYCLES: the min
    * answers "how bad", the count answers "how often". Same reset-by-
    * writing-0 trade as executionCyclesPeak above. */
-  uint32_t stepPulseMinCycles;    // READ-ONLY except for reset: narrowest STEP pulse since host wrote 0. 0 = nothing measured yet
-  uint32_t stepPulseRuntCount;    // READ-ONLY except for reset: pulses narrower than ELS_STEP_RUNT_CYCLES since host wrote 0
 
   /* Bootloader hand-off (2026-09-06, protocolVersion 8). elspi has no way to
    * power-cycle the controller, so "reboot into the field bootloader and stay
@@ -436,8 +396,6 @@ typedef struct {
    * no padding. The identity window is deliberately NOT here -- it sits
    * outside this struct at a fixed address so the write-protected bootloader
    * can serve the same registers no matter how this struct grows. */
-  uint16_t bootCommand;           // bidirectional: SW writes ELS_BOOT_CMD_* (els_identity.h); FIRMWARE CLEARS IT on consume. 1 = reboot into the bootloader and stay resident, 2 = plain reboot. Refused (cleared, no ack) while enable != 0
-  uint16_t bootSeq;               // READ-ONLY (firmware-owned): increments once per ACCEPTED boot command, immediately before the reset it triggers
 
   /* --- TRIGGER-INSTANT SNAPSHOT (2026-09-07, protocolVersion 9). The one
    * measurement the host structurally cannot take.
@@ -496,19 +454,19 @@ typedef struct {
    * registers, taking elsStop_t to 140 registers: still two 72-register reads
    * per board tick (72 + 68), with 4 registers of tail growth left before a
    * third request is needed. */
-  uint16_t stopTriggerSeq;          // READ-ONLY (firmware-owned): increments once per stop trigger, immediately BEFORE the payload below. Monotonic; edge-detect it, and re-read on no edge
-  uint16_t stopTriggerReserved;     // explicit pad -- see above; keeps the int32s 4-aligned and the register count honest
-  int32_t  stopTriggerZ;            // READ-ONLY (firmware-owned): scales[scaleIndex].position at the trigger, and it is the SAME value the threshold comparison was made on, not a re-read. (settled Z) - this = the coast. NOTE it is the reference scale as of the PREVIOUS tick when scaleIndex is above the sync-enabled scale's index -- the trigger test runs inside that scale's loop iteration, before this one's position is updated. 10 us of lag, inherent to the DECISION rather than to this register (latchedZ has always had it), and the right endpoint precisely because overshoot is measured from where the firmware decided to stop
-  int32_t  stopTriggerZSpeed;       // READ-ONLY (firmware-owned): scales[scaleIndex].speed at the trigger, encoder counts/s -- the same register and units the DRO shows. The table's x-axis. Computed by updateSpeedTask over the 50 ms window ENDING BEFORE the trigger, so unlike a host estimate it cannot straddle the coast; it is up to 50 ms old, which on a constant-feed threading pass is the steady approach speed and is exactly what is wanted
-  int32_t  stopTriggerStepsToGo;    // READ-ONLY (firmware-owned): servo.stepsToGo at the trigger. NONZERO means the firmware was still commanding motion, so the overshoot is not purely mechanical coast -- the 2026-08-28 stop-overshoot captures found zero emitted steps after the trigger in 12 of 14 passes, and this makes that check automatic per pass instead of a one-off probe build
-  int32_t  stopTriggerSpindleSpeed; // READ-ONLY (firmware-owned): scales[0].speed at the trigger, counts/s. Context, and enough for a host to reconstruct the commanded feed of a threading pass from the sync ratio
-} elsStop_t;
+
+#include "Ramps_generated.h"
 
 /* Register-layout version published in elsStop.protocolVersion. Mirrored by
  * reflex-ui's ELS_PROTOCOL_VERSION (ui/reflex/utils/devices.py); the UI checks
- * it at connect. Bump it whenever rampsSharedData_t changes shape. The
- * history of every bump is at the assignment in RampsStart(). */
-#define ELS_PROTOCOL_VERSION 9
+ * it at connect. The history of every bump is at the assignment in RampsStart().
+ *
+ * NO LONGER A LITERAL. It is whatever the schema says, because a version that
+ * guards the register MAP and a map that is generated from a schema must not be
+ * able to disagree -- and a hand-bumped literal beside a generated layout is
+ * exactly how they would. Bump `protocol_version` in registers/els_stop.yaml
+ * and regenerate. */
+#define ELS_PROTOCOL_VERSION ELS_STOP_PROTOCOL_VERSION
 
 /* Runt threshold, CPU cycles. 250 = 2.5 us at 100 MHz -- the top of the
  * minimum-pulse range common step-servo drives specify. Deliberately the

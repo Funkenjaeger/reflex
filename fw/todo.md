@@ -508,13 +508,19 @@ firmware logic added later has the same gap.
 
 ---
 
-## Modbus field bootloader (2026-09-06) — BUILT, NOT HARDWARE-VERIFIED
+## Modbus field bootloader (2026-09-06) — HARDWARE-VERIFIED 2026-09-07
 
-Branch `feat/modbus-bootloader`. Design and register contract:
-`Core/Inc/els_identity.h`, `docs/decisions/els-modbus-register-map.md`
-(Implemented section). Bring-up procedure: `bootloader/README.md`.
+Branch `feat/modbus-bootloader`, merged at `fe9e8dc`. Design and register
+contract: `Core/Inc/els_identity.h`,
+`decisions/els-modbus-register-map.md` (Implemented section). Bring-up
+procedure: `bootloader/README.md`.
 
-### Landed (natively tested only)
+**Bring-up result, on the machine 2026-09-07:** boots, validates and jumps; the
+identity window reads from both stages; field flashing moved 44,868 bytes over
+RS-485 in 12.9 s with no programmer and no power cycle; the anti-brick swap-back
+restored the backup image after three watchdog strikes.
+
+### Landed
 - `bootloader/` — bare-metal sector-0 bootloader, own Modbus slave, staging +
   copy-to-RUN with BACKUP swap-back, flash journal for power-loss recovery,
   IWDG + boot-attempt counter. 5.1 KB of the 16 KB sector.
@@ -527,30 +533,43 @@ Branch `feat/modbus-bootloader`. Design and register contract:
   of an apply; 23/23 mutations killed; identity window end-to-end on the
   emulator PTY via the real client.
 
-### NOT proven on hardware (every item needs the chip, none has run on it)
+### Proven on hardware by the 2026-09-07 bring-up
 - Flash controller sequence in `bootloader/src/bl_hw.c` (unlock, sector erase
-  PSIZE x32, word program, error flags), and the 1-4 s erase stall under a
-  polled UART.
-- CRC unit vs the software CRC (software one is pinned to Python and the
-  published 0xC704DD7B single-zero-word value).
+  PSIZE x32, word program, error flags) — it wrote a 44,868-byte image.
 - USART1 from 16 MHz HSI (BRR 0x8B) on a real RS-485 bus with the
-  hardware-derived DE, and the DMA receiver that replaced the byte poll
-  on 2026-09-07: DMA2 stream 2 channel 4 circular into a 1 KB ring,
-  frames closed by the polled USART IDLE flag and measured by the change
-  in NDTR (`bootloader/src/bl_hw.c`, arithmetic in
-  `bootloader/core/bl_rxring.c` which IS covered natively). The 1.5 ms
-  DWT frame-gap detector this replaced is gone, and so is the
-  TRCENA/CYCCNT enable that existed only to feed it. Acceptance: rerun
-  `bl_retry_probe.py 222 200` on elspi, which measured 14.0% frame loss
-  against the polled receiver.
-- RTC backup register access (PWREN + DBP only, no RTCEN), the VBAT-less
-  power-cycle behaviour the design assumes.
-- IWDG arming, its freeze under SWD halt, and the app's 50 ms refresh keeping
-  up under a real cut.
+  hardware-derived DE, and the DMA receiver that replaced the byte poll on
+  2026-09-07: DMA2 stream 2 channel 4 circular into a 1 KB ring, frames closed
+  by the polled USART IDLE flag and measured by the change in NDTR
+  (`bootloader/src/bl_hw.c`, arithmetic in `bootloader/core/bl_rxring.c`). The
+  1.5 ms DWT frame-gap detector this replaced is gone, and so is the
+  TRCENA/CYCCNT enable that existed only to feed it. The 1-4 s erase stall
+  under a *polled* UART is moot — that receiver no longer exists.
 - The jump: peripheral deinit, VTOR, MSP, and the app's `SystemInit` VTOR set.
+- IWDG arming, the boot-attempt counter, and the anti-brick swap-back it drives
+  — the backup image came back after three watchdog strikes. (Bring-up was not
+  supposed to include this; it did.)
+
+### Covered by implication only — not separately probed
+- CRC unit vs the software CRC: the board accepted an image whose CRC the
+  Python client computed, so the two agree on the path that flew. The published
+  0xC704DD7B single-zero-word vector was not re-checked on the chip.
+- RTC backup register access (PWREN + DBP only, no RTCEN): the attempt counter
+  survived three resets, so the path works. The VBAT-less power-cycle behaviour
+  the design assumes was not separately exercised.
+
+### Still not proven on hardware
+- `blCommand` 7 REVERT (2026-09-12, branch `feat/update-rollback`): the
+  on-demand BACKUP -> RUN copy, its `NO_BACKUP` refusal, and the in-app
+  updater's rollback through it. Emulator + host tests only (bl_core_test G/H,
+  bl_client_retry_test, test_updater); the REVERT copy path itself is the
+  swap-back verified 2026-09-07, but the command entry is not. Bench step 9c
+  in `bootloader/README.md`.
 - Option-byte WRP on sector 0 via openocd `flash protect`, and clearing it.
-- Anti-brick swap-back on the real board (deliberately NOT part of bring-up;
-  see the README for the payload-free way if it is ever wanted).
+- IWDG freeze under SWD halt, and the app's 50 ms refresh keeping up under a
+  real cut.
+- The named acceptance for the DMA receiver — rerun `bl_retry_probe.py 222 200`
+  on elspi, which measured 14.0% frame loss against the old polled receiver. A
+  successful flash under bounded retry is weaker evidence than the probe.
 
 ### Open decision (UI, outside this branch)
 - `elsStop_t` grew 128 -> 130 registers, so the per-tick snapshot needs THREE
@@ -560,8 +579,9 @@ Branch `feat/modbus-bootloader`. Design and register contract:
   land with the UI half of this feature.
 
 ### Follow-ups
-- `flash.sh` records SWD flashes in `~/firmware/flashed.json`; `modbus-flash.py`
-  does not write there yet. Add a record line once the flow has run on elspi.
+- ~~`modbus-flash.py` does not write `~/firmware/flashed.json` yet.~~ DONE
+  2026-09-11: it appends after the board confirms the new rev, and the in-app
+  updater passes the login user's manifest path (`scripts/flash_manifest.py`).
 - The bootloader ignores broadcast (address 0) frames entirely; fine for the UI
   master, worth stating if another master ever shares the bus.
 

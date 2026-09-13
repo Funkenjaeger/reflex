@@ -112,6 +112,7 @@ enum {
 #define ELS_BL_CMD_APPLY   4u   /* back up RUN, copy STAGING -> RUN, enter TRIAL  */
 #define ELS_BL_CMD_JUMP    5u   /* count an attempt, arm IWDG, boot RUN           */
 #define ELS_BL_CMD_STAY    6u   /* no-op that acks: stay resident                 */
+#define ELS_BL_CMD_REVERT  7u   /* copy BACKUP -> RUN on demand, journaled; REVERTED */
 
 /* blStatus */
 #define ELS_BL_STATUS_IDLE          0u  /* resident, nothing in flight          */
@@ -146,6 +147,7 @@ enum {
 #define ELS_BL_ERR_JOURNAL        17u   /* could not append to the state journal */
 #define ELS_BL_ERR_BACKUP_FAILED  18u   /* RUN -> BACKUP copy did not verify     */
 #define ELS_BL_ERR_COPY_FAILED    19u   /* STAGING -> RUN copy did not verify    */
+#define ELS_BL_ERR_NO_BACKUP      20u   /* REVERT with no valid BACKUP that differs from RUN */
 
 /* Slots */
 #define ELS_BL_SLOT_RUN     0u

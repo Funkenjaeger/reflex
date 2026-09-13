@@ -163,6 +163,25 @@ class AxisDispatcher(SavingDispatcher):
     # ── Connection ───────────────────────────────────────────────────
 
     def _init_connection(self, *args, **kv):
+        """Re-read syncEnable and re-teach the sync ratio for a new connection.
+
+        Bound to ``board.connected``, which fires on EVERY transition, not
+        just False -> True. ``Board.pause_polling()`` (the in-app updater's
+        serial-port handover) calls ``connection_manager.disconnect()`` --
+        which sets the underlying device to None -- BEFORE it sets
+        ``connected = False``, so this callback used to fire with a device
+        that had just gone away and reach for a register on it regardless.
+        The read itself does not raise (``reflex.utils.communication``'s
+        read helpers catch it), so nothing crashed, but it logged a bare
+        ``'NoneType' object has no attribute 'read_register'`` -- exactly the
+        kind of red ERROR line the update screen tells the operator not to
+        power off next to. Guard like every sibling of this pattern already
+        does (``InputDispatcher._write_scale_dir_on_connect``,
+        ``_set_sync_ratio`` itself): there is nothing to read or re-teach on
+        the way DOWN, only on the way back up.
+        """
+        if not self.board.connected:
+            return
         primary_idx = self._transform.primary_input
         if primary_idx < len(self.inputs):
             self.syncEnable = self.board.device['scales'][primary_idx]['syncEnable']
