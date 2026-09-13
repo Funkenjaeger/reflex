@@ -58,7 +58,14 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
-  - pymdownx.superfences
+  # The mermaid fence is what renders the system-architecture diagram. Without
+  # this custom fence a ```mermaid block is just a code listing -- Material
+  # ships the mermaid loader, but only for blocks it has been told are diagrams.
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:
@@ -92,5 +99,6 @@ nav:
       - reference/index.md
       - Register map: reference/register-map.md
   - Design notes:
+      - System architecture: design/architecture.md
       - design/els-command-channel.md
       - ELS safety case: design/els-safety-case.md
