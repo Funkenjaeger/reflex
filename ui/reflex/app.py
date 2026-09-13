@@ -257,6 +257,18 @@ class MainApp(App):
 
         self.els = ElsDispatcher(id_override="0")
 
+        # Every SavingDispatcher now exists and has read its file, so this is
+        # the first moment the config directory is a complete picture of the
+        # machine -- and the last moment before the app starts writing to it.
+        #
+        # The ledger hooks write_settings, so it only sees changes the APP
+        # made. This catches everything else: a value edited by hand over SSH,
+        # a file restored from a backup, a card swap. Writes only when the
+        # configuration differs from the newest snapshot, and never raises --
+        # a card that cannot write its snapshot must still boot into a lathe.
+        from reflex.utils import commissioning_bundle
+        commissioning_bundle.snapshot_if_changed("startup")
+
         self.els_uic = ElsUiController(els=self.els, board=self.board)
 
         self.beep()
