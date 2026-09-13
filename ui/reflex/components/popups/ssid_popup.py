@@ -12,11 +12,16 @@ from kivy.uix.button import Button
 
 from reflex.utils.kv_loader import load_kv
 
+log = Logger.getChild(__name__)
+
 NMCLI_AVAILABLE = shutil.which("nmcli") is not None
 if NMCLI_AVAILABLE:
-    nmcli.disable_use_sudo()
+    try:
+        nmcli.disable_use_sudo()
+    except Exception as e:  # pragma: no cover - a raise here would kill import
+        log.warning(f"nmcli setup failed — wifi scan unavailable: {e}")
+        NMCLI_AVAILABLE = False
 
-log = Logger.getChild(__name__)
 load_kv(__file__)
 
 
@@ -27,6 +32,11 @@ class SsidPopup(ModalView):
     available_networks = ListProperty()
     selected_network = StringProperty()
     scanning = BooleanProperty(False)
+
+    # Plain class attribute providing the default; an nmcli refusal latches it
+    # false on the INSTANCE, so the rescan button on this popup stops asking a
+    # polkit that has already said no. Mirrors NetworkScreen.nmcli_usable.
+    nmcli_usable = NMCLI_AVAILABLE
 
     def __init__(self, callback, selected_network, **kv):
         from reflex.app import MainApp
@@ -47,7 +57,7 @@ class SsidPopup(ModalView):
                 b.background_color = self.app.formats.color_off
 
     async def wifi_rescan(self, *args, **kv):
-        if not NMCLI_AVAILABLE:
+        if not NMCLI_AVAILABLE or not self.nmcli_usable:
             log.warning("nmcli not found — wifi scan unavailable")
             return
         self.scanning = True
@@ -73,7 +83,12 @@ class SsidPopup(ModalView):
                 self.container.add_widget(btn)
 
         except Exception as e:
-            log.info(str(e))
+            # nmcli present but refusing (polkit, for an unprivileged service
+            # user) reads the same to the operator as nmcli missing: an empty
+            # list and a warning in the log. It must never propagate out of
+            # the Clock callback that schedules this.
+            self.nmcli_usable = False
+            log.warning(f"nmcli wifi scan failed — wifi scan unavailable: {e}")
 
         finally:
             self.scanning = False
