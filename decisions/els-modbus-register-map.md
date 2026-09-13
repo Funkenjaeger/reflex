@@ -250,13 +250,20 @@ LSI/256/4096) before every jump, is frozen while a debugger halts the core,
 and is refreshed by the app from the 50 ms LED task; it cannot be stopped.
 
 `RTC->BKP1R` = "STAY" (0x53544159) is the software path into the bootloader:
-the app writes it and resets; the bootloader clears it and stays resident.
+the app writes it and **jumps to sector 0** (`Core/Src/els_boot.c`); the
+bootloader clears it and stays resident. It was a `NVIC_SystemReset()` until
+2026-09-12: BOOT0 is not connected on the V1.2 board, every reset samples
+that floating pin, and 3 of 7 reset-into-bootloader cycles that day came up
+in the ST ROM instead. The jump undoes FreeRTOS, the NVIC, every peripheral
+on the three buses and the PLL, then enters through the bootloader's own
+vector table with VTOR pointed at it, so it samples nothing. The RESET
+command (`bootCommand` = 2) is still a real reset and still samples BOOT0.
 
 ### App side (protocolVersion 7 -> 8)
 
 `elsStop.bootCommand` / `bootSeq` appended at the tail of `elsStop_t` (bytes
-464..467, registers 232/233), the calCommand hand-off: 1 = reboot into the
-bootloader and stay, 2 = plain reboot; consumed in servoEnableTask, cleared on
+464..467, registers 232/233), the calCommand hand-off: 1 = enter the
+bootloader and stay (a jump), 2 = plain reboot; consumed in servoEnableTask, cleared on
 consume, acked on `bootSeq`, REFUSED (cleared, no ack) while `enable != 0`.
 Mirrored in `ui/reflex/utils/devices.py` (`ELS_PROTOCOL_VERSION` 8) and the
 contract test (`KNOWN_ROOT_SIZE` 468). The `Ramps.c` changes are confined to:
