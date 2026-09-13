@@ -56,33 +56,35 @@ cmake --build build-slot                  # -> build-slot/reflex-fw.bin (header 
 Since 2026-09-07 `.github/workflows/release.yml` runs both of those and
 publishes the results, so a commissioning job does not have to build them:
 `reflex-bl-<V>.bin` / `reflex-bl-<V>.elf` are this bootloader (step 4 below
-programs the ELF), `reflex-app-<V>.bin` is the slotted application for step 5
-and for any `modbus-flash.py` run, and `reflex-fw-<V>.bin` is the legacy
-`0x08000000` image that `scripts/flash.sh` writes — which is a different
-layout, not a different build of the same thing.
+programs the ELF), and `reflex-app-<V>.bin` is the slotted application for
+step 5 and for any `modbus-flash.py` run. Those two are the whole release
+payload — and they are different LAYOUTS, not different builds of the same
+thing, which is the distinction the rest of this file is about.
 
-> **`reflex-fw-<V>.bin` is deprecated, and it has an end condition.**
+> **RETIRED 2026-09-13: `reflex-fw-<V>.bin` / `.elf` are no longer published.**
 >
-> It exists for one population: boards still running the legacy no-bootloader
-> layout, which is every board built before 2026-09-07 and any board a
-> `--force-legacy` run has taken back there. It is not what a new board gets —
-> `scripts/provision.sh` programs `reflex-bl` + `reflex-app` — and nothing
-> built from it can be updated over the wire.
+> They were the legacy no-bootloader image at `0x08000000`, kept for one
+> population — boards still running that layout — under an explicit end
+> condition: they ship until no such board remains. **Known legacy boards as
+> of 2026-09-12: none.** This line said elspi from 2026-09-08, and that was
+> wrong: on 2026-09-12 a sector-0 dump over the real ST-Link classified elspi
+> BOOTLOADER, `flash.sh` refused, and `--enter-bootloader` answered as
+> bootloader `8b6f5c3`. It was never returned to the legacy layout. It now
+> runs bootloader and app `2bf5539`. With the list empty the condition was
+> met, and `release.yml` stopped building and shipping the asset.
 >
-> **It ships until no board on the legacy layout remains, and then it stops.**
-> That is the whole condition; there is no other reason to keep building it.
-> Retiring it is four edits in `release.yml` — the legacy `cmake -S . -B build`
-> in "Cross-build the release firmware", the two `cp fw/build/reflex-fw.*`
-> lines in "Collect the artifacts", and the legacy half of "Check each firmware
-> asset is the layout its name claims" — plus retiring `scripts/flash.sh`, since
-> the asset and the script are the same layout wearing two hats.
+> **`scripts/flash.sh` STAYS.** The note this replaces said the asset and the
+> script had to be retired together, "the same layout wearing two hats"; that
+> coupling was false. `flash.sh` configures and builds the legacy image
+> locally and programs `firmware/reflex-fw-<variant>.elf` from that build — it
+> never consumed the release asset, so nothing was taken away from it. It
+> remains the SWD recovery tool: the way into a board that will not answer
+> over Modbus, and the only thing that runs with nothing in sector 0.
 >
-> **Known legacy boards as of 2026-09-12: none.** This line said elspi from
-> 2026-09-08, and that was wrong: on 2026-09-12 a sector-0 dump over the real
-> ST-Link classified elspi BOOTLOADER, `flash.sh` refused, and `--enter-bootloader`
-> answered as bootloader `8b6f5c3`. It was never returned to the legacy layout.
-> It now runs bootloader and app `2bf5539`. With the list empty, the legacy
-> asset's end condition is met; retiring it is the four `release.yml` edits above.
+> Releases tagged before 2026-09-13 still carry the old asset. If you are
+> reading one of those release pages, `reflex-fw-<V>.bin` there is still the
+> legacy `0x08000000` layout and still not something the bootloader or
+> `modbus-flash.py` will take.
 
 `build-slot/reflex-fw.bin` is the image: `scripts/reflex_image.py` patches its
 length and CRC32 in post-build and re-validates it. The ELF still carries zero
