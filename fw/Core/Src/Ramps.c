@@ -1804,8 +1804,8 @@ _Noreturn void servoEnableTask(void *argument) {
 }
 
 /* The calCommand hand-off for bootCommand (see Ramps.h). Consumed and cleared
- * in one pass; an accepted command acks on bootSeq and then resets the
- * controller, so the ack mostly serves the refusal case: cleared with NO seq
+ * in one pass; an accepted command acks on bootSeq and then leaves for the
+ * bootloader (a jump) or resets, so the ack mostly serves the refusal case: cleared with NO seq
  * edge while a job is live. A function rather than inline in the task so
  * the native tests can call it (els_boot_command_test). */
 void elsBootCommandTick(rampsSharedData_t *shared) {
@@ -1815,7 +1815,7 @@ void elsBootCommandTick(rampsSharedData_t *shared) {
   if (shared->elsStop.enable != 0u) return;       /* job live: refused, no ack */
   if (cmd == ELS_BOOT_CMD_BOOTLOADER) {
     shared->elsStop.bootSeq++;
-    elsBootRequestStayAndReset();
+    elsBootEnterBootloader();
   } else if (cmd == ELS_BOOT_CMD_RESET) {
     shared->elsStop.bootSeq++;
     elsBootRequestReset();

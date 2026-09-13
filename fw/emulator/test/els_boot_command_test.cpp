@@ -64,7 +64,7 @@ extern uint16_t servoCyclesCounter;
 
 /* Strong overrides of the weak els_boot.h no-ops: observable. */
 static int stayResets = 0, plainResets = 0, attemptsClears = 0, kicks = 0;
-void elsBootRequestStayAndReset(void) { stayResets++; }
+void elsBootEnterBootloader(void) { stayResets++; }
 void elsBootRequestReset(void) { plainResets++; }
 void elsBootAttemptsClear(void) { attemptsClears++; }
 void elsBootWatchdogKick(void) { kicks++; }

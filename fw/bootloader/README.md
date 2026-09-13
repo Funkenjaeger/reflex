@@ -103,7 +103,8 @@ python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
 ```
 
 The client reads the identity window first and refuses on any `idMagic`
-mismatch; asks the app to reboot into the bootloader (`bootCommand` = 1); erases
+mismatch; asks the app to enter the bootloader (`bootCommand` = 1, a jump, not a
+reset, since 2026-09-12); erases
 STAGING; streams 200 bytes per FC16; verifies; applies (RUN is backed up to
 BACKUP, STAGING copied to RUN, journaled in flash); jumps; then polls until the
 app answers with the image's build rev. `--dry-run` does everything except the
