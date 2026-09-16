@@ -73,14 +73,15 @@ not sloppy defaulting. ``/etc/elspi-release`` did not exist before order
 entirely. Refusing on a missing file would brick every card running today
 the moment this code shipped, on a machine whose operator has no terminal to
 recover it with. So an absent or unparseable file is read as release 0 (see
-:func:`read_image_release`), and 0 is refused only because
-``MINIMUM_IMAGE_RELEASE`` is 1 -- the ordinary comparison, not a special
-case. A future session must NOT "fix" this into an unconditional refusal on
-missing-file; that would refuse the one population of machines (everything
-shipped before 2026-09-14#5's image) that this order was written to still
-allow to update. If ``MINIMUM_IMAGE_RELEASE`` is ever dropped back to 0, an
-undeclared image once again passes, by the same arithmetic -- that is the
-intended escape hatch, not a bug.
+:func:`read_image_release`), and whether 0 is refused is the ordinary
+comparison against ``MINIMUM_IMAGE_RELEASE``, not a special case. The
+minimum ships as 0 (decided 2026-09-16), so today every undeclared image
+passes; it is bumped to 1 only once an image carrying ``/etc/elspi-release``
+is on the machine, and from then on an undeclared image is refused by the
+same arithmetic. A future session must NOT "fix" this into an unconditional
+refusal on missing-file, and must not bump the minimum before that image is
+deployed: either would refuse every card shipped before 2026-09-14#5's image,
+on a machine whose operator has no terminal to recover it with.
 """
 
 from __future__ import annotations
