@@ -58,6 +58,29 @@ EVERY EXTERNAL EFFECT IS INJECTED (``runner``, ``download``, ``emit``) so the
 whole sequence, gate included, is exercised in tests without a board, a
 network, or a git checkout. The defaults in :mod:`reflex.utils.updater` bind
 those to subprocess and urllib.
+
+THE IMAGE-RELEASE GATE (``check_image_release``, order 2026-09-14#6) is a
+second, unrelated refusal that lives in this module for the same reason the
+protocol gate does: it decides whether the update should touch the board at
+all, and it runs at PREFLIGHT, before the protocol gate, before anything
+irreversible. ``reflex.utils.image_requirement.MINIMUM_IMAGE_RELEASE`` is
+this release's own declared floor; ``/etc/elspi-release`` is what the
+machine's OS image says about itself (order 2026-09-14#5).
+
+MISSING OR UNPARSEABLE IS NOT THE SAME AS TOO OLD, and this is deliberate,
+not sloppy defaulting. ``/etc/elspi-release`` did not exist before order
+2026-09-14#5's image; today's shipped image, v2026.09.13, PREDATES it
+entirely. Refusing on a missing file would brick every card running today
+the moment this code shipped, on a machine whose operator has no terminal to
+recover it with. So an absent or unparseable file is read as release 0 (see
+:func:`read_image_release`), and 0 is refused only because
+``MINIMUM_IMAGE_RELEASE`` is 1 -- the ordinary comparison, not a special
+case. A future session must NOT "fix" this into an unconditional refusal on
+missing-file; that would refuse the one population of machines (everything
+shipped before 2026-09-14#5's image) that this order was written to still
+allow to update. If ``MINIMUM_IMAGE_RELEASE`` is ever dropped back to 0, an
+undeclared image once again passes, by the same arithmetic -- that is the
+intended escape hatch, not a bug.
 """
 
 from __future__ import annotations
@@ -73,6 +96,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from kivy.logger import Logger
+
+from reflex.utils.image_requirement import MINIMUM_IMAGE_RELEASE
 
 log = Logger.getChild(__name__)
 
@@ -164,6 +189,20 @@ class RolledBack(ProtocolMismatch):
     CONFIRMED there -- the application runs the rev it ran before the update,
     at this UI's protocol. The machine is as it was. Only raised after that
     identity read, never on the rollback command's exit status alone.
+    """
+
+
+class ImageTooOld(UpdateRefused):
+    """This machine's elspi image is older than this release needs.
+
+    Its own class, the same way :class:`ProtocolMismatch` is its own class --
+    not because it fires after anything irreversible (it is checked at
+    PREFLIGHT, before the flash, so refusing here leaves the machine exactly
+    as it found it), but because the message has to name two specific
+    numbers: the release the machine is running and the minimum this update
+    requires. See :func:`check_image_release` and the module docstring for
+    why an image that never declared itself is release 0 rather than an
+    automatic refusal.
     """
 
 
@@ -338,6 +377,101 @@ def parse_protocol_version(map_source: str) -> int:
             "on the version it is running; update from the command line "
             "instead -- see the Installing page.")
     return int(m.group(1))
+
+
+# --------------------------------------------------------------------------
+# The image-release gate (order 2026-09-14#6) -- see the module docstring
+# --------------------------------------------------------------------------
+
+# The flat KEY=VALUE rendering of /etc/elspi-image.json (order 2026-09-14#5),
+# written at image build time. Injectable so tests never touch the real path,
+# and so this refuses to know anything about the machine it is not told.
+ELSPI_RELEASE_PATH = Path("/etc/elspi-release")
+
+
+@dataclass(frozen=True)
+class ImageRelease:
+    """What this machine's OS image says about its own release, or the
+    honest absence of that.
+
+    ``declared`` is False for both a MISSING file and one that could not be
+    read as an integer -- see :func:`read_image_release` for why those are
+    the same case rather than the second one raising.
+    """
+    release: int
+    declared: bool
+
+
+def parse_elspi_release(text: str) -> dict[str, str]:
+    """``/etc/elspi-release``'s KEY=VALUE lines (os-release shape).
+
+    Tolerant on purpose: a blank line, a ``#`` comment, or a line with no
+    ``=`` is skipped rather than raised on -- this file is read at update
+    time on a machine nobody is going to SSH into to fix a stray line. The
+    keys agreed with order 2026-09-14#5: ``ELSPI_IMAGE_RELEASE``,
+    ``ELSPI_IMAGE_BUILD``, ``ELSPI_IMAGE_DATE``, ``ELSPI_REFLEX_COMMIT``,
+    ``ELSPI_PYTHON``, ``ELSPI_KIVY``, ``ELSPI_UV``. Only
+    ``ELSPI_IMAGE_RELEASE`` is consumed by this module; the rest round-trip
+    for any future caller that wants them.
+    """
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key:
+            out[key] = value.strip()
+    return out
+
+
+def read_image_release(path: Path = ELSPI_RELEASE_PATH) -> ImageRelease:
+    """Read the running image's declared release, or honestly say it did not.
+
+    ABSENT IS NOT A REFUSAL -- see the module docstring for why. A missing
+    file, a file with no ``ELSPI_IMAGE_RELEASE`` key, and a value that is not
+    a plain integer are ALL folded into the same
+    ``ImageRelease(release=0, declared=False)``: a corrupt or absent
+    declaration is not evidence the image is too old, only that this check
+    cannot read one, and 0 is what the comparison in
+    :func:`check_image_release` treats as "never declared itself".
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return ImageRelease(release=0, declared=False)
+    raw = parse_elspi_release(text).get("ELSPI_IMAGE_RELEASE")
+    if raw is None:
+        return ImageRelease(release=0, declared=False)
+    try:
+        return ImageRelease(release=int(raw.strip()), declared=True)
+    except ValueError:
+        return ImageRelease(release=0, declared=False)
+
+
+def check_image_release(image: ImageRelease, minimum: int = MINIMUM_IMAGE_RELEASE,
+                        emit=None) -> None:
+    """Refuse if the running image is older than ``minimum``.
+
+    Logs (via ``emit``, never a bare print) one line when the image never
+    declared itself at all -- REGARDLESS of whether that is about to be
+    refused -- so an operator or a log reader can see that the machine is
+    running an undeclared image even on the ``minimum == 0`` nights when
+    that is not a problem yet. See :func:`read_image_release` for why
+    undeclared reads as release 0, and the module docstring for why 0 is not
+    an automatic refusal.
+    """
+    say = emit or (lambda line: None)
+    if not image.declared:
+        say("This machine's image did not declare an /etc/elspi-release "
+            "(missing or unparseable); treating it as release 0.")
+    if image.release < minimum:
+        raise ImageTooOld(
+            f"REFUSED: this machine's elspi image is release {image.release}, "
+            f"but this update needs at least release {minimum}. Re-image the "
+            f"machine with a current elspi image and try again. Nothing has "
+            f"been changed.")
 
 
 # --------------------------------------------------------------------------
@@ -548,9 +682,11 @@ class UpdateSession:
                  download=urllib_download, fetch_json=urllib_fetch_json,
                  emit=None, uv_finder=find_uv, service: str = SERVICE_NAME,
                  python: str | None = None, restart=None,
-                 manifest: Path | None = None):
+                 manifest: Path | None = None,
+                 elspi_release_path: Path | None = None):
         self.checkout = Path(checkout)
         self._manifest = manifest
+        self._elspi_release_path = elspi_release_path or ELSPI_RELEASE_PATH
         self.port = port
         self.current_protocol = current_protocol
         self.workdir = Path(workdir)
@@ -614,6 +750,16 @@ class UpdateSession:
         erase in :meth:`flash_firmware`.
         """
         self.emit(f"Preparing {release.tag}.")
+
+        # Cheapest possible check first: a local file read, no board, no
+        # network, no git -- and the one refusal in this method that fires
+        # before even uv is looked for. See the module docstring. ``minimum``
+        # is passed explicitly (rather than relying on check_image_release's
+        # own default) so that patching this module's MINIMUM_IMAGE_RELEASE
+        # -- the whole ship-0-now-bump-later fork the docstring describes --
+        # takes effect without editing this call site.
+        check_image_release(read_image_release(self._elspi_release_path),
+                            minimum=MINIMUM_IMAGE_RELEASE, emit=self.emit)
 
         uv = self._uv_finder()
         self.emit(f"uv: {uv}")

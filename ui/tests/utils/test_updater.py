@@ -17,17 +17,23 @@ from pathlib import Path
 import pytest
 
 from reflex.utils import updater
+from reflex.utils.image_requirement import MINIMUM_IMAGE_RELEASE
 from reflex.utils.updater import (
     Identity,
+    ImageRelease,
+    ImageTooOld,
     FirmwareProtocolMismatch,
     ProtocolMismatch,
     Release,
     RolledBack,
     UpdateRefused,
     UpdateSession,
+    check_image_release,
+    parse_elspi_release,
     parse_identity,
     parse_image_info,
     parse_protocol_version,
+    read_image_release,
     resolve_checkout,
     select_releases,
     verify_firmware_half,
@@ -403,6 +409,16 @@ def _session(runner, tmp_path, **kw):
     restarts = []
     kw.setdefault("manifest", tmp_path / "home" / "firmware" / "flashed.json")
     kw.setdefault("checkout", tmp_path / "checkout")
+    if "elspi_release_path" not in kw:
+        # Every pre-existing session test predates the image-release gate
+        # (order 2026-09-14#6) and has no opinion about it, so give it a
+        # file that declares exactly MINIMUM_IMAGE_RELEASE -- allowed, by
+        # the gate's own arithmetic (release < minimum refuses; equal does
+        # not). Tests that DO want to exercise the gate pass their own
+        # elspi_release_path and override this.
+        release_file = tmp_path / "etc-elspi-release"
+        release_file.write_text(f"ELSPI_IMAGE_RELEASE={MINIMUM_IMAGE_RELEASE}\n")
+        kw["elspi_release_path"] = release_file
     s = UpdateSession(
         port="/dev/serial0",
         current_protocol=CURRENT_PROTOCOL,
@@ -716,3 +732,145 @@ def test_list_releases_goes_through_the_same_filter(tmp_path):
     assert [x.tag for x in s.list_releases(allow_prerelease=False)] == ["v1.1.0"]
     assert [x.tag for x in s.list_releases(allow_prerelease=True)] == [
         "v1.2.0-rc.1", "v1.1.0"]
+
+
+# ---------------------------------------------------------------------------
+# the image-release gate (order 2026-09-14#6) -- /etc/elspi-release and
+# MINIMUM_IMAGE_RELEASE. See the module docstring for why absent/unparseable
+# is release 0 rather than an immediate refusal.
+# ---------------------------------------------------------------------------
+
+def test_parse_elspi_release_reads_key_value_lines():
+    text = (
+        "ELSPI_IMAGE_RELEASE=2\n"
+        "ELSPI_IMAGE_BUILD=42\n"
+        "ELSPI_IMAGE_DATE=2026-09-13\n"
+        "ELSPI_REFLEX_COMMIT=714e246\n"
+    )
+    fields = parse_elspi_release(text)
+    assert fields["ELSPI_IMAGE_RELEASE"] == "2"
+    assert fields["ELSPI_REFLEX_COMMIT"] == "714e246"
+
+
+def test_parse_elspi_release_skips_blanks_and_comments():
+    text = "\n# a comment\nELSPI_IMAGE_RELEASE=3\nnonsense with no equals\n"
+    assert parse_elspi_release(text) == {"ELSPI_IMAGE_RELEASE": "3"}
+
+
+def test_read_image_release_declared(tmp_path):
+    f = tmp_path / "elspi-release"
+    f.write_text("ELSPI_IMAGE_RELEASE=2\n")
+    got = read_image_release(f)
+    assert got == ImageRelease(release=2, declared=True)
+
+
+def test_read_image_release_missing_file_is_undeclared_release_zero(tmp_path):
+    """Case (3)/(4) from the order: a MISSING file, never a crash."""
+    got = read_image_release(tmp_path / "does-not-exist")
+    assert got == ImageRelease(release=0, declared=False)
+
+
+@pytest.mark.parametrize("garbage", [
+    "not a key value file at all, just prose\n",
+    "ELSPI_IMAGE_RELEASE=not-a-number\n",
+    "ELSPI_IMAGE_BUILD=42\n",   # present file, but no ELSPI_IMAGE_RELEASE key
+    "",
+])
+def test_read_image_release_garbage_is_undeclared_never_a_crash(tmp_path, garbage):
+    """Case (5) from the order: a garbage file is treated as absent, and
+    reading it must never raise."""
+    f = tmp_path / "elspi-release"
+    f.write_text(garbage)
+    assert read_image_release(f) == ImageRelease(release=0, declared=False)
+
+
+def test_gate_1_running_newer_than_minimum_is_allowed():
+    """(1) release file says 2, minimum 1 -> allowed."""
+    check_image_release(ImageRelease(release=2, declared=True), minimum=1)
+
+
+def test_gate_2_running_older_than_minimum_refuses_naming_both_numbers():
+    """(2) release file says 1, minimum 2 -> ImageTooOld naming both numbers."""
+    with pytest.raises(ImageTooOld) as e:
+        check_image_release(ImageRelease(release=1, declared=True), minimum=2)
+    assert "1" in str(e.value)
+    assert "2" in str(e.value)
+
+
+def test_gate_3_absent_with_zero_minimum_is_allowed_and_logs_one_line():
+    """(3) file absent, minimum 0 -> allowed and the one-line log emitted."""
+    lines = []
+    check_image_release(ImageRelease(release=0, declared=False), minimum=0,
+                        emit=lines.append)
+    assert len(lines) == 1
+    assert "elspi-release" in lines[0]
+
+
+def test_gate_4_absent_with_nonzero_minimum_refuses():
+    """(4) file absent, minimum 1 -> refused."""
+    lines = []
+    with pytest.raises(ImageTooOld):
+        check_image_release(ImageRelease(release=0, declared=False), minimum=1,
+                            emit=lines.append)
+    # the log line still fires -- the refusal names WHY, the log names WHAT
+    assert len(lines) == 1
+
+
+def test_gate_5_garbage_file_end_to_end_never_crashes_treated_as_absent(tmp_path):
+    """(5) garbage file -> treated as absent, never a crash, end to end
+    through read_image_release + check_image_release together."""
+    f = tmp_path / "elspi-release"
+    f.write_text("total nonsense\n")
+    image = read_image_release(f)
+    assert image == ImageRelease(release=0, declared=False)
+    with pytest.raises(ImageTooOld):
+        check_image_release(image, minimum=1)
+
+
+def test_the_default_minimum_is_the_declared_constant():
+    """check_image_release's default minimum tracks
+    reflex.utils.image_requirement.MINIMUM_IMAGE_RELEASE, not a copy of it."""
+    import inspect
+    default = inspect.signature(check_image_release).parameters["minimum"].default
+    assert default == MINIMUM_IMAGE_RELEASE
+
+
+def test_preflight_refuses_an_image_too_old_before_touching_anything(tmp_path):
+    """Integration: the gate is wired into preflight, and fires before uv is
+    even looked for -- no runner call happens at all."""
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    release_file = tmp_path / "elspi-release"
+    release_file.write_text("ELSPI_IMAGE_RELEASE=0\n")
+    s = _session(r, tmp_path, elspi_release_path=release_file)
+    with pytest.raises(ImageTooOld) as e:
+        s.run(RELEASE)
+    assert str(MINIMUM_IMAGE_RELEASE) in str(e.value)
+    assert "0" in str(e.value)
+    assert r.calls == [], "refused before any tool was even run"
+
+
+def test_preflight_allows_an_image_at_exactly_the_minimum(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    release_file = tmp_path / "elspi-release"
+    release_file.write_text(f"ELSPI_IMAGE_RELEASE={MINIMUM_IMAGE_RELEASE}\n")
+    s = _session(r, tmp_path, elspi_release_path=release_file)
+    s.run(RELEASE)   # does not raise
+    assert r.touched_the_ui_half
+
+
+def test_preflight_allows_a_missing_release_file_when_minimum_is_zero(tmp_path,
+                                                                       monkeypatch):
+    """This is what makes today's v2026.09.13 (no /etc/elspi-release at all)
+    still updatable if MINIMUM_IMAGE_RELEASE were ever shipped as 0 -- the
+    fork the module docstring and CLARIFICATION describe. With the order's
+    own MINIMUM_IMAGE_RELEASE = 1 this same machine is REFUSED (proven by
+    test_preflight_refuses_an_image_too_old_before_touching_anything above,
+    where an explicit release=0 file stands in for "undeclared"); this test
+    pins the minimum=0 branch of the arithmetic in isolation by patching the
+    module constant directly, without needing a second real fixture file.
+    """
+    monkeypatch.setattr(updater, "MINIMUM_IMAGE_RELEASE", 0)
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    s = _session(r, tmp_path, elspi_release_path=tmp_path / "does-not-exist")
+    s.run(RELEASE)   # does not raise
+    assert r.touched_the_ui_half
