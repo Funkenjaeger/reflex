@@ -24,4 +24,5 @@ provisioning primitive) -- the UI-side counterpart to IMAGE_RELEASE's own
 bump rule in elspi's docs/provisioning.md (order 2026-09-14#5).
 """
 
-MINIMUM_IMAGE_RELEASE = 1
+# Bump to 1 once an image carrying /etc/elspi-release (elspi order 2026-09-14#5) is on the machine; decided by Evan 2026-09-16.
+MINIMUM_IMAGE_RELEASE = 0

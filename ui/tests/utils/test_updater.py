@@ -835,16 +835,18 @@ def test_the_default_minimum_is_the_declared_constant():
     assert default == MINIMUM_IMAGE_RELEASE
 
 
-def test_preflight_refuses_an_image_too_old_before_touching_anything(tmp_path):
+def test_preflight_refuses_an_image_too_old_before_touching_anything(tmp_path,
+                                                                      monkeypatch):
     """Integration: the gate is wired into preflight, and fires before uv is
     even looked for -- no runner call happens at all."""
+    monkeypatch.setattr(updater, "MINIMUM_IMAGE_RELEASE", 1)
     r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
     release_file = tmp_path / "elspi-release"
     release_file.write_text("ELSPI_IMAGE_RELEASE=0\n")
     s = _session(r, tmp_path, elspi_release_path=release_file)
     with pytest.raises(ImageTooOld) as e:
         s.run(RELEASE)
-    assert str(MINIMUM_IMAGE_RELEASE) in str(e.value)
+    assert "1" in str(e.value)
     assert "0" in str(e.value)
     assert r.calls == [], "refused before any tool was even run"
 
