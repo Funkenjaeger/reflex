@@ -34,22 +34,27 @@ parse of an INI file, which has sections -- and is ``None`` when ``config.ini``
 is absent, so the document's shape is the same either way and two documents can
 be compared field by field without a missing-key special case.
 
-WHAT THIS MODULE DOES NOT DO. There is no import/apply. :func:`split` is the
-inverse of the per-stem part of :func:`build` and exists so a future import can
-be written against a tested decomposition, but writing a bundle back onto a
-machine is a separate change with its own safety questions (which keys may be
-overwritten on a machine that is not the one exported, what happens to a stem
-the running app has no dispatcher for, whether the app must be stopped first).
+WHAT THIS MODULE DOES NOT DO. :func:`apply` (below) writes the per-stem half
+of a bundle back onto a config directory -- it is the inverse of :func:`split`,
+which is why it takes the same document shape. It deliberately does NOT
+restore ``config_ini``: :func:`split` already drops it (see its docstring),
+so "apply what split hands you" naturally excludes it, and writing
+``config.ini`` back is a separate change with its own format questions
+(``ConfigParser`` quoting, section ordering) that this one does not need to
+answer to close the USB round trip.
 """
 import configparser
 import os
 import platform
+import tempfile
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 from kivy.logger import Logger
 
+from reflex.utils.commissioning_scope import COMMISSIONING, tier
 from reflex.utils.paths import config_dir
 
 log = Logger.getChild(__name__)
@@ -213,6 +218,125 @@ def split(doc: dict) -> dict[str, dict]:
     future import will apply. It does NOT write anything.
     """
     return {k: v for k, v in doc.items() if k not in NON_STEM_KEYS}
+
+
+@dataclass
+class ApplyReport:
+    """The result of :func:`apply`.
+
+    :param ok: ``False`` means the WHOLE document was refused -- nothing was
+        written, and ``reason`` says why. ``True`` covers both a real write
+        and a ``dry_run`` (which never writes but still validates and lists
+        what it would have done).
+    :param reason: set only when ``ok`` is ``False``.
+    :param written: stems actually written (or, under ``dry_run``, that would
+        have been).
+    :param skipped: ``(stem, reason)`` for a stem whose own write failed --
+        writing the OTHERS still went ahead; see :func:`apply`'s docstring.
+    """
+    ok: bool
+    reason: str | None = None
+    written: list[str] = field(default_factory=list)
+    skipped: list[tuple[str, str]] = field(default_factory=list)
+
+
+def _atomic_dump(data: dict, path: Path) -> None:
+    """Write ``data`` to ``path`` as YAML, never leaving ``path`` half-written.
+
+    Writes to a temp file IN THE SAME DIRECTORY (so the final ``os.replace``
+    is a same-filesystem rename, which POSIX guarantees is atomic), fsyncs it,
+    then renames it onto ``path``. A failure at any point before the rename
+    -- a full disk, a killed process -- leaves the temp file orphaned (removed
+    in the ``except``) and ``path`` exactly as it was; a reader can never
+    observe a partially-written ``path``.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.safe_dump(data, f, sort_keys=False, default_flow_style=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def apply(doc: dict, config_dir, *, dry_run: bool = False) -> ApplyReport:
+    """Write a bundle's per-stem sections back onto ``config_dir``.
+
+    The inverse of :func:`split`'s decomposition: every non-``meta``,
+    non-``config_ini`` top-level key of ``doc`` becomes ``<stem>.yaml`` under
+    ``config_dir``, written verbatim (see :func:`_atomic_dump`) and byte-for-
+    byte round-trippable -- this does NOT filter out operational keys like
+    ``offsets`` from a section it decides to write, because a real export
+    always carries them and dropping them would silently lose the machine's
+    current job state, not just its identity.
+
+    Two refusals happen BEFORE anything is written, and both leave every file
+    under ``config_dir`` untouched:
+
+    * ``meta.schema`` newer than this app's :data:`SCHEMA` -- a document whose
+      shape this code was never taught to read. Guessing at an unknown shape
+      is how a newer bundle silently corrupts an older machine's config; a
+      named refusal is the alternative.
+    * A section that carries NO commissioning-tier data at all (every one of
+      its keys classifies as ``operational`` or ``ignored`` per
+      :mod:`reflex.utils.commissioning_scope`). A section like that is not
+      what a commissioning import exists to restore -- see the scope module's
+      own docstring for why the tier split exists in the first place -- and
+      accepting it as machine identity would be importing job-state noise (or
+      a hand-edited/corrupted section) under that name. An ordinary export's
+      sections always mix in identity keys (``axis_name``, ``backlash``, ...)
+      alongside any operational ones, so this does not fire on a real bundle;
+      it fires on one that is not one.
+
+    Past that gate, each stem is written independently and a per-file failure
+    (e.g. an unwritable destination) is caught, logged, and recorded in
+    ``report.skipped`` -- one bad file does not stop the others, and
+    :func:`_atomic_dump`'s temp+rename means the failed file is left exactly
+    as it was found (nothing "half written").
+
+    :param dry_run: validate and report, but write nothing. ``report.written``
+        lists what WOULD be written.
+    """
+    config_dir = Path(config_dir)
+    meta = doc.get("meta") or {}
+    schema = meta.get("schema")
+    if not isinstance(schema, int) or schema > SCHEMA:
+        return ApplyReport(ok=False, reason=(
+            f"bundle schema {schema!r} is newer than this app understands "
+            f"(schema {SCHEMA}); refusing rather than guessing at its shape"))
+
+    sections = split(doc)
+    for stem, data in sections.items():
+        if not isinstance(data, dict):
+            return ApplyReport(ok=False, reason=(
+                f"section {stem!r} is not a mapping; refusing"))
+        if data and all(tier(stem, key, data) != COMMISSIONING for key in data):
+            return ApplyReport(ok=False, reason=(
+                f"section {stem!r} carries no commissioning-tier data "
+                f"(commissioning_scope.py); refusing"))
+
+    if dry_run:
+        return ApplyReport(ok=True, written=sorted(sections))
+
+    written: list[str] = []
+    skipped: list[tuple[str, str]] = []
+    for stem in sorted(sections):
+        path = config_dir / f"{stem}.yaml"
+        try:
+            _atomic_dump(sections[stem], path)
+            written.append(stem)
+        except OSError as e:
+            log.error(f"commissioning apply: cannot write {path} ({e})")
+            skipped.append((stem, str(e)))
+    return ApplyReport(ok=True, written=written, skipped=skipped)
 
 
 def _without_meta(doc: dict) -> dict:
