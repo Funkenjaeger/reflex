@@ -73,3 +73,18 @@
         opacity: 1 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
         disabled: MODE_ELS not in USE_CASE_MODES.get(app.use_case, [])
         on_release: app.manager.goto("els_setup")
+      SetupButton:
+        text: "Export to USB"
+        on_release: root.export_to_usb()
+      SetupButton:
+        text: "Import from USB"
+        on_release: root.import_from_usb()
+
+    Label:
+      id: status_label
+      text: root.status_text
+      size_hint_y: None
+      height: dp(24)
+      font_name: app.theme.font_bold
+      font_size: app.formats.font_size
+      color: app.theme.text
