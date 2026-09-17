@@ -15,7 +15,9 @@ THE THREE TIERS
 ``commissioning``
     Machine identity: backlash, calibration constants, gear and sync ratios,
     scale resolutions, polarity/direction flags, axis names and roles, the
-    per-axis transform. These are what a card death loses and what a
+    per-axis transform, and the machine's ``use_case`` in ``Device-0.yaml``
+    (lathe / rotary table: it decides which modes exist at all). These are
+    what a card death loses and what a
     replacement card has to be told. Everything not named below is this, by
     default and on purpose -- a new calibration property added to a dispatcher
     is captured the day it is added, with nobody remembering to list it here.
@@ -27,6 +29,9 @@ THE THREE TIERS
 
     * ``offsets`` in ANY file -- the 100 work offsets, rewritten every time
       the operator zeroes the DRO.
+    * ``current_mode`` in ANY file -- the operating mode last selected on the
+      home screen (``Device-0.yaml``). Added 2026-09-16 with that stem; no
+      stem carried the key before, so this is an addition, not a re-tier.
     * ``syncRatioNum`` / ``syncRatioDen`` ONLY in a file whose data carries
       ``spindleMode: true``. On a spindle axis these two are the
       degrees-per-revolution presentation of the encoder and the ELS bar
@@ -67,7 +72,7 @@ OPERATIONAL: Tier = "operational"
 IGNORED: Tier = "ignored"
 
 #: Operational in every file, no matter what the file is.
-OPERATIONAL_KEYS = frozenset({"offsets"})
+OPERATIONAL_KEYS = frozenset({"offsets", "current_mode"})
 
 #: Operational only when the file's own data says the axis is the spindle.
 SPINDLE_ONLY_OPERATIONAL_KEYS = frozenset({"syncRatioNum", "syncRatioDen"})

@@ -87,3 +87,24 @@ def test_a_none_data_mapping_does_not_raise():
     an empty mapping through. A classifier that raises here would take out a
     config save."""
     assert tier("Axis-0", "syncRatioNum", None) == COMMISSIONING
+
+
+# ── Device-0: use_case is identity, current_mode is job state ────────
+
+def test_use_case_is_commissioning():
+    """(f) A card death must not turn a lathe into a rotary table: the ledger
+    and the commissioning hash capture use_case."""
+    data = {"use_case": "lathe", "current_mode": 2, "id_override": "0"}
+    assert tier("Device-0", "use_case", data) == COMMISSIONING
+
+
+def test_current_mode_is_operational():
+    data = {"use_case": "lathe", "current_mode": 2, "id_override": "0"}
+    assert tier("Device-0", "current_mode", data) == OPERATIONAL
+
+
+def test_a_device_stem_passes_the_apply_gate():
+    """apply() refuses a section with no commissioning key; a real Device-0
+    must never be refused."""
+    data = {"use_case": "lathe", "current_mode": 2, "id_override": "0"}
+    assert any(tier("Device-0", k, data) == COMMISSIONING for k in data)
