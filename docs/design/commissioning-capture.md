@@ -120,11 +120,12 @@ and an older app reading a new bundle sees nothing it misreads, just one more
 stem (the reasoning is at `SCHEMA` in the module).
 
 `split(doc)` is the inverse of the per-file half and returns `{stem: mapping}`.
-**There is no import or apply yet.** Writing a bundle back onto a machine has
-its own safety questions — which keys may be overwritten on a machine that is
-not the one exported from, what happens to a stem the running app has no
-dispatcher for, whether the app must be stopped first — and it is a separate
-change.
+`apply(doc, config_dir)` is the inverse (order 2026-09-14#4, integration
+`157ead0`): it writes every stem back verbatim, refuses a bundle whose
+`meta.schema` is newer than the app knows, refuses a section only when none of
+its keys is commissioning-tier, and writes each file atomically. It is what the
+Setup screen's USB import calls. On 2026-09-16 the real lathe's 19 stems
+round-tripped byte-identically through build, YAML and apply, off the card.
 
 ## The scope contract
 
