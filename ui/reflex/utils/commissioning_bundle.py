@@ -18,32 +18,30 @@ THE SHAPE::
       hostname: elspi
       app: 1.2.0rc3                   # installed reflex version, or "unknown"
       fw: 1.2.0                       # caller-supplied, may be null
-    config_ini:
-      device:
-        use_case: lathe
-        current_mode: '2'
     Axis-0: {...}                     # one key per YAML stem, verbatim,
     Axis-1: {...}                     # in sorted stem order
     CoordBar-0: {...}
+    Device-0: {...}                   # use_case, current_mode
     Els-0: {...}
 
 ``meta`` is first in the dumped text (``sort_keys=False``) so a human opening
 an export or a snapshot sees what machine and what moment it came from before
-anything else. ``config_ini`` is ``{section: {key: value}}`` -- the honest
-parse of an INI file, which has sections -- and is ``None`` when ``config.ini``
-is absent, so the document's shape is the same either way and two documents can
-be compared field by field without a missing-key special case.
+anything else.
 
-WHAT THIS MODULE DOES NOT DO. :func:`apply` (below) writes the per-stem half
-of a bundle back onto a config directory -- it is the inverse of :func:`split`,
-which is why it takes the same document shape. It deliberately does NOT
-restore ``config_ini``: :func:`split` already drops it (see its docstring),
-so "apply what split hands you" naturally excludes it, and writing
-``config.ini`` back is a separate change with its own format questions
-(``ConfigParser`` quoting, section ordering) that this one does not need to
-answer to close the USB round trip.
+THE RETIRED ``config_ini`` SECTION. Until 2026-09-16 the document also carried
+``config_ini:``, the parsed ``ui/config.ini``, because ``use_case`` and
+``current_mode`` still lived there. They now live in the ``Device-0`` stem
+(``reflex/dispatchers/device.py``), so :func:`build` no longer emits it. A
+bundle exported before that still has it, and :func:`apply` accepts such a
+bundle: it logs and ignores the section, except that a
+``config_ini.device.use_case`` in a bundle with NO ``Device-0`` stem is
+carried into ``Device-0``, so a pre-migration export still restores a lathe.
+``meta.schema`` did not change: see :data:`SCHEMA`.
+
+WHAT :func:`apply` IS. It writes the per-stem half of a bundle back onto a
+config directory -- the inverse of :func:`split`, which is why it takes the
+same document shape.
 """
-import configparser
 import os
 import platform
 import tempfile
@@ -61,10 +59,27 @@ log = Logger.getChild(__name__)
 
 #: Bump when the document's shape changes incompatibly. A consumer that does
 #: not recognise the schema should refuse the document, not guess at it.
+#:
+#: NOT bumped when ``config_ini`` was retired for the ``Device-0`` stem
+#: (2026-09-16). :func:`apply` refuses only a schema NEWER than its own, so a
+#: bump would make every older app refuse every new export outright. The
+#: change is not one an older reader misreads: a new bundle simply lacks
+#: ``config_ini`` (which older ``split``/``apply`` already skipped) and has one
+#: more stem (``Device-0``), which older ``apply`` writes like any other and
+#: whose ``use_case`` passes its commissioning gate. An older app ignores that
+#: file rather than corrupting anything.
 SCHEMA = 1
 
-#: Top-level keys of a bundle that are NOT a config file stem.
-NON_STEM_KEYS = ("meta", "config_ini")
+#: Top-level keys of a bundle that are NOT a config file stem. ``config_ini``
+#: is no longer emitted but still recognised, so an older bundle's section is
+#: never written out as a ``config_ini.yaml`` stem.
+LEGACY_CONFIG_INI_KEY = "config_ini"
+NON_STEM_KEYS = ("meta", LEGACY_CONFIG_INI_KEY)
+
+#: The stem that now holds ``use_case`` / ``current_mode``. Mirrors
+#: ``reflex.dispatchers.device.DEVICE_STEM`` (pinned equal by a test) without
+#: importing the Kivy dispatcher stack into this module.
+DEVICE_STEM = "Device-0"
 
 MACHINE_ID_PATH = "/etc/machine-id"
 
@@ -124,45 +139,6 @@ def machine_id() -> str:
     return platform.node()
 
 
-def config_ini_path() -> str | None:
-    """Where the app's ``config.ini`` lives, or ``None`` if that is unknowable.
-
-    Resolved through ``reflex.components.appsettings.config_path`` -- the same
-    constant the app itself reads -- so the bundle cannot describe a
-    ``config.ini`` the running app is not using. Imported lazily: that module
-    pulls in ``kivy.uix.settings``, and a bundle built in a test has no reason
-    to. A seam rather than a direct import so a test can aim it somewhere
-    else; the file is gitignored, so there is nothing to aim at in a checkout.
-    """
-    try:
-        from reflex.components.appsettings import config_path
-        return config_path
-    except Exception as e:  # pragma: no cover - only if the app package breaks
-        log.error(f"commissioning bundle: cannot locate config.ini ({e})")
-        return None
-
-
-def _config_ini() -> dict | None:
-    """The app's ``config.ini``, parsed as ``{section: {key: value}}``, or
-    ``None`` when it is absent.
-
-    Parsed with the stdlib rather than Kivy's ConfigParser because Kivy's
-    subclass writes defaults back into the file on read, and a reader that
-    mutates what it reads has no place in a capture path.
-    """
-    config_path = config_ini_path()
-    if config_path is None or not os.path.exists(config_path):
-        return None
-
-    parser = configparser.ConfigParser()
-    try:
-        parser.read(config_path)
-    except (OSError, configparser.Error) as e:
-        log.error(f"commissioning bundle: cannot parse config.ini ({e})")
-        return None
-    return {section: dict(parser[section]) for section in parser.sections()}
-
-
 def build(fw_rev: str | None = None) -> dict:
     """The whole machine configuration as one mapping. See the module docstring.
 
@@ -181,7 +157,6 @@ def build(fw_rev: str | None = None) -> dict:
             "app": app_version(),
             "fw": fw_rev,
         },
-        "config_ini": _config_ini(),
     }
 
     # Non-recursive glob on purpose: ledger/ and snapshots/ live under
@@ -302,6 +277,12 @@ def apply(doc: dict, config_dir, *, dry_run: bool = False) -> ApplyReport:
     :func:`_atomic_dump`'s temp+rename means the failed file is left exactly
     as it was found (nothing "half written").
 
+    A legacy ``config_ini`` section is logged and ignored, with one
+    exception: if it has ``device.use_case`` and the bundle has no
+    :data:`DEVICE_STEM`, a ``{use_case: ...}`` section is added under that stem
+    (see the module docstring). Only ``use_case`` is carried; ``current_mode``
+    is job state and the app falls back to a mode valid for the use case.
+
     :param dry_run: validate and report, but write nothing. ``report.written``
         lists what WOULD be written.
     """
@@ -314,6 +295,7 @@ def apply(doc: dict, config_dir, *, dry_run: bool = False) -> ApplyReport:
             f"(schema {SCHEMA}); refusing rather than guessing at its shape"))
 
     sections = split(doc)
+    _carry_legacy_use_case(doc, sections)
     for stem, data in sections.items():
         if not isinstance(data, dict):
             return ApplyReport(ok=False, reason=(
@@ -337,6 +319,23 @@ def apply(doc: dict, config_dir, *, dry_run: bool = False) -> ApplyReport:
             log.error(f"commissioning apply: cannot write {path} ({e})")
             skipped.append((stem, str(e)))
     return ApplyReport(ok=True, written=written, skipped=skipped)
+
+
+def _carry_legacy_use_case(doc: dict, sections: dict) -> None:
+    """Fold a pre-2026-09-16 bundle's ``config_ini.device.use_case`` into
+    ``sections`` as :data:`DEVICE_STEM`, if that stem is absent. Mutates
+    ``sections``; never touches ``doc``."""
+    if LEGACY_CONFIG_INI_KEY not in doc:
+        return
+    legacy = doc.get(LEGACY_CONFIG_INI_KEY)
+    device = legacy.get("device") if isinstance(legacy, dict) else None
+    use_case = device.get("use_case") if isinstance(device, dict) else None
+    if use_case and DEVICE_STEM not in sections:
+        sections[DEVICE_STEM] = {"use_case": str(use_case)}
+        log.info(f"commissioning apply: legacy config_ini section ignored, "
+                 f"except device.use_case={use_case!r} -> {DEVICE_STEM}")
+    else:
+        log.info("commissioning apply: legacy config_ini section ignored")
 
 
 def _without_meta(doc: dict) -> dict:

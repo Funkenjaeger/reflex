@@ -91,25 +91,33 @@ meta:
   hostname: elspi
   app: 1.2.0rc3                    # installed reflex version, or "unknown"
   fw: 1.2.0                        # passed in by the caller, may be null
-config_ini:
-  device:
-    use_case: lathe
-    current_mode: '2'
 Axis-0:                            # one key per YAML stem, verbatim,
   axis_name: C                     # in sorted stem order
   spindleMode: true
 Axis-1:
   axis_name: Z
   backlash: 0.04
+Device-0:
+  use_case: lathe                  # commissioning tier
+  current_mode: 2                  # operational tier
 Els-0:
   spindle_axis_index: 0
 ```
 
 `meta` is first in the dumped text so a human opening an export sees what
-machine and what moment it came from before anything else. `config_ini` is the
-parsed `ui/config.ini`, located through the same constant the app itself reads,
-and is `null` when the file is absent — so the document's shape does not depend
-on the machine's state and two documents can be compared field by field.
+machine and what moment it came from before anything else.
+
+Bundles exported before 2026-09-16 also carry `config_ini:`, the parsed
+`ui/config.ini`, because the machine's `use_case` and `current_mode` still
+lived there. Those two keys are now the `Device-0` stem
+(`ui/reflex/dispatchers/device.py`; the app migrates them from the ini once, on
+the first start with no `Device-0.yaml`, and never reads the ini for them
+again). `build()` no longer emits `config_ini`. `apply()` still accepts it: it
+logs and ignores the section, except that `config_ini.device.use_case` in a
+bundle with no `Device-0` stem is written to `Device-0`, so an old export still
+restores a lathe. `meta.schema` stays 1: `apply()` refuses only a newer schema,
+and an older app reading a new bundle sees nothing it misreads, just one more
+stem (the reasoning is at `SCHEMA` in the module).
 
 `split(doc)` is the inverse of the per-file half and returns `{stem: mapping}`.
 **There is no import or apply yet.** Writing a bundle back onto a machine has

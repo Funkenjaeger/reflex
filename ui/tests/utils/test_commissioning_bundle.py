@@ -9,13 +9,6 @@ from reflex.utils import commissioning_bundle
 
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
-    # ui/config.ini is gitignored, so a checkout does not have one -- point the
-    # bundle's seam at a tmp copy rather than at whatever the dev machine has,
-    # so the assertions below describe a known file.
-    ini = tmp_path / "config.ini"
-    ini.write_text("[device]\nuse_case = lathe\ncurrent_mode = 2\n")
-    monkeypatch.setattr(commissioning_bundle, "config_ini_path", lambda: str(ini))
-
     root = tmp_path / "config" / "reflex"
     root.mkdir(parents=True)
     monkeypatch.setenv("REFLEX_CONFIG_DIR", str(root))
@@ -52,33 +45,24 @@ def test_one_top_level_key_per_yaml_stem_in_sorted_order(cfg):
     assert doc["Axis-1"] == {"axis_name": "Z", "backlash": 0.04}
 
 
-def test_config_ini_is_parsed_when_present(cfg):
-    """Located through the same constant the app reads, so the bundle cannot
-    describe a config.ini the app is not using."""
-    assert commissioning_bundle.build()["config_ini"] == {
-        "device": {"use_case": "lathe", "current_mode": "2"}}
-
-
-def test_config_ini_is_null_when_absent(cfg, tmp_path, monkeypatch):
-    """The key is always present so the document's shape does not depend on
-    the machine's state -- two bundles compare field by field with no
-    missing-key special case."""
-    monkeypatch.setattr(commissioning_bundle, "config_ini_path",
-                        lambda: str(tmp_path / "nope.ini"))
+def test_build_emits_the_device_stem_and_no_config_ini(cfg):
+    """(d) config_ini is retired: use_case travels as the Device-0 stem,
+    written here by the real dispatcher rather than by hand."""
+    from reflex.dispatchers.device import DeviceDispatcher
+    dev = DeviceDispatcher(id_override="0")
+    dev.use_case = "lathe"
     doc = commissioning_bundle.build()
-    assert "config_ini" in doc
-    assert doc["config_ini"] is None
+    assert "config_ini" not in doc
+    assert doc[commissioning_bundle.DEVICE_STEM]["use_case"] == "lathe"
 
 
-def test_the_real_config_ini_path_is_the_apps_own(cfg, monkeypatch):
-    """Guard the seam: the fixture above patches config_ini_path, so without
-    this the production resolution could be broken and every test still pass."""
-    monkeypatch.undo()
-    path = commissioning_bundle.config_ini_path()
-    assert path is not None
-    assert path.replace("\\", "/").endswith("ui/config.ini")
-    from reflex.components.appsettings import config_path
-    assert path == config_path
+def test_the_bundle_device_stem_is_the_dispatchers_file(cfg):
+    """The bundle names the stem without importing the dispatcher; pin the
+    two spellings together."""
+    from reflex.dispatchers import device
+    from reflex.dispatchers.device import DeviceDispatcher
+    assert commissioning_bundle.DEVICE_STEM == device.DEVICE_STEM
+    assert DeviceDispatcher(id_override="0").filename.stem == device.DEVICE_STEM
 
 
 def test_the_ledger_subtree_is_not_swallowed_into_the_bundle(cfg):
@@ -100,7 +84,7 @@ def test_meta_comes_first_in_the_dumped_text(cfg, tmp_path):
     text = out.read_text()
     assert text.startswith("meta:")
     # default_flow_style=False: nested mappings are block, not `{a: 1}`.
-    assert "\n  device:\n" in text
+    assert "\nAxis-1:\n  axis_name: Z\n" in text
 
 
 def test_dump_creates_parent_directories(cfg, tmp_path):
@@ -119,7 +103,10 @@ def test_split_round_trips_to_the_on_disk_mappings(cfg):
 
 
 def test_split_drops_meta_and_config_ini(cfg):
-    parts = commissioning_bundle.split(commissioning_bundle.build())
+    """A legacy bundle's config_ini is still not a stem."""
+    doc = commissioning_bundle.build()
+    doc["config_ini"] = {"device": {"use_case": "lathe"}}
+    parts = commissioning_bundle.split(doc)
     assert "meta" not in parts
     assert "config_ini" not in parts
 
@@ -138,7 +125,6 @@ def test_a_dumped_bundle_reloads_to_the_same_config(cfg, tmp_path):
     commissioning_bundle.dump(doc, out)
     reloaded = yaml.safe_load(out.read_text())
     assert commissioning_bundle.split(reloaded) == commissioning_bundle.split(doc)
-    assert reloaded["config_ini"] == doc["config_ini"]
 
 
 # ── snapshots ────────────────────────────────────────────────────────

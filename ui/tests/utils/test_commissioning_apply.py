@@ -16,10 +16,6 @@ from reflex.utils import commissioning_bundle
 def source_dir(tmp_path, monkeypatch):
     """A config dir with real files, wired the same way as
     ``test_commissioning_bundle.py``'s ``cfg`` fixture."""
-    ini = tmp_path / "config.ini"
-    ini.write_text("[device]\nuse_case = lathe\ncurrent_mode = 2\n")
-    monkeypatch.setattr(commissioning_bundle, "config_ini_path", lambda: str(ini))
-
     root = tmp_path / "source"
     root.mkdir()
     monkeypatch.setenv("REFLEX_CONFIG_DIR", str(root))
@@ -66,11 +62,56 @@ def test_round_trip_preserves_the_operational_key(source_dir, dest_dir):
 
 
 def test_config_ini_is_not_restored(source_dir, dest_dir):
-    """apply() writes only what split() hands it, which drops config_ini --
-    see both docstrings. Nothing named config.ini should appear."""
+    """A legacy config_ini section is never written back as an ini or as a
+    stem of its own."""
     doc = commissioning_bundle.build()
+    doc["config_ini"] = {"device": {"use_case": "lathe", "current_mode": "2"}}
     commissioning_bundle.apply(doc, dest_dir)
     assert not (dest_dir / "config.ini").exists()
+    assert not (dest_dir / "config_ini.yaml").exists()
+
+
+# ── legacy bundles: config_ini.device.use_case -> Device-0 ───────────────
+
+def _legacy_bundle(use_case="lathe"):
+    doc = commissioning_bundle.build()
+    assert "config_ini" not in doc
+    doc["config_ini"] = {"device": {"use_case": use_case, "current_mode": "2"}}
+    return doc
+
+
+def test_a_legacy_use_case_is_written_to_the_device_stem(source_dir, dest_dir):
+    """(e) A pre-migration export, which carried use_case only in config_ini,
+    still restores a lathe."""
+    report = commissioning_bundle.apply(_legacy_bundle("lathe"), dest_dir)
+    assert report.ok, report.reason
+    assert "Device-0" in report.written
+    written = yaml.safe_load((dest_dir / "Device-0.yaml").read_text())
+    assert written == {"use_case": "lathe"}
+
+
+def test_a_legacy_use_case_does_not_override_a_device_stem(source_dir, dest_dir):
+    """A bundle that has both: the stem is the newer truth."""
+    doc = _legacy_bundle("lathe")
+    doc["Device-0"] = {"use_case": "rotary_table", "current_mode": 1}
+    commissioning_bundle.apply(doc, dest_dir)
+    written = yaml.safe_load((dest_dir / "Device-0.yaml").read_text())
+    assert written["use_case"] == "rotary_table"
+
+
+def test_a_legacy_config_ini_without_use_case_writes_no_device_stem(
+        source_dir, dest_dir):
+    doc = commissioning_bundle.build()
+    doc["config_ini"] = None
+    report = commissioning_bundle.apply(doc, dest_dir)
+    assert report.ok
+    assert not (dest_dir / "Device-0.yaml").exists()
+
+
+def test_apply_never_mutates_the_callers_document(source_dir, dest_dir):
+    doc = _legacy_bundle("lathe")
+    commissioning_bundle.apply(doc, dest_dir)
+    assert "Device-0" not in doc
 
 
 # ── (2) RED: schema too new ──────────────────────────────────────────────
