@@ -80,6 +80,53 @@
         text: "Import from USB"
         on_release: root.import_from_usb()
 
+    # Opt-in GitHub gist sync. A row of its own rather than three more cells in
+    # the grid above: that grid's row height is computed for three rows and is
+    # already full, and these controls are one feature that reads as a unit.
+    BoxLayout:
+      id: gist_row
+      size_hint_y: None
+      height: dp(48)
+      spacing: 10
+      ToggleButton:
+        id: gist_toggle
+        text: "Sync to GitHub gist"
+        font_name: app.theme.font_bold
+        font_size: app.formats.font_size
+        state: 'down' if root.gist_enabled else 'normal'
+        on_release: root.toggle_gist_sync(self.state == 'down')
+      SetupButton:
+        text: "Sync now"
+        disabled: not root.gist_enabled
+        on_release: root.sync_now()
+      SetupButton:
+        text: "Restore from gist"
+        on_release: root.restore_from_gist()
+
+    # The device-flow user code, LARGE. No QR: no QR library is a dependency of
+    # this app and this feature added none, so the operator reads the code and
+    # the short URL. Blank (and zero-height) when no flow is in progress.
+    Label:
+      id: gist_code_label
+      text: root.gist_code_text
+      size_hint_y: None
+      height: dp(64) if root.gist_code_text else 0
+      opacity: 1 if root.gist_code_text else 0
+      halign: "center"
+      font_name: app.theme.font_bold
+      font_size: app.formats.font_size * 1.8
+      color: app.theme.accent
+
+    # Where to turn the grant off again, beside the toggle that turned it on.
+    Label:
+      id: gist_revoke_label
+      text: "Revoke access at " + root.gist_revoke_text
+      size_hint_y: None
+      height: dp(20)
+      font_name: app.theme.font_bold
+      font_size: app.formats.font_size * 0.7
+      color: app.theme.text
+
     Label:
       id: status_label
       text: root.status_text

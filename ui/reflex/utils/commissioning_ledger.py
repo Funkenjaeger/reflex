@@ -28,6 +28,14 @@ A ledger failure never reaches the caller. :func:`record` swallows everything
 and logs it, because the alternative is a config save that fails -- or an app
 that crashes mid-calibration -- because a record-keeping directory was not
 writable. The record is important; it is not more important than the lathe.
+
+THE CHANGE HOOK (:func:`on_change`). "A commissioning value moved" is the event
+other features want -- today the opt-in gist sync
+(:mod:`reflex.utils.gist_sync`), which uploads the bundle when it changes.
+Observers are called from :func:`record` but strictly OUTSIDE its write path:
+the lines are appended and the snapshot is taken first, then the callbacks run,
+each in its own ``try``. An observer that hangs or raises therefore cannot cost
+a ledger line, and the ledger keeps knowing nothing about who is listening.
 """
 import json
 from pathlib import Path
@@ -96,8 +104,45 @@ def _changes(stem: str, old_data: dict | None, new_data: dict) -> list[tuple]:
     return changes
 
 
+#: Callables invoked with the number of changes AFTER a successful record.
+#: See the module docstring. Module-level rather than per-instance because
+#: `record` is a module function that every SavingDispatcher shares.
+_change_observers: list = []
+
+
+def on_change(callback) -> None:
+    """Call ``callback(count)`` after :func:`record` writes ``count`` lines.
+
+    Idempotent per callable, so wiring it from a screen the operator can open
+    twice does not double the calls. Never fires for a save that changed no
+    commissioning key, and never fires from inside the ledger's write path.
+    """
+    if callback not in _change_observers:
+        _change_observers.append(callback)
+
+
+def clear_change_observers() -> None:
+    """Drop every observer. For tests, and for turning a feature back off."""
+    _change_observers.clear()
+
+
+def _notify_change(count: int) -> None:
+    """Run the observers, each isolated. An observer's failure is ITS problem:
+    the ledger line is already on disk and nothing here can un-write it, so the
+    only useful response is a log line and the next observer."""
+    for callback in list(_change_observers):
+        try:
+            callback(count)
+        except Exception as e:
+            log.error(f"commissioning ledger observer {callback!r} failed: {e}")
+
+
 def record(file_path, old_data: dict | None, new_data: dict, trigger: str) -> int:
     """Append a line per changed commissioning key. Returns the line count.
+
+    Observers registered with :func:`on_change` are called afterwards, once,
+    only when something was actually recorded -- see the module docstring for
+    why they are outside the write path rather than in it.
 
     :param file_path: the YAML file just written; its stem names the record.
     :param old_data: that file's contents BEFORE the write, or ``None`` when
@@ -109,6 +154,20 @@ def record(file_path, old_data: dict | None, new_data: dict, trigger: str) -> in
         triggering property, and a blank is more honest than inventing one.
 
     Never raises. Every failure is logged and swallowed.
+    """
+    count = _write_record(file_path, old_data, new_data, trigger)
+    if count:
+        _notify_change(count)
+    return count
+
+
+def _write_record(file_path, old_data: dict | None, new_data: dict, trigger: str) -> int:
+    """The ledger's write path and nothing else: the append and the snapshot.
+
+    Split out of :func:`record` so that "call the observers" is textually
+    outside it -- an observer cannot be added to this function by accident, and
+    a reader can see in one screen that nothing external runs between the
+    ``open(..., "a")`` and its close.
     """
     try:
         stem = Path(file_path).stem
