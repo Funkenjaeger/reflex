@@ -1,6 +1,9 @@
 from reflex.utils.base_device import BaseDevice, TypeDefinition
 from reflex.utils import communication
 from reflex.utils import els_stop_map
+from reflex.utils import fast_data_map
+from reflex.utils import input_map
+from reflex.utils import servo_map
 SCALES_COUNT = 4
 SERVOS_COUNT = 3
 
@@ -61,51 +64,30 @@ Float = TypeDefinition(
 )
 
 
+# servo_t, input_t and fastData_t are GENERATED, like elsStop_t below. These
+# were hand-maintained strings with hand-placed _pad fields until 2026-09-18;
+# tools/genregs.py now emits them from registers/servo.yaml, input.yaml and
+# fast_data.yaml at offsets the target compiler has agreed to via static_assert
+# in fw/Core/Inc/Ramps_generated.h. Edit the schema, not these.
+
+
 class Servo(BaseDevice):
-    definition = """
-typedef struct {
-  float maxSpeed;
-  float currentSpeed;
-  float jogSpeed;
-  float acceleration;
-  int32_t stepsToGo;
-  uint32_t destinationSteps;
-  uint32_t currentSteps;
-  uint32_t desiredSteps;
-  int16_t servoDir;
-  int16_t _pad;
-} servo_t;
-"""
+    """Mirror of ``servo_t`` (registers/servo.yaml)."""
+
+    definition = servo_map.DEFINITION
 
 
 class Scale(BaseDevice):
-    definition = """
-typedef struct {
-  uint32_t timerHandleSlot;
-  int32_t position;
-  int32_t speed;
-  int32_t syncRatioNum, syncRatioDen;
-  uint16_t syncEnable;
-  int16_t scaleDir;
-} input_t;
-"""
+    """Mirror of ``input_t`` (registers/input.yaml), one per ``scales[i]``."""
+
+    definition = input_map.DEFINITION
 
 
 class FastData(BaseDevice):
-    definition = """
-typedef struct {
-  uint32_t servoCurrent;
-  uint32_t servoDesired;
-  uint32_t stepsToGo;
-  float servoSpeed;
-  int32_t scaleCurrent[4];
-  int32_t scaleSpeed[4];
-  uint32_t cycles;
-  uint32_t executionInterval;
-  uint16_t servoMode;
-  uint16_t _pad0;
-} fastData_t;
-"""
+    """Mirror of ``fastData_t`` (registers/fast_data.yaml)."""
+
+    definition = fast_data_map.DEFINITION
+
 
 class ElsStop(BaseDevice):
     """Mirror of ``elsStop_t`` in reflex-fw ``Core/Inc/Ramps.h``.

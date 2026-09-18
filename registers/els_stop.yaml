@@ -41,8 +41,13 @@ protocol_version: 10          # 9 -> 10: the warm/cold remap. Bump on any layout
 
 meta:
   struct: elsStop_t
+  short_name: elsStop            # prose name for the struct in generated text
+  macro_prefix: ELS_STOP         # C macros: ELS_STOP_TOTAL_REGS, ELS_STOP_HOT_REG_BASE, ...
   parent: rampsSharedData_t
-  parent_offset_registers: 104   # elsStop base within the parent; 104 + bootCommand(128) == 232, the address modbus-flash.py uses today
+  parent_member: elsStop
+  parent_count: 1
+  parent_offset_registers: 104   # elsStop base within the parent. Pinned by a static_assert(offsetof(rampsSharedData_t, elsStop)) the generator emits; bootCommand's absolute address in offsets.json is derived from it
+  py_out: ui/reflex/utils/els_stop_map.py
   register_width_bits: 16
   endianness: little
   c_header_out: fw/Core/Inc/Ramps_generated.h

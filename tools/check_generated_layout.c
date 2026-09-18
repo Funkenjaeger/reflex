@@ -11,4 +11,6 @@
  */
 #include "../fw/Core/Inc/Ramps_generated.h"
 
-int main(void) { return (int)sizeof(elsStop_t); }
+int main(void) {
+  return (int)(sizeof(servo_t) + sizeof(input_t) + sizeof(fastData_t) + sizeof(elsStop_t));
+}

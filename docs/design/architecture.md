@@ -87,12 +87,14 @@ version as an input, and stamps it into both halves even when only one changed.
 `v1.2.0` therefore *names a firmware and UI pair*, which is what turns "which
 firmware does this UI expect?" from tribal knowledge into a version number.
 
-**The map is generated from one schema.**
-`registers/els_stop.yaml` → `tools/genregs.py` emits the C header, the UI's
-Python mirror, a JSON offset table and
+**The map is generated from one schema per struct.**
+`registers/*.yaml` (`els_stop`, `servo`, `input`, `fast_data`) →
+`tools/genregs.py` emits the C header, the UI's Python mirrors, a JSON offset
+table and
 [the published map](../reference/register-map.md). The generator can be
 confidently wrong in both directions at once, so two checks sit outside it: the
-emitted header carries a `_Static_assert(offsetof(...))` per field — **the
+emitted header carries a `static_assert(offsetof(...))` per field, a
+`sizeof` per struct and each struct's placement in `rampsSharedData_t` — **the
 compiler, not the generator, has the final vote on padding** — and
 `genregs.py --check` in CI fails on any hand-edit to a generated file. It also
 refuses to emit at all on a group over its request budget or on a `seq` field
@@ -357,7 +359,7 @@ option bytes, and a controller that will not answer over Modbus at all.
 |---|---|---|---|
 | `reflex` | `fw/` | Firmware application, sector-0 bootloader, native emulator | The firmware for anything real-time; **the compiler** for the register layout |
 | `reflex` | `ui/` | Kivy app, Modbus master, in-app updater | The UI for operator workflow, configuration and display |
-| `reflex` | `registers/els_stop.yaml` | The `elsStop_t` schema | **The** source for that block; both sides are generated from it |
+| `reflex` | `registers/*.yaml` | One schema per generated struct: `elsStop_t`, `servo_t`, `input_t`, `fastData_t` | **The** source for those blocks; both sides are generated from them |
 | `reflex` | `tools/genregs.py` | The generator, and its `--check` guard | — |
 | `reflex` | `decisions/` | Dated ADRs with their rejected alternatives | The reasoning behind every contract on this page |
 | `reflex` | `.github/workflows/release.yml` | The lockstep release | Which version names which pair, and the asset names |
