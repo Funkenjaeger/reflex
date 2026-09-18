@@ -512,6 +512,40 @@ def resolve_checkout(start: Path | None = None) -> Path:
     return root
 
 
+def unwritable_venv_dirs(venv: Path, limit: int = 5) -> list[Path]:
+    """Directories under the venv ``uv sync`` will write to that THIS process
+    cannot write, up to ``limit``; empty when the sync can proceed.
+
+    WHY EVERY DIRECTORY, NOT JUST THE TOP. Replacing a package means deleting
+    and creating entries inside its directories, and that needs write on each
+    one -- a venv whose top is ours but whose site-packages subtree is root's
+    passes a top-level check and fails halfway through the sync. That is the
+    exact state elspi shipped in: /opt/reflex-venv built as root by
+    stage-elspi/08-venv, the UI running as ``default`` (found 2026-09-17, Open
+    Loops 6aac9465). A venv that does not exist yet is judged by its parent,
+    which is where ``uv`` would create it.
+    """
+    venv = Path(venv)
+    if venv.exists():
+        target = venv.resolve()
+    else:  # nearest existing ancestor: where uv would have to create it
+        target = venv.parent
+        while not target.exists() and target != target.parent:
+            target = target.parent
+    bad = []
+    if not os.access(target, os.W_OK | os.X_OK):
+        bad.append(target)
+    if venv.exists():
+        for root, dirs, _files in os.walk(target):
+            for d in dirs:
+                p = Path(root) / d
+                if not p.is_symlink() and not os.access(p, os.W_OK | os.X_OK):
+                    bad.append(p)
+                    if len(bad) >= limit:
+                        return bad
+    return bad[:limit]
+
+
 def find_uv(env_path: str | None = None) -> str:
     """The ``uv`` binary that will sync the venv, or refuse.
 
@@ -789,6 +823,21 @@ class UpdateSession:
         # takes effect without editing this call site.
         check_image_release(read_image_release(self._elspi_release_path),
                             minimum=MINIMUM_IMAGE_RELEASE, emit=self.emit)
+
+        # Second-cheapest, and it must precede the erase: install_ui_half runs
+        # `uv sync` AFTER the firmware is flashed, so a venv this process
+        # cannot write turns into a new board under an old UI. Refuse now,
+        # while nothing has changed.
+        venv = self.checkout / "ui" / ".venv"
+        bad = unwritable_venv_dirs(venv)
+        if bad:
+            raise UpdateRefused(
+                "The UI's Python environment is not writable by the user this "
+                f"UI runs as, so installing {release.tag}'s packages would fail "
+                "AFTER the firmware had been flashed. Nothing has been changed.\n"
+                f"Not writable: {', '.join(str(p) for p in bad)}\n"
+                f"Fix it once, over SSH:  sudo chown -R $(id -un):$(id -gn) {venv.resolve()}")
+        self.emit(f"Python environment is writable: {venv.resolve()}")
 
         uv = self._uv_finder()
         self.emit(f"uv: {uv}")

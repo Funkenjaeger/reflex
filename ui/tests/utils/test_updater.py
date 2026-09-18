@@ -12,6 +12,7 @@ Two mutations were run against this file and both turn it red; each is named
 in the test that catches it.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -911,3 +912,73 @@ def test_last_flashed_rev_skips_a_torn_last_line(tmp_path):
 def test_last_flashed_rev_is_none_without_a_manifest(tmp_path):
     assert updater.last_flashed_rev(tmp_path / "absent.json") is None
     assert updater.last_flashed_rev(_manifest(tmp_path, "")) is None
+
+
+# --------------------------------------------------------------------------
+# The venv-writable preflight (Open Loops 6aac9465, 2026-09-17)
+# --------------------------------------------------------------------------
+# elspi shipped /opt/reflex-venv root-owned with the UI running as `default`,
+# and install_ui_half's `uv sync` comes AFTER the flash. These pin that an
+# unwritable venv is refused before the board is touched.
+
+_as_root = hasattr(os, "geteuid") and os.geteuid() == 0
+needs_non_root = pytest.mark.skipif(
+    _as_root or not hasattr(os, "geteuid"),
+    reason="permission bits are not enforced for root, or not POSIX")
+
+
+def _venv(tmp_path, *, readonly):
+    """checkout/ui/.venv -> a real venv-shaped dir elsewhere, symlinked like
+    elspi's ui/.venv -> /opt/reflex-venv, with site-packages optionally
+    read-only (the subtree case a top-level check would miss)."""
+    real = tmp_path / "opt" / "reflex-venv"
+    site = real / "lib" / "python3.13" / "site-packages"
+    (site / "kivy").mkdir(parents=True)
+    ui = tmp_path / "checkout" / "ui"
+    ui.mkdir(parents=True, exist_ok=True)
+    (ui / ".venv").symlink_to(real)
+    if readonly:
+        site.chmod(0o555)
+    return real, site
+
+
+@needs_non_root
+def test_an_unwritable_venv_is_refused_before_the_flash(tmp_path):
+    real, site = _venv(tmp_path, readonly=True)
+    try:
+        r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+        s = _session(r, tmp_path)
+        with pytest.raises(UpdateRefused) as e:
+            s.run(RELEASE)
+        msg = str(e.value)
+        assert "not writable" in msg and str(site) in msg
+        assert "chown" in msg, "the refusal names the fix"
+        assert not r.flashed and not r.ran("modbus-flash.py"), "the board was never touched"
+        assert r.touched_the_ui_half == [] and s.restarts == []
+    finally:
+        site.chmod(0o755)
+
+
+@needs_non_root
+def test_a_writable_venv_passes_the_check(tmp_path):
+    real, _site = _venv(tmp_path, readonly=False)
+    assert updater.unwritable_venv_dirs(tmp_path / "checkout" / "ui" / ".venv") == []
+
+
+@needs_non_root
+def test_the_check_walks_the_subtree_not_just_the_top(tmp_path):
+    """The top of the venv is writable; a package directory deep inside is not.
+    uv would fail replacing that package, so the check must see it."""
+    real, site = _venv(tmp_path, readonly=False)
+    deep = site / "kivy"
+    deep.chmod(0o555)
+    try:
+        assert updater.unwritable_venv_dirs(tmp_path / "checkout" / "ui" / ".venv") == [deep]
+    finally:
+        deep.chmod(0o755)
+
+
+def test_a_missing_venv_is_judged_by_where_uv_would_create_it(tmp_path):
+    ui = tmp_path / "ui"
+    ui.mkdir()
+    assert updater.unwritable_venv_dirs(ui / ".venv") == []
