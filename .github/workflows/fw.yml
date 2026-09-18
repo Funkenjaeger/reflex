@@ -21,12 +21,14 @@ on:
       - "fw/**"
       - "registers/**"
       - "tools/genregs.py"
+      - "tools/test_layout_fingerprint_seen_red.py"
       - ".github/workflows/fw.yml"
   pull_request:
     paths:
       - "fw/**"
       - "registers/**"
       - "tools/genregs.py"
+      - "tools/test_layout_fingerprint_seen_red.py"
       - ".github/workflows/fw.yml"
 
 jobs:
@@ -52,6 +54,11 @@ jobs:
         run: pip install pyyaml
       - name: Check the generated map matches the schema
         run: python tools/genregs.py --check
+      # --check also fails a layout that no longer matches the fingerprint
+      # pinned for the current protocol_version. This proves that gate can go
+      # red (and can be satisfied by a bump + pin) on a scratch copy of the tree.
+      - name: Layout-fingerprint gate seen-red
+        run: python tools/test_layout_fingerprint_seen_red.py
 
   emulator-tests:
     runs-on: ubuntu-latest

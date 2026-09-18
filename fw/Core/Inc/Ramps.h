@@ -425,9 +425,12 @@ extern TIM_HandleTypeDef *ramps_timer_handles[SCALES_COUNT];
    * above; stopTriggerReserved is the EXPLICIT pad that keeps the four int32s
    * 4-aligned (same reason machineModeReserved and diagReserved[4] exist -- an
    * implicit pad is a phantom register reflex-ui cannot mirror). 20 bytes, 10
-   * registers, taking elsStop_t to 140 registers: still two 72-register reads
-   * per board tick (72 + 68), with 4 registers of tail growth left before a
-   * third request is needed. */
+   * registers, taking elsStop_t to 140 registers AT protocolVersion 9: then
+   * two 72-register reads per board tick (72 + 68), with 4 registers of tail
+   * growth left before a third request was needed. [HISTORICAL -- the
+   * protocolVersion 10 warm/cold remap made it 142 registers read as ONE hot
+   * request; Ramps_generated.h and docs/reference/register-map.md carry the
+   * current numbers.] */
 
 #include "Ramps_generated.h"
 

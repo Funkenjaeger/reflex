@@ -38,6 +38,8 @@
 
 schema_version: 1
 protocol_version: 10          # 9 -> 10: the warm/cold remap. Bump on any layout change.
+                              # ENFORCED: genregs --check fails if the layout no longer matches
+                              # registers/layout-fingerprints.json's pin for this version.
 
 meta:
   struct: elsStop_t
@@ -230,19 +232,23 @@ constants:
 # EXPECTED GENERATOR OUTPUT for this file -- asserted by the generator's own
 # test, so a refactor that silently changes the layout goes red.
 #
-#   hot   58 registers  (elsStop 0..57)    -> ONE FC3 request  (budget 75)
-#   cold  82 registers  (elsStop 58..139)  -> fetched on demand
-#   total 140 registers -- unchanged from protocolVersion 9
+#   hot   56 registers  (elsStop 0..55)    -> ONE FC3 request  (budget 75)
+#   cold  86 registers  (elsStop 56..141)  -> fetched on demand
+#   total 142 registers (protocolVersion 9 was 140)
 #
-# Two generator-emitted alignment pads inside hot (before phaseOffsetPending and
-# before stopTriggerZ). Under protocolVersion 9 those were hand-placed fields
-# named machineModeReserved and stopTriggerReserved; they are now the
-# generator's business and vanish from this file.
+# Four generator-emitted interior alignment pads: two in hot (before
+# lastTakeupZDelta and before stopTriggerZ) and two in cold (before
+# phaseOffsetPending and before diagSettleTicks). Under protocolVersion 9 the
+# padding was hand-placed fields named machineModeReserved and
+# stopTriggerReserved; it is now the generator's business and vanishes from
+# this file. (Numbers corrected 2026-09-18: the block previously said hot 58 /
+# cold 82 / total 140 with two pads, which the register-map sweep found did not
+# match what the generator actually emits for protocolVersion 10.)
 #
-# Tick cost: fastData (30 regs, 1 request) + elsStop hot (58 regs, 1 request)
+# Tick cost: fastData (30 regs, 1 request) + elsStop hot (56 regs, 1 request)
 #            = 2 exchanges per tick, down from 3. A 33% cut in the quantity that
 #            actually causes comms loss.
-# Headroom:  17 registers of hot growth before a second hot request. Auto-start
+# Headroom:  19 registers of hot growth before a second hot request. Auto-start
 #            is planned at ~10.
 # =============================================================================
 

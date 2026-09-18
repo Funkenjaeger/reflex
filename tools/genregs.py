@@ -34,10 +34,20 @@ budget, a seq field sitting above anything it acknowledges (the 2026-08-22
 torn-read bug shape), an unresolved array-length constant, a constant whose
 value in the C header no longer matches the schema, two structs overlapping in
 the parent, or modbus-flash.py hardcoding a register the schema disagrees with.
+
+    python tools/genregs.py --pin      pin the current layout's fingerprint for
+                                       the current protocol_version
+
+VERSION BINDING (2026-09-18). registers/layout-fingerprints.json maps each
+protocolVersion to a fingerprint of the layout it means, and both a regenerate
+and --check fail when the current layout does not match the pin for the current
+protocol_version -- so a layout edit cannot ship under an old version number.
+See check_fingerprint().
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import re
@@ -615,6 +625,103 @@ def check_external_consumers(schemas):
             f"{table[version]}, the schema puts bootCommand at {want}")
 
 
+FINGERPRINTS = "registers/layout-fingerprints.json"
+
+
+def layout_fingerprint(schemas):
+    """sha256 over the WIRE LAYOUT of every generated struct -- nothing else.
+
+    Covers, per struct in parent order: its name, where it sits in the parent
+    (member, base register, element count), its size, and every field's
+    (name, type, byte offset, element count). Prose, ids, access, kind and
+    group names are deliberately NOT in it: they can change without a single
+    register moving, and a fingerprint that moved on a doc edit would train
+    people to re-pin it without reading why it moved.
+    """
+    canon = []
+    for s in schemas:
+        canon.append({
+            "struct": s.struct,
+            "member": s.meta["parent_member"],
+            "base": s.base,
+            "count": s.parent_count,
+            "registers": s.total,
+            "fields": [[i["name"], i["type"], i["byte_off"], i["count"]]
+                       for i in s.items if not i["pad"]],
+        })
+    canon.append({"parent_registers": max(s.end for s in schemas)})
+    blob = json.dumps(canon, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def load_fingerprints():
+    p = ROOT / FINGERPRINTS
+    if not p.exists():
+        return {}
+    doc = json.loads(io.open(p, encoding="utf-8").read())
+    return {str(k): v for k, v in (doc.get("protocol_versions") or {}).items()}
+
+
+def check_fingerprint(schemas):
+    """Return an error string if the layout no longer matches the version's pin.
+
+    THE GAP THIS CLOSES (found by the 2026-09-18 register-map sweep). --check
+    compares generated files against the schema, so a DELIBERATE schema edit
+    that is regenerated passes every gate -- including the static_asserts, which
+    the same regeneration rewrote -- while protocol_version still says 10. A
+    UI built against the old map and firmware built against the new one would
+    then both report protocolVersion 10 and decode each other's registers as
+    garbage, which is exactly what that number exists to prevent.
+
+    So the version is bound to a layout here, in a file the generator never
+    writes on its own: layout-fingerprints.json maps protocolVersion -> the
+    fingerprint of the one layout that version means. A layout edit without a
+    bump now fails, and the only way to make it pass is to bump the version
+    and pin the new fingerprint -- `genregs.py --pin`, which refuses to
+    overwrite an existing pin.
+    """
+    version = str(protocol_version(schemas))
+    have = layout_fingerprint(schemas)
+    pins = load_fingerprints()
+    if version not in pins:
+        return (f"protocolVersion {version} has no pinned layout fingerprint in "
+                f"{FINGERPRINTS}. If this is a new version, pin it: "
+                f"python tools/genregs.py --pin  (fingerprint {have})")
+    if pins[version] != have:
+        return (f"LAYOUT CHANGED WITHOUT A protocol_version BUMP: the register layout "
+                f"no longer matches the fingerprint pinned for protocolVersion {version} "
+                f"in {FINGERPRINTS} (pinned {pins[version][:16]}..., now {have[:16]}...). "
+                f"Bump protocol_version in the schema that carries it, add the new "
+                f"version to modbus-flash.py APP_BOOT_COMMAND_REG, regenerate, and pin "
+                f"the new fingerprint with `python tools/genregs.py --pin`. Never re-pin "
+                f"an existing version: firmware that says {version} is already in the field.")
+    return None
+
+
+def pin_fingerprint(schemas):
+    version = str(protocol_version(schemas))
+    have = layout_fingerprint(schemas)
+    pins = load_fingerprints()
+    if version in pins and pins[version] != have:
+        raise GenError(
+            f"protocolVersion {version} is already pinned to a DIFFERENT layout in "
+            f"{FINGERPRINTS}; bump protocol_version instead of re-pinning. (If {version} "
+            f"genuinely never left this branch, delete its entry by hand and say so "
+            f"in the commit message.)")
+    pins[version] = have
+    p = ROOT / FINGERPRINTS
+    doc = {
+        "note": "protocolVersion -> sha256 of the register layout that version means "
+                "(tools/genregs.py layout_fingerprint). PINNED BY HAND with "
+                "`genregs.py --pin`, never rewritten by a plain regenerate; "
+                "`genregs.py --check` fails if the current layout does not match the "
+                "pin for the current protocol_version.",
+        "protocol_versions": {k: pins[k] for k in sorted(pins, key=int)},
+    }
+    io.open(p, "w", encoding="utf-8", newline="\n").write(json.dumps(doc, indent=2) + "\n")
+    return version, have
+
+
 def emit_json(schemas):
     return json.dumps({
         "note": "Absolute rampsSharedData_t register addresses for external tools. "
@@ -707,11 +814,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
                     help="diff against checked-in output; exit 1 on drift")
+    ap.add_argument("--pin", action="store_true",
+                    help=f"pin the current layout's fingerprint for the current "
+                         f"protocol_version in {FINGERPRINTS}; refuses to overwrite a "
+                         f"different existing pin")
     args = ap.parse_args()
 
     schemas = load_schemas()
     check_external_consumers(schemas)
+    if args.pin:
+        version, fp = pin_fingerprint(schemas)
+        print(f"genregs --pin: protocolVersion {version} -> {fp}")
+        return 0
     rendered = render(schemas)
+    fp_err = check_fingerprint(schemas)
 
     drift = []
     for rel, text in rendered.items():
@@ -726,12 +842,15 @@ def main():
             io.open(p, "w", encoding="utf-8", newline="\n").write(text)
 
     if args.check:
+        if fp_err:
+            drift.append(fp_err)
         if drift:
             print("genregs --check FAILED:")
             for d in drift:
                 print("  - " + d)
             return 1
-        print("genregs --check: all generated files match the schema")
+        print("genregs --check: all generated files match the schema, and the layout "
+              f"matches the fingerprint pinned for protocolVersion {protocol_version(schemas)}")
         return 0
 
     for s in schemas:
@@ -746,6 +865,11 @@ def main():
           f"protocolVersion {protocol_version(schemas)}")
     for rel in rendered:
         print("  wrote " + rel)
+    if fp_err:
+        # Written anyway, so a layout can be iterated on; but it is not a green
+        # run, and --check (CI) refuses the same state.
+        print("genregs: " + fp_err)
+        return 1
     return 0
 
 
