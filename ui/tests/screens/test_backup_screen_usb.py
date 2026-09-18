@@ -1,24 +1,24 @@
-"""SetupScreen's USB export/import buttons.
+"""BackupScreen's USB export/import buttons.
 
 Driven the same way ``test_update_screen.py`` and
 ``test_network_screen_nmcli.py`` drive their screens: ``apply_class_lang_rules``
 stubbed so construction never touches the real kv tree (this screen has no ids
 its ``__init__`` reaches for, so nothing extra needs stubbing), and every real
 dependency (``commissioning_bundle``, ``usb``, ``CustomPopup``) replaced at the
-module object ``setup_screen`` imported, which is the one seam all of it goes
+module object ``backup_screen`` imported, which is the one seam all of it goes
 through.
 """
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import reflex.components.screens.setup_screen as ss
+import reflex.components.screens.backup_screen as ss
 
 
 @pytest.fixture
 def screen():
-    with patch.object(ss.SetupScreen, "apply_class_lang_rules"):
-        return ss.SetupScreen()
+    with patch.object(ss.BackupScreen, "apply_class_lang_rules"):
+        return ss.BackupScreen()
 
 
 @pytest.fixture
@@ -47,14 +47,52 @@ def fake_usb(monkeypatch):
 
 # ── export ───────────────────────────────────────────────────────────────
 
-def test_export_success_reports_the_written_path(screen, bundle, fake_usb, tmp_path):
-    target = tmp_path / "reflex-commissioning-elspi-20260913T190411Z.yaml"
+def test_export_success_reports_the_file_name_not_the_mount_path(
+        screen, bundle, fake_usb, monkeypatch):
+    # The path the lathe actually wrote on 2026-09-17; in full it ran off the
+    # 1024-px screen, and /media/sda1-3/ means nothing to the operator.
+    target = ss.Path("/media/sda1-3/reflex-commissioning-elspi-20260918T003909Z.yaml")
     fake_usb.export_bundle.return_value = target
+    monkeypatch.setattr(ss, "_recorded_fw_rev", lambda: "43ac7c5 (v1.2.0-rc.3)")
 
     screen.export_to_usb()
 
-    assert str(target) in screen.status_text
-    bundle.build.assert_called_once_with()
+    assert target.name in screen.status_text
+    assert "/media/" not in screen.status_text
+
+
+def test_export_stamps_the_recorded_firmware_revision(screen, bundle, fake_usb, monkeypatch):
+    # meta.fw was null on every export until 2026-09-17 ("Firmware: None").
+    fake_usb.export_bundle.return_value = ss.Path("/media/x/b.yaml")
+    monkeypatch.setattr(ss, "_recorded_fw_rev", lambda: "43ac7c5 (v1.2.0-rc.3)")
+
+    screen.export_to_usb()
+
+    bundle.build.assert_called_once_with(fw_rev="43ac7c5 (v1.2.0-rc.3)")
+
+
+def test_the_recorded_fw_rev_never_raises(monkeypatch):
+    def boom(*a, **k):
+        raise ss.updater.UpdateRefused("not a checkout")
+    monkeypatch.setattr(ss.updater, "resolve_checkout", boom)
+
+    assert ss._recorded_fw_rev() is None
+
+
+def test_local_time_converts_the_utc_stamp(monkeypatch):
+    monkeypatch.setenv("TZ", "America/New_York")
+    ss.time.tzset()
+    try:
+        # The lathe's real export: 20:39 EDT, stored as 00:39 UTC the next day.
+        assert ss._local_time("2026-09-18T00:39:09+00:00") == "2026-09-17 20:39"
+    finally:
+        monkeypatch.delenv("TZ")
+        ss.time.tzset()
+
+
+@pytest.mark.parametrize("ts, shown", [(None, "unknown"), ("", "unknown"), ("garbage", "garbage")])
+def test_local_time_degrades_visibly(ts, shown):
+    assert ss._local_time(ts) == shown
 
 
 def test_export_with_no_stick_shows_the_refusal_message(screen, bundle, fake_usb):
@@ -116,9 +154,27 @@ def test_import_opens_a_confirm_dialog_showing_the_bundle_meta(
 
     assert screen.import_popup is not None
     assert "elspi" in captured["message"]
-    assert "2026-09-13T19:04:11+00:00" in captured["message"]
+    # Local wall-clock time, not the raw UTC ISO string (2026-09-17).
+    assert f"Captured: {ss._local_time('2026-09-13T19:04:11+00:00')}" in captured["message"]
+    assert "+00:00" not in captured["message"]
     assert "1.2.0" in captured["message"]
     assert captured["cancel_text"]  # a confirm/cancel, not a bare OK
+
+
+def test_a_bundle_without_firmware_says_not_recorded_not_none(
+        screen, tmp_path, fake_usb, monkeypatch):
+    path = tmp_path / "reflex-commissioning-elspi-20260918T003909Z.yaml"
+    path.write_text("meta:\n  schema: 1\n  ts: '2026-09-18T00:39:09+00:00'\n"
+                    "  hostname: elspi\n  fw: null\nAxis-0:\n  axis_name: X\n")
+    fake_usb.find_bundles.return_value = [path]
+    captured = {}
+    monkeypatch.setattr(ss, "CustomPopup",
+                        lambda **kw: captured.update(kw) or MagicMock(name="popup"))
+
+    screen.import_from_usb()
+
+    assert "Firmware: not recorded" in captured["message"]
+    assert "None" not in captured["message"]
 
 
 def test_confirming_the_dialog_applies_the_bundle(

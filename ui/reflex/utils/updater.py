@@ -550,6 +550,34 @@ def manifest_path_for(checkout: Path) -> Path:
     return Path(pwd.getpwuid(owner).pw_dir) / "firmware" / "flashed.json"
 
 
+def last_flashed_rev(manifest: Path) -> str | None:
+    """The revision the LAST record in the flash manifest says is on the board,
+    as ``"<rev>"`` or ``"<rev> (<tag>)"``; ``None`` when there is no usable
+    record.
+
+    The manifest is JSON Lines, one object per flash, appended by
+    ``flash.sh`` / ``modbus-flash.py`` (a revert is a record too, naming the
+    rev it went back to), so the last parseable line is the current state. It
+    is what the flashing tools RECORDED, not a live read of the board -- the
+    same evidence ot-state reports -- and is used where holding the serial port
+    for an identity read is not possible, such as a running UI's export.
+    """
+    try:
+        lines = Path(manifest).read_text().splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        rev = record.get("rev") if isinstance(record, dict) else None
+        if rev:
+            tag = record.get("tag")
+            return f"{rev} ({tag})" if tag else str(rev)
+    return None
+
+
 # --------------------------------------------------------------------------
 # The gate
 # --------------------------------------------------------------------------

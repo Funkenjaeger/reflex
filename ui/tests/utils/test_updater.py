@@ -876,3 +876,38 @@ def test_preflight_allows_a_missing_release_file_when_minimum_is_zero(tmp_path,
     s = _session(r, tmp_path, elspi_release_path=tmp_path / "does-not-exist")
     s.run(RELEASE)   # does not raise
     assert r.touched_the_ui_half
+
+
+# --------------------------------------------------------------------------
+# last_flashed_rev -- the manifest reader behind the Backup screen's meta.fw
+# --------------------------------------------------------------------------
+# Record shapes copied from elspi's real ~/firmware/flashed.json (2026-09-17).
+_FLASH = ('{"utc":"2026-09-13T15:08:45Z","variant":"unknown","rev":"cb52073",'
+          '"via":"modbus","image":"reflex-app-cb52073.bin","protocol":10}')
+_RELEASE = ('{"utc":"2026-09-13T15:51:51Z","variant":"release","rev":"43ac7c5",'
+            '"via":"modbus","image":"reflex-app-1.2.0-rc.3.bin","protocol":10,"tag":"v1.2.0-rc.3"}')
+_REVERT = ('{"utc":"2026-09-13T01:57:21Z","variant":"revert","rev":"88e57ec",'
+           '"md5":null,"via":"modbus","protocol":10,"reverted_from":"cb52073"}')
+
+
+def _manifest(tmp_path, *lines):
+    path = tmp_path / "flashed.json"
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def test_last_flashed_rev_is_the_last_record_with_its_tag(tmp_path):
+    assert updater.last_flashed_rev(_manifest(tmp_path, _FLASH, _RELEASE)) == "43ac7c5 (v1.2.0-rc.3)"
+
+
+def test_last_flashed_rev_follows_a_revert_to_the_rev_it_restored(tmp_path):
+    assert updater.last_flashed_rev(_manifest(tmp_path, _RELEASE, _REVERT)) == "88e57ec"
+
+
+def test_last_flashed_rev_skips_a_torn_last_line(tmp_path):
+    assert updater.last_flashed_rev(_manifest(tmp_path, _FLASH, '{"utc":"2026-09-1')) == "cb52073"
+
+
+def test_last_flashed_rev_is_none_without_a_manifest(tmp_path):
+    assert updater.last_flashed_rev(tmp_path / "absent.json") is None
+    assert updater.last_flashed_rev(_manifest(tmp_path, "")) is None

@@ -1,0 +1,95 @@
+#: import ScreenHeader reflex.components.widgets.screen_header
+
+<BackupSection@Label>:
+  size_hint_y: None
+  height: dp(30)
+  text_size: self.width, None
+  halign: "left"
+  valign: "middle"
+  font_name: app.theme.font_bold
+  font_size: app.formats.font_size * 0.8
+  color: app.theme.accent
+
+<BackupScreen>:
+  BoxLayout:
+    title: "Backup"
+    orientation: "vertical"
+    padding: 10
+    spacing: 8
+    ScreenHeader:
+      text: "Backup"
+
+    BackupSection:
+      text: "USB stick"
+    BoxLayout:
+      size_hint_y: None
+      height: dp(64)
+      spacing: 20
+      SetupButton:
+        text: "Export to USB"
+        on_release: root.export_to_usb()
+      SetupButton:
+        text: "Import from USB"
+        on_release: root.import_from_usb()
+
+    # Opt-in GitHub gist sync: a second transport for the same bundle. When
+    # this build has no OAuth client id (every build today) the buttons are
+    # disabled and the note line says why, in small type -- the notice used to
+    # be shown at 1.8x in the device-code box and drew over its neighbours.
+    BackupSection:
+      text: "GitHub gist"
+    BoxLayout:
+      size_hint_y: None
+      height: dp(64)
+      spacing: 20
+      SetupButton:
+        id: gist_toggle
+        text: "Gist sync: ON" if root.gist_enabled else "Gist sync: OFF"
+        disabled: not root.gist_configured
+        on_release: root.toggle_gist_sync(not root.gist_enabled)
+      SetupButton:
+        text: "Sync now"
+        disabled: not root.gist_enabled
+        on_release: root.sync_now()
+      SetupButton:
+        text: "Restore from gist"
+        disabled: not root.gist_configured
+        on_release: root.restore_from_gist()
+    Label:
+      id: gist_note_label
+      text: root.gist_note_text
+      size_hint_y: None
+      text_size: self.width, None
+      height: self.texture_size[1]
+      halign: "left"
+      font_name: app.theme.font_bold
+      font_size: app.formats.font_size * 0.7
+      color: app.theme.text
+
+    # The device-flow user code, LARGE, only while a flow is in progress. No
+    # QR: no QR library is a dependency of this app.
+    Label:
+      id: gist_code_label
+      text: root.gist_code_text
+      size_hint_y: None
+      text_size: self.width, None
+      height: self.texture_size[1] if root.gist_code_text else 0
+      opacity: 1 if root.gist_code_text else 0
+      halign: "center"
+      font_name: app.theme.font_bold
+      font_size: app.formats.font_size * 1.8
+      color: app.theme.accent
+
+    # The last action's outcome. Wraps rather than running off the screen.
+    Label:
+      id: status_label
+      text: root.status_text
+      size_hint_y: None
+      text_size: self.width, None
+      height: self.texture_size[1]
+      halign: "left"
+      font_name: app.theme.font_bold
+      font_size: app.formats.font_size
+      color: app.theme.text
+
+    Widget:

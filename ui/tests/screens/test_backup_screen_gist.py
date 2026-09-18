@@ -1,8 +1,8 @@
-"""SetupScreen's gist-sync toggle, "Sync now" and "Restore from gist".
+"""BackupScreen's gist-sync toggle, "Sync now" and "Restore from gist".
 
-Driven exactly like ``test_setup_screen_usb.py``: ``apply_class_lang_rules``
+Driven exactly like ``test_backup_screen_usb.py``: ``apply_class_lang_rules``
 stubbed so construction never builds the kv tree, and the real dependency
-(``gist_sync``) replaced at the module object ``setup_screen`` imported.
+(``gist_sync``) replaced at the module object ``backup_screen`` imported.
 
 THE TWO THREADING SEAMS ARE MADE SYNCHRONOUS. ``_run_async`` puts work on a
 daemon thread in the app and ``_dispatch_to_ui`` marshals results back through
@@ -15,22 +15,22 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import reflex.components.screens.setup_screen as ss
+import reflex.components.screens.backup_screen as ss
 from reflex.utils import gist_sync as real_gist_sync
 
 
 @pytest.fixture
 def screen():
-    with patch.object(ss.SetupScreen, "apply_class_lang_rules"):
-        return ss.SetupScreen()
+    with patch.object(ss.BackupScreen, "apply_class_lang_rules"):
+        return ss.BackupScreen()
 
 
 @pytest.fixture
 def sync_screen(screen, monkeypatch):
     """`screen`, with both threading seams collapsed to a direct call."""
-    monkeypatch.setattr(ss.SetupScreen, "_run_async",
+    monkeypatch.setattr(ss.BackupScreen, "_run_async",
                         lambda self, work: work())
-    monkeypatch.setattr(ss.SetupScreen, "_dispatch_to_ui",
+    monkeypatch.setattr(ss.BackupScreen, "_dispatch_to_ui",
                         lambda self, work: work())
     return screen
 
@@ -82,7 +82,11 @@ def test_refresh_puts_the_not_configured_message_on_screen(screen, fake_gist):
 
     screen.refresh_gist_state()
 
-    assert screen.gist_code_text == real_gist_sync.NOT_CONFIGURED_MESSAGE
+    # In the small note line, NOT the 1.8x device-code box, where it overflowed
+    # its neighbours on the lathe (2026-09-17).
+    assert screen.gist_note_text == real_gist_sync.NOT_CONFIGURED_MESSAGE
+    assert screen.gist_code_text == ""
+    assert screen.gist_configured is False
     assert screen.gist_enabled is False
 
 
@@ -112,7 +116,7 @@ def test_turning_it_on_runs_the_device_flow_and_shows_the_code(
 def test_the_user_code_and_url_are_put_on_screen_as_text(screen, fake_gist,
                                                          monkeypatch):
     """No QR anywhere in this feature -- the operator reads the code."""
-    monkeypatch.setattr(ss.SetupScreen, "_dispatch_to_ui",
+    monkeypatch.setattr(ss.BackupScreen, "_dispatch_to_ui",
                         lambda self, work: work())
     code = real_gist_sync.DeviceCode(
         device_code="dc", user_code="WDJB-MJHT",
@@ -162,7 +166,7 @@ def test_an_unreachable_github_never_raises_into_the_ui(sync_screen, fake_gist):
 def test_a_second_press_does_not_start_a_second_flow(screen, fake_gist,
                                                      monkeypatch):
     started = []
-    monkeypatch.setattr(ss.SetupScreen, "_run_async",
+    monkeypatch.setattr(ss.BackupScreen, "_run_async",
                         lambda self, work: started.append(work))
 
     screen.start_device_flow()
@@ -238,7 +242,7 @@ def test_restore_opens_the_shared_confirm_dialog_with_the_bundle_meta(
 
     assert sync_screen.import_popup is not None, "the USB import's own dialog"
     assert "elspi" in captured["message"]
-    assert "2026-09-13T19:04:11+00:00" in captured["message"]
+    assert f"Captured: {ss._local_time('2026-09-13T19:04:11+00:00')}" in captured["message"]
     assert captured["cancel_text"], "a confirm/cancel, not a bare OK"
     assert captured["confirm_callback"] == sync_screen._apply_pending_import
 
@@ -268,7 +272,7 @@ def test_restore_with_several_candidates_offers_a_picker(
                                updated_at="2026-07-01T00:00:00Z"),
     ]
     offered = []
-    monkeypatch.setattr(ss.SetupScreen, "_open_restore_picker",
+    monkeypatch.setattr(ss.BackupScreen, "_open_restore_picker",
                         lambda self, refs: offered.extend(refs))
 
     sync_screen.restore_from_gist()
