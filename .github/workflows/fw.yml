@@ -22,6 +22,7 @@ on:
       - "registers/**"
       - "tools/genregs.py"
       - "tools/test_layout_fingerprint_seen_red.py"
+      - "tools/test_generated_layout_seen_red.py"
       - ".github/workflows/fw.yml"
   pull_request:
     paths:
@@ -29,6 +30,7 @@ on:
       - "registers/**"
       - "tools/genregs.py"
       - "tools/test_layout_fingerprint_seen_red.py"
+      - "tools/test_generated_layout_seen_red.py"
       - ".github/workflows/fw.yml"
 
 jobs:
@@ -132,6 +134,16 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j
+      # The static_asserts in Ramps_generated.h are the compiler's vote on the
+      # register layout, and the build above only proves they PASS. This proves
+      # each can FAIL: every mutation (reorder, widen, drop, pad change, per
+      # generated struct) must break the ARM compile naming what moved. Until
+      # 2026-09-18 it only ever ran by hand, so an assert that had gone
+      # decorative would have stayed green here. The script exits 77 (SKIP)
+      # without a cross compiler; any non-zero fails the step, so a skip
+      # cannot pass for a pass.
+      - name: Seen-red the generated layout asserts
+        run: python3 tools/test_generated_layout_seen_red.py
       # The emulator suite above builds for x86, where a double is a hardware
       # instruction and free, so it is STRUCTURALLY unable to see the cost of
       # one on Cortex-M4F. On 2026-08-28 that blind spot let a double divide
