@@ -731,6 +731,11 @@ class Prepared:
     image: ImageInfo
     target_protocol: int
     uv: str
+    #: Where the checkout was before the update: the commit, and the branch
+    #: when it was on one (elspi runs `integration`). What _undo_ui_half puts
+    #: back. None when git could not say, which disables the undo's checkout.
+    previous_rev: str | None = None
+    previous_branch: str | None = None
 
 
 class UpdateSession:
@@ -750,6 +755,9 @@ class UpdateSession:
         self.checkout = Path(checkout)
         self._manifest = manifest
         self._elspi_release_path = elspi_release_path or ELSPI_RELEASE_PATH
+        #: The controller's identity just before the flash, kept so a failed
+        #: UI half can put exactly that firmware back (_undo_ui_half).
+        self._before_flash: Identity | None = None
         self.port = port
         self.current_protocol = current_protocol
         self.workdir = Path(workdir)
@@ -886,8 +894,22 @@ class UpdateSession:
         image = parse_image_info(out)
         self.emit(f"Firmware image: rev {image.rev}, {image.length} bytes.")
 
+        # Where the checkout is NOW, so a UI half that fails after the flash
+        # can be undone (_undo_ui_half). A branch is recorded as well as the
+        # commit because the update's own checkout is --detach and leaves the
+        # branch pointing where it was: checking the BRANCH back out restores
+        # exactly the pre-update state, not a detached copy of it.
+        previous_rev = self._run(["git", "rev-parse", "HEAD"], cwd=self.checkout,
+                                 quiet=True, what="git rev-parse HEAD").strip() or None
+        rc, branch = self._runner(["git", "symbolic-ref", "-q", "--short", "HEAD"],
+                                  cwd=self.checkout, timeout=30, emit=None)
+        previous_branch = branch.strip() if rc == 0 and branch.strip() else None
+        self.emit(f"Checkout now: {previous_branch or 'detached'} at "
+                  f"{(previous_rev or 'UNKNOWN')[:12]}.")
+
         return Prepared(release=release, image_path=image_path, image=image,
-                        target_protocol=target_protocol, uv=uv)
+                        target_protocol=target_protocol, uv=uv,
+                        previous_rev=previous_rev, previous_branch=previous_branch)
 
     # -- 2. flash, then THE GATE ------------------------------------------
 
@@ -898,6 +920,7 @@ class UpdateSession:
         :meth:`reflex.dispatchers.board.Board.pause_polling`.
         """
         before = self.read_identity()
+        self._before_flash = before
         self.emit(f"Controller before: {before}.")
         if before.stage != STAGE_APPLICATION:
             raise UpdateRefused(
@@ -957,32 +980,9 @@ class UpdateSession:
                   f"{after.app_protocol}, its UI expects "
                   f"{prepared.target_protocol}. Restoring the previous "
                   f"firmware ({before.build_rev}). DO NOT POWER OFF THE MACHINE.")
-        manifest = self._manifest or manifest_path_for(self.checkout)
-        rc, out = self._runner(
-            [self.python, self._modbus_flash, "--revert", "--port", self.port,
-             "--manifest", manifest, "--expect-rev", before.build_rev],
-            cwd=None, timeout=300, emit=self._emit)
-        if rc != 0:
-            raise ProtocolMismatch(
-                f"{refused}\n\nRestoring the previous firmware "
-                f"({before.build_rev}) was attempted and FAILED, so the state "
-                f"above still stands.\n{out.strip()[-600:]}") from refused
-        try:
-            restored = self.read_identity()
-        except UpdateRefused as unreadable:
-            raise ProtocolMismatch(
-                f"{refused}\n\nA rollback to {before.build_rev} reported "
-                f"success, but the controller could not be read afterwards, so "
-                f"what it runs is UNKNOWN.\n{unreadable}") from refused
-        self.emit(f"Controller after rollback: {restored}.")
-        if (restored.stage != STAGE_APPLICATION
-                or restored.build_rev != before.build_rev
-                or restored.app_protocol != self.current_protocol):
-            raise ProtocolMismatch(
-                f"{refused}\n\nA rollback to {before.build_rev} reported "
-                f"success, but the controller now reports {restored}, not the "
-                f"previous firmware at protocol version "
-                f"{self.current_protocol}. Treat the machine as mismatched.") from refused
+        failure = self._revert_firmware(before)
+        if failure:
+            raise ProtocolMismatch(f"{refused}\n\n{failure}") from refused
         raise RolledBack(
             f"REFUSED: the {tag} firmware speaks register protocol version "
             f"{after.app_protocol}, but the {tag} UI expects "
@@ -991,6 +991,107 @@ class UpdateSession:
             f"firmware ({before.build_rev}) has been restored and confirmed "
             f"running, and the UI was never changed. Do not retry this "
             f"release.") from refused
+
+    def _revert_firmware(self, before: Identity) -> str | None:
+        """Put ``before``'s firmware back and PROVE it; ``None`` on success,
+        else the sentence describing what went wrong.
+
+        Shared by both rollbacks -- the gate's (:meth:`_roll_back`) and the
+        UI half's (:meth:`_undo_ui_half`). Success is decided by a FRESH
+        identity read, never by the revert's exit status: the bootloader kept
+        the outgoing image, ``modbus-flash.py --revert`` copies it back
+        (journaled, power-loss safe, bench-verified 2026-09-13), and only the
+        board saying so makes it true.
+        """
+        manifest = self._manifest or manifest_path_for(self.checkout)
+        rc, out = self._runner(
+            [self.python, self._modbus_flash, "--revert", "--port", self.port,
+             "--manifest", manifest, "--expect-rev", before.build_rev],
+            cwd=None, timeout=300, emit=self._emit)
+        if rc != 0:
+            return (f"Restoring the previous firmware ({before.build_rev}) was "
+                    f"attempted and FAILED, so the state above still stands.\n"
+                    f"{out.strip()[-600:]}")
+        try:
+            restored = self.read_identity()
+        except UpdateRefused as unreadable:
+            return (f"A rollback to {before.build_rev} reported success, but the "
+                    f"controller could not be read afterwards, so what it runs "
+                    f"is UNKNOWN.\n{unreadable}")
+        self.emit(f"Controller after rollback: {restored}.")
+        if (restored.stage != STAGE_APPLICATION
+                or restored.build_rev != before.build_rev
+                or restored.app_protocol != self.current_protocol):
+            return (f"A rollback to {before.build_rev} reported success, but the "
+                    f"controller now reports {restored}, not the previous "
+                    f"firmware at protocol version {self.current_protocol}. "
+                    f"Treat the machine as mismatched.")
+        return None
+
+    def _undo_ui_half(self, prepared: Prepared, failed: Exception):
+        """The UI half failed AFTER a verified flash: put BOTH halves back.
+        Always raises.
+
+        Until 2026-09-17 this path only re-raised, which left new firmware
+        under the old UI with nothing reverted -- and the Update screen then
+        refused a retry ("ALREADY mismatched"), so the touchscreen could
+        neither finish nor undo it (Open Loops 6aaca75b). Ordering, and why:
+
+          1. The CHECKOUT first, back to the branch/commit preflight recorded,
+             and `uv sync` there, because install_ui_half may have got as far
+             as either. If the checkout cannot be restored the firmware is
+             deliberately LEFT NEW: old firmware under a checkout that is
+             already the new release would be mismatched at the next restart,
+             whereas new firmware there matches it.
+          2. Only then the FIRMWARE, via the same proven revert the gate uses.
+
+        The running process never changed -- it is still the old UI -- so a
+        successful undo needs no restart: old UI, old checkout, old firmware.
+        """
+        tag = prepared.release.tag
+        before = self._before_flash
+        self.emit(f"Installing the {tag} UI FAILED after its firmware was "
+                  f"flashed. Putting the previous UI and firmware back. "
+                  f"DO NOT POWER OFF THE MACHINE.")
+
+        if not prepared.previous_rev or before is None:
+            raise ProtocolMismatch(
+                f"{failed}\n\nThe {tag} firmware is on the controller, but the "
+                f"{tag} UI could not be installed, and the previous state was not "
+                f"recorded well enough to restore automatically (checkout: "
+                f"{prepared.previous_rev or 'unknown'}; firmware: "
+                f"{before.build_rev if before else 'unknown'}). The machine is "
+                f"MISMATCHED: new firmware, old UI. Recover over SSH.") from failed
+
+        where = (f"{prepared.previous_branch} ({prepared.previous_rev[:12]})"
+                 if prepared.previous_branch else prepared.previous_rev[:12])
+        restored, sync_rc, out = self._restore_previous_checkout(prepared)
+        if not restored:
+            raise ProtocolMismatch(
+                f"{failed}\n\nPutting the checkout back to {where} ALSO failed, "
+                f"so the {tag} firmware was deliberately LEFT on the controller: "
+                f"the checkout may already hold {tag}, and after a restart that "
+                f"UI matches this firmware, while the previous firmware would "
+                f"not. Restart the UI to run {tag}; if it does not come up, "
+                f"recover over SSH.\n{out.strip()[-400:]}") from failed
+        env_note = ("" if sync_rc == 0 else
+                    f" Re-syncing the previous Python environment FAILED as well "
+                    f"(exit {sync_rc}), so a package {tag} added or changed may "
+                    f"still be installed; the running UI is unaffected until it "
+                    f"restarts.")
+
+        self.emit(f"Restoring the previous firmware ({before.build_rev}).")
+        failure = self._revert_firmware(before)
+        if failure:
+            raise ProtocolMismatch(
+                f"{failed}\n\nThe checkout was put back to {where}, but: "
+                f"{failure}{env_note}") from failed
+        raise RolledBack(
+            f"The {tag} update did not complete: installing its UI failed "
+            f"({str(failed).splitlines()[0]}). Nothing from {tag} was kept: the "
+            f"previous firmware ({before.build_rev}) is restored and confirmed "
+            f"running, and the UI is back on {where}.{env_note} Fix the cause "
+            f"above before trying {tag} again.") from failed
 
     # -- 3. the UI half, reachable only with a verdict ---------------------
 
@@ -1025,6 +1126,26 @@ class UpdateSession:
                   f"{prepared.release.tag}.")
         self.restart_service()
 
+    def _restore_previous_checkout(self, prepared: Prepared):
+        """The ONLY other place that runs git checkout / uv sync, and it can
+        only go BACKWARDS: to the branch/commit preflight recorded, never to
+        the release. Returns ``(checked_out, sync_rc, output)``.
+
+        test_update_screen_wired pins that these two commands appear in
+        exactly install_ui_half and here, and that nothing here names the
+        release -- so this cannot become a second way to INSTALL past the gate.
+        """
+        target = prepared.previous_branch or prepared.previous_rev
+        rc, out = self._runner(["git", "checkout", target], cwd=self.checkout,
+                               timeout=300, emit=self._emit)
+        if rc != 0:
+            return False, None, out
+        self.emit(f"Checkout restored to {target}. Re-syncing its Python environment.")
+        sync_rc, sync_out = self._runner([prepared.uv, "sync", "--frozen"],
+                                         cwd=self.checkout / "ui", timeout=3600,
+                                         emit=self._emit)
+        return True, sync_rc, sync_out
+
     def restart_service(self):
         self._restart()
 
@@ -1048,14 +1169,18 @@ class UpdateSession:
         read until the service restarts, so no old-UI poll ever lands on new
         firmware.
 
-        THE FAILURE PATHS RESUME THE LINK, including the one that leaves new
-        firmware under the old UI. That state is a mismatch, and it is
-        tempting to leave the link down rather than "let the UI talk to
-        firmware it does not match" -- but the operator has no terminal, and a
-        machine with a dead DRO tells them nothing. Board's connect-time
-        protocol check is the surface built for exactly this: it names which
-        half is older, in words, on the screen. Leaving the link down would
-        suppress the one message that explains what happened.
+        A UI HALF THAT FAILS AFTER THE FLASH IS UNDONE (:meth:`_undo_ui_half`):
+        checkout and packages back, then the firmware back, proven by an
+        identity read. Until 2026-09-17 it was only re-raised, leaving new
+        firmware under the old UI with the Update screen refusing a retry.
+
+        THE FAILURE PATHS RESUME THE LINK, including the ones that still leave
+        a mismatch (an undo that could not complete). It is tempting to leave
+        the link down rather than "let the UI talk to firmware it does not
+        match" -- but the operator has no terminal, and a machine with a dead
+        DRO tells them nothing. The Update screen names the state in words
+        (the raised message), and the Sync Enable button refuses to engage a
+        feed against a mismatched protocol (app.on_servo_enable_pressed).
         """
         prepared = self.preflight(release)
         if pause_link:
@@ -1068,7 +1193,11 @@ class UpdateSession:
             raise
         try:
             self.install_ui_half(prepared, verdict)
-        except Exception:
-            if resume_link:
-                resume_link()
-            raise
+        except Exception as failed:
+            # The port stays with the flasher through the undo: the revert
+            # needs it, and the old UI must not poll a board mid-revert.
+            try:
+                self._undo_ui_half(prepared, failed)     # always raises
+            finally:
+                if resume_link:
+                    resume_link()

@@ -43,6 +43,7 @@ from reflex.utils.updater import (
 CURRENT_PROTOCOL = 9
 TARGET_PROTOCOL = 10        # a release that DID move the register layout
 IMAGE_REV = "abc1234"
+PREVIOUS_REV = "0123456789abcdef0123456789abcdef01234567"  # the checkout's HEAD before
 
 
 # ---------------------------------------------------------------------------
@@ -334,8 +335,14 @@ class FakeRunner:
     def __init__(self, *, board_protocol_after, board_protocol_before=CURRENT_PROTOCOL,
                  target_protocol=TARGET_PROTOCOL, image_rev=IMAGE_REV,
                  board_rev_after=IMAGE_REV, image_valid=True, dirty="",
-                 fail=None, board_after_revert=None):
+                 fail=None, board_after_revert=None,
+                 head_rev=PREVIOUS_REV, head_branch="integration"):
         self.calls = []
+        # What `git rev-parse HEAD` / `git symbolic-ref` report for the
+        # checkout before the update (preflight records them for the undo).
+        # head_branch=None models a detached checkout.
+        self.head_rev = head_rev
+        self.head_branch = head_branch
         self.board_protocol_before = board_protocol_before
         self.board_protocol_after = board_protocol_after
         self.target_protocol = target_protocol
@@ -383,6 +390,10 @@ class FakeRunner:
         if argv[:2] == ["git", "show"]:
             # what `git show <tag>:ui/reflex/utils/els_stop_map.py` yields
             return 0, f"PROTOCOL_VERSION = {self.target_protocol}\n"
+        if argv[:3] == ["git", "rev-parse", "HEAD"]:
+            return 0, f"{self.head_rev}\n"
+        if argv[:2] == ["git", "symbolic-ref"]:
+            return (0, f"{self.head_branch}\n") if self.head_branch else (1, "")
         if argv[0] == "git":
             return 0, ""
         if argv[0].endswith("uv"):
@@ -982,3 +993,91 @@ def test_a_missing_venv_is_judged_by_where_uv_would_create_it(tmp_path):
     ui = tmp_path / "ui"
     ui.mkdir()
     assert updater.unwritable_venv_dirs(ui / ".venv") == []
+
+
+# --------------------------------------------------------------------------
+# A UI half that fails AFTER a verified flash is undone (Open Loops 6aaca75b)
+# --------------------------------------------------------------------------
+# Until 2026-09-17 run() only re-raised here: new firmware under the old UI,
+# nothing reverted, and the Update screen then refused a retry ("ALREADY
+# mismatched"). Probed with this FakeRunner before the fix.
+
+def _restored_checkout(r):
+    """The undo's own checkout -- of the recorded branch, not of the tag."""
+    return [c for c in r.ran("git", "checkout") if "--detach" not in c]
+
+
+def test_a_failed_checkout_after_the_flash_puts_both_halves_back(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={"checkout --detach"})
+    s = _session(r, tmp_path)
+    with pytest.raises(RolledBack) as e:
+        s.run(RELEASE)
+    assert r.flashed and r.reverted, "flashed, then the firmware put back"
+    assert _restored_checkout(r)[0][-1] == "integration", "the BRANCH, not a detached copy"
+    last_identity = max(i for i, c in enumerate(r.calls) if "--identity" in c)
+    assert last_identity > r.calls.index(r.ran("--revert")[0]), "proved by a read AFTER the revert"
+    msg = str(e.value)
+    assert "0000001" in msg and "integration" in msg and "did not complete" in msg
+    assert s.restarts == [], "the old UI never stopped running; nothing to restart"
+
+
+def test_a_failed_uv_sync_restores_the_checkout_before_the_firmware(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={"sync --frozen"})
+    s = _session(r, tmp_path)
+    with pytest.raises(RolledBack) as e:
+        s.run(RELEASE)
+    restore = r.calls.index(_restored_checkout(r)[0])
+    revert = r.calls.index(r.ran("--revert")[0])
+    assert restore < revert, "checkout back FIRST, then the firmware"
+    # The re-sync of the previous environment hits the same fake failure: the
+    # message must say so rather than claim a clean environment.
+    assert "Re-syncing the previous Python environment FAILED" in str(e.value)
+
+
+def test_a_detached_checkout_is_restored_to_its_commit(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={"sync --frozen"},
+                   head_branch=None)
+    s = _session(r, tmp_path)
+    with pytest.raises(RolledBack):
+        s.run(RELEASE)
+    assert _restored_checkout(r)[0][-1] == PREVIOUS_REV
+
+
+def test_if_the_checkout_cannot_be_restored_the_firmware_is_left_new(tmp_path):
+    """Old firmware under a checkout that may already be the new release would
+    be mismatched at the next restart; new firmware there matches it."""
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={"git checkout"})
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert not isinstance(e.value, RolledBack)
+    assert r.flashed and not r.reverted
+    assert "deliberately LEFT" in str(e.value)
+
+
+def test_a_failed_firmware_revert_is_reported_as_the_state_it_leaves(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={"checkout --detach", "--revert"})
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert not isinstance(e.value, RolledBack)
+    msg = str(e.value)
+    assert "checkout was put back" in msg and "FAILED" in msg
+
+
+def test_the_link_is_resumed_only_after_the_undo(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={"checkout --detach"})
+    s = _session(r, tmp_path)
+    order = []
+    real_runner = s._runner
+
+    def spy(argv, **kw):
+        if "--revert" in " ".join(map(str, argv)):
+            order.append("revert")
+        return real_runner(argv, **kw)
+    s._runner = spy
+    with pytest.raises(RolledBack):
+        s.run(RELEASE, pause_link=lambda: order.append("pause"),
+              resume_link=lambda: order.append("resume"))
+    assert order == ["pause", "revert", "resume"]

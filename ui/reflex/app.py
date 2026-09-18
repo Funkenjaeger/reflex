@@ -178,7 +178,28 @@ class MainApp(App):
         In advanced ELS mode, enabling the feed with no armed ELS stop would run
         the carriage with no automatic stop (audit H2b/H6) — so ask for explicit
         confirmation first. In every other mode (basic power feed) and when a
-        stop is armed, toggle the feed directly. Disabling is never gated."""
+        stop is armed, toggle the feed directly. Disabling is never gated.
+
+        MISMATCHED PROTOCOL REFUSES TURNING THE FEED ON, in every mode. A
+        firmware/UI protocol mismatch means this UI's register map is not the
+        board's: every write past the point of divergence lands at the wrong
+        offset, and before 2026-09-17 only calibration and resync checked.
+        Board's check stays non-fatal (the DRO and the Update screen still
+        work, which is how the operator gets out of it); this is where it
+        becomes a refusal, because this is where a wrong write moves metal.
+        Open Loops 6aaca75b."""
+        if self.servo.servoMode == 0 and self.board.protocol_mismatch:
+            from reflex.components.popups.custom_popup import CustomPopup
+            log.warning(f"Sync Enable refused: {self.board.protocol_message}")
+            CustomPopup(
+                title="Firmware / UI mismatch",
+                message=(f"{self.board.protocol_message}\n\nThe feed will not "
+                         f"engage until the firmware and the UI match. "
+                         f"Setup > Update."),
+                button_text="OK",
+                popup_size_hint=[0.7, 0.6],
+            ).open()
+            return
         if self.current_mode != MODE_ELS or self.els_uic is None:
             self.servo.toggle_enable()
             return
