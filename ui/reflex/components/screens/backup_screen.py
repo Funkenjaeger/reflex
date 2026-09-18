@@ -57,7 +57,7 @@ from kivy.uix.screenmanager import Screen
 
 from reflex.components.popups.custom_popup import CustomPopup
 from reflex.components.screens import setup_screen  # noqa: F401 -- defines <SetupButton>, used by backup_screen.kv
-from reflex.utils import commissioning_bundle, gist_sync, updater, usb
+from reflex.utils import commissioning_bundle, gist_sync, usb
 from reflex.utils.kv_loader import load_kv
 from reflex.utils.paths import config_dir
 
@@ -88,10 +88,15 @@ class BackupScreen(Screen):
     gist_enabled = BooleanProperty(False)
 
     #: The device-flow code and URL, shown as LARGE TEXT while a flow is in
-    #: progress and blank otherwise. THERE IS NO QR CODE: ``pyproject.toml``
-    #: carries no QR library and this feature added no dependency, so the
-    #: operator reads the eight characters and the short URL off the screen.
+    #: progress and blank otherwise.
     gist_code_text = StringProperty("")
+
+    #: What the QR beside the code encodes: the verification URL, set only
+    #: while a code is on screen and cleared with it (``on_gist_code_text``).
+    #: A QR (segno, added 2026-09-17) because typing the URL on a phone at the
+    #: lathe is a pain. GitHub's device flow has no code-prefilled URL, so the
+    #: QR carries the URL only; the eight characters are still typed.
+    gist_qr_data = StringProperty("")
 
     #: Where to revoke the grant, shown beside the toggle whenever the feature
     #: is configured. A grant the operator cannot find is one they cannot undo.
@@ -123,13 +128,12 @@ class BackupScreen(Screen):
         """Build the whole-machine bundle and write it to the first stick
         found, or show the refusal message when there isn't one.
 
-        ``meta.fw`` is the revision from the flash manifest (see
-        :func:`_recorded_fw_rev`), not a live read of the board: the identity
-        window is only readable through ``modbus-flash.py``, which needs the
-        serial port this running UI owns. It was ``null`` on every export until
-        2026-09-17, which the import dialog then showed as "Firmware: None".
+        ``meta.fw`` comes from ``build()`` itself, which stamps the flash
+        manifest's recorded revision by default (see
+        ``commissioning_bundle.recorded_fw_rev``) -- the same for this export,
+        the gist sync and the startup snapshot.
         """
-        doc = commissioning_bundle.build(fw_rev=_recorded_fw_rev())
+        doc = commissioning_bundle.build()
         text = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)
         filename = usb.bundle_filename(
             doc["meta"]["hostname"], commissioning_bundle._file_stamp())
@@ -310,13 +314,20 @@ class BackupScreen(Screen):
         self._run_async(work)
 
     def _post_code(self, code):
-        """Put the device code on screen. LARGE TEXT, no QR -- see the class
-        docstring for ``gist_code_text``."""
+        """Put the device code on screen: the code LARGE, and a QR of the
+        verification URL beside it (see ``gist_qr_data``)."""
         def show():
             self.gist_code_text = (
                 f"{code.user_code}\n"
-                f"Enter this at {code.verification_uri}")
+                f"Scan, or go to {code.verification_uri}")
+            self.gist_qr_data = code.verification_uri
         self._dispatch_to_ui(show)
+
+    def on_gist_code_text(self, _instance, value):
+        """Every path that clears the code (flow done, failed, toggled off)
+        clears the QR with it -- one rule instead of four call sites."""
+        if not value:
+            self.gist_qr_data = ""
 
     def _post_code_cleared(self):
         self._dispatch_to_ui(lambda: setattr(self, "gist_code_text", ""))
@@ -455,17 +466,3 @@ def _local_time(ts) -> str:
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
     return when.astimezone().strftime("%Y-%m-%d %H:%M")
-
-
-def _recorded_fw_rev() -> str | None:
-    """The firmware revision the flash manifest last recorded, or ``None``.
-
-    Never raises: a missing manifest (a dev desktop, a card nobody flashed
-    from) makes an export say "not recorded", it does not stop the export.
-    """
-    try:
-        manifest = updater.manifest_path_for(updater.resolve_checkout())
-        return updater.last_flashed_rev(manifest)
-    except Exception as e:
-        log.info(f"backup screen: no firmware revision for the bundle ({e})")
-        return None

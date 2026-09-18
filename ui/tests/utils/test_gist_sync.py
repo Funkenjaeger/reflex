@@ -307,6 +307,26 @@ def test_the_first_sync_creates_a_secret_gist(token):
     assert content.startswith("meta:"), "meta first, as the USB export writes it"
 
 
+def test_a_sync_with_no_doc_stamps_the_recorded_firmware(token, tmp_path, monkeypatch):
+    """The path the Backup screen and the ledger hook both take (doc=None).
+    The first real gist, 2026-09-17, carried fw: null because this path called
+    build() back when build()'s default was None."""
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "Els-0.yaml").write_text("els_backlash_steps: 484\n")
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(config))
+    monkeypatch.setattr(commissioning_bundle, "recorded_fw_rev",
+                        lambda: "43ac7c5 (v1.2.0-rc.3)")
+    http = FakeHttp((201, {"id": "gist-1"}))
+
+    assert gist_sync.push_bundle(transport=http) == "gist-1"
+
+    content = http.calls[0]["data"]["files"][gist_sync.BUNDLE_FILENAME]["content"]
+    doc = yaml.safe_load(content)
+    assert doc["meta"]["fw"] == "43ac7c5 (v1.2.0-rc.3)"
+    assert doc["Els-0"]["els_backlash_steps"] == 484
+
+
 def test_later_syncs_patch_the_same_gist(token):
     create = FakeHttp((201, {"id": "gist-1"}))
     gist_sync.push_bundle(DOC, transport=create)

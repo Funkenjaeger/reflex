@@ -17,6 +17,7 @@ dependencies = [
     "nmcli>=1.5.0",
     "pydantic>=2.10.3",
     "pyyaml>=6.0.2",
+    "segno>=1.6.0",
     "aiohttp>=3.9.0",
     "sentry-sdk>=2.32.0",
     "transitions>=0.9.3",

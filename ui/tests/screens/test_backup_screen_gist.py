@@ -113,9 +113,10 @@ def test_turning_it_on_runs_the_device_flow_and_shows_the_code(
     fake_gist.sync_now.assert_called_once()
 
 
-def test_the_user_code_and_url_are_put_on_screen_as_text(screen, fake_gist,
-                                                         monkeypatch):
-    """No QR anywhere in this feature -- the operator reads the code."""
+def test_the_user_code_and_url_are_put_on_screen_with_a_qr_of_the_url(
+        screen, fake_gist, monkeypatch):
+    """The code and URL as text (the code must still be typed -- GitHub gives
+    no code-prefilled URL) plus a QR of the URL (2026-09-17)."""
     monkeypatch.setattr(ss.BackupScreen, "_dispatch_to_ui",
                         lambda self, work: work())
     code = real_gist_sync.DeviceCode(
@@ -126,6 +127,16 @@ def test_the_user_code_and_url_are_put_on_screen_as_text(screen, fake_gist,
 
     assert "WDJB-MJHT" in screen.gist_code_text
     assert "https://github.com/login/device" in screen.gist_code_text
+    assert screen.gist_qr_data == "https://github.com/login/device"
+
+
+def test_clearing_the_code_clears_the_qr(screen):
+    screen.gist_code_text = "WDJB-MJHT\nScan, or go to https://github.com/login/device"
+    screen.gist_qr_data = "https://github.com/login/device"
+
+    screen.gist_code_text = ""  # every clearing path ends here
+
+    assert screen.gist_qr_data == ""
 
 
 def test_an_existing_token_skips_the_device_flow(sync_screen, fake_gist):

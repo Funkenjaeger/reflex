@@ -120,6 +120,36 @@ def layout_checks(screen, tag):
         check(f"{tag}: {wid} text fits its box", ok and on_screen(w), detail)
 
 
+def qr_checks(screen):
+    """Q1: the QR is square, on screen, clear of its neighbours, with modules
+    of at least 4 px. Q2: THE PIXELS ARE THE RIGHT CODE -- every module centre
+    in the saved frame is sampled and compared against segno's own matrix for
+    gist_qr_data, quiet zone included. A QR that draws but is mirrored,
+    flipped, offset or encodes the wrong string fails Q2."""
+    from PIL import Image
+
+    qr = screen.ids.gist_qr
+    check("Q1 QR encodes the verification URL", qr.data == "https://github.com/login/device", repr(qr.data))
+    geo = qr.geometry()
+    if geo is None:
+        check("Q1 QR drawn", False, f"widget {qr.width:.0f}x{qr.height:.0f} too small")
+        return
+    module, x0, y_top, n = geo
+    check("Q1 QR modules are >= 4 px", module >= 4, f"{module} px x {n} modules = {module * n} px")
+    check("Q1 QR is on screen and inside its row", on_screen(qr) and inside(qr, screen.ids.gist_code_row), "ok")
+    img = Image.open(os.path.join(OUT_DIR, "backup_gist_device_code.png")).convert("L")
+    H = img.height
+    wx, wy = qr.to_window(x0, y_top)
+    bad = 0
+    for r, row in enumerate(qr.modules()):
+        for c, dark in enumerate(row):
+            px = int(wx + c * module + module / 2)
+            py = int(H - (wy - r * module - module / 2))  # kivy y-up -> image y-down
+            if (img.getpixel((px, py)) < 128) != dark:
+                bad += 1
+    check("Q2 every QR module in the frame matches segno's matrix", bad == 0, f"{bad} of {n * n} modules wrong")
+
+
 def inside(child, parent):
     cx, cy = child.to_window(child.x, child.y)
     px, py = parent.to_window(parent.x, parent.y)
@@ -167,14 +197,25 @@ def capture(_dt):
               repr(screen.gist_note_text))
 
         # The configured state with a device flow in progress: the tallest the
-        # screen gets. Forced on the real properties, not re-typed text.
+        # screen gets. The code goes on screen through the REAL _post_code,
+        # with the thread hop replaced by a direct call.
         screen.gist_configured = True
         screen.gist_note_text = f"Revoke access at {screen.gist_revoke_text}"
-        screen.gist_code_text = "WDJB-MJHT\nEnter this at https://github.com/login/device"
+        real_dispatch = screen._dispatch_to_ui
+        screen._dispatch_to_ui = lambda work: work()
+        try:
+            screen._post_code(gist_sync.DeviceCode(
+                device_code="x", user_code="WDJB-MJHT",
+                verification_uri="https://github.com/login/device",
+                expires_in=899, interval=5))
+        finally:
+            screen._dispatch_to_ui = real_dispatch
         screen._status("Synced to gist 0123456789abcdef0123456789abcdef")
         shot("backup_gist_device_code")
         layout_checks(screen, "device code")
+        qr_checks(screen)
         screen.gist_code_text = ""
+        check("Q3 clearing the code clears the QR", screen.gist_qr_data == "", repr(screen.gist_qr_data))
         screen.refresh_gist_state()
 
         real_export = usb.export_bundle

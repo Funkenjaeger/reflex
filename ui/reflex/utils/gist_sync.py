@@ -291,11 +291,11 @@ class DeviceCode:
     """What GitHub hands back at the start of the flow.
 
     :param user_code: the eight characters the operator types. Shown as LARGE
-        TEXT on the Setup screen -- there is no QR code anywhere in this
-        feature, deliberately: ``ui/pyproject.toml`` carries no QR library and
-        this feature was not allowed to add one, so the operator reads the code
-        and the short URL off the screen.
-    :param verification_uri: where they type it.
+        TEXT on the Backup screen.
+    :param verification_uri: where they type it. Also shown as a QR code
+        beside the user code (segno, added 2026-09-17), so the phone gets there
+        with one scan; GitHub gives no code-prefilled URL, so the code itself
+        is still typed.
     :param interval: seconds GitHub asks us to wait between polls. Obeyed, and
         raised on ``slow_down``.
     """

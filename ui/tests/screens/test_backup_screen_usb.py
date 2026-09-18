@@ -53,7 +53,6 @@ def test_export_success_reports_the_file_name_not_the_mount_path(
     # 1024-px screen, and /media/sda1-3/ means nothing to the operator.
     target = ss.Path("/media/sda1-3/reflex-commissioning-elspi-20260918T003909Z.yaml")
     fake_usb.export_bundle.return_value = target
-    monkeypatch.setattr(ss, "_recorded_fw_rev", lambda: "43ac7c5 (v1.2.0-rc.3)")
 
     screen.export_to_usb()
 
@@ -61,22 +60,15 @@ def test_export_success_reports_the_file_name_not_the_mount_path(
     assert "/media/" not in screen.status_text
 
 
-def test_export_stamps_the_recorded_firmware_revision(screen, bundle, fake_usb, monkeypatch):
+def test_export_uses_builds_default_so_fw_is_stamped(screen, bundle, fake_usb):
     # meta.fw was null on every export until 2026-09-17 ("Firmware: None").
+    # build()'s DEFAULT stamps the recorded revision; passing fw_rev at all
+    # (even None) would bypass it -- which is how the gist path stayed null.
     fake_usb.export_bundle.return_value = ss.Path("/media/x/b.yaml")
-    monkeypatch.setattr(ss, "_recorded_fw_rev", lambda: "43ac7c5 (v1.2.0-rc.3)")
 
     screen.export_to_usb()
 
-    bundle.build.assert_called_once_with(fw_rev="43ac7c5 (v1.2.0-rc.3)")
-
-
-def test_the_recorded_fw_rev_never_raises(monkeypatch):
-    def boom(*a, **k):
-        raise ss.updater.UpdateRefused("not a checkout")
-    monkeypatch.setattr(ss.updater, "resolve_checkout", boom)
-
-    assert ss._recorded_fw_rev() is None
+    bundle.build.assert_called_once_with()
 
 
 def test_local_time_converts_the_utc_stamp(monkeypatch):

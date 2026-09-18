@@ -139,15 +139,41 @@ def machine_id() -> str:
     return platform.node()
 
 
-def build(fw_rev: str | None = None) -> dict:
+def recorded_fw_rev() -> str | None:
+    """The firmware revision the flash manifest last recorded, or ``None``.
+
+    What the flashing tools RECORDED (``~/firmware/flashed.json``, see
+    :func:`reflex.utils.updater.last_flashed_rev`), not a live read of the
+    board: the identity window is only readable through ``modbus-flash.py``,
+    which needs the serial port a running UI owns. Never raises -- a desktop,
+    or a card nobody flashed from, gets ``None`` and a bundle that says so.
+    """
+    try:
+        from reflex.utils import updater  # lazy: POSIX-only helpers inside
+        return updater.last_flashed_rev(
+            updater.manifest_path_for(updater.resolve_checkout()))
+    except Exception as e:
+        log.info(f"commissioning bundle: no recorded firmware revision ({e})")
+        return None
+
+
+#: ``build``'s default: look the revision up with :func:`recorded_fw_rev`.
+RECORDED = object()
+
+
+def build(fw_rev=RECORDED) -> dict:
     """The whole machine configuration as one mapping. See the module docstring.
 
-    :param fw_rev: the firmware revision to stamp into ``meta.fw``. Passed in
-        rather than read here because the firmware version is known to the
-        board dispatcher, not to a config-directory walk, and a bundle built
-        with the board offline is still a valid bundle -- it just says ``fw:
-        null`` instead of guessing.
+    :param fw_rev: the firmware revision for ``meta.fw``. By default it is
+        looked up with :func:`recorded_fw_rev`, HERE, so every producer of a
+        bundle carries it -- USB export, gist sync and the startup snapshot.
+        Until 2026-09-17 the default was ``None`` and each caller had to pass
+        it; none did, every bundle said ``fw: null``, and fixing one caller
+        (the USB export) left the gist sync still writing null. Pass ``None``
+        explicitly for a bundle that must not claim a revision.
     """
+    if fw_rev is RECORDED:
+        fw_rev = recorded_fw_rev()
     doc: dict = {
         "meta": {
             "schema": SCHEMA,

@@ -32,10 +32,30 @@ def test_meta_carries_the_provenance_of_the_capture(cfg):
     assert meta["fw"] == "1.2.0"
 
 
-def test_fw_is_null_when_the_board_could_not_be_asked(cfg):
-    """A bundle built with the board offline is still a valid bundle; it says
-    so rather than guessing a firmware revision."""
+def test_fw_is_null_when_no_revision_is_recorded(cfg, monkeypatch):
+    """A bundle with no recorded firmware is still a valid bundle; it says so
+    rather than guessing a firmware revision."""
+    monkeypatch.setattr(commissioning_bundle, "recorded_fw_rev", lambda: None)
     assert commissioning_bundle.build()["meta"]["fw"] is None
+    assert commissioning_bundle.build(fw_rev=None)["meta"]["fw"] is None
+
+
+def test_build_stamps_the_recorded_revision_by_default(cfg, monkeypatch):
+    """Every producer (USB export, gist sync, startup snapshot) calls plain
+    build(). Until 2026-09-17 that meant fw: null everywhere, and fixing the
+    USB export's call left the gist still writing null."""
+    monkeypatch.setattr(commissioning_bundle, "recorded_fw_rev",
+                        lambda: "43ac7c5 (v1.2.0-rc.3)")
+    assert commissioning_bundle.build()["meta"]["fw"] == "43ac7c5 (v1.2.0-rc.3)"
+
+
+def test_recorded_fw_rev_never_raises(monkeypatch):
+    from reflex.utils import updater
+
+    def boom(*a, **k):
+        raise updater.UpdateRefused("not a checkout")
+    monkeypatch.setattr(updater, "resolve_checkout", boom)
+    assert commissioning_bundle.recorded_fw_rev() is None
 
 
 def test_one_top_level_key_per_yaml_stem_in_sorted_order(cfg):
