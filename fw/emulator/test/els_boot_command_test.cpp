@@ -114,7 +114,11 @@ int main() {
     check(offsetof(rampsSharedData_t, elsStop.bootSeq) == 338, "bootSeq at byte 338 = register 169");
     check(sizeof(rampsSharedData_t) == 492,
           "rampsSharedData_t is 492 bytes (140 register of fields + 2 of alignment)");
-    check(ELS_PROTOCOL_VERSION == 10, "ELS_PROTOCOL_VERSION is 10");
+    /* protocolVersion 11 (2026-09-18) filled two alignment pads with
+     * stopOffset / stopTriggerOffset: bootCommand, bootSeq and the 492-byte
+     * size above are deliberately UNCHANGED, which is why they are asserted
+     * with the same numbers and only the version moved. */
+    check(ELS_PROTOCOL_VERSION == 11, "ELS_PROTOCOL_VERSION is 11");
     /* The no-phantom-register property, asserted against whatever ends the
      * struct TODAY. An implicit trailing pad would make a register reflex-ui
      * cannot mirror, and the contract test would report a size mismatch it

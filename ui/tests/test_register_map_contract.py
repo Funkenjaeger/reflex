@@ -524,7 +524,10 @@ SEQ_SAFE_BY_LAYOUT = {
     # telling a host that a new capture arrived -- the payload has no other
     # freshness marker and a repeated pass can legitimately produce identical
     # values -- so the ordering here is what makes the whole block trustworthy.
-    "elsStop.stopTriggerSeq":       ["elsStop.stopTriggerZ",
+    # stopTriggerOffset joined it in protocolVersion 11 (2026-09-18): the
+    # clamped stop-overshoot correction each trigger used.
+    "elsStop.stopTriggerSeq":       ["elsStop.stopTriggerOffset",
+                                     "elsStop.stopTriggerZ",
                                      "elsStop.stopTriggerZSpeed",
                                      "elsStop.stopTriggerStepsToGo",
                                      "elsStop.stopTriggerSpindleSpeed"],

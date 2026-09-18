@@ -27,6 +27,9 @@
 #ifndef ELS_DIAG_TRACE_BUCKETS
 #define ELS_DIAG_TRACE_BUCKETS 50  /* verified against fw/Core/Inc/Ramps.h */
 #endif
+#ifndef ELS_STOP_OFFSET_MAX
+#define ELS_STOP_OFFSET_MAX 200  /* verified against fw/Core/Inc/Ramps.h */
+#endif
 #ifndef SCALES_COUNT
 #define SCALES_COUNT 4  /* verified against fw/Core/Inc/Scales.h */
 #endif
@@ -235,7 +238,7 @@ static_assert(FAST_DATA_ALL_REG_COUNT <= 75, "all group exceeds its FC3 request 
 
 /* ======== elsStop_t -- from registers/els_stop.yaml ======== */
 
-#define ELS_STOP_PROTOCOL_VERSION 10u
+#define ELS_STOP_PROTOCOL_VERSION 11u
 #define ELS_STOP_TOTAL_REGS 142u
 #define ELS_STOP_HOT_REG_BASE 0u
 #define ELS_STOP_HOT_REG_COUNT 56u
@@ -415,7 +418,15 @@ typedef struct {
    * it counts.
    */
   uint16_t stopTriggerSeq;
-  uint16_t _pad2;        /* generator-emitted alignment, before stopTriggerZ */
+
+  /* reg 47 READ-ONLY (firmware-owned): the CLAMPED stopOffset actually in
+   * effect when this trigger fired, encoder counts (0..ELS_STOP_OFFSET_MAX).
+   * So the stop fired at stopPosition - sign(stopDirection) *
+   * stopTriggerOffset, and stopTriggerZ is that effective threshold (or just
+   * past it). Recorded rather than inferred from what the host last wrote,
+   * because the host's write and the trigger race
+   */
+  int16_t stopTriggerOffset;
 
   /* reg 48 READ-ONLY (firmware-owned): scales[scaleIndex].position at the
    * trigger, and it is the SAME value the threshold comparison was made on,
@@ -493,7 +504,20 @@ typedef struct {
    * phaseOffsetSeq, never this.
    */
   uint16_t phaseOffsetCommand;
-  uint16_t _pad3;        /* generator-emitted alignment, before phaseOffsetPending */
+
+  /* reg 61 SW write: stop-overshoot correction in encoder counts. The ISR
+   * fires the stop this many counts EARLY (effective threshold = stopPosition
+   * - sign(stopDirection) * clamp(stopOffset, 0, ELS_STOP_OFFSET_MAX)); >= 0
+   * fires earlier, negative is treated as 0, above ELS_STOP_OFFSET_MAX (200
+   * counts = 1 mm on elspi) is clamped. The hysteresis clearance is measured
+   * from the same effective threshold. Written LIVE by reflex-ui from the
+   * approach Z rate; stopPosition stays the exact, overshoot-ignorant target.
+   * A SEPARATE 16-bit register rather than a rewritten stopPosition because
+   * Modbus FC16 copies a 32-bit value one 16-bit half at a time and the ISR
+   * could see it torn; a single 16-bit read is atomic. 0 = no correction (and
+   * the reset value)
+   */
+  int16_t stopOffset;
 
   /* reg 62 host-written candidate total, leadscrew steps. Read by the ISR
    * ONLY under a nonzero phaseOffsetCommand; write it BEFORE the command,
@@ -556,7 +580,7 @@ typedef struct {
    * same reason
    */
   uint16_t diagBucketCount;
-  uint16_t _pad4;        /* generator-emitted alignment, before diagSettleTicks */
+  uint16_t _pad2;        /* generator-emitted alignment, before diagSettleTicks */
 
   /* reg 82 READ-ONLY (firmware-owned): ticks from capture start to the LAST
    * tick that saw nonzero dZ. THE measurement ELS_SLIP_SETTLE_TICKS is a
@@ -625,6 +649,7 @@ static_assert(offsetof(elsStop_t, latchSeq) == 84, "latchSeq moved: schema says 
 static_assert(offsetof(elsStop_t, phaseOffsetSeq) == 86, "phaseOffsetSeq moved: schema says register 43");
 static_assert(offsetof(elsStop_t, phaseOffsetSteps) == 88, "phaseOffsetSteps moved: schema says register 44");
 static_assert(offsetof(elsStop_t, stopTriggerSeq) == 92, "stopTriggerSeq moved: schema says register 46");
+static_assert(offsetof(elsStop_t, stopTriggerOffset) == 94, "stopTriggerOffset moved: schema says register 47");
 static_assert(offsetof(elsStop_t, stopTriggerZ) == 96, "stopTriggerZ moved: schema says register 48");
 static_assert(offsetof(elsStop_t, stopTriggerZSpeed) == 100, "stopTriggerZSpeed moved: schema says register 50");
 static_assert(offsetof(elsStop_t, stopTriggerStepsToGo) == 104, "stopTriggerStepsToGo moved: schema says register 52");
@@ -634,6 +659,7 @@ static_assert(offsetof(elsStop_t, calSeq) == 114, "calSeq moved: schema says reg
 static_assert(offsetof(elsStop_t, calResult) == 116, "calResult moved: schema says register 58");
 static_assert(offsetof(elsStop_t, latchCommand) == 118, "latchCommand moved: schema says register 59");
 static_assert(offsetof(elsStop_t, phaseOffsetCommand) == 120, "phaseOffsetCommand moved: schema says register 60");
+static_assert(offsetof(elsStop_t, stopOffset) == 122, "stopOffset moved: schema says register 61");
 static_assert(offsetof(elsStop_t, phaseOffsetPending) == 124, "phaseOffsetPending moved: schema says register 62");
 static_assert(offsetof(elsStop_t, bootCommand) == 128, "bootCommand moved: schema says register 64");
 static_assert(offsetof(elsStop_t, bootSeq) == 130, "bootSeq moved: schema says register 65");

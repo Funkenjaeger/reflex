@@ -204,6 +204,13 @@ ELS_PROTOCOL_VERSION = els_stop_map.PROTOCOL_VERSION        # elsStop.protocolVe
                                 # stop fires. The coast it measures lasts ~12 ms
                                 # against a 33 ms poll, so this UI could never
                                 # have taken the reading itself.
+                                # 10 (2026-09-07): the hot/cold remap; every
+                                # offset moved and the map became generated.
+                                # 11 (2026-09-18): stopOffset (host-written
+                                # stop-overshoot correction, fires the stop
+                                # early) and stopTriggerOffset (the clamped
+                                # value each trigger used), both in former
+                                # alignment pads -- nothing else moved.
 
 # Diagnostic scratchpad schema ids (elsStop.diagSchema). 0 means no probe is
 # compiled into the firmware and the block must not be interpreted at all.

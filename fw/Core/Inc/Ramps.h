@@ -56,6 +56,15 @@
  * Change what goes IN the block (and diagSchema with it), never its size. */
 #define ELS_DIAG_TRACE_BUCKETS 50
 
+/* Ceiling on elsStop.stopOffset, the stop-overshoot correction, in encoder
+ * counts (protocolVersion 11, 2026-09-18). The ISR clamps the host's value to
+ * [0, ELS_STOP_OFFSET_MAX] before moving the threshold, so a garbage or runaway
+ * write can fire the stop at most this far early -- never late, never further.
+ * 200 counts is 1 mm on elspi's 5 um/count Z scale, ~5x the largest coast
+ * measured (43 counts at 3567 counts/s). Resolved into registers/els_stop.yaml
+ * by genregs, which fails generation if the two disagree. */
+#define ELS_STOP_OFFSET_MAX 200
+
 /* Diagnostic scratchpad schema ids -- which probe is compiled into the block.
  * Part of the register CONTRACT, not an implementation detail: reflex-ui
  * mirrors these and refuses any id it does not recognise, so append only and

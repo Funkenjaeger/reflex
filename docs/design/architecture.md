@@ -51,7 +51,7 @@ flowchart TB
       direction LR
       UI["ui/ — Kivy app<br/>Modbus master<br/>in-app updater"]
       FW["fw/ — STM32F411 app<br/>Modbus slave<br/>+ sector-0 bootloader"]
-      UI <-->|"register map<br/>protocolVersion 10<br/>RS-485 Modbus RTU"| FW
+      UI <-->|"register map<br/>protocolVersion 11<br/>RS-485 Modbus RTU"| FW
     end
 
     HW["kicad-reflex — the board<br/>Provvedo V1.2 today<br/>respin planned"]

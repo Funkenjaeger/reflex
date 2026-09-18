@@ -100,7 +100,10 @@ STATE_NAMES = {0: "IDLE", 1: "BACKUP", 2: "COPY", 3: "TRIAL", 4: "REVERT", 5: "R
 # been checked -- an unlisted protocolVersion makes the client refuse and tell
 # the operator to flash over SWD once, which is the correct answer to "I do not
 # know where this register is".
-APP_BOOT_COMMAND_REG = {8: 232, 9: 232, 10: 168}
+# 11 (2026-09-18) keeps 168: stopOffset and stopTriggerOffset were placed in two
+# of protocolVersion 10's alignment pads, so no group grew and nothing moved.
+# Listed separately for the whitelist reason above; genregs --check verifies it.
+APP_BOOT_COMMAND_REG = {8: 232, 9: 232, 10: 168, 11: 168}
 BOOT_CMD_BOOTLOADER = 1
 
 CHUNK_BYTES = BL_DATA_REGS * 2   # 200
