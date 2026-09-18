@@ -13,13 +13,34 @@ zone the spec requires, then one dark Rectangle per dark module. No image
 file, no texture round-trip, no Pillow. The module size is a whole number of
 pixels so every module is the same width -- a scanner reads fractional,
 uneven modules much worse -- and the symbol is centred in the widget.
+
+SEGNO IS OPTIONAL AT RUNTIME. This module is imported by backup_screen.kv,
+which the screen manager loads at startup, so a hard ``import segno`` would
+turn a missing wheel into a UI that does not start -- and on elspi the venv's
+site-packages is root-owned, so a code deploy (git pull + restart, as the
+service user) can land before anyone with sudo has run ``uv sync``. Measured
+2026-09-17, before the first deploy of this widget. Without segno,
+:data:`AVAILABLE` is False, nothing is drawn, and the Backup screen shows the
+code and URL as text exactly as it did before the QR existed.
 """
-import segno
 from kivy.graphics import Color, Rectangle
+from kivy.logger import Logger
 from kivy.properties import ColorProperty, StringProperty
 from kivy.uix.widget import Widget
 
+try:
+    import segno
+except ImportError:  # pragma: no cover - exercised by test_qr_code via monkeypatch
+    segno = None
+    Logger.warning("qr_code: segno is not installed; the device-flow QR is disabled "
+                   "(run `uv sync --frozen` in ui/)")
+
 QUIET_ZONE = 4  # modules; the QR spec's minimum border
+
+
+def available() -> bool:
+    """True when a QR can be drawn (segno importable)."""
+    return segno is not None
 
 
 class QrCode(Widget):
@@ -36,7 +57,7 @@ class QrCode(Widget):
     def modules(self) -> list[list[bool]]:
         """The symbol INCLUDING the quiet zone, top row first; True = dark.
         Split out so the preview can check the pixels against it."""
-        if not self.data:
+        if not self.data or not available():
             return []
         qr = segno.make(self.data, error="m", micro=False)
         return [[bool(v) for v in row] for row in qr.matrix_iter(scale=1, border=QUIET_ZONE)]

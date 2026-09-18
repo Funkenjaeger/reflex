@@ -130,6 +130,23 @@ def test_the_user_code_and_url_are_put_on_screen_with_a_qr_of_the_url(
     assert screen.gist_qr_data == "https://github.com/login/device"
 
 
+def test_without_segno_the_code_is_text_only_and_no_qr_box(screen, fake_gist, monkeypatch):
+    """elspi's site-packages is root-owned, so a code deploy can land before
+    segno is installed. That must degrade to the pre-QR screen, not crash."""
+    monkeypatch.setattr(ss.BackupScreen, "_dispatch_to_ui",
+                        lambda self, work: work())
+    monkeypatch.setattr(ss.qr_code, "segno", None)
+    code = real_gist_sync.DeviceCode(
+        device_code="dc", user_code="WDJB-MJHT",
+        verification_uri="https://github.com/login/device")
+
+    screen._post_code(code)
+
+    assert "WDJB-MJHT" in screen.gist_code_text
+    assert "Enter this at https://github.com/login/device" in screen.gist_code_text
+    assert screen.gist_qr_data == "", "no QR data -> the kv gives the QR zero width"
+
+
 def test_clearing_the_code_clears_the_qr(screen):
     screen.gist_code_text = "WDJB-MJHT\nScan, or go to https://github.com/login/device"
     screen.gist_qr_data = "https://github.com/login/device"

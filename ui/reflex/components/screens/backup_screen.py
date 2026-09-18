@@ -57,6 +57,7 @@ from kivy.uix.screenmanager import Screen
 
 from reflex.components.popups.custom_popup import CustomPopup
 from reflex.components.screens import setup_screen  # noqa: F401 -- defines <SetupButton>, used by backup_screen.kv
+from reflex.components.widgets import qr_code
 from reflex.utils import commissioning_bundle, gist_sync, usb
 from reflex.utils.kv_loader import load_kv
 from reflex.utils.paths import config_dir
@@ -317,10 +318,15 @@ class BackupScreen(Screen):
         """Put the device code on screen: the code LARGE, and a QR of the
         verification URL beside it (see ``gist_qr_data``)."""
         def show():
-            self.gist_code_text = (
-                f"{code.user_code}\n"
-                f"Scan, or go to {code.verification_uri}")
-            self.gist_qr_data = code.verification_uri
+            if qr_code.available():
+                self.gist_code_text = (
+                    f"{code.user_code}\n"
+                    f"Scan, or go to {code.verification_uri}")
+                self.gist_qr_data = code.verification_uri
+            else:  # no segno on this card: text only, no empty QR box
+                self.gist_code_text = (
+                    f"{code.user_code}\n"
+                    f"Enter this at {code.verification_uri}")
         self._dispatch_to_ui(show)
 
     def on_gist_code_text(self, _instance, value):

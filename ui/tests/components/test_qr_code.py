@@ -30,3 +30,13 @@ def test_geometry_uses_whole_pixel_modules_centred():
 def test_nothing_is_drawn_without_data_or_room():
     assert QrCode(data="").geometry() is None
     assert QrCode(data=URL, size=(10, 10)).geometry() is None, "under 1 px per module"
+
+
+def test_a_missing_segno_draws_nothing_instead_of_raising(monkeypatch):
+    from reflex.components.widgets import qr_code
+    monkeypatch.setattr(qr_code, "segno", None)
+
+    qr = QrCode(data=URL, size=(190, 190))
+
+    assert not qr_code.available()
+    assert qr.modules() == [] and qr.geometry() is None
