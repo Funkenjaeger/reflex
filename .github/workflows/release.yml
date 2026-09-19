@@ -18,8 +18,9 @@
 # retired with the split repos: its config had accumulated v7 keys that PSR 10
 # silently ignores, so options read like live settings while doing nothing, and
 # nobody could say from the file what a push would do. An explicit input cannot
-# drift like that -- and the release notes are generated from the conventional
-# commits either way, so the log still does the describing.
+# drift like that. The describing is done by hand: release-notes/<V>.md is the
+# release's written description (required, see the step that checks it), with
+# the generated commit list appended beneath it.
 name: release
 
 on:
@@ -90,6 +91,29 @@ jobs:
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+
+      # EVERY RELEASE CARRIES A WRITTEN DESCRIPTION, from release-notes/<V>.md.
+      # Until v1.2.0-rc.4 the only notes were --generate-notes, which for a
+      # direct-push repo with no PRs is a bare "Full Changelog" compare link:
+      # every release through rc.3 went out with nothing on its page saying what
+      # it was for. The file is written for a person deciding whether to
+      # install -- what changed, what to watch out for, what is experimental --
+      # and the generated commit list is still appended beneath it.
+      #
+      # It runs here, before the builds, and on dry runs too, so a missing file
+      # costs seconds and is caught by the dry run rather than by the publish.
+      # The heading must name THIS version, which refuses the easy mistake of
+      # copying the previous release's file and forgetting to rewrite it.
+      - name: Refuse a release without written notes
+        run: |
+          V='${{ steps.v.outputs.version }}'
+          F="release-notes/$V.md"
+          [ -f "$F" ] || { echo "::error::$F does not exist. Write the release description there (see release-notes/ for earlier ones) and commit it before releasing."; exit 1; }
+          HEAD=$(grep -m1 -v '^[[:space:]]*$' "$F")
+          [ "$HEAD" = "## reflex v$V" ] || { echo "::error::$F must open with '## reflex v$V'; it opens with '$HEAD'."; exit 1; }
+          BODY=$(grep -v '^[[:space:]]*$' "$F" | tail -n +2 | wc -l)
+          [ "$BODY" -ge 3 ] || { echo "::error::$F has $BODY non-blank lines under its heading; that is not a description."; exit 1; }
+          echo "ok: $F, $BODY lines under '## reflex v$V'"
 
       # ── Build both halves ─────────────────────────────────────────────────
       # Package list mirrors fw.yml's arm-build; the two must stay in step so
@@ -503,7 +527,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           V=${{ steps.v.outputs.version }}
-          FLAGS="--generate-notes --target ${{ github.ref_name }}"
+          # --notes-file together with --generate-notes: the written notes come
+          # first and the generated changelog is appended beneath them.
+          FLAGS="--notes-file release-notes/$V.md --generate-notes --target ${{ github.ref_name }}"
           [ "${{ steps.v.outputs.prerelease }}" = "true" ] && FLAGS="$FLAGS --prerelease"
           gh release create "v$V" dist/* --title "reflex v$V" $FLAGS
           echo "published v$V from ${{ github.ref_name }}"
