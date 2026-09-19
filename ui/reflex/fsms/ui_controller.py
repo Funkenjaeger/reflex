@@ -13,6 +13,7 @@ from reflex.fsms.els_flight_recorder import FlightRecorder
 from reflex.fsms.els_phase_recorder import (
     PhaseCorrectionRecorder, PhaseLiveTracker, SpindleCountWatch)
 from reflex.fsms.els_mode_watch import ElsModeWatch
+from reflex.fsms.els_overshoot import StopOffsetCorrector
 from reflex.utils.devices import (takeup_failure_text,
                                   ELS_DIAG_SCHEMA_MODE_WATCH,
                                   ELS_DIAG_SCHEMA_MODE_WATCH_V2)
@@ -310,12 +311,32 @@ class ElsUiController(EventDispatcher):
             board,
             fsm_state=lambda: self._els_fsm.state,
             fsm_states=ElsFsm.STATES,
+            # The stopOffset this UI last WROTE -- the correction in effect as
+            # far as the host knows. A lambda for the same reason fsm_state is:
+            # the corrector is built below. The firmware's own record of what a
+            # trigger used is stopTriggerOffset, in the snapshot.
+            stop_offset=lambda: self._stop_offset.offset_in_effect,
         )
 
         # Built FIRST, before any FSM or poller exists, because `notify()` must
         # be safe to call from anywhere below -- including from construction, if
         # a future reconcile-on-connect wants to say something.
         self._notices = NoticeCenter()
+
+        # Stop-overshoot correction (protocolVersion 11). Opt-in, default off.
+        # Each tick it turns the live Z rate into a stopOffset and writes it
+        # through a rate limiter -- or writes 0 once when the correction is off
+        # or the stop is not armed. It never touches stopPosition. See
+        # fsms/els_overshoot.py for the table, the sign and the tick budget.
+        self._stop_offset = StopOffsetCorrector(
+            self._hal, board,
+            # `is True`, not bool(): the setting is a BooleanProperty, and a
+            # stand-in that is merely truthy must not switch a machine-motion
+            # correction on.
+            enabled=lambda: getattr(self._els, "els_overshoot_correction", False) is True,
+            margin=lambda: int(getattr(self._els, "els_overshoot_margin_counts", 1)),
+            notify=lambda message: self.notify(message, NOTICE_WARNING),
+        )
 
         # Rung-2 sampler (log-only): compares the domain FSM's state against
         # the firmware-published machine mode. Runs against every build now
@@ -423,6 +444,9 @@ class ElsUiController(EventDispatcher):
         # Raw spindle counter, change-only, no job required -- the belt-off
         # EMI experiment's instrument. See SpindleCountWatch.
         self._board.bind(update_tick=self._poll_spindle_watch)
+        # The overshoot correction's writer. Bound BEFORE the flight recorder
+        # so the offset the recorder files for this tick is the one in effect.
+        self._board.bind(update_tick=self._poll_stop_offset)
         # The flight recorder. Bound LAST of the recorders deliberately: it
         # samples what this tick's snapshot holds, and running after the pollers
         # that may write registers means the row it files is the state the rest
@@ -477,6 +501,10 @@ class ElsUiController(EventDispatcher):
             # including whether it carries a diagnostic probe, and which one --
             # says nothing about this one. Re-interrogate from scratch.
             self._diag_recorder.reset()
+            # Same reasoning for the overshoot correction: whatever stopOffset
+            # was last written went to a board that may since have rebooted (0)
+            # or kept an older value. Forget it; the next tick re-sends.
+            self._stop_offset.reset()
             if value:
                 # A (re)connection means the firmware may hold elsStop state
                 # from a previous session (or have rebooted and lost ours) —
@@ -851,6 +879,24 @@ class ElsUiController(EventDispatcher):
         Never raises -- see SpindleCountWatch.poll().
         """
         self._spindle_watch.poll()
+
+    def _poll_stop_offset(self, *args):
+        """Keep elsStop.stopOffset tracking the approach rate, or at 0.
+
+        Bound to update_tick, so it must never raise: an exception escaping a
+        Kivy dispatch takes the UI down on a machine whose only interface is
+        the UI. A failed tick costs one tick of a stale offset; the ISR clamps
+        whatever it holds, so the worst case is the previous correction.
+        """
+        try:
+            self._stop_offset.poll()
+        except Exception as e:
+            log.warning(f"stop-offset correction tick failed: {e}")
+
+    @property
+    def stop_offset_corrector(self):
+        """Read-only access for the setup screen and tests."""
+        return self._stop_offset
 
     def _poll_flight_recorder(self, *args):
         """Persist this tick's poll stream while the machine is doing something.

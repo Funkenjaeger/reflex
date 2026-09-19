@@ -367,6 +367,17 @@ add_executable(els_stop_trigger_snapshot_test
 target_link_libraries(els_stop_trigger_snapshot_test m pthread)
 add_test(NAME els_stop_trigger_snapshot_test COMMAND els_stop_trigger_snapshot_test)
 
+# The stop-overshoot correction (elsStop.stopOffset / stopTriggerOffset,
+# protocolVersion 11): the ISR fires the stop clamp(stopOffset, 0, MAX) counts
+# EARLY on the approach side, in both directions, measures the hysteresis re-arm
+# from the same effective threshold, and publishes the clamped value in the
+# trigger snapshot. Same rig as the snapshot test, stepping Z one count a tick.
+add_executable(els_stop_offset_test
+    ${CMAKE_SOURCE_DIR}/test/els_stop_offset_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_link_libraries(els_stop_offset_test m pthread)
+add_test(NAME els_stop_offset_test COMMAND els_stop_offset_test)
+
 add_executable(els_diag_scratch_mode_watch_v2_test
     ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)

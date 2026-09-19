@@ -341,7 +341,19 @@ void RampsStart(rampsHandler_t *rampsData) {
    * StepsToGo / SpindleSpeed), latched in the ISR at the stop trigger. The host
    * polls at 30 Hz and the coast it is trying to measure lasts ~12 ms, so the
    * trigger position was never obtainable from outside the ISR -- see the block
-   * comment on it in Ramps.h. */
+   * comment on it in Ramps.h.
+   *
+   * 10 (2026-09-07): the hot/cold remap. The block was reordered into a
+   * tick-read group and an on-demand group (registers/els_stop.yaml), and
+   * elsStop_t became GENERATED; every offset moved.
+   *
+   * 11 (2026-09-18): the stop-overshoot correction. stopOffset (host-written,
+   * cold) moves the trigger threshold early by a clamped number of counts, and
+   * stopTriggerOffset (hot, behind stopTriggerSeq) records the clamped value
+   * each trigger used. Both sit in slots that were alignment pads under 10, so
+   * nothing else moved -- bootCommand is still register 168. From here on the
+   * version is bound to the layout by registers/layout-fingerprints.json, which
+   * genregs --check enforces. */
   rampsData->shared.elsStop.protocolVersion = ELS_PROTOCOL_VERSION;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
@@ -357,6 +369,8 @@ void RampsStart(rampsHandler_t *rampsData) {
   rampsData->shared.elsStop.phaseOffsetSeq     = 0;
   rampsData->shared.elsStop.phaseOffsetPending = 0;
   rampsData->shared.elsStop.phaseOffsetSteps   = 0;
+  rampsData->shared.elsStop.stopOffset         = 0;   /* no correction until the host asks */
+  rampsData->shared.elsStop.stopTriggerOffset  = 0;
   rampsData->shared.elsStop.executionCyclesPeak = 0;
   rampsData->shared.elsStop.bootCommand = 0;
   rampsData->shared.elsStop.bootSeq     = 0;
@@ -1246,22 +1260,50 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
       // Check ELS stop trigger (only latch when not already active)
       if (!shared->elsStop.active && shared->elsStop.enable) {
         int32_t refPos = shared->scales[shared->elsStop.scaleIndex].position;
+        /* STOP-OVERSHOOT CORRECTION (protocolVersion 11, 2026-09-18). The
+         * carriage coasts past the trigger by an amount that grows with the
+         * approach rate, so the host writes elsStop.stopOffset -- counts to
+         * fire EARLY -- live from that rate, and stopPosition stays the exact
+         * target. Read ONCE per pass into a local: a single 16-bit load is
+         * atomic on the M4, and the clearance and the trigger below must be
+         * judged against the same number. Clamped to [0, ELS_STOP_OFFSET_MAX]:
+         * a negative value would fire LATE, past the operator's shoulder, so it
+         * is treated as 0 rather than trusted; anything above the ceiling is a
+         * garbage or runaway write and moves the stop at most 1 mm early.
+         *
+         * threshold = stopPosition - sign(stopDirection) * offset, i.e. the
+         * offset is always taken off the APPROACH side. Offset 0 gives exactly
+         * the pre-11 threshold, so with the host's correction off (the default)
+         * this block is behaviour-identical to protocolVersion 10. */
+        int32_t stopOffset = (int32_t)shared->elsStop.stopOffset;
+        if (stopOffset < 0) {
+          stopOffset = 0;
+        } else if (stopOffset > ELS_STOP_OFFSET_MAX) {
+          stopOffset = ELS_STOP_OFFSET_MAX;
+        }
+        int32_t threshold = (shared->elsStop.stopDirection >= 0)
+                            ? (shared->elsStop.stopPosition - stopOffset)
+                            : (shared->elsStop.stopPosition + stopOffset);
         /* Hysteresis gate (elsStop.hysteresis, Ramps.h:102). Distance the axis
          * currently sits CLEAR of the threshold, on the retract side. The flag
          * is sticky-true until the next latch, so a resume issued with the axis
          * still at/past the threshold cannot re-latch in the same ISR pass and
          * swallow the 1->0 edge the resume path (Ramps.c:455) depends on.
          * hysteresis <= 0 sets the flag unconditionally every pass, which is
-         * exactly the pre-gate behavior. */
+         * exactly the pre-gate behavior.
+         *
+         * Measured from the EFFECTIVE threshold, not stopPosition, so an offset
+         * shifts the whole stop -- trigger and re-arm distance together -- and
+         * the stop's behaviour is otherwise unchanged. */
         int32_t clearance = (shared->elsStop.stopDirection >= 0)
-                            ? (shared->elsStop.stopPosition - refPos)
-                            : (refPos - shared->elsStop.stopPosition);
+                            ? (threshold - refPos)
+                            : (refPos - threshold);
         if (shared->elsStop.hysteresis <= 0 || clearance >= shared->elsStop.hysteresis) {
           data->elsStopHysteresisCleared = 1;
         }
         bool shouldStop = ((shared->elsStop.stopDirection >= 0)
-                          ? (refPos >= shared->elsStop.stopPosition)
-                          : (refPos <= shared->elsStop.stopPosition))
+                          ? (refPos >= threshold)
+                          : (refPos <= threshold))
                           && data->elsStopHysteresisCleared;
         if (shouldStop) {
           shared->elsStop.active = 1;
@@ -1286,6 +1328,9 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
            * captures a per-JOB datum and must not be overwritten, this is a
            * per-PASS measurement and every pass is a sample. */
           shared->elsStop.stopTriggerSeq++;
+          /* The CLAMPED offset this decision was made with -- not what the
+           * host last wrote, which it may since have changed. */
+          shared->elsStop.stopTriggerOffset       = (int16_t)stopOffset;
           shared->elsStop.stopTriggerZ            = refPos;
           shared->elsStop.stopTriggerZSpeed       = shared->scales[shared->elsStop.scaleIndex].speed;
           shared->elsStop.stopTriggerStepsToGo    = shared->servo.stepsToGo;

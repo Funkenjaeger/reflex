@@ -386,6 +386,10 @@ CONTEXT_FIELDS = (
     # own context record by construction.
     "stopTriggerSeq", "stopTriggerZ", "stopTriggerZSpeed",
     "stopTriggerStepsToGo", "stopTriggerSpindleSpeed",
+    # protocolVersion 11: the CLAMPED stop-overshoot correction the firmware
+    # applied at that trigger. With stopPosition and the settled Z (sc<n>) it
+    # makes each stop self-describing: target, correction, where it landed.
+    "stopTriggerOffset",
     # the take-up: what was commanded, what happened, what Z saw
     "backlashSteps", "takeupSeq", "takeupResult", "lastTakeupZDelta",
     "takeupThreshCounts",
@@ -400,6 +404,12 @@ CONTEXT_FIELDS = (
     # different finding from one that does not
     "stepPulseMinCycles", "stepPulseRuntCount",
 )
+
+
+#: Context key for the stopOffset the UI last wrote (the correction in effect as
+#: far as the host knows). Named apart from the register on purpose: it is the
+#: HOST's record, and stopTriggerOffset is the firmware's.
+STOP_OFFSET_KEY = "stopOffsetWritten"
 
 
 def _utc_now_iso() -> str:
@@ -536,7 +546,8 @@ class FlightRecorder:
     takes the UI down with it, on a machine whose only interface is that UI.
     """
 
-    def __init__(self, board, fsm_state=None, fsm_states=None, directory=None,
+    def __init__(self, board, fsm_state=None, fsm_states=None, stop_offset=None,
+                 directory=None,
                  now=time.monotonic, free_bytes=None,
                  segment_max_bytes=SEGMENT_MAX_BYTES,
                  max_total_bytes=MAX_TOTAL_BYTES,
@@ -549,6 +560,12 @@ class FlightRecorder:
         # stale object here.
         self._fsm_state = fsm_state
         self._states = list(fsm_states) if fsm_states else []
+        # A CALLABLE returning the stopOffset the UI last wrote (None =
+        # unknown), filed in the context record as STOP_OFFSET_KEY. Host-side
+        # state, not a snapshot field: stopOffset is a COLD register, written
+        # and never polled, so it is deliberately not in CONTEXT_FIELDS (the
+        # tick-reader audit would -- rightly -- fail a cold field there).
+        self._stop_offset = stop_offset
         self._dir = Path(directory) if directory is not None else None
         self._now = now
         self._free_bytes = free_bytes or _default_free_bytes
@@ -840,7 +857,13 @@ class FlightRecorder:
             return -1
 
     def _context(self, snap) -> dict:
-        return {f: snap[f] for f in CONTEXT_FIELDS if f in snap}
+        ctx = {f: snap[f] for f in CONTEXT_FIELDS if f in snap}
+        if self._stop_offset is not None:
+            try:
+                ctx[STOP_OFFSET_KEY] = self._stop_offset()
+            except Exception:
+                ctx[STOP_OFFSET_KEY] = None   # unknown, said so
+        return ctx
 
     def _emit_context_if_changed(self, snap) -> None:
         ctx = self._context(snap)
@@ -952,6 +975,10 @@ class FlightRecorder:
             # reader that breaks silently on the next appended column.
             "fields": list(FAST_FIELDS),
             "context_fields": list(CONTEXT_FIELDS),
+            # Host-side context keys that are NOT registers, named so a reader
+            # does not mistake them for snapshot fields (see STOP_OFFSET_KEY).
+            "context_host_fields": ([STOP_OFFSET_KEY]
+                                    if self._stop_offset is not None else []),
             "fsm_states": list(self._states),
             "sample_every_n_ticks": self._every,
             "board_tick_hz": 30,

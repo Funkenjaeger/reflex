@@ -7,13 +7,13 @@ emitted into the format strings below, which is the whole point.
 
 import struct
 
-PROTOCOL_VERSION = 10
+PROTOCOL_VERSION = 11
 ELS_STOP_BASE = 104
 TOTAL_REGISTERS = 142
 
 HOT_BASE = 0
 HOT_COUNT = 56
-HOT_FORMAT = "<HHihHfifIiiHHffffHHH2xiiIIHHHHiH2xiiii"
+HOT_FORMAT = "<HHihHfifIiiHHffffHHH2xiiIIHHHHiHhiiii"
 HOT_FIELDS = [
     "enable",
     "scaleIndex",
@@ -45,6 +45,7 @@ HOT_FIELDS = [
     "phaseOffsetSeq",
     "phaseOffsetSteps",
     "stopTriggerSeq",
+    "stopTriggerOffset",
     "stopTriggerZ",
     "stopTriggerZSpeed",
     "stopTriggerStepsToGo",
@@ -81,6 +82,7 @@ HOT_LAYOUT = [
     ("phaseOffsetSeq", 1),
     ("phaseOffsetSteps", 1),
     ("stopTriggerSeq", 1),
+    ("stopTriggerOffset", 1),
     ("stopTriggerZ", 1),
     ("stopTriggerZSpeed", 1),
     ("stopTriggerStepsToGo", 1),
@@ -89,13 +91,14 @@ HOT_LAYOUT = [
 
 COLD_BASE = 56
 COLD_COUNT = 86
-COLD_FORMAT = "<HHHHH2xiHH3iiiIHHH2xii50hHH4H"
+COLD_FORMAT = "<HHHHHhiHH3iiiIHHH2xii50hHH4H"
 COLD_FIELDS = [
     "calCommand",
     "calSeq",
     "calResult",
     "latchCommand",
     "phaseOffsetCommand",
+    "stopOffset",
     "phaseOffsetPending",
     "bootCommand",
     "bootSeq",
@@ -119,6 +122,7 @@ COLD_LAYOUT = [
     ("calResult", 1),
     ("latchCommand", 1),
     ("phaseOffsetCommand", 1),
+    ("stopOffset", 1),
     ("phaseOffsetPending", 1),
     ("bootCommand", 1),
     ("bootSeq", 1),
@@ -168,6 +172,7 @@ OFFSETS = {
     "phaseOffsetSeq": 43,
     "phaseOffsetSteps": 44,
     "stopTriggerSeq": 46,
+    "stopTriggerOffset": 47,
     "stopTriggerZ": 48,
     "stopTriggerZSpeed": 50,
     "stopTriggerStepsToGo": 52,
@@ -177,6 +182,7 @@ OFFSETS = {
     "calResult": 58,
     "latchCommand": 59,
     "phaseOffsetCommand": 60,
+    "stopOffset": 61,
     "phaseOffsetPending": 62,
     "bootCommand": 64,
     "bootSeq": 65,
@@ -259,7 +265,7 @@ typedef struct {
   uint16_t phaseOffsetSeq;
   int32_t phaseOffsetSteps;
   uint16_t stopTriggerSeq;
-  uint16_t _pad2;
+  int16_t stopTriggerOffset;
   int32_t stopTriggerZ;
   int32_t stopTriggerZSpeed;
   int32_t stopTriggerStepsToGo;
@@ -269,7 +275,7 @@ typedef struct {
   uint16_t calResult;
   uint16_t latchCommand;
   uint16_t phaseOffsetCommand;
-  uint16_t _pad3;
+  int16_t stopOffset;
   int32_t phaseOffsetPending;
   uint16_t bootCommand;
   uint16_t bootSeq;
@@ -280,7 +286,7 @@ typedef struct {
   uint16_t diagSchema;
   uint16_t diagBucketTicks;
   uint16_t diagBucketCount;
-  uint16_t _pad4;
+  uint16_t _pad2;
   int32_t diagSettleTicks;
   int32_t diagNetCounts;
   int16_t diagTrace[50];

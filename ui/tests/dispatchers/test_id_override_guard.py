@@ -34,6 +34,7 @@ SAVING_DISPATCHER_SUBCLASSES = {
     "ElsAdvancedBar", "ElsBar", "AxisDispatcher", "CirclePatternDispatcher",
     "RectPatternDispatcher", "LinePatternDispatcher", "ElsDispatcher",
     "FormatsDispatcher", "ServoDispatcher", "InputDispatcher",
+    "DeviceDispatcher",
 }
 
 BASE_CLASS = "SavingDispatcher"

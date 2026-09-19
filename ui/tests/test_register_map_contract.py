@@ -1,31 +1,41 @@
 """Register-map layout contract test (Task 15 of the emulator system-test plan).
 
-Independent, emulator-free check that reflex-ui's hand-maintained register
-definitions (``reflex/utils/devices.py``) still agree, byte-for-byte, with the
-firmware's authoritative struct layout (reflex-fw ``Core/Inc/Ramps.h``).
+Independent, emulator-free check that reflex-ui's register definitions
+(``reflex/utils/devices.py``) agree, byte-for-byte, with the true C layout of
+the firmware's shared Modbus block, ``rampsSharedData_t``.
 
-Why this exists
----------------
-The Modbus register map is duplicated by hand on both sides of the RS-485 link:
-the firmware owns the C structs in ``Ramps.h``; reflex-ui mirrors them as the
-``definition`` strings in ``devices.py``. Nothing else checks the two still
-match. Drift here is silent and nasty -- reads land at the wrong offset and come
-back as plausible-looking garbage (exactly the class of the wrong-base-address
-gotcha the emulator spike hit). The emulator system suite catches gross drift
-only implicitly and slowly; this catches it precisely, instantly, and WITHOUT a
-firmware build, so it runs in the DEFAULT test suite (it is NOT marked
-``system``). It only skips when reflex-fw isn't checked out.
+Where the two sides come from now
+---------------------------------
+Every struct in that block except its four leading ISR counters is GENERATED
+by ``tools/genregs.py`` from one schema per struct in ``registers/*.yaml``:
+elsStop_t since 2026-09-07; servo_t, input_t and fastData_t since 2026-09-18.
+The generator writes the C structs into reflex-fw ``Core/Inc/Ramps_generated.h``
+and the ``DEFINITION`` strings reflex-ui parses into
+``reflex/utils/*_map.py``. ``rampsSharedData_t`` itself is still hand-written,
+in reflex-fw ``Core/Inc/Ramps.h`` and in ``devices.Global``.
 
-The subtlety this test handles
-------------------------------
-reflex-ui's parser (``BaseDevice.parse_addresses_from_definition``) packs fields
-sequentially with NO C-alignment awareness. The firmware's real on-the-wire
-layout is what the C compiler produces, *with* natural alignment and implicit
-trailing padding. reflex-ui bridges the gap by hand-placing explicit ``_pad``
-fields in its definitions. So a correct contract is NOT a field-name diff -- it
-is: does reflex-ui's packed layout (with its manual pads) reproduce the firmware
-struct's true C layout? We compute the true C offsets here as the oracle and
-compare reflex-ui's actual computed offsets against them.
+So a NAME diff between the sides can no longer fail for the generated structs:
+both come from one schema. What this test proves is the part that still can:
+
+* that the generated Python packing reproduces the C layout. reflex-ui's parser
+  (``BaseDevice.parse_addresses_from_definition``) packs fields sequentially
+  with NO C-alignment awareness, while the wire layout is what the C compiler
+  produces, *with* natural alignment and trailing padding. The generator
+  bridges that gap by emitting explicit ``_pad`` fields -- the tail pads of
+  servo_t and fastData_t included, which C leaves implicit. This test computes
+  the true C offsets independently, from the headers, and compares reflex-ui's
+  actual computed offsets against them;
+* that the hand-written parent agrees on both sides (member order, array
+  counts, total size);
+* that the generated structs are defined ONLY in the generated header, so a
+  hand-written copy reappearing in Ramps.h cannot quietly become a second
+  source of truth (``test_generated_structs_have_one_definition``).
+
+It runs WITHOUT a firmware build, in the DEFAULT suite (it is NOT marked
+``system``), and only skips when the firmware tree isn't checked out. The
+compiler's own vote on the same layout is the static_asserts in
+Ramps_generated.h; this is the independent second opinion that needs no
+cross-compiler.
 """
 
 import os
@@ -44,9 +54,10 @@ REFLEX_FW_DIR, _SKIP_REASON = require_or_skip_reason()
 # pytestmark below stops anything from actually reading them.
 RAMPS_H = (REFLEX_FW_DIR / "Core" / "Inc" / "Ramps.h") if REFLEX_FW_DIR else Path("/nonexistent")
 # 2026-09-07: elsStop_t moved OUT of Ramps.h and is now generated from
-# registers/els_stop.yaml into Ramps_generated.h. Both are parsed, so the
-# oracle still sees every struct in the shared block and this test keeps
-# doing the job it was written for.
+# registers/els_stop.yaml into Ramps_generated.h; servo_t, input_t and
+# fastData_t followed on 2026-09-18. Both headers are parsed -- the parent
+# rampsSharedData_t is still in Ramps.h -- so the oracle sees every struct
+# in the shared block and this test keeps doing the job it was written for.
 #
 # WHAT THIS TEST NOW PROVES, and it is worth being precise because the
 # generator changed the question. Both sides of the elsStop map now come
@@ -311,6 +322,30 @@ def test_layout_oracle_selfcheck(firmware_structs):
     assert _type_size(ROOT_STRUCT, firmware_structs) == KNOWN_ROOT_SIZE
 
 
+GENERATED_STRUCTS = ("servo_t", "input_t", "fastData_t", "elsStop_t")
+
+
+def test_generated_structs_have_one_definition():
+    """Each generated struct is defined in Ramps_generated.h and NOT in Ramps.h.
+
+    The oracle above parses both headers into one dict, so a hand-written copy
+    of a generated struct left (or put back) in Ramps.h would silently win or
+    lose by parse order rather than failing -- and the compiler would reject a
+    duplicate typedef only in the translation units that include both. Pin the
+    single source here, where it is cheap and says what is wrong.
+    """
+    macros = _load_macros()
+    generated = _parse_structs(RAMPS_GENERATED_H.read_text(), macros)
+    hand = _parse_structs(RAMPS_H.read_text(), macros)
+    for name in GENERATED_STRUCTS:
+        assert name in generated, f"{name} is not in {RAMPS_GENERATED_H.name}"
+        assert name not in hand, (
+            f"{name} is defined in {RAMPS_H.name} as well as the generated header. "
+            f"It is generated from registers/*.yaml: edit the schema, do not "
+            f"hand-write the struct.")
+    assert ROOT_STRUCT in hand, f"{ROOT_STRUCT} should still be hand-written in {RAMPS_H.name}"
+
+
 def test_layout_engine_models_padding():
     """Unit-test the alignment engine itself on a synthetic struct with known
     tricky padding -- proves it computes interior AND trailing padding correctly,
@@ -489,7 +524,10 @@ SEQ_SAFE_BY_LAYOUT = {
     # telling a host that a new capture arrived -- the payload has no other
     # freshness marker and a repeated pass can legitimately produce identical
     # values -- so the ordering here is what makes the whole block trustworthy.
-    "elsStop.stopTriggerSeq":       ["elsStop.stopTriggerZ",
+    # stopTriggerOffset joined it in protocolVersion 11 (2026-09-18): the
+    # clamped stop-overshoot correction each trigger used.
+    "elsStop.stopTriggerSeq":       ["elsStop.stopTriggerOffset",
+                                     "elsStop.stopTriggerZ",
                                      "elsStop.stopTriggerZSpeed",
                                      "elsStop.stopTriggerStepsToGo",
                                      "elsStop.stopTriggerSpindleSpeed"],

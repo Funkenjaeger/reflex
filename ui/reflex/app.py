@@ -3,7 +3,7 @@ import os
 from kivy.app import App
 from kivy.config import Config
 from kivy.core.audio import SoundLoader
-from kivy.properties import (ObjectProperty, ConfigParserProperty, NumericProperty,
+from kivy.properties import (ObjectProperty, NumericProperty,
                              ListProperty, StringProperty, BooleanProperty,
                              AliasProperty)
 from kivy.logger import Logger
@@ -16,11 +16,12 @@ from reflex.utils.log_levels import apply_log_levels
 # has anything to say. Overridable per-logger via REFLEX_LOG_* -- see the module.
 apply_log_levels()
 
-from reflex.components.appsettings import config
 import reflex.components.widgets.facelift_chrome  # noqa: F401  (installs global Popup/form chrome)
 from reflex.components.widgets.theme_provider import ThemeProvider
 from reflex.dispatchers.axis import AxisDispatcher
 from reflex.dispatchers.board import Board
+from reflex.dispatchers.device import (DEFAULT_MODE, DEFAULT_USE_CASE,
+                                       DeviceDispatcher)
 from reflex.dispatchers.els import ElsDispatcher
 from reflex.dispatchers.formats import FormatsDispatcher
 from reflex.dispatchers.input import InputDispatcher
@@ -56,7 +57,8 @@ USE_CASE_LABELS = {
     "lathe": "Lathe",
     "all_features": "All Features",
 }
-DEFAULT_USE_CASE = "rotary_table"
+# DEFAULT_USE_CASE is imported above from reflex.dispatchers.device, which owns
+# the persisted value; it is re-exported from here for existing importers.
 
 
 class MainApp(App):
@@ -82,13 +84,16 @@ class MainApp(App):
 
     els_uic: ElsUiController = ObjectProperty()
 
-    current_mode = ConfigParserProperty(
-        defaultvalue=1, section="device", key="current_mode", config=config, val_type=int
-    )
+    # Plain properties so kv can bind them. Persisted by `device`
+    # (Device-0.yaml, see dispatchers/device.py), which _load_device_settings
+    # seeds them from and keeps in step with every change. They used to be
+    # ConfigParserPropertys on ui/config.ini [device]; that ini is now only a
+    # one-time migration source for these two keys.
+    current_mode = NumericProperty(DEFAULT_MODE)
 
-    use_case = ConfigParserProperty(
-        defaultvalue=DEFAULT_USE_CASE, section="device", key="use_case", config=config, val_type=str
-    )
+    use_case = StringProperty(DEFAULT_USE_CASE)
+
+    device: DeviceDispatcher = ObjectProperty(None, allownone=True)
 
     def _get_patterns_available(self):
         """Does this use case expose the pattern screen at all?
@@ -143,6 +148,25 @@ class MainApp(App):
             mode_id = MODE_DRO
         self.current_mode = mode_id
 
+    def _load_device_settings(self):
+        """Create the Device-0 dispatcher and make the app's properties follow it.
+
+        Bound BEFORE seeding, and current_mode is seeded before use_case, so
+        that on_use_case validates the STORED mode against the STORED use case
+        and any correction it makes (an invalid mode falls back to DRO) is
+        persisted rather than lost.
+        """
+        self.device = DeviceDispatcher(id_override="0")
+        self.bind(
+            current_mode=lambda _i, v: setattr(self.device, "current_mode", v),
+            use_case=lambda _i, v: setattr(self.device, "use_case", v),
+        )
+        self.current_mode = self.device.current_mode
+        self.use_case = self.device.use_case
+        # A use case equal to the class default fires no on_use_case, so run
+        # the same validation explicitly.
+        self.set_mode(self.current_mode)
+
     def on_use_case(self, instance, value):
         # If the active mode is no longer valid for the new use case, fall back
         # to DRO (common to all use cases and the most benign).
@@ -154,7 +178,28 @@ class MainApp(App):
         In advanced ELS mode, enabling the feed with no armed ELS stop would run
         the carriage with no automatic stop (audit H2b/H6) — so ask for explicit
         confirmation first. In every other mode (basic power feed) and when a
-        stop is armed, toggle the feed directly. Disabling is never gated."""
+        stop is armed, toggle the feed directly. Disabling is never gated.
+
+        MISMATCHED PROTOCOL REFUSES TURNING THE FEED ON, in every mode. A
+        firmware/UI protocol mismatch means this UI's register map is not the
+        board's: every write past the point of divergence lands at the wrong
+        offset, and before 2026-09-17 only calibration and resync checked.
+        Board's check stays non-fatal (the DRO and the Update screen still
+        work, which is how the operator gets out of it); this is where it
+        becomes a refusal, because this is where a wrong write moves metal.
+        Open Loops 6aaca75b."""
+        if self.servo.servoMode == 0 and self.board.protocol_mismatch:
+            from reflex.components.popups.custom_popup import CustomPopup
+            log.warning(f"Sync Enable refused: {self.board.protocol_message}")
+            CustomPopup(
+                title="Firmware / UI mismatch",
+                message=(f"{self.board.protocol_message}\n\nThe feed will not "
+                         f"engage until the firmware and the UI match. "
+                         f"Setup > Update."),
+                button_text="OK",
+                popup_size_hint=[0.7, 0.6],
+            ).open()
+            return
         if self.current_mode != MODE_ELS or self.els_uic is None:
             self.servo.toggle_enable()
             return
@@ -188,6 +233,9 @@ class MainApp(App):
         Config.set('kivy', 'exit_on_escape', '0')
 
         self.formats = FormatsDispatcher(id_override="0")
+        # Before anything reads app.use_case, and before the startup snapshot
+        # below, so a first boot after the ini migration captures Device-0.
+        self._load_device_settings()
         # Reactive theme: seed from the persisted selection and keep the two in
         # sync so the formats-menu picker drives a live recolor. Coerce any
         # stale/invalid persisted value to the default and write it back, so the
@@ -256,6 +304,18 @@ class MainApp(App):
         self.axes = list(self.board.axes)
 
         self.els = ElsDispatcher(id_override="0")
+
+        # Every SavingDispatcher now exists and has read its file, so this is
+        # the first moment the config directory is a complete picture of the
+        # machine -- and the last moment before the app starts writing to it.
+        #
+        # The ledger hooks write_settings, so it only sees changes the APP
+        # made. This catches everything else: a value edited by hand over SSH,
+        # a file restored from a backup, a card swap. Writes only when the
+        # configuration differs from the newest snapshot, and never raises --
+        # a card that cannot write its snapshot must still boot into a lathe.
+        from reflex.utils import commissioning_bundle
+        commissioning_bundle.snapshot_if_changed("startup")
 
         self.els_uic = ElsUiController(els=self.els, board=self.board)
 

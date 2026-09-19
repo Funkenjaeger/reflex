@@ -2,12 +2,17 @@
 #: import MODE_ELS reflex.app.MODE_ELS
 #: import USE_CASE_MODES reflex.app.USE_CASE_MODES
 
+# Shared with backup_screen.kv (it imports this module first). Works for a
+# ToggleButton too: the style keys off `state`, which both classes carry.
 <SetupButton@Button>:
   font_name: app.theme.font_bold
   font_size: app.formats.font_size
   color: app.theme.accent_text if self.state == 'down' else app.theme.text
+  disabled_color: app.theme.text[:3] + [0.35]
   background_normal: ''
   background_down: ''
+  background_disabled_normal: ''
+  background_disabled_down: ''
   background_color: 0, 0, 0, 0
   on_press: app.beep()
   canvas.before:
@@ -31,7 +36,12 @@
     ScreenHeader:
       text: "Setup"
 
+    # Twelve buttons, three rows of four. The row height is computed for
+    # exactly three rows, so a thirteenth button does not add a row -- it draws
+    # outside the grid (that is how Import from USB ended up under the gist
+    # controls, 2026-09-17). New entries go on a sub-screen, as Backup did.
     GridLayout:
+      id: grid
       spacing: 20
       padding: 20
       cols: 4
@@ -73,3 +83,6 @@
         opacity: 1 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
         disabled: MODE_ELS not in USE_CASE_MODES.get(app.use_case, [])
         on_release: app.manager.goto("els_setup")
+      SetupButton:
+        text: "Backup"
+        on_release: app.manager.goto("backup")
