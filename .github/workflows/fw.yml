@@ -112,6 +112,21 @@ jobs:
         working-directory: fw
         run: python3 scripts/lib/flash-manifest-test.py
 
+      # The flasher's answer to a link that fails mid-transfer (Open Loops
+      # 6aae7131/6aae7135, after 2026-09-19 on the lathe: one chunk lost four
+      # times, exit 1, board left in the bootloader). The REAL flash() against
+      # a fake bootloader that drops frames, answers every other request, or
+      # dies, on a virtual clock: resync and resume, return to the old
+      # application and prove it, never a blind jump after APPLY. Then the
+      # same scenarios against mutated copies of the flasher, which must go
+      # red -- so neither behaviour can quietly stop being tested. Stdlib only.
+      - name: Flasher resync/resume and return-to-app
+        working-directory: fw
+        run: python3 scripts/lib/modbus-flash-recovery-test.py
+      - name: Flasher recovery tests seen-red
+        working-directory: fw
+        run: python3 scripts/lib/modbus-flash-recovery-seen-red.py
+
   arm-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15

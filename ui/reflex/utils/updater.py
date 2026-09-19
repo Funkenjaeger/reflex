@@ -941,11 +941,14 @@ class UpdateSession:
         # reports the new rev. The path is explicit because this runs as
         # root -- see manifest_path_for.
         manifest = self._manifest or manifest_path_for(self.checkout)
-        self._run([self.python, self._modbus_flash, prepared.image_path,
-                   "--port", self.port, "--manifest", manifest,
-                   "--record-variant", "release",
-                   "--record-tag", prepared.release.tag], timeout=600,
-                  what="flashing the controller")
+        try:
+            self._run([self.python, self._modbus_flash, prepared.image_path,
+                       "--port", self.port, "--manifest", manifest,
+                       "--record-variant", "release",
+                       "--record-tag", prepared.release.tag], timeout=600,
+                      what="flashing the controller")
+        except UpdateRefused as failed:
+            self._settle_failed_flash(before, failed)       # always raises
 
         after = self.read_identity()
         self.emit(f"Controller after: {after}.")
@@ -959,6 +962,44 @@ class UpdateSession:
                   f"{verdict.identity.app_protocol} matches the "
                   f"{verdict.target_tag} UI.")
         return verdict
+
+    def _settle_failed_flash(self, before: Identity, failed: UpdateRefused):
+        """The flasher exited non-zero: say what state the controller is in,
+        from a FRESH identity read. Always raises.
+
+        Since 2026-09-19 (Open Loops 6aae7131) modbus-flash.py does not leave
+        a board it found running an application parked in the bootloader when
+        a transfer fails before APPLY: it jumps back, proves the previous rev
+        is running, and exits 1 saying NOTHING CHANGED. That morning a
+        transfer glitch on the lathe had left the board in the bootloader,
+        which under this UI is a dead DRO on a machine with no terminal.
+
+        The script's word is not taken for it, here any more than in
+        _revert_firmware: the identity read decides. The previous rev at the
+        previous protocol, in the application, is "nothing changed" -- an
+        ordinary refusal. Anything else fired after the board was written to,
+        so it is a :class:`ProtocolMismatch` that names the state."""
+        try:
+            now = self.read_identity()
+        except UpdateRefused as unreadable:
+            raise ProtocolMismatch(
+                f"The firmware update FAILED, and the controller could not be "
+                f"read afterwards, so what it is running is UNKNOWN. The UI was "
+                f"not changed. Check it with fw/scripts/modbus-flash.py "
+                f"--identity before using the machine.\n{failed}\n{unreadable}") from failed
+        self.emit(f"Controller after the failed flash: {now}.")
+        if (now.stage == STAGE_APPLICATION and now.build_rev == before.build_rev
+                and now.app_protocol == before.app_protocol):
+            raise UpdateRefused(
+                f"The firmware transfer FAILED and nothing changed: the "
+                f"controller is confirmed running its previous firmware "
+                f"({before.build_rev}), and the UI was not changed.\n{failed}") from failed
+        raise ProtocolMismatch(
+            f"The firmware update FAILED, and the controller is NOT running its "
+            f"previous firmware ({before.build_rev}): it reports {now}. The UI "
+            f"was not changed. Recover the controller with "
+            f"fw/scripts/modbus-flash.py (--identity to look, --boot-app if it "
+            f"is in the bootloader) before using the machine.\n{failed}") from failed
 
     def _roll_back(self, prepared: Prepared, before: Identity,
                    after: Identity, refused: FirmwareProtocolMismatch):
