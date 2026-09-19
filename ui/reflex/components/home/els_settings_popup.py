@@ -31,9 +31,10 @@ class ElsSettingsPopup(Popup):
 
     # Stop-overshoot correction. The toggle binds straight to the dispatcher;
     # the margin goes through here so a negative entry is refused rather than
-    # stored (a negative margin would aim PAST the measured coast).
-    OVERSHOOT_WARNING = ("Fires the stop early by the measured coast; "
-                         "verify at a shoulder before relying on it.")
+    # stored (a negative margin would aim PAST the measured coast). Its caution
+    # (fires early; verify at a shoulder) lives in the setting's help topic,
+    # help/els_overshoot_correction.md, like every other setting's -- the
+    # one-line warning label that sat under the toggle was removed 2026-09-19.
     overshoot_margin_counts = NumericProperty(1)
 
     def __init__(self, **kv):

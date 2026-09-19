@@ -329,7 +329,10 @@ Every UI component follows this structure:
   - `release.yml` runs **only when dispatched by hand**, and only from `main`
     or `dev`. It refuses a pre-release version on `main` and a final version on
     `dev`, refuses a tag that already exists, and refuses to publish a firmware
-    image carrying diagnostic probe symbols.
+    image carrying diagnostic probe symbols. It also refuses a version with no
+    `release-notes/<version>.md`: every release page opens with a written
+    description (what changed, upgrade notes, what is experimental), and the
+    generated commit list goes beneath it.
 
 - **`[skip ci]` is still not for you.** It suppresses *every* workflow for that
   push, and since the test suites now run on every branch, the marker's only

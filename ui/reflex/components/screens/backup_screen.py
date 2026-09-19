@@ -360,8 +360,12 @@ class BackupScreen(Screen):
             if gist_id:
                 self._post_status(f"Synced to gist {gist_id}")
             else:
+                # A rejected sign-in has turned sync OFF; show that, and say
+                # why rather than promising a retry that cannot succeed.
+                self._dispatch_to_ui(self.refresh_gist_state)
                 self._post_status(
-                    "Gist sync failed -- will retry at the next change.")
+                    gist_sync.last_error
+                    or "Gist sync failed -- will retry at the next change.")
 
         self._run_async(work)
 
@@ -382,6 +386,11 @@ class BackupScreen(Screen):
         def work():
             try:
                 refs = gist_sync.list_machine_gists()
+            except gist_sync.SignInExpired as e:
+                gist_sync.sign_in_expired()
+                self._dispatch_to_ui(self.refresh_gist_state)
+                self._post_status(str(e))
+                return
             except gist_sync.GistSyncError as e:
                 self._post_status(str(e))
                 return
@@ -431,6 +440,11 @@ class BackupScreen(Screen):
         def work():
             try:
                 doc = gist_sync.fetch_bundle(gist_id)
+            except gist_sync.SignInExpired as e:
+                gist_sync.sign_in_expired()
+                self._dispatch_to_ui(self.refresh_gist_state)
+                self._post_status(str(e))
+                return
             except gist_sync.GistSyncError as e:
                 self._post_status(str(e))
                 return

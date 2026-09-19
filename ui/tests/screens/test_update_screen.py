@@ -93,6 +93,76 @@ class TestAllowExperimental:
         assert not any("dev" in tag for tag in screen.releases)
 
 
+class _Device:
+    """The one attribute of Device-0 this screen reads and writes."""
+    def __init__(self, offer_prereleases=False):
+        self.offer_prereleases = offer_prereleases
+
+
+class TestTogglePersistsAndNeedsNoRefresh:
+    """Bench 2026-09-19: the toggle reset to off on every visit, and turning
+    it on showed nothing until Refresh was tapped, because the fetch itself
+    honoured the toggle."""
+
+    def test_the_fetch_takes_prereleases_whatever_the_toggle_says(self, screen):
+        """MUTATION EVIDENCE: fetching with allow_prerelease=<toggle> fails."""
+        class FakeSession:
+            def list_release_catalogue(self):
+                return [_release("v1.3.0-rc.1", True), _release("v1.2.0")]
+
+            def list_releases(self, **kw):
+                raise AssertionError("the screen must fetch the whole catalogue")
+        screen.allow_experimental = False
+        with patch.object(screen, "_session", return_value=FakeSession()):
+            got = screen._fetch_releases()
+        assert [r.tag for r in got] == ["v1.3.0-rc.1", "v1.2.0"]
+
+    def test_turning_it_on_shows_prereleases_at_once(self, screen):
+        screen._set_releases()
+        with patch.object(screen, "schedule_refresh_releases") as refresh:
+            screen.allow_experimental = True
+        assert "v1.2.0-rc.1" in screen.releases
+        refresh.assert_not_called()
+
+    def test_the_toggle_is_restored_on_entry(self, screen):
+        dev = _Device(offer_prereleases=True)
+        with patch.object(UpdateScreen, "_device", return_value=dev), \
+             patch.object(screen, "schedule_refresh_releases"):
+            screen.on_pre_enter()
+        assert screen.allow_experimental is True
+        assert "v1.2.0-rc.1" in screen.releases
+
+    def test_the_toggle_is_saved_when_changed(self, screen):
+        dev = _Device(offer_prereleases=False)
+        with patch.object(UpdateScreen, "_device", return_value=dev):
+            screen.allow_experimental = True
+            assert dev.offer_prereleases is True
+            screen.allow_experimental = False
+            assert dev.offer_prereleases is False
+
+    def test_entry_does_not_refetch_a_catalogue_it_already_has(self, screen):
+        with patch.object(UpdateScreen, "_device", return_value=None), \
+             patch.object(screen, "schedule_refresh_releases") as refresh:
+            screen.on_pre_enter()
+        refresh.assert_not_called()
+
+
+class TestStatusInView:
+    def test_starting_an_update_scrolls_to_the_status_box(self, screen):
+        class Scroller:
+            scroll_y = 1
+        scroller = Scroller()
+        screen.ids["scroller"] = scroller
+        screen._scroll_to_status()
+        assert scroller.scroll_y == 0
+
+    def test_the_scroll_is_scheduled_by_the_install(self, screen):
+        with patch("reflex.components.screens.update_screen.Clock") as clock:
+            screen._do_install(_release("v1.1.0"))
+        callbacks = [c.args[0] for c in clock.schedule_once.call_args_list]
+        assert screen._scroll_to_status in callbacks
+
+
 class TestInstallRelease:
     def test_a_final_release_installs_without_a_dialog(self, screen):
         screen._set_releases()

@@ -50,6 +50,7 @@ cutting metal; it just has a stale gist.
 """
 import json
 import os
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -98,6 +99,10 @@ BUNDLE_FILENAME = "reflex-commissioning.yaml"
 #: what makes a restore able to tell two lathes apart in one account.
 DESCRIPTION_PREFIX = "reflex commissioning bundle: "
 
+#: Restore-list paging: GitHub's maximum page size, and a bound on pages.
+LIST_PAGE_SIZE = 100
+LIST_MAX_PAGES = 10
+
 #: Override for the whole state directory (token + gist id + the enabled
 #: marker). A sibling of ``REFLEX_CONFIG_DIR`` in spirit, kept separate on
 #: purpose: pointing this at the config dir is the exact mistake the module
@@ -129,6 +134,31 @@ class NotConfigured(GistSyncError):
 
     def __init__(self, message: str = NOT_CONFIGURED_MESSAGE):
         super().__init__(message)
+
+
+#: Shown when GitHub answers 401 to the stored token.
+SIGN_IN_EXPIRED_MESSAGE = (
+    "GitHub no longer accepts this machine's sign-in. Gist sync is now OFF: "
+    "tap it to sign in again.")
+
+
+class SignInExpired(GistSyncError):
+    """GitHub answered 401: the stored token is revoked or expired.
+
+    Its own class because no retry can fix it. Until 2026-09-19 a 401 was
+    reported as "will retry at the next change" with the toggle left ON, so
+    every automatic sync failed quietly forever (seen on the lathe that day:
+    the 09-17 token had stopped working, cause unknown)."""
+
+    def __init__(self, message: str = SIGN_IN_EXPIRED_MESSAGE):
+        super().__init__(message)
+
+
+def _raise_for(status: int, body) -> None:
+    if status == 401:
+        raise SignInExpired()
+    if status >= 400:
+        raise GistSyncError(_error_message(body if isinstance(body, dict) else {}, status))
 
 
 # ── the one network seam ────────────────────────────────────────────────────
@@ -170,12 +200,17 @@ def http_json(url: str, *, method: str = "GET", data: dict | None = None,
         return e.code, _parse(e.read())
 
 
-def _parse(raw: bytes) -> dict:
+def _parse(raw: bytes) -> dict | list:
+    """A JSON object OR array. ``GET /gists`` answers with an array; until
+    2026-09-19 this returned ``{}`` for anything that was not an object, so
+    every restore on real GitHub listed nothing ("No commissioning bundles
+    found in your gists") while the tests -- whose fake transport hands back
+    Python lists without parsing anything -- passed."""
     try:
         parsed = json.loads(raw.decode() or "{}")
     except (ValueError, UnicodeDecodeError):
         return {}
-    return parsed if isinstance(parsed, dict) else {}
+    return parsed if isinstance(parsed, (dict, list)) else {}
 
 
 def _transport(transport):
@@ -474,8 +509,7 @@ def push_bundle(doc: dict | None = None, *, transport=None) -> str:
         status, body = _transport(transport)(
             f"{GISTS_URL}/{gist_id}", method="PATCH", data=payload, token=token)
         if status != 404:
-            if status >= 400:
-                raise GistSyncError(_error_message(body, status))
+            _raise_for(status, body)
             return gist_id
         # The operator deleted it in the browser. Fall through and make a new
         # one rather than failing forever on a dead id.
@@ -484,8 +518,9 @@ def push_bundle(doc: dict | None = None, *, transport=None) -> str:
     payload["public"] = False
     status, body = _transport(transport)(
         GISTS_URL, method="POST", data=payload, token=token)
-    if status >= 400 or not body.get("id"):
-        raise GistSyncError(_error_message(body, status))
+    _raise_for(status, body)
+    if not isinstance(body, dict) or not body.get("id"):
+        raise GistSyncError(_error_message(body if isinstance(body, dict) else {}, status))
     _write_gist_id(body["id"])
     return body["id"]
 
@@ -499,11 +534,32 @@ def sync_now(doc: dict | None = None, *, transport=None) -> str | None:
     worth a cloud copy. The retry is the next commissioning change -- nothing
     is marked done, so the next call tries the same work with fresher input.
     """
+    global last_error
+    last_error = None
     try:
         return push_bundle(doc, transport=transport)
+    except SignInExpired as e:
+        sign_in_expired()
+        last_error = str(e)
+        return None
     except Exception as e:
+        last_error = "Gist sync failed -- will retry at the next change."
         log.error(f"gist sync failed (will retry at the next change): {e}")
         return None
+
+
+def sign_in_expired() -> None:
+    """GitHub rejected the stored token. No retry can fix that, so drop it and
+    turn sync OFF: the Backup screen then shows the truth, and one tap on the
+    toggle starts a fresh sign-in."""
+    forget_token()
+    set_enabled(False)
+    log.error("gist sync: GitHub rejected the token (401); token dropped, sync turned off")
+
+
+#: Operator-facing reason for the last :func:`sync_now` that returned None,
+#: or None after a success. Read by the Backup screen's status line.
+last_error: str | None = None
 
 
 def sync_if_enabled(doc: dict | None = None, *, transport=None) -> str | None:
@@ -537,10 +593,17 @@ def list_machine_gists(machine_id: str | None = None, *, transport=None) -> list
     token = load_token()
     if not token:
         raise GistSyncError("Not connected to GitHub yet.")
-    status, body = _transport(transport)(GISTS_URL, token=token)
-    if status >= 400:
-        raise GistSyncError(_error_message(body if isinstance(body, dict) else {}, status))
-    items = body if isinstance(body, list) else body.get("items", [])
+    # 100 per page (GitHub's default is 30) and follow the pages, bounded: a
+    # user with many gists must not have the bundle fall off page one.
+    items = []
+    for page in range(1, LIST_MAX_PAGES + 1):
+        status, body = _transport(transport)(
+            f"{GISTS_URL}?per_page={LIST_PAGE_SIZE}&page={page}", token=token)
+        _raise_for(status, body)
+        batch = body if isinstance(body, list) else body.get("items", [])
+        items.extend(batch)
+        if len(batch) < LIST_PAGE_SIZE:
+            break
     refs = []
     for item in items:
         description = (item or {}).get("description") or ""
@@ -568,8 +631,9 @@ def fetch_bundle(gist_id: str, *, transport=None) -> dict:
     if not token:
         raise GistSyncError("Not connected to GitHub yet.")
     status, body = _transport(transport)(f"{GISTS_URL}/{gist_id}", token=token)
-    if status >= 400:
-        raise GistSyncError(_error_message(body, status))
+    _raise_for(status, body)
+    if not isinstance(body, dict):
+        raise GistSyncError(f"Gist {gist_id}: GitHub returned an unexpected response.")
     files = body.get("files") or {}
     entry = files.get(BUNDLE_FILENAME)
     if entry is None and files:
@@ -586,24 +650,77 @@ def fetch_bundle(gist_id: str, *, transport=None) -> dict:
 
 # ── the ledger hook ─────────────────────────────────────────────────────────
 
+_sync_lock = threading.Lock()
+_sync_again = False
+
+
+def _start_worker(fn) -> None:
+    """Seam: tests replace this to run the worker inline."""
+    threading.Thread(target=fn, name="gist-sync", daemon=True).start()
+
+
 def _on_commissioning_change(count: int) -> None:
     """Registered with :func:`reflex.utils.commissioning_ledger.on_change`.
 
     Runs AFTER the ledger line and its snapshot are on disk, outside the
     ledger's write path, and swallows everything (``sync_if_enabled`` ->
     ``sync_now``). ``count`` is unused beyond "something moved".
+
+    OFF THE CALLING THREAD (2026-09-19). The ledger notifies from inside a
+    config save, which is the Kivy thread; a sync is an HTTPS round trip, so
+    running it inline froze the screen for as long as GitHub took -- or for
+    the whole timeout on a shop network with no route out. Changes that land
+    while a sync is running are coalesced into one more sync afterwards.
     """
-    sync_if_enabled()
+    global _sync_again
+    if not _sync_lock.acquire(blocking=False):
+        _sync_again = True
+        return
+    _start_worker(_sync_worker)
+
+
+def _sync_worker() -> None:
+    global _sync_again
+    try:
+        while True:
+            _sync_again = False
+            sync_if_enabled()
+            if not _sync_again:
+                break
+    finally:
+        _sync_lock.release()
+    if _sync_again:                 # arrived between the check and the release
+        _on_commissioning_change(0)
 
 
 def install_ledger_hook() -> None:
     """Make a recorded commissioning change trigger a sync. Idempotent.
 
-    Called from the Setup screen when the toggle goes on, so a machine that
-    never opted in never registers anything at all.
+    Called from the Setup screen when the toggle goes on, and at app start
+    by :func:`install_ledger_hook_if_enabled` -- so a machine that never opted
+    in never registers anything at all.
     """
     from reflex.utils import commissioning_ledger
     commissioning_ledger.on_change(_on_commissioning_change)
+
+
+def install_ledger_hook_if_enabled() -> bool:
+    """At app start: re-arm the hook when sync is on. Never raises.
+
+    THE HOOK LIVES IN MEMORY; THE TOGGLE LIVES ON DISK. Until 2026-09-19 only
+    the Backup screen's toggle installed it, so the first UI restart after
+    turning sync on silently stopped every automatic sync while the screen
+    still showed it ON. Measured on the lathe: sync enabled and a token
+    present, the ledger growing on 09-19, and the gist last written on
+    09-17 21:08 -- the moment the toggle was flipped.
+    """
+    try:
+        if is_configured() and is_enabled():
+            install_ledger_hook()
+            return True
+    except Exception as e:  # a lathe must boot whatever the gist state is
+        log.error(f"gist sync: could not re-arm the ledger hook at start ({e})")
+    return False
 
 
 def bundle_contains_token(text: str) -> bool:

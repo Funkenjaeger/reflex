@@ -316,6 +316,10 @@ class MainApp(App):
         # a card that cannot write its snapshot must still boot into a lathe.
         from reflex.utils import commissioning_bundle
         commissioning_bundle.snapshot_if_changed("startup")
+        # Gist sync's toggle is on disk but its ledger hook is in memory:
+        # re-arm it on every start, or a restart silently ends auto-sync.
+        from reflex.utils import gist_sync
+        gist_sync.install_ledger_hook_if_enabled()
 
         self.els_uic = ElsUiController(els=self.els, board=self.board)
 

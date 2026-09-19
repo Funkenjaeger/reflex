@@ -19,16 +19,15 @@ every screen reachable from the Setup menu gates -- the menu itself, its twelve
 sub-screens, and the screens those open (one input, one axis, the log viewer,
 the colour and font pickers).
 
-Only the platform boundary is stubbed: `is_pi` is forced on for System (off a
-Pi the whole list is hidden behind a notice) and a few screens get the state a
-lathe shows (a status line, a disabled button) so that state is measured too.
+Only a few screens are given the state a lathe shows (a status line, a
+disabled button, the free-space figure) so that state is measured too.
 Everything else -- the kv rules, the theme, the disabled states -- is
 production.
 
-ONE DELIBERATE EXCEPTION: a DISABLED row-help "?" icon (a row with no help
-topic) is measured and reported as INFO, not gated. Whether a no-help icon
-should recede, be hidden, or be dimmed legibly is a design decision still open
-(2026-09-19), not a legibility defect. An ENABLED help icon is a control and
+A DISABLED row-help "?" icon is no longer drawn at all: Evan chose, on
+2026-09-19, to hide the icon on rows that have no help topic rather than fade
+it (it was white at 30%, ~1.1:1 in the light theme). Nothing to measure, so
+nothing is excluded here any more. An ENABLED help icon is a control and
 gates like text.
 
 Run (WSL):
@@ -255,9 +254,9 @@ def contrast_pass(screen, tag, frame, seen):
         detail = (f"{r:.2f}:1  text rgba {fmt(resolved_color(w))} -> ink {ink} "
                   f"on bg {bg}{state}")
         line = (f"{tag}: {label_of(w)} contrast >= {MIN_RATIO:.0f}:1", r >= MIN_RATIO, detail)
-        # The one exemption (see the module docstring): a DISABLED help icon
-        # is reported, not gated -- how far a no-help icon should recede is
-        # a design call this check does not make. Enabled icons gate.
+        # A disabled help icon is not drawn at all since 2026-09-19, so this
+        # branch should stay empty; it is kept as a belt-and-braces guard in
+        # case one is ever shown again. Enabled icons gate like text.
         (INFO if is_icon(w) and w.disabled else RESULTS).append(line)
 
 
@@ -298,18 +297,9 @@ def scroll_frames(screen, tag):
 
 # -- per-screen state: what a lathe shows ------------------------------------
 def prepare_system(screen):
-    screen.is_pi = True
-    screen.root_device = "/dev/mmcblk0p2"
-    screen.disk_device = "/dev/mmcblk0"
-    screen.partition_number = "2"
-    screen.disk_size_str = "29.7 GB"
-    screen.partition_size_str = "29.2 GB"
-    screen.fs_total_str = "28.7 GB"
-    screen.fs_used_str = "6.1 GB"
-    screen.fs_free_str = "21.4 GB"
-    screen.can_resize = False       # the lathe's card is already expanded
-    screen.is_running = False
-    screen.status = "Partition already uses the whole disk"
+    # Since 2026-09-19 the screen is one read-only row; entering it re-reads
+    # free space, so pin the value AFTER goto (see run_theme).
+    screen.free_space_str = "54.01 GiB"
 
 
 def prepare_backup(screen):
@@ -403,7 +393,7 @@ def run_theme(theme_idx):
             settle(30)
             if name in PREPARE:
                 PREPARE[name](scr)
-                settle(30)
+                settle(10)
             scroll_frames(scr, f"{name}_{theme}")
     except Exception as e:  # never let the Kivy clock swallow it
         import traceback

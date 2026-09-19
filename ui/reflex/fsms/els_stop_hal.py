@@ -88,8 +88,9 @@ class TickReads:
         return bool(self._get('referenceLatched', 0))
 
     # Which scale the firmware compares against stopPosition -- and so whose
-    # fastData.scaleSpeed is the live Z rate the overshoot correction keys on
-    # (the same scales[scaleIndex].speed that stopTriggerZSpeed copies).
+    # position (fastData.scaleCurrent) the overshoot correction differentiates
+    # over a ~0.5 s window for its live Z rate. (Not its scaleSpeed register:
+    # that single-tick reading made the correction dither, 2026-09-19.)
     def scale_index(self) -> int:
         return int(self._get('scaleIndex', 0))
 

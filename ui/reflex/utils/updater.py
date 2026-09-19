@@ -160,9 +160,35 @@ FIRMWARE_ASSET_RE = re.compile(r"^reflex-app-.+\.bin$")
 
 SERVICE_NAME = "reflex-ui.service"
 
+# THE UI RESTARTS ITSELF THROUGH SUDO, because since the 2026-09-13 image it
+# runs as the unprivileged service user, not root. A bare `systemctl restart`
+# from that user goes to polkit, which asks for authentication (measured on
+# elspi 2026-09-19: pkcheck on org.freedesktop.systemd1.manage-units, "requires
+# authentication"), and a service has no one to ask -- so it was refused, and
+# the Popen that ran it never looked. The image grants exactly this command,
+# NOPASSWD (elspi deltas/01-converge.sh, /etc/sudoers.d/reflex-restart), and
+# sudoers matches arguments literally: keep the absolute path and argument
+# order in step with that rule. -n: fail at once rather than wait for a
+# password nobody can type.
+RESTART_ARGV = ("sudo", "-n", "/usr/bin/systemctl", "restart")
+# A refused restart (sudo -n with no rule, a missing binary) exits within
+# milliseconds; a granted one blocks until systemd has stopped this process.
+# Still running after this long is read as "granted, under way".
+RESTART_REFUSAL_WINDOW_S = 5.0
+
 
 class UpdateRefused(Exception):
     """The update did not happen, and the machine was not left half-updated."""
+
+
+class ServiceRestartFailed(Exception):
+    """Everything is installed, but the UI could not restart itself.
+
+    NOT an UpdateRefused, and deliberately not caught as a failed UI half:
+    both halves are in and match, so undoing them would throw away a good
+    update. The operator restarts the UI instead (Exit Application; the unit
+    is Restart=always).
+    """
 
 
 class ProtocolMismatch(UpdateRefused):
@@ -810,6 +836,22 @@ class UpdateSession:
         payload = self._fetch_json(GITHUB_RELEASES_URL)
         return select_releases(payload, allow_prerelease=allow_prerelease)
 
+    def list_release_catalogue(self) -> list[Release]:
+        """Pre-releases AND finals from one fetch, newest first, so the Update
+        screen's pre-release toggle only filters and never has to re-fetch.
+
+        Both selections, not just the pre-release one: each is capped at
+        RELEASE_LIST_LIMIT, and a run of release candidates must not push the
+        newest finals out of the list the toggle-off view is filtered from.
+        Finals missing from the first list are older than all of it, so
+        appending them keeps newest-first."""
+        payload = self._fetch_json(GITHUB_RELEASES_URL)
+        out = select_releases(payload, allow_prerelease=True)
+        seen = {r.tag for r in out}
+        out += [r for r in select_releases(payload, allow_prerelease=False)
+                if r.tag not in seen]
+        return out
+
     # -- 1. preflight ------------------------------------------------------
 
     def preflight(self, release: Release) -> Prepared:
@@ -941,11 +983,14 @@ class UpdateSession:
         # reports the new rev. The path is explicit because this runs as
         # root -- see manifest_path_for.
         manifest = self._manifest or manifest_path_for(self.checkout)
-        self._run([self.python, self._modbus_flash, prepared.image_path,
-                   "--port", self.port, "--manifest", manifest,
-                   "--record-variant", "release",
-                   "--record-tag", prepared.release.tag], timeout=600,
-                  what="flashing the controller")
+        try:
+            self._run([self.python, self._modbus_flash, prepared.image_path,
+                       "--port", self.port, "--manifest", manifest,
+                       "--record-variant", "release",
+                       "--record-tag", prepared.release.tag], timeout=600,
+                      what="flashing the controller")
+        except UpdateRefused as failed:
+            self._settle_failed_flash(before, failed)       # always raises
 
         after = self.read_identity()
         self.emit(f"Controller after: {after}.")
@@ -959,6 +1004,44 @@ class UpdateSession:
                   f"{verdict.identity.app_protocol} matches the "
                   f"{verdict.target_tag} UI.")
         return verdict
+
+    def _settle_failed_flash(self, before: Identity, failed: UpdateRefused):
+        """The flasher exited non-zero: say what state the controller is in,
+        from a FRESH identity read. Always raises.
+
+        Since 2026-09-19 (Open Loops 6aae7131) modbus-flash.py does not leave
+        a board it found running an application parked in the bootloader when
+        a transfer fails before APPLY: it jumps back, proves the previous rev
+        is running, and exits 1 saying NOTHING CHANGED. That morning a
+        transfer glitch on the lathe had left the board in the bootloader,
+        which under this UI is a dead DRO on a machine with no terminal.
+
+        The script's word is not taken for it, here any more than in
+        _revert_firmware: the identity read decides. The previous rev at the
+        previous protocol, in the application, is "nothing changed" -- an
+        ordinary refusal. Anything else fired after the board was written to,
+        so it is a :class:`ProtocolMismatch` that names the state."""
+        try:
+            now = self.read_identity()
+        except UpdateRefused as unreadable:
+            raise ProtocolMismatch(
+                f"The firmware update FAILED, and the controller could not be "
+                f"read afterwards, so what it is running is UNKNOWN. The UI was "
+                f"not changed. Check it with fw/scripts/modbus-flash.py "
+                f"--identity before using the machine.\n{failed}\n{unreadable}") from failed
+        self.emit(f"Controller after the failed flash: {now}.")
+        if (now.stage == STAGE_APPLICATION and now.build_rev == before.build_rev
+                and now.app_protocol == before.app_protocol):
+            raise UpdateRefused(
+                f"The firmware transfer FAILED and nothing changed: the "
+                f"controller is confirmed running its previous firmware "
+                f"({before.build_rev}), and the UI was not changed.\n{failed}") from failed
+        raise ProtocolMismatch(
+            f"The firmware update FAILED, and the controller is NOT running its "
+            f"previous firmware ({before.build_rev}): it reports {now}. The UI "
+            f"was not changed. Recover the controller with "
+            f"fw/scripts/modbus-flash.py (--identity to look, --boot-app if it "
+            f"is in the bootloader) before using the machine.\n{failed}") from failed
 
     def _roll_back(self, prepared: Prepared, before: Identity,
                    after: Identity, refused: FirmwareProtocolMismatch):
@@ -1095,12 +1178,16 @@ class UpdateSession:
 
     # -- 3. the UI half, reachable only with a verdict ---------------------
 
-    def install_ui_half(self, prepared: Prepared, verdict: FirmwareVerdict):
+    def install_ui_half(self, prepared: Prepared, verdict: FirmwareVerdict) -> bool:
         """Check out the tag, sync the venv, restart the service.
 
         Takes the verdict as an argument rather than consulting a flag, and
         re-asserts it here: the gate is a precondition of this method, not a
         step somebody can reorder around.
+
+        Returns whether the restart was set going. False means the update is
+        complete but the running process is still the OLD UI, which the
+        operator has been told how to replace.
         """
         if not isinstance(verdict, FirmwareVerdict):
             raise UpdateRefused("install_ui_half requires a verified firmware "
@@ -1124,7 +1211,17 @@ class UpdateSession:
 
         self.emit(f"Restarting {self.service}. The UI will come back on "
                   f"{prepared.release.tag}.")
-        self.restart_service()
+        try:
+            self.restart_service()
+        except ServiceRestartFailed as e:
+            self.emit(
+                f"The UI could not restart itself: {e}\n"
+                f"The update IS installed -- controller firmware and UI are both "
+                f"{prepared.release.tag} -- but this screen is still the old UI. "
+                f"Tap Exit Application: the UI comes back on "
+                f"{prepared.release.tag} by itself.")
+            return False
+        return True
 
     def _restore_previous_checkout(self, prepared: Prepared):
         """The ONLY other place that runs git checkout / uv sync, and it can
@@ -1147,22 +1244,49 @@ class UpdateSession:
         return True, sync_rc, sync_out
 
     def restart_service(self):
+        """Set the restart going, or raise :class:`ServiceRestartFailed`."""
         self._restart()
 
     def _systemctl_restart(self):
         """Detached on purpose: systemd kills this process as part of the
-        restart, so waiting on the command would mean waiting to be killed.
+        restart, so waiting for the command to FINISH would mean waiting to
+        be killed. The unit is KillMode=process, so the detached sudo is not
+        killed with it and sees the restart through.
 
-        NOT routed through ``self._runner`` for the same reason -- and
-        separately injectable so that a test of the install sequence cannot
-        restart the developer's machine by getting one argument wrong."""
-        subprocess.Popen(["systemctl", "restart", self.service],
-                         start_new_session=True)
+        What it does wait for is a quick REFUSAL. Until 2026-09-19 this was
+        fire-and-forget, and after the UI stopped running as root every
+        restart was refused by polkit with nobody looking: the screen said
+        "Restarting." and stayed on the old UI. See RESTART_ARGV.
+
+        NOT routed through ``self._runner`` -- and separately injectable so
+        that a test of the install sequence cannot restart the developer's
+        machine by getting one argument wrong."""
+        argv = [*RESTART_ARGV, self.service]
+        try:
+            proc = subprocess.Popen(argv, start_new_session=True,
+                                    stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT)
+        except OSError as e:
+            raise ServiceRestartFailed(f"`{' '.join(argv)}` could not run: {e}") from e
+        try:
+            rc = proc.wait(timeout=RESTART_REFUSAL_WINDOW_S)
+        except subprocess.TimeoutExpired:
+            return                                  # granted, under way
+        if rc != 0:
+            out = (proc.stdout.read() or b"").decode(errors="replace").strip()
+            raise ServiceRestartFailed(
+                f"`{' '.join(argv)}` exited {rc}"
+                + (f": {out[-300:]}" if out else ""))
 
     # -- the whole thing ---------------------------------------------------
 
     def run(self, release: Release, *, pause_link=None, resume_link=None):
         """Preflight, flash, gate, install. Raises :class:`UpdateRefused`.
+
+        Returns True when the UI restart is under way, False when the update
+        is installed but the UI could not restart itself (the operator has
+        been told to tap Exit Application; see :class:`ServiceRestartFailed`).
 
         ``pause_link``/``resume_link`` hand the serial port over and take it
         back; the port stays with the flasher from before the first identity
@@ -1192,7 +1316,7 @@ class UpdateSession:
                 resume_link()
             raise
         try:
-            self.install_ui_half(prepared, verdict)
+            return self.install_ui_half(prepared, verdict)
         except Exception as failed:
             # The port stays with the flasher through the undo: the revert
             # needs it, and the old UI must not poll a board mid-revert.

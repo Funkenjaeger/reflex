@@ -46,6 +46,8 @@ def fake_gist(monkeypatch):
     fake = MagicMock(name="gist_sync")
     fake.GistSyncError = real_gist_sync.GistSyncError
     fake.NotConfigured = real_gist_sync.NotConfigured
+    fake.SignInExpired = real_gist_sync.SignInExpired
+    fake.last_error = None
     fake.NOT_CONFIGURED_MESSAGE = real_gist_sync.NOT_CONFIGURED_MESSAGE
     fake.REVOKE_URL = real_gist_sync.REVOKE_URL
     fake.is_configured.return_value = True
@@ -237,6 +239,28 @@ def test_a_failed_sync_says_it_will_retry(sync_screen, fake_gist):
     sync_screen.sync_now()
 
     assert "retry at the next change" in sync_screen.status_text
+
+
+def test_a_rejected_sign_in_says_so_and_shows_sync_off(sync_screen, fake_gist):
+    """Lathe, 2026-09-19: a 401 was shown as "will retry" with the toggle ON."""
+    fake_gist.sync_now.return_value = None
+    fake_gist.last_error = real_gist_sync.SIGN_IN_EXPIRED_MESSAGE
+    fake_gist.is_enabled.return_value = False       # sync_now turned it off
+
+    sync_screen.sync_now()
+
+    assert "no longer accepts" in sync_screen.status_text
+    assert "retry" not in sync_screen.status_text
+    assert sync_screen.gist_enabled is False
+
+
+def test_a_rejected_sign_in_during_restore_turns_sync_off(sync_screen, fake_gist):
+    fake_gist.list_machine_gists.side_effect = real_gist_sync.SignInExpired()
+
+    sync_screen.restore_from_gist()
+
+    fake_gist.sign_in_expired.assert_called_once()
+    assert "no longer accepts" in sync_screen.status_text
 
 
 # ── restore: the SAME confirm dialog and apply() path as USB ────────────────

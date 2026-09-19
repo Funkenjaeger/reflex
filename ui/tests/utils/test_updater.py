@@ -336,8 +336,16 @@ class FakeRunner:
                  target_protocol=TARGET_PROTOCOL, image_rev=IMAGE_REV,
                  board_rev_after=IMAGE_REV, image_valid=True, dirty="",
                  fail=None, board_after_revert=None,
-                 head_rev=PREVIOUS_REV, head_branch="integration"):
+                 head_rev=PREVIOUS_REV, head_branch="integration",
+                 board_after_failed_flash=None):
         self.calls = []
+        # What `--identity` reports once the image flash has FAILED (a `fail`
+        # marker matched it): None = what the board ran before, i.e. the
+        # flasher got back to the old application (2026-09-19, Open Loops
+        # 6aae7131); a string = that identity line verbatim; "unreadable" =
+        # the identity read itself fails.
+        self.board_after_failed_flash = board_after_failed_flash
+        self.flash_failed = False
         # What `git rev-parse HEAD` / `git symbolic-ref` report for the
         # checkout before the update (preflight records them for the undo).
         # head_branch=None models a detached checkout.
@@ -364,8 +372,15 @@ class FakeRunner:
 
         for marker in self.fail:
             if marker in joined:
+                if ("modbus-flash.py" in joined and "--identity" not in argv
+                        and "--revert" not in argv):
+                    self.flash_failed = True
                 return 1, f"boom: {marker}"
 
+        if "--identity" in argv and self.flash_failed and self.board_after_failed_flash:
+            if self.board_after_failed_flash == "unreadable":
+                return 1, "no identity window at 2048: no reply within 0.3s to FC3"
+            return 0, self.board_after_failed_flash
         if "--identity" in argv:
             protocol = (self.board_protocol_after if self.flashed
                         else self.board_protocol_before)
@@ -419,6 +434,7 @@ RELEASE = Release(tag="v1.2.0", prerelease=False,
 
 def _session(runner, tmp_path, **kw):
     restarts = []
+    kw.setdefault("restart", lambda: restarts.append(1))
     kw.setdefault("manifest", tmp_path / "home" / "firmware" / "flashed.json")
     kw.setdefault("checkout", tmp_path / "checkout")
     if "elspi_release_path" not in kw:
@@ -439,7 +455,6 @@ def _session(runner, tmp_path, **kw):
         download=lambda url, dest: (dest.write_bytes(b"x"), dest)[1],
         fetch_json=lambda url: PAYLOAD,
         uv_finder=lambda: "/usr/bin/uv",
-        restart=lambda: restarts.append(1),
         python="/usr/bin/python3",
         **kw,
     )
@@ -729,12 +744,85 @@ def test_refuses_a_machine_that_is_already_mismatched(tmp_path):
     assert r.ran("modbus-flash.py", "reflex-app-1.2.0.bin") == []
 
 
+# Fails the IMAGE FLASH and nothing else: "--record-variant" is only on that
+# command line. Until 2026-09-19 the failed-flash test used the image's file
+# name, which the preflight's `reflex_image.py info <image>` also carries --
+# so it was refused at preflight and never reached a flash at all.
+FLASH_ONLY = "--record-variant"
+
+
 def test_a_failed_flash_does_not_install_the_ui_half(tmp_path):
-    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
-                   fail={"reflex-app-1.2.0.bin"})
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={FLASH_ONLY})
     s = _session(r, tmp_path)
     with pytest.raises(UpdateRefused):
         s.run(RELEASE)
+    assert r.ran("modbus-flash.py", "reflex-app-1.2.0.bin"), "the flash was never reached"
+    assert r.touched_the_ui_half == []
+
+
+# ---------------------------------------------------------------------------
+# a FAILED flash is settled by a fresh identity read (Open Loops 6aae7131).
+# 2026-09-19 on the lathe: a transfer glitch made modbus-flash.py exit 1 with
+# the board left in the bootloader. The flasher now jumps back to the old
+# application and proves it; the updater re-reads the board rather than take
+# the script's word, and says "nothing changed" only when the board does.
+# ---------------------------------------------------------------------------
+
+def test_a_failed_flash_back_on_the_old_firmware_says_nothing_changed(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY})
+    s = _session(r, tmp_path)
+    with pytest.raises(UpdateRefused) as e:
+        s.run(RELEASE)
+    assert not isinstance(e.value, ProtocolMismatch), (
+        "the controller is confirmed on its previous firmware: an ordinary "
+        "refusal, not a mismatch")
+    assert "nothing changed" in str(e.value)
+    assert "0000001" in str(e.value)
+    assert f"boom: {FLASH_ONLY}" in str(e.value), "the flasher's own words are kept"
+    flash_at = r.calls.index(r.ran("modbus-flash.py", "reflex-app-1.2.0.bin")[0])
+    assert any("--identity" in c for c in r.calls[flash_at + 1:]), (
+        "decided by a fresh identity read after the failed flash, not by the exit status")
+    assert r.touched_the_ui_half == []
+    assert r.ran("--revert") == [], "nothing was applied, so nothing is reverted"
+
+
+def test_a_failed_flash_that_left_the_bootloader_is_a_mismatch_naming_it(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY},
+                   board_after_failed_flash=("idMagic=0x454c stage=bootloader "
+                                             "windowVersion=1 rev=0b1c0de appProtocol=0"))
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    msg = str(e.value)
+    assert "nothing changed" not in msg
+    assert "NOT running its previous firmware" in msg and "bootloader" in msg
+    assert "--boot-app" in msg
+    assert r.touched_the_ui_half == []
+
+
+def test_a_failed_flash_on_a_foreign_rev_is_not_nothing_changed(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY},
+                   board_after_failed_flash=("idMagic=0x454c stage=application "
+                                             f"windowVersion=1 rev={IMAGE_REV} "
+                                             f"appProtocol={TARGET_PROTOCOL}"))
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert "nothing changed" not in str(e.value)
+    assert IMAGE_REV in str(e.value)
+
+
+def test_a_failed_flash_then_an_unreadable_board_says_unknown(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY},
+                   board_after_failed_flash="unreadable")
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert "UNKNOWN" in str(e.value) and "nothing changed" not in str(e.value)
     assert r.touched_the_ui_half == []
 
 
@@ -1081,3 +1169,106 @@ def test_the_link_is_resumed_only_after_the_undo(tmp_path):
         s.run(RELEASE, pause_link=lambda: order.append("pause"),
               resume_link=lambda: order.append("resume"))
     assert order == ["pause", "revert", "resume"]
+
+
+# --------------------------------------------------------------------------
+# The restart at the end of an update (2026-09-19)
+# --------------------------------------------------------------------------
+# Since the 2026-09-13 image the UI runs as the service user, and a bare
+# `systemctl restart` from it is refused by polkit. The old fire-and-forget
+# Popen never saw that: the screen said "Restarting." and stayed on the old UI.
+
+class _FakeProc:
+    def __init__(self, rc=None, out=b""):
+        self._rc, self.stdout = rc, __import__("io").BytesIO(out)
+
+    def wait(self, timeout=None):
+        if self._rc is None:
+            raise updater.subprocess.TimeoutExpired("sudo", timeout)
+        return self._rc
+
+
+def _real_restart_session(tmp_path, monkeypatch, proc):
+    seen = []
+
+    def fake_popen(argv, **kw):
+        seen.append((list(argv), kw))
+        if isinstance(proc, Exception):
+            raise proc
+        return proc
+    monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
+    s = UpdateSession(checkout=tmp_path, port="/dev/null", current_protocol=1,
+                      workdir=tmp_path / "w")
+    return s, seen
+
+
+def test_the_restart_is_exactly_the_command_sudoers_grants(tmp_path, monkeypatch):
+    """sudoers matches arguments literally: the image's rule is
+    `NOPASSWD: /usr/bin/systemctl restart reflex-ui.service`. Any other spelling
+    (bare `systemctl`, a --no-block, another order) falls back to a password
+    prompt nobody can answer. -n makes that refusal immediate."""
+    s, seen = _real_restart_session(tmp_path, monkeypatch, _FakeProc(rc=None))
+    s.restart_service()
+    [(argv, kw)] = seen
+    assert argv == ["sudo", "-n", "/usr/bin/systemctl", "restart", "reflex-ui.service"]
+    assert kw.get("start_new_session") is True
+    assert kw.get("stdin") is updater.subprocess.DEVNULL
+
+
+def test_a_refused_restart_is_raised_not_swallowed(tmp_path, monkeypatch):
+    """MUTATION EVIDENCE. The pre-2026-09-19 fire-and-forget restart returns
+    here as if all were well."""
+    s, _ = _real_restart_session(
+        tmp_path, monkeypatch, _FakeProc(rc=1, out=b"sudo: a password is required\n"))
+    with pytest.raises(updater.ServiceRestartFailed) as e:
+        s.restart_service()
+    assert "exited 1" in str(e.value) and "password is required" in str(e.value)
+
+
+def test_a_restart_still_running_is_read_as_under_way(tmp_path, monkeypatch):
+    s, _ = _real_restart_session(tmp_path, monkeypatch, _FakeProc(rc=None))
+    s.restart_service()                     # no raise: systemd is stopping us
+
+
+def test_a_missing_sudo_is_a_failed_restart(tmp_path, monkeypatch):
+    s, _ = _real_restart_session(tmp_path, monkeypatch, FileNotFoundError("sudo"))
+    with pytest.raises(updater.ServiceRestartFailed):
+        s.restart_service()
+
+
+def test_a_failed_restart_keeps_the_update_and_says_exit_application(tmp_path):
+    """Both halves are installed and match; a refused restart must NOT be
+    handled as a failed UI half (which would put both back). run() reports it
+    so the screen can say what to do."""
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    lines = []
+
+    def refuse():
+        raise updater.ServiceRestartFailed("`sudo -n ...` exited 1")
+    s = _session(r, tmp_path, restart=refuse, emit=lines.append)
+    assert s.run(RELEASE) is False
+    assert r.flashed and not r.reverted, "the new firmware stays"
+    assert _restored_checkout(r) == [], "the checkout stays on the release"
+    said = "\n".join(lines)
+    assert "Exit Application" in said and RELEASE.tag in said
+
+
+def test_a_granted_restart_is_reported_as_restarting(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    s = _session(r, tmp_path)
+    assert s.run(RELEASE) is True
+    assert s.restarts == [1]
+
+
+def test_the_catalogue_keeps_the_newest_finals_behind_a_run_of_candidates(tmp_path):
+    """The Update screen fetches once and filters locally. Twelve release
+    candidates fill the capped pre-release selection; the finals must still
+    be there for the toggle-off view."""
+    payload = ([_payload_item(f"v2.0.0-rc.{i}", prerelease=True) for i in range(12, 0, -1)]
+               + [_payload_item("v1.1.0"), _payload_item("v1.0.1")])
+    s = _session(FakeRunner(board_protocol_after=TARGET_PROTOCOL), tmp_path)
+    s._fetch_json = lambda url: payload
+    tags = [r.tag for r in s.list_release_catalogue()]
+    assert tags[0] == "v2.0.0-rc.12", "newest first"
+    assert tags[-2:] == ["v1.1.0", "v1.0.1"]
+    assert len(tags) == len(set(tags))
