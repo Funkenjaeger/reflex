@@ -1,6 +1,16 @@
+#:import Window kivy.core.window.Window
 # ── Popup chrome ───────────────────────────────────────────────────────────
 # Restyle every stock Kivy Popup into the facelift look: dark-steel frame,
 # cyan Chakra-Petch title, and a crisp cyan separator under it.
+#
+# THE DIMMING BEHIND A POPUP IS DRAWN HERE, and Kivy's own is switched off
+# (overlay_color transparent). Its rule paints that overlay in canvas.before
+# too -- and kivy/uix/modalview.kv is loaded when the first Popup is BUILT,
+# i.e. after this file, so its instruction landed LAST and dimmed the popup
+# as well as the screen behind it. Measured 2026-09-19 in the light theme:
+# the feed picker's body rendered at 30% of `background` (217 -> 66) and its
+# accent_text title read 1.14:1 -- against 5.9:1 on an undimmed face. Ours is
+# the first instruction in this rule, so the frame and face below cover it.
 <Popup>:
     title_color: app.theme.accent_text
     title_font: app.theme.font_bold
@@ -9,7 +19,13 @@
     separator_height: dp(2)
     background: ''
     background_color: 0, 0, 0, 0
+    overlay_color: 0, 0, 0, 0
     canvas.before:
+        Color:
+            rgba: 0, 0, 0, 0.7
+        Rectangle:
+            pos: 0, 0
+            size: Window.size
         Color:
             rgba: app.theme.border
         RoundedRectangle:
