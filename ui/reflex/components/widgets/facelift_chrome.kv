@@ -24,6 +24,16 @@
             radius: [dp(8)]
 
 # ── Shared settings-row controls ───────────────────────────────────────────
+# DISABLED COLOURS ARE THEMED HERE TOO, NOT JUST `color`. Kivy draws a disabled
+# Label/Button in `disabled_color` and a disabled TextInput in
+# `disabled_foreground_color`, and their stock values -- white at 30% and BLACK
+# AT 50% -- know nothing about the theme. Black-at-50% on the dark `recess`
+# fill measured 1.02:1, which is why every read-only value on Setup > System
+# was invisible in the dark theme (reported at the lathe 2026-09-19; the stock
+# fallbacks had been live since these controls were introduced in 02def60).
+# Any colour property added to these rules needs its disabled twin as well;
+# tests/test_form_disabled_colors.py holds that, and
+# previews/preview_system_screen.py measures the pixels.
 # Subtle info/help button (the "i" icon at the left of each settings row).
 <FormHelpButton@ButtonBehavior+FloatLayout>:
     # Circle-question help affordance (Font Awesome "circle-question", \uf059).
@@ -48,6 +58,7 @@
 # Row caption: left-aligned, Chakra Petch, light blue-grey.
 <FormLabel@Label>:
     color: app.theme.text
+    disabled_color: app.theme.text_disabled
     font_name: app.theme.font_bold
     font_size: app.formats.font_size
     halign: 'left'
@@ -64,6 +75,7 @@
     font_name: app.theme.font_bold
     font_size: app.formats.font_size
     color: app.theme.accent_text
+    disabled_color: app.theme.text_disabled
     canvas.before:
         Color:
             rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
@@ -85,6 +97,7 @@
     font_name: app.theme.font_bold
     font_size: app.formats.font_size
     color: app.theme.accent_text if self.state == 'down' else app.theme.text_dim
+    disabled_color: app.theme.text_disabled
     canvas.before:
         Color:
             rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
@@ -102,8 +115,12 @@
 <FormTextInput@TextInput>:
     background_normal: ''
     background_active: ''
+    # Without this a disabled field swaps to Kivy's stock textinput_disabled
+    # image (tinted by background_color), a different-looking well.
+    background_disabled_normal: ''
     background_color: app.theme.recess
     foreground_color: app.theme.text
+    disabled_foreground_color: app.theme.text_disabled
     cursor_color: app.theme.accent
     font_name: app.theme.font_bold
     padding: [dp(12), (self.height - self.line_height) / 2 if self.height > self.line_height else dp(6)]
