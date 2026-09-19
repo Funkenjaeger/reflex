@@ -238,3 +238,51 @@ The table lives in code for this release (`ui/reflex/fsms/els_overshoot.py`) and
 current configuration — Z scale 5 µm/count, ServoBar maxSpeed 10000 / acceleration 20000; change
 either and it must be re-measured. The per-machine calibration wizard above remains separate, later
 work, and nothing here has yet been verified at the lathe.
+
+## 2026-09-19: first bench result, the dithering, and the fix
+
+**Bench (elspi, flight session `20260919T112827Z`).** Air passes at .040 in/rev, ~342 rpm, Stop Z
+−6889, approach in −Z. The true Z rate from rpm × feed is ~1158 counts/s (342 × 0.040 × 5080 / 60);
+the firmware's trigger snapshot read 1180–1200. Correction **off** (three passes): every stop
+settled at −6896, **7 counts past** the target, all three. Correction **on** (three passes, margin
+1): settled −6887, −6887, −6888 — **2, 2 and 1 counts short**. The sign and the sizing work.
+
+**The dithering.** The recorder's `stopOffsetWritten` shows the UI wrote stopOffset 15–21 times per
+corrected pass, walking 9 → 10 → 11 → 10 → 9 about every 270 ms through the whole steady part of
+4–6.5 s, 22–37 mm passes. The live input, the single-tick `fastData.scaleSpeed`, wandered
+~1040–1140 counts/s at a steady feed, and every wobble crossed a count boundary of the table; the
+offset in effect at the trigger (`stopTriggerOffset` 10, 9, 9) was simply the last write. Every one
+of those writes was an extra Modbus exchange, the thing the limiter exists to ration. A second,
+quieter defect sat under it: the table's x-axis was the trigger **snapshot** rate, which reads high
+against truth (1200 here vs ~1158; median +1.8%, up to +7% against the position stream over the
+09-12..14 passes), while the live reading sat at or below truth — so the UI sized from a lower rate
+than the table was built on, up to ~1 count of under-correction.
+
+**The fix (Evan, 2026-09-19).**
+
+- *One rate method on both sides.* The table is re-keyed on the **stream** rate — Z position delta
+  over time, as the 2026-09-18 analysis already computed it for the same same-speed sets — with the
+  overshoot column unchanged: (0,0) (280,1) (583,3) (1185,9) (1600,12) (1679,17) (2430,29) (2469,32)
+  (3529,43). The corrector now computes its live rate the same way, from successive
+  `fastData.scaleCurrent` positions of the stop's reference scale over a ~0.5 s window (no rate at
+  all until the samples span 0.25 s; the window restarts across a > 0.3 s gap, on a scale change, and
+  at Cut, so the rapid retract made while held at the shoulder is never averaged into the next
+  approach). On the bench passes the position-derived rate's standard deviation is ~110 counts/s
+  over a single tick and ~12 over the 0.5 s window. Hold-above-range is kept; the top point is now 3529.
+- *Asymmetric hold.* The offset target is the largest offset wanted in the last 1 s: it **rises at
+  once** (bigger offset = lands shorter = the safe side) and **falls only** after a full second of
+  lower wanted values, and then only to the largest of them, never to a dip. Held-while-active, the
+  zero on off/disarm (which also forgets the held value) and the ≥ 1 count / ≥ 250 ms limiter are
+  unchanged and remain the outer bound. Time held at the shoulder does not count as time low, so a
+  pass starts at its predecessor's offset.
+- *Replay.* `ui/tests/fsms/test_els_overshoot_replay.py` replays the three corrected passes (Z
+  position, `active` and host time only, 7.7 KB) through the corrector: at most 3 writes in the
+  steady part, the offset in effect at the trigger ≥ the table's offset for 1158 counts/s (10), and
+  never falling in the last second before the trigger. Against the previous corrector it fails
+  (18 steady-part writes on the first pass; a fall 11 → 8 in its last second); with the fix the
+  passes make 5, 0 and 0 writes from Cut to the stop, with 10 in effect at every trigger.
+- *The on-screen warning is gone.* The one-line label under the toggle (quoted in the section
+  above) was clipped and had no precedent in the menu; its caution lives in the setting's help
+  topic, *Stop Coast Correction*, like every other setting's.
+
+Not yet re-run at the lathe with the fix.
