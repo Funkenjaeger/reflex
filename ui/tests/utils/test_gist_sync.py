@@ -534,6 +534,72 @@ def test_list_machine_gists_matches_the_description_pattern_newest_first(token):
     assert refs[0].machine_id == "5a2f"
 
 
+class _Resp:
+    def __init__(self, raw, status=200):
+        self._raw, self.status = raw, status
+
+    def read(self):
+        return self._raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_the_restore_list_survives_the_real_http_layer(token, monkeypatch):
+    """MUTATION EVIDENCE. GitHub answers GET /gists with a JSON ARRAY. The
+    FakeHttp tests hand back Python lists and never parse anything, so they
+    passed while _parse turned every real answer into {} and the lathe said
+    "No commissioning bundles found in your gists" (2026-09-19)."""
+    import json as _json
+    seen = []
+
+    def fake_urlopen(request, timeout=None):
+        seen.append(request.full_url)
+        return _Resp(_json.dumps(GIST_LIST).encode())
+    monkeypatch.setattr(gist_sync.urllib.request, "urlopen", fake_urlopen)
+
+    refs = gist_sync.list_machine_gists()           # the default transport
+
+    assert [r.id for r in refs] == ["g-new", "g-other", "g-old"]
+    assert "per_page=100" in seen[0]
+
+
+def test_the_restore_list_follows_pages(token):
+    filler = [{"id": f"x{i}", "description": "unrelated", "updated_at": ""} for i in range(100)]
+    page2 = [{"id": "g-late", "description": "reflex commissioning bundle: 77aa",
+              "updated_at": "2026-09-19T00:00:00Z"}]
+    http = FakeHttp((200, filler), (200, page2))
+
+    refs = gist_sync.list_machine_gists(transport=http)
+
+    assert [r.id for r in refs] == ["g-late"]
+    assert len(http.calls) == 2 and "page=2" in http.calls[1]["url"]
+
+
+def test_a_rejected_token_turns_sync_off_instead_of_retrying(token, monkeypatch):
+    """Lathe, 2026-09-19: the 09-17 token drew HTTP 401 on every sync, logged
+    as "will retry at the next change" with the toggle left ON."""
+    monkeypatch.setattr(gist_sync, "GIST_CLIENT_ID", "Ov23-test")
+    gist_sync.set_enabled(True)
+    gist_sync._write_gist_id("gist-1")
+    http = FakeHttp((401, {"message": "Bad credentials"}))
+
+    assert gist_sync.sync_now(DOC, transport=http) is None
+
+    assert gist_sync.last_error == gist_sync.SIGN_IN_EXPIRED_MESSAGE
+    assert gist_sync.load_token() is None, "the dead token is dropped"
+    assert gist_sync.is_enabled() is False, "and the toggle tells the truth"
+
+
+def test_a_rejected_token_on_the_restore_list_is_named(token):
+    http = FakeHttp((401, {"message": "Bad credentials"}))
+    with pytest.raises(gist_sync.SignInExpired):
+        gist_sync.list_machine_gists(transport=http)
+
+
 def test_list_machine_gists_can_filter_to_one_machine(token):
     http = FakeHttp((200, GIST_LIST))
 
