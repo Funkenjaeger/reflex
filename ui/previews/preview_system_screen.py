@@ -10,10 +10,10 @@ whole list, and for every visible label, button and text field measures the
 contrast of the most contrasting pixel in the text's own box against that
 box's dominant (background) colour. Anything under MIN_RATIO fails.
 
-Only the platform boundary is stubbed: `is_pi` is forced on (off a Pi the whole
-list is hidden behind a "only available on Raspberry Pi" notice) and the
-storage strings are set to what a lathe shows. Everything else -- the kv
-rules, the theme, the disabled states -- is production.
+Only the free-space figure is pinned (to what a lathe shows). Everything
+else -- the kv rules, the theme, the disabled states -- is production. Since
+2026-09-19 the screen is one read-only row: the upstream resize and reboot
+buttons and the device readout were removed.
 
 Icon-font glyphs (the row help "?") are measured and printed as INFO but do
 not gate: they are chrome, and whether a disabled help icon should recede is a
@@ -262,16 +262,9 @@ def scroll_frames(screen, tag, gating):
 
 
 def prepare_system(screen):
-    screen.is_pi = True
-    screen.root_device = "/dev/mmcblk0p2"
-    screen.disk_device = "/dev/mmcblk0"
-    screen.partition_number = "2"
-    screen.disk_size_str = "29.7 GB"
-    screen.partition_size_str = "29.2 GB"
-    screen.fs_total_str = "28.7 GB"
-    screen.fs_used_str = "6.1 GB"
-    screen.fs_free_str = "21.4 GB"
-    screen.status = "Rebooting..."
+    # Since 2026-09-19 the screen is one read-only row; entering it re-reads
+    # free space, so pin the value AFTER goto (see run_theme).
+    screen.free_space_str = "54.01 GiB"
 
 
 def run_theme(theme_idx):
@@ -281,9 +274,10 @@ def run_theme(theme_idx):
         settle()
         check(f"{theme}: theme applied", app.theme.name == theme, app.theme.name)
         system = app.manager.get_screen("system")
-        prepare_system(system)
         app.manager.goto("system")
         settle(30)
+        prepare_system(system)
+        settle(10)
         scroll_frames(system, f"system_{theme}", gating=True)
         if SWEEP:
             for name in SWEEP_SCREENS:
