@@ -123,6 +123,39 @@
             rounded_rectangle: (self.x + dp(4) + 0.5, self.y + dp(5) + 0.5, self.width - dp(8) - 1, self.height - dp(10) - 1, dp(5))
             width: 1.0
 
+# Themed action button: the Setup menu grid, Backup's actions, Update's
+# Install/Exit, the Logs and Inputs/Axes lists. Lived in setup_screen.kv until
+# 2026-09-19; moved here, where it is loaded once for the whole app, so any
+# screen (or Python code, via Factory.SetupButton) can use it without importing
+# setup_screen first.
+# Disabled text is `text_disabled`, NOT the enabled colour at 35% alpha: alpha
+# dimming pulls the ink toward the fill and measured 2.07:1 dark / 1.98:1 light
+# on Backup's disabled gist buttons (2026-09-19). text_disabled is tuned for
+# >= 3:1 on `surface` in every theme (tests/components/test_theme_contrast.py).
+<SetupButton@Button>:
+    font_name: app.theme.font_bold
+    font_size: app.formats.font_size
+    color: app.theme.accent_text if self.state == 'down' else app.theme.text
+    disabled_color: app.theme.text_disabled
+    background_normal: ''
+    background_down: ''
+    background_disabled_normal: ''
+    background_disabled_down: ''
+    background_color: 0, 0, 0, 0
+    on_press: app.beep()
+    canvas.before:
+        Color:
+            rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(8)]
+        Color:
+            rgba: app.theme.accent if self.state == 'down' else app.theme.border
+        Line:
+            rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(8))
+            width: 1.0
+
 # Themed single-line text entry for string settings.
 <FormTextInput@TextInput>:
     background_normal: ''

@@ -56,7 +56,7 @@ from kivy.properties import BooleanProperty, StringProperty
 from kivy.uix.screenmanager import Screen
 
 from reflex.components.popups.custom_popup import CustomPopup
-from reflex.components.screens import setup_screen  # noqa: F401 -- defines <SetupButton>, used by backup_screen.kv
+from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>, used by backup_screen.kv
 from reflex.components.widgets import qr_code
 from reflex.utils import commissioning_bundle, gist_sync, usb
 from reflex.utils.kv_loader import load_kv
