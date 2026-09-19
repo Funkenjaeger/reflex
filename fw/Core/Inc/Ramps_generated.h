@@ -185,10 +185,10 @@ typedef struct {
    */
   uint32_t servoDesired;
 
-  /* reg 4 READ-ONLY (firmware-owned): mirror of servo.stepsToGo, updated by
-   * ramp algorithm
+  /* reg 4 READ-ONLY (firmware-owned): mirror of servo.stepsToGo (signed:
+   * negative on reverse moves), updated by ramp algorithm
    */
-  uint32_t stepsToGo;
+  int32_t stepsToGo;
 
   /* reg 6 READ-ONLY (firmware-owned): output step rate (steps/100ms), updated
    * by servoEnableTask

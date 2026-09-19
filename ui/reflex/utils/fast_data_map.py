@@ -12,7 +12,7 @@ TOTAL_REGISTERS = 30
 
 ALL_BASE = 0
 ALL_COUNT = 30
-ALL_FORMAT = "<IIIf4i4iIIH2x"
+ALL_FORMAT = "<IIif4i4iIIH2x"
 ALL_FIELDS = [
     "servoCurrent",
     "servoDesired",
@@ -79,7 +79,7 @@ DEFINITION = """
 typedef struct {
   uint32_t servoCurrent;
   uint32_t servoDesired;
-  uint32_t stepsToGo;
+  int32_t stepsToGo;
   float servoSpeed;
   int32_t scaleCurrent[4];
   int32_t scaleSpeed[4];

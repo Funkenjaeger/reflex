@@ -55,7 +55,7 @@ The whole struct. Firmware-published mirrors of the live servo and scale state, 
 |----:|----:|------|-------|--------|-------|
 | 0 | 74 | `uint32` | `servoCurrent` | ro_firmware | READ-ONLY (firmware-owned): mirror of servo.currentSteps, updated by updateSpeedTask |
 | 2 | 76 | `uint32` | `servoDesired` | ro_firmware | READ-ONLY (firmware-owned): mirror of servo.desiredSteps, updated by updateSpeedTask |
-| 4 | 78 | `uint32` | `stepsToGo` | ro_firmware | READ-ONLY (firmware-owned): mirror of servo.stepsToGo, updated by ramp algorithm |
+| 4 | 78 | `int32` | `stepsToGo` | ro_firmware | READ-ONLY (firmware-owned): mirror of servo.stepsToGo (signed: negative on reverse moves), updated by ramp algorithm |
 | 6 | 80 | `float` | `servoSpeed` | ro_firmware | READ-ONLY (firmware-owned): output step rate (steps/100ms), updated by servoEnableTask |
 | 8 | 82 | `int32[4]` | `scaleCurrent` | ro_firmware | READ-ONLY (firmware-owned): mirror of scales[i].position, updated by ISR |
 | 16 | 90 | `int32[4]` | `scaleSpeed` | ro_firmware | READ-ONLY (firmware-owned): mirror of scales[i].speed, updated by updateSpeedTask |
