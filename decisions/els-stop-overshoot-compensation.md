@@ -4,7 +4,10 @@
 abandoned). **PROPOSED** for the user-facing calibration design in
 [Making it usable by someone other than Evan](#making-it-usable-by-someone-other-than-evan) — none of
 that is implemented, and the shipped default is and remains zero correction.
-**Date:** 2026-09-03.
+**2026-09-18:** the MECHANISM is decided and implemented for reflex rc.4 (protocolVersion 11) --
+see [2026-09-18: the mechanism, as built](#2026-09-18-the-mechanism-as-built). It ships OFF; the
+per-machine calibration wizard is still proposed, not built.
+**Date:** 2026-09-03; amended 2026-09-18.
 **Supersedes:** nothing. This is the first decision record on the subject.
 
 ---
@@ -153,8 +156,11 @@ user's confidence while the *table* is what gets applied.
 - **Gated behind an advanced menu, with a warning.**
 - **Clamp the maximum correction** to a sane absolute value, so a bad calibration cannot fire the
   stop wildly early.
-- **Apply a fraction — proposed default ~90% — so residual error is undershoot.** Material left at a
-  shoulder is recoverable; material removed is scrap.
+- ~~**Apply a fraction — proposed default ~90% — so residual error is undershoot.**~~ **SUPERSEDED
+  2026-09-18 — the sign was backwards.** The goal stands (material left at a shoulder is
+  recoverable; material removed is scrap), but the correction fires the stop EARLY, so the carriage
+  settles at `target − offset + overshoot`: applying 90% of the coast lands it **10% of the coast
+  PAST** the target. Landing short needs `offset > overshoot`. See the 2026-09-18 section.
 - **Bind the calibration to the config it was measured under.** A correction taken at different
   steps/mm or a different scale ratio is silently wrong. Store the relevant config identity and
   invalidate with a re-run prompt when it changes. This is the footgun most likely to catch a second
@@ -174,10 +180,61 @@ than hiding behind a single converted number.
 
 ## What this record does not decide
 
-- Whether the correction is applied per-pass at pass start (host-side, using the measured spindle
-  rate) or live at the trigger (firmware-side). Phase 1 assumes the former; a machine whose spindle
-  speed drifts materially within a pass would need the latter.
+- ~~Whether the correction is applied per-pass at pass start (host-side, using the measured spindle
+  rate) or live at the trigger (firmware-side).~~ **Decided 2026-09-18:** neither exactly -- the
+  host computes it LIVE from the measured Z rate and writes it through a rate limiter; the firmware
+  applies whatever value is in the register at the trigger. See below.
 - The speed count, repeat count, and spread threshold for the wizard. These need the widened dataset
   first — only two speed groups exist today (n=27 and n=4).
 - Whether turning-to-a-shoulder, rather than threading, is the real motivating case. The phase
   analysis above suggests it is, and that would raise the feature's priority.
+
+---
+
+## 2026-09-18: the mechanism, as built
+
+Decided by Evan and implemented for reflex rc.4 (branch `feat/stop-offset`, protocolVersion 11).
+
+**A separate `stopOffset` register, not a rewritten `stopPosition`.** `elsStop.stopOffset` (int16,
+host-written) is a count of encoder counts to fire the stop EARLY. The ISR moves its threshold to
+`stopPosition − sign(stopDirection) × clamp(stopOffset, 0, ELS_STOP_OFFSET_MAX)` and measures the
+hysteresis re-arm clearance from the same effective threshold, so an offset of 0 is exactly the
+protocol-10 stop. `stopPosition` stays the exact, overshoot-ignorant target the operator set. The
+reason it is a second register: `stopPosition` is 32 bits, and `Modbus.c` `process_FC16` stores a
+multi-register write one 16-bit half at a time, so an ISR that re-reads `stopPosition` every pass
+could see a torn target between the two halves. A single 16-bit register is written and read
+atomically. Negative values are treated as 0 (never late); `ELS_STOP_OFFSET_MAX` is 200 counts
+(1 mm on elspi, ~5× the largest measured coast), so a bad write can move the stop at most 1 mm
+early. The trigger snapshot gains `stopTriggerOffset`, the clamped value each trigger used, behind
+`stopTriggerSeq`. Both registers went into former alignment pads, so nothing else moved
+(`bootCommand` is still register 168).
+
+**UI-live, through a write limiter.** The UI recomputes the offset every board tick from the live Z
+rate (`fastData.scaleSpeed` of the stop's reference scale — the same register `stopTriggerZSpeed`
+copies, so the table's x-axis and the live input are one quantity). Every register assignment is an
+immediate Modbus exchange, and the tick is held at two exchanges (a third per tick is what halved it
+to ~16 Hz before 2026-09-07), so a new value is written only when it has moved by ≥ 1 count AND
+≥ 250 ms have passed since the last write: at most one extra exchange every ~8 ticks, none at a
+steady rate. Turning the correction off, or disarming, writes 0 once. While the stop is latched
+(`active`) the offset is held — the ISR cannot fire then, and the carriage retracts at rapid speed in
+that state.
+
+**Sizing: the envelope + 1 count.** The table is the per-rate MAXIMUM over same-speed sets from the
+protocol-10 sessions of 09-12/13/14 (re-derived 2026-09-18): (0,0) (300,1) (596,3) (1187,9) (1640,12)
+(1692,17) (2500,29) (2507,32) (3567,43), Z rate in counts/s, overshoot in counts at 5 µm/count.
+`offset = ceil(interpolated envelope) + 1`. Between points it is linear; above 3567 counts/s it
+**holds** 43 (+1) and posts one notice per pass, rather than extrapolating a coast curve past the
+fastest pass anyone measured.
+
+**The sign.** The carriage settles at `target − offset + overshoot`. It lands short only if
+`offset > overshoot`, so the prediction is never scaled below 100% — the earlier "~90% applied"
+proposal lands 10% of the coast past the target and is superseded. A unit test pins
+`offset(rate) > predicted(rate)` at every table point and across a dense sweep; it was seen to fail
+against both a 90% mutation and a 90%-plus-margin mutation.
+
+**Default off, and bound to this machine.** Opt-in on the ELS settings screen under "Advanced", with
+the warning *fires the stop early by the measured coast; verify at a shoulder before relying on it*.
+The table lives in code for this release (`ui/reflex/fsms/els_overshoot.py`) and is bound to elspi's
+current configuration — Z scale 5 µm/count, ServoBar maxSpeed 10000 / acceleration 20000; change
+either and it must be re-measured. The per-machine calibration wizard above remains separate, later
+work, and nothing here has yet been verified at the lathe.
