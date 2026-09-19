@@ -89,6 +89,7 @@ def _snap(enable=0, active=0, takeupPending=0, takeupSeq=0, **over):
         "stepPulseMinCycles": 900, "stepPulseRuntCount": 0,
         "stopTriggerSeq": 0, "stopTriggerZ": 0, "stopTriggerZSpeed": 0,
         "stopTriggerStepsToGo": 0, "stopTriggerSpindleSpeed": 0,
+        "stopTriggerOffset": 0,   # protocolVersion 11: in the hot snapshot
     }
     snap.update(over)
     return snap
@@ -540,6 +541,48 @@ def test_each_stop_trigger_lands_its_own_context_record(tmp_path):
     assert trig[0]["stopTriggerZ"] == -40210 and trig[0]["stopTriggerZSpeed"] == 2512
     assert trig[0]["stopTriggerStepsToGo"] == -7, "signed, as the generated map declares"
     assert trig[1]["stopTriggerZ"] == -38100
+
+
+def test_a_stop_records_its_target_offset_and_trigger(tmp_path):
+    """protocolVersion 11: a recorded stop must show the target (stopPosition),
+    the correction -- both the firmware's clamped stopTriggerOffset and the
+    stopOffset this UI last wrote -- and, per sample, the settled Z. Seen red
+    2026-09-18 by dropping "stopTriggerOffset" from CONTEXT_FIELDS: the
+    trigger's context record then lacks it (KeyError: 'stopTriggerOffset')."""
+    clock, board = _Clock(), _Board()
+    written = {"v": None}
+    rec = _recorder(tmp_path, board, clock, stop_offset=lambda: written["v"])
+    live = _fast(servoMode=1)
+    _pump(rec, clock, board, 10, state="cutting", snap=_snap(enable=1), fast=live)
+    written["v"] = 44
+    _pump(rec, clock, board, 10, snap=_snap(enable=1))
+    _pump(rec, clock, board, 10, snap=_snap(enable=1, active=1, stopTriggerSeq=1,
+                                           stopTriggerZ=12301, stopTriggerOffset=44,
+                                           stopTriggerZSpeed=3500),
+          fast=_fast(servoMode=1, scales=(0, 12310, 0, 0)))
+    records, _ = _all(tmp_path)
+    head = [r for r in records if r.get("kind") == "session_start"][0]
+    assert head["context_host_fields"] == ["stopOffsetWritten"]
+    ctx = _kinds(records, "context")
+    assert ctx[0]["stopOffsetWritten"] is None, "unknown is said, not invented"
+    assert any(c["stopOffsetWritten"] == 44 and c["stopTriggerSeq"] == 0 for c in ctx),         "a new written offset lands its own context record"
+    trig = [c for c in ctx if c.get("stopTriggerSeq") == 1]
+    assert len(trig) == 1
+    assert trig[0]["stopPosition"] == 12345          # the exact target
+    assert trig[0]["stopTriggerOffset"] == 44        # what the ISR applied
+    assert trig[0]["stopOffsetWritten"] == 44        # what the host wrote
+    assert trig[0]["stopTriggerZ"] == 12301
+
+
+def test_stop_offset_is_host_state_not_a_register_column():
+    """stopOffset is a COLD register (written, never polled); putting it in
+    CONTEXT_FIELDS would make the tick-reader audit fail and the recorder read
+    a key the hot snapshot does not carry. The host's record rides its own
+    key instead."""
+    from reflex.fsms.els_flight_recorder import STOP_OFFSET_KEY
+    assert "stopOffset" not in CONTEXT_FIELDS
+    assert "stopTriggerOffset" in CONTEXT_FIELDS
+    assert STOP_OFFSET_KEY not in CONTEXT_FIELDS
 
 
 def test_fsm_transitions_are_their_own_records(tmp_path):

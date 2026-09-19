@@ -56,6 +56,15 @@
  * Change what goes IN the block (and diagSchema with it), never its size. */
 #define ELS_DIAG_TRACE_BUCKETS 50
 
+/* Ceiling on elsStop.stopOffset, the stop-overshoot correction, in encoder
+ * counts (protocolVersion 11, 2026-09-18). The ISR clamps the host's value to
+ * [0, ELS_STOP_OFFSET_MAX] before moving the threshold, so a garbage or runaway
+ * write can fire the stop at most this far early -- never late, never further.
+ * 200 counts is 1 mm on elspi's 5 um/count Z scale, ~5x the largest coast
+ * measured (43 counts at 3567 counts/s). Resolved into registers/els_stop.yaml
+ * by genregs, which fails generation if the two disagree. */
+#define ELS_STOP_OFFSET_MAX 200
+
 /* Diagnostic scratchpad schema ids -- which probe is compiled into the block.
  * Part of the register CONTRACT, not an implementation detail: reflex-ui
  * mirrors these and refuses any id it does not recognise, so append only and
@@ -141,44 +150,18 @@ typedef struct {
   int32_t error;
 } deltaPosError_t;
 
-typedef struct {
-  uint32_t timerHandleSlot;            // init-only: index into ramps_timer_handles[]; held as a 4-byte slot id (not a pointer) so the modbus wire layout is identical on STM32 and 64-bit emulator hosts
-  int32_t position;                    // READ-ONLY (firmware-owned): absolute encoder position, updated by ISR
-  int32_t speed;                       // READ-ONLY (firmware-owned): encoder speed (counts/s), updated by updateSpeedTask
-  int32_t syncRatioNum, syncRatioDen;  // SW write: sync ratio numerator/denominator (output steps per input count)
-  uint16_t syncEnable;                 // SW write: 0 = sync disabled, non-zero = sync enabled for this scale
-  int16_t scaleDir;                    // SW write: ±1, default +1 (no inversion); applied to encoder delta in ISR
-} input_t;
+/* servo_t, input_t and fastData_t ARE GENERATED, like elsStop_t below: from
+ * registers/servo.yaml, registers/input.yaml and registers/fast_data.yaml into
+ * Ramps_generated.h, which carries their per-field documentation and the
+ * static_asserts that pin every offset and size. Do not add a field here --
+ * add it to the schema and regenerate, or CI's `genregs.py --check` fails.
+ * (Moved onto the generator byte-identically on 2026-09-18.) */
 
 extern TIM_HandleTypeDef *ramps_timer_handles[SCALES_COUNT];
 
-typedef struct {
-  float maxSpeed;              // SW write: maximum step rate (steps/s); clamped to 100000 by firmware
-  float currentSpeed;          // READ-ONLY (firmware-owned): live ramp speed, managed by ramp algorithm
-  float jogSpeed;              // SW write: jog target speed (steps/s); negative = reverse
-  float acceleration;          // SW write: ramp acceleration (steps/s²)
-  int32_t stepsToGo;          // SW write: remaining steps for indexing move; firmware decrements toward zero
-  uint32_t destinationSteps;  // SW write: absolute destination step count for indexing mode
-  uint32_t currentSteps;      // READ-ONLY (firmware-owned): step counter incremented/decremented by ISR
-  uint32_t desiredSteps;      // READ-ONLY (firmware-owned): accumulated target steps, driven by sync/ramp
-  int16_t servoDir;           // SW write: ±1, default +1 (no inversion); applied to DIR pin in ISR
-} servo_t;
-
-typedef struct {
-  uint32_t servoCurrent;               // READ-ONLY (firmware-owned): mirror of servo.currentSteps, updated by updateSpeedTask
-  uint32_t servoDesired;               // READ-ONLY (firmware-owned): mirror of servo.desiredSteps, updated by updateSpeedTask
-  uint32_t stepsToGo;                  // READ-ONLY (firmware-owned): mirror of servo.stepsToGo, updated by ramp algorithm
-  float servoSpeed;                    // READ-ONLY (firmware-owned): output step rate (steps/100ms), updated by servoEnableTask
-  int32_t scaleCurrent[SCALES_COUNT];  // READ-ONLY (firmware-owned): mirror of scales[i].position, updated by ISR
-  int32_t scaleSpeed[SCALES_COUNT];    // READ-ONLY (firmware-owned): mirror of scales[i].speed, updated by updateSpeedTask
-  uint32_t cycles;                     // READ-ONLY (firmware-owned): ISR execution time in CPU cycles, updated by updateSpeedTask
-  uint32_t executionInterval;          // READ-ONLY (firmware-owned): ISR interval in CPU cycles, updated by ISR
-  uint16_t servoMode;                  // SW write: 0=disabled, 1=sync/index (also set by firmware), 2=jog
-} fastData_t;
-
 /* ---------------------------------------------------------------------------
  * elsStop_t IS GENERATED. Its definition, its per-field documentation and the
- * _Static_asserts that prove its layout live in Ramps_generated.h, emitted by
+ * static_asserts that prove its layout live in Ramps_generated.h, emitted by
  * tools/genregs.py from registers/els_stop.yaml. Do not add a field here --
  * add it to the schema and regenerate, or CI's `genregs.py --check` fails.
  *
@@ -451,9 +434,12 @@ typedef struct {
    * above; stopTriggerReserved is the EXPLICIT pad that keeps the four int32s
    * 4-aligned (same reason machineModeReserved and diagReserved[4] exist -- an
    * implicit pad is a phantom register reflex-ui cannot mirror). 20 bytes, 10
-   * registers, taking elsStop_t to 140 registers: still two 72-register reads
-   * per board tick (72 + 68), with 4 registers of tail growth left before a
-   * third request is needed. */
+   * registers, taking elsStop_t to 140 registers AT protocolVersion 9: then
+   * two 72-register reads per board tick (72 + 68), with 4 registers of tail
+   * growth left before a third request was needed. [HISTORICAL -- the
+   * protocolVersion 10 warm/cold remap made it 142 registers read as ONE hot
+   * request; Ramps_generated.h and docs/reference/register-map.md carry the
+   * current numbers.] */
 
 #include "Ramps_generated.h"
 
@@ -486,6 +472,11 @@ typedef struct {
   fastData_t fastData;
   elsStop_t elsStop;
 } rampsSharedData_t;
+
+/* Where each generated struct sits in this one, and this one's total size --
+ * checked by the compiler, not trusted. Emitted by tools/genregs.py from the
+ * schemas' parent_offset_registers; see Ramps_generated.h. */
+RAMPS_GENERATED_ASSERT_PARENT_LAYOUT();
 
 
 typedef struct {

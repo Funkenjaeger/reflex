@@ -192,6 +192,16 @@ Plug the ST-Link into the Pi and the SWD header on the board. Build and flash
 from the Pi — the same checkout you just cloned, so what is on the controller
 cannot be a different revision from what is in front of you.
 
+**On the elspi image the toolchain and udev rules below are already baked
+in.** Skip the `apt install` line and follow the SWD first-load page in the
+elspi repository's docs, then run:
+
+```bash
+cd ~/projects/reflex/fw && ./scripts/provision.sh
+```
+
+**On the OSPI image**, install the toolchain first:
+
 ```bash
 sudo apt install gcc-arm-none-eabi cmake build-essential openocd
 cd ~/projects/reflex/fw && ./scripts/provision.sh

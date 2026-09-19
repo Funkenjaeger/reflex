@@ -88,18 +88,31 @@ def _updater_src():
 
 
 def test_the_ui_half_is_installed_from_exactly_one_place():
-    """git checkout and uv sync appear only inside install_ui_half.
+    """git checkout and uv sync appear only inside install_ui_half -- and in
+    _restore_previous_checkout, which can only go BACKWARDS.
 
     A behaviour test can prove the gate refuses. It cannot prove that a later
     change did not add a second path to the git commands that skips it -- and
     that is the shape this whole feature was pulled for once already.
+
+    The undo of a failed UI half (2026-09-17, Open Loops 6aaca75b) needs the
+    same two commands to put the PREVIOUS checkout back. It is admitted as the
+    one other site on two conditions checked here: it is its own named method,
+    and nothing in it names the release -- it may only use the previous_*
+    fields preflight recorded. A second site that could reach a release tag is
+    still a failure.
     """
     src = _updater_src()
-    body = src[src.index("def install_ui_half"):src.index("def restart_service")]
+    install = src[src.index("def install_ui_half"):src.index("def _restore_previous_checkout")]
+    restore = src[src.index("def _restore_previous_checkout"):src.index("def restart_service")]
+    code = restore.split('"""', 2)[-1]  # the body after the docstring
     for needle in ('"checkout"', '"sync"'):
-        assert needle in body
-        assert src.count(needle) == body.count(needle), (
-            f"{needle} appears outside install_ui_half")
+        assert needle in install, f"{needle} missing from install_ui_half"
+        assert src.count(needle) == install.count(needle) + restore.count(needle), (
+            f"{needle} appears outside install_ui_half / _restore_previous_checkout")
+    assert "previous_branch" in code and "previous_rev" in code
+    assert "release" not in code and ".tag" not in code, (
+        "_restore_previous_checkout must never be able to reach the release")
 
 
 def test_install_ui_half_takes_a_verdict():

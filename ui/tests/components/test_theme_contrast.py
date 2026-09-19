@@ -73,6 +73,19 @@ def test_a_disabled_label_is_readable_on_a_blank_action_button(theme):
 
 
 @pytest.mark.parametrize("theme", sorted(PALETTES))
+def test_a_disabled_label_is_readable_on_a_raised_value_pill(theme):
+    """`recess` is not the only fill a disabled label sits on: a disabled
+    FormValueButton (Setup > System "Already full") draws on `surface`.
+    Dark's text_disabled scored 3.89:1 on recess and 2.26:1 on surface until
+    2026-09-19, so the recess-only check above never saw it."""
+    p = PALETTES[theme]
+    got = contrast(p["text_disabled"], p["surface"])
+    assert got >= LARGE_TEXT_FLOOR, (
+        f"{theme}: a disabled value-pill label scores {got:.2f}:1 against "
+        f"`surface`, under the {LARGE_TEXT_FLOOR}:1 floor for large text.")
+
+
+@pytest.mark.parametrize("theme", sorted(PALETTES))
 def test_disabled_still_reads_as_subordinate_to_enabled(theme):
     """Readable is not the only requirement -- it must still look disabled."""
     p = PALETTES[theme]

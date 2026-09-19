@@ -20,6 +20,9 @@ class Manager(ScreenManager):
         from reflex.components.screens.setup_screen import SetupScreen
         self.add_widget(SetupScreen(name="setup_screen"))
 
+        from reflex.components.screens.backup_screen import BackupScreen
+        self.add_widget(BackupScreen(name="backup"))
+
         from reflex.components.screens.machine_screen import MachineScreen
         self.add_widget(MachineScreen(name="machine"))
 

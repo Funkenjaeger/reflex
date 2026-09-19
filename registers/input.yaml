@@ -1,0 +1,64 @@
+# =============================================================================
+# reflex register schema -- SINGLE SOURCE OF TRUTH for input_t
+# =============================================================================
+# Generates, and is never generated from:
+#   fw/Core/Inc/Ramps_generated.h   struct + static_assert per field
+#   ui/reflex/utils/input_map.py    decoder + the DEFINITION reflex-ui parses
+#   docs/reference/register-map.md  the documented map
+#
+# One input_t per scale: rampsSharedData_t carries `input_t scales[SCALES_COUNT]`,
+# so this struct is laid out once and repeated SCALES_COUNT times at a stride of
+# its own size (`parent_count` below). The generator resolves SCALES_COUNT from
+# fw/Core/Inc/Scales.h and refuses to emit if the two disagree.
+#
+# TRANSCRIBED, NOT REDESIGNED (2026-09-18, Open Loops 6a9f3106). Field list,
+# order, types and padding are exactly the hand-written struct this replaced in
+# fw/Core/Inc/Ramps.h, and the `doc:` strings are its per-field comments
+# verbatim. The one cosmetic difference: Ramps.h declared syncRatioNum and
+# syncRatioDen on one line (`int32_t syncRatioNum, syncRatioDen;`); they are two
+# declarations now, same order, same type, and both carry that line's comment.
+# 24 bytes, no padding anywhere.
+# =============================================================================
+
+schema_version: 1
+
+meta:
+  struct: input_t
+  short_name: input
+  macro_prefix: INPUT
+  parent: rampsSharedData_t
+  parent_member: scales
+  parent_count: SCALES_COUNT     # resolved from the constants block below
+  parent_offset_registers: 26    # scales[0]; scales[i] is at 26 + 12*i
+  register_width_bits: 16
+  endianness: little
+  py_out: ui/reflex/utils/input_map.py
+
+layout:
+  - group: all
+    doc: >
+      The whole struct: one scale's encoder state and its sync configuration.
+    budget_registers: 125
+    fail_over_budget: true
+
+types:
+  uint16: {bytes: 2}
+  int16:  {bytes: 2}
+  uint32: {bytes: 4}
+  int32:  {bytes: 4}
+  float:  {bytes: 4}   # IEEE-754 binary32, little-endian, as the STM32 lays it out
+
+fields:
+  - {id: 1, name: timerHandleSlot, type: uint32, access: init_only,   group: all, doc: "init-only: index into ramps_timer_handles[]; held as a 4-byte slot id (not a pointer) so the modbus wire layout is identical on STM32 and 64-bit emulator hosts"}
+  - {id: 2, name: position,        type: int32,  access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): absolute encoder position, updated by ISR"}
+  - {id: 3, name: speed,           type: int32,  access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): encoder speed (counts/s), updated by updateSpeedTask"}
+  - {id: 4, name: syncRatioNum,    type: int32,  access: sw_write,    group: all, doc: "SW write: sync ratio numerator/denominator (output steps per input count)"}
+  - {id: 5, name: syncRatioDen,    type: int32,  access: sw_write,    group: all, doc: "SW write: sync ratio numerator/denominator (output steps per input count)"}
+  - {id: 6, name: syncEnable,      type: uint16, access: sw_write,    group: all, doc: "SW write: 0 = sync disabled, non-zero = sync enabled for this scale"}
+  - {id: 7, name: scaleDir,        type: int16,  access: sw_write,    group: all, doc: "SW write: ±1, default +1 (no inversion); applied to encoder delta in ISR"}
+
+constants:
+  SCALES_COUNT:
+    value: 4
+    source: fw/Core/Inc/Scales.h
+    on_mismatch: fail

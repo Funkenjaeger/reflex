@@ -1,10 +1,16 @@
-from kivy.logger import Logger
+"""The Setup screen: a grid of buttons, each navigating to one settings screen.
+
+Nothing here is itself a setting or an action -- backup and restore of the
+commissioning bundle moved behind the Backup button (``backup_screen``) on
+2026-09-17, when having them at this level overflowed the grid on the lathe.
+The ``<SetupButton>`` rule in ``setup_screen.kv`` is shared with that screen.
+"""
 from kivy.uix.screenmanager import Screen
 
 from reflex.utils.kv_loader import load_kv
 
-log = Logger.getChild(__name__)
 load_kv(__file__)
+
 
 class SetupScreen(Screen):
     pass

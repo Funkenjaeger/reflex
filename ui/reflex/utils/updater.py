@@ -58,6 +58,30 @@ EVERY EXTERNAL EFFECT IS INJECTED (``runner``, ``download``, ``emit``) so the
 whole sequence, gate included, is exercised in tests without a board, a
 network, or a git checkout. The defaults in :mod:`reflex.utils.updater` bind
 those to subprocess and urllib.
+
+THE IMAGE-RELEASE GATE (``check_image_release``, order 2026-09-14#6) is a
+second, unrelated refusal that lives in this module for the same reason the
+protocol gate does: it decides whether the update should touch the board at
+all, and it runs at PREFLIGHT, before the protocol gate, before anything
+irreversible. ``reflex.utils.image_requirement.MINIMUM_IMAGE_RELEASE`` is
+this release's own declared floor; ``/etc/elspi-release`` is what the
+machine's OS image says about itself (order 2026-09-14#5).
+
+MISSING OR UNPARSEABLE IS NOT THE SAME AS TOO OLD, and this is deliberate,
+not sloppy defaulting. ``/etc/elspi-release`` did not exist before order
+2026-09-14#5's image; today's shipped image, v2026.09.13, PREDATES it
+entirely. Refusing on a missing file would brick every card running today
+the moment this code shipped, on a machine whose operator has no terminal to
+recover it with. So an absent or unparseable file is read as release 0 (see
+:func:`read_image_release`), and whether 0 is refused is the ordinary
+comparison against ``MINIMUM_IMAGE_RELEASE``, not a special case. The
+minimum ships as 0 (decided 2026-09-16), so today every undeclared image
+passes; it is bumped to 1 only once an image carrying ``/etc/elspi-release``
+is on the machine, and from then on an undeclared image is refused by the
+same arithmetic. A future session must NOT "fix" this into an unconditional
+refusal on missing-file, and must not bump the minimum before that image is
+deployed: either would refuse every card shipped before 2026-09-14#5's image,
+on a machine whose operator has no terminal to recover it with.
 """
 
 from __future__ import annotations
@@ -73,6 +97,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from kivy.logger import Logger
+
+from reflex.utils.image_requirement import MINIMUM_IMAGE_RELEASE
 
 log = Logger.getChild(__name__)
 
@@ -164,6 +190,20 @@ class RolledBack(ProtocolMismatch):
     CONFIRMED there -- the application runs the rev it ran before the update,
     at this UI's protocol. The machine is as it was. Only raised after that
     identity read, never on the rollback command's exit status alone.
+    """
+
+
+class ImageTooOld(UpdateRefused):
+    """This machine's elspi image is older than this release needs.
+
+    Its own class, the same way :class:`ProtocolMismatch` is its own class --
+    not because it fires after anything irreversible (it is checked at
+    PREFLIGHT, before the flash, so refusing here leaves the machine exactly
+    as it found it), but because the message has to name two specific
+    numbers: the release the machine is running and the minimum this update
+    requires. See :func:`check_image_release` and the module docstring for
+    why an image that never declared itself is release 0 rather than an
+    automatic refusal.
     """
 
 
@@ -341,6 +381,101 @@ def parse_protocol_version(map_source: str) -> int:
 
 
 # --------------------------------------------------------------------------
+# The image-release gate (order 2026-09-14#6) -- see the module docstring
+# --------------------------------------------------------------------------
+
+# The flat KEY=VALUE rendering of /etc/elspi-image.json (order 2026-09-14#5),
+# written at image build time. Injectable so tests never touch the real path,
+# and so this refuses to know anything about the machine it is not told.
+ELSPI_RELEASE_PATH = Path("/etc/elspi-release")
+
+
+@dataclass(frozen=True)
+class ImageRelease:
+    """What this machine's OS image says about its own release, or the
+    honest absence of that.
+
+    ``declared`` is False for both a MISSING file and one that could not be
+    read as an integer -- see :func:`read_image_release` for why those are
+    the same case rather than the second one raising.
+    """
+    release: int
+    declared: bool
+
+
+def parse_elspi_release(text: str) -> dict[str, str]:
+    """``/etc/elspi-release``'s KEY=VALUE lines (os-release shape).
+
+    Tolerant on purpose: a blank line, a ``#`` comment, or a line with no
+    ``=`` is skipped rather than raised on -- this file is read at update
+    time on a machine nobody is going to SSH into to fix a stray line. The
+    keys agreed with order 2026-09-14#5: ``ELSPI_IMAGE_RELEASE``,
+    ``ELSPI_IMAGE_BUILD``, ``ELSPI_IMAGE_DATE``, ``ELSPI_REFLEX_COMMIT``,
+    ``ELSPI_PYTHON``, ``ELSPI_KIVY``, ``ELSPI_UV``. Only
+    ``ELSPI_IMAGE_RELEASE`` is consumed by this module; the rest round-trip
+    for any future caller that wants them.
+    """
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key:
+            out[key] = value.strip()
+    return out
+
+
+def read_image_release(path: Path = ELSPI_RELEASE_PATH) -> ImageRelease:
+    """Read the running image's declared release, or honestly say it did not.
+
+    ABSENT IS NOT A REFUSAL -- see the module docstring for why. A missing
+    file, a file with no ``ELSPI_IMAGE_RELEASE`` key, and a value that is not
+    a plain integer are ALL folded into the same
+    ``ImageRelease(release=0, declared=False)``: a corrupt or absent
+    declaration is not evidence the image is too old, only that this check
+    cannot read one, and 0 is what the comparison in
+    :func:`check_image_release` treats as "never declared itself".
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return ImageRelease(release=0, declared=False)
+    raw = parse_elspi_release(text).get("ELSPI_IMAGE_RELEASE")
+    if raw is None:
+        return ImageRelease(release=0, declared=False)
+    try:
+        return ImageRelease(release=int(raw.strip()), declared=True)
+    except ValueError:
+        return ImageRelease(release=0, declared=False)
+
+
+def check_image_release(image: ImageRelease, minimum: int = MINIMUM_IMAGE_RELEASE,
+                        emit=None) -> None:
+    """Refuse if the running image is older than ``minimum``.
+
+    Logs (via ``emit``, never a bare print) one line when the image never
+    declared itself at all -- REGARDLESS of whether that is about to be
+    refused -- so an operator or a log reader can see that the machine is
+    running an undeclared image even on the ``minimum == 0`` nights when
+    that is not a problem yet. See :func:`read_image_release` for why
+    undeclared reads as release 0, and the module docstring for why 0 is not
+    an automatic refusal.
+    """
+    say = emit or (lambda line: None)
+    if not image.declared:
+        say("This machine's image did not declare an /etc/elspi-release "
+            "(missing or unparseable); treating it as release 0.")
+    if image.release < minimum:
+        raise ImageTooOld(
+            f"REFUSED: this machine's elspi image is release {image.release}, "
+            f"but this update needs at least release {minimum}. Re-image the "
+            f"machine with a current elspi image and try again. Nothing has "
+            f"been changed.")
+
+
+# --------------------------------------------------------------------------
 # Where we are installed
 # --------------------------------------------------------------------------
 
@@ -375,6 +510,40 @@ def resolve_checkout(start: Path | None = None) -> Path:
             f"the firmware. Update from the command line instead -- see the "
             f"Installing page.")
     return root
+
+
+def unwritable_venv_dirs(venv: Path, limit: int = 5) -> list[Path]:
+    """Directories under the venv ``uv sync`` will write to that THIS process
+    cannot write, up to ``limit``; empty when the sync can proceed.
+
+    WHY EVERY DIRECTORY, NOT JUST THE TOP. Replacing a package means deleting
+    and creating entries inside its directories, and that needs write on each
+    one -- a venv whose top is ours but whose site-packages subtree is root's
+    passes a top-level check and fails halfway through the sync. That is the
+    exact state elspi shipped in: /opt/reflex-venv built as root by
+    stage-elspi/08-venv, the UI running as ``default`` (found 2026-09-17, Open
+    Loops 6aac9465). A venv that does not exist yet is judged by its parent,
+    which is where ``uv`` would create it.
+    """
+    venv = Path(venv)
+    if venv.exists():
+        target = venv.resolve()
+    else:  # nearest existing ancestor: where uv would have to create it
+        target = venv.parent
+        while not target.exists() and target != target.parent:
+            target = target.parent
+    bad = []
+    if not os.access(target, os.W_OK | os.X_OK):
+        bad.append(target)
+    if venv.exists():
+        for root, dirs, _files in os.walk(target):
+            for d in dirs:
+                p = Path(root) / d
+                if not p.is_symlink() and not os.access(p, os.W_OK | os.X_OK):
+                    bad.append(p)
+                    if len(bad) >= limit:
+                        return bad
+    return bad[:limit]
 
 
 def find_uv(env_path: str | None = None) -> str:
@@ -413,6 +582,34 @@ def manifest_path_for(checkout: Path) -> Path:
     import pwd   # POSIX only; imported here so the module still loads on Windows
     owner = Path(checkout).stat().st_uid
     return Path(pwd.getpwuid(owner).pw_dir) / "firmware" / "flashed.json"
+
+
+def last_flashed_rev(manifest: Path) -> str | None:
+    """The revision the LAST record in the flash manifest says is on the board,
+    as ``"<rev>"`` or ``"<rev> (<tag>)"``; ``None`` when there is no usable
+    record.
+
+    The manifest is JSON Lines, one object per flash, appended by
+    ``flash.sh`` / ``modbus-flash.py`` (a revert is a record too, naming the
+    rev it went back to), so the last parseable line is the current state. It
+    is what the flashing tools RECORDED, not a live read of the board -- the
+    same evidence ot-state reports -- and is used where holding the serial port
+    for an identity read is not possible, such as a running UI's export.
+    """
+    try:
+        lines = Path(manifest).read_text().splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        rev = record.get("rev") if isinstance(record, dict) else None
+        if rev:
+            tag = record.get("tag")
+            return f"{rev} ({tag})" if tag else str(rev)
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -534,6 +731,11 @@ class Prepared:
     image: ImageInfo
     target_protocol: int
     uv: str
+    #: Where the checkout was before the update: the commit, and the branch
+    #: when it was on one (elspi runs `integration`). What _undo_ui_half puts
+    #: back. None when git could not say, which disables the undo's checkout.
+    previous_rev: str | None = None
+    previous_branch: str | None = None
 
 
 class UpdateSession:
@@ -548,9 +750,14 @@ class UpdateSession:
                  download=urllib_download, fetch_json=urllib_fetch_json,
                  emit=None, uv_finder=find_uv, service: str = SERVICE_NAME,
                  python: str | None = None, restart=None,
-                 manifest: Path | None = None):
+                 manifest: Path | None = None,
+                 elspi_release_path: Path | None = None):
         self.checkout = Path(checkout)
         self._manifest = manifest
+        self._elspi_release_path = elspi_release_path or ELSPI_RELEASE_PATH
+        #: The controller's identity just before the flash, kept so a failed
+        #: UI half can put exactly that firmware back (_undo_ui_half).
+        self._before_flash: Identity | None = None
         self.port = port
         self.current_protocol = current_protocol
         self.workdir = Path(workdir)
@@ -615,6 +822,31 @@ class UpdateSession:
         """
         self.emit(f"Preparing {release.tag}.")
 
+        # Cheapest possible check first: a local file read, no board, no
+        # network, no git -- and the one refusal in this method that fires
+        # before even uv is looked for. See the module docstring. ``minimum``
+        # is passed explicitly (rather than relying on check_image_release's
+        # own default) so that patching this module's MINIMUM_IMAGE_RELEASE
+        # -- the whole ship-0-now-bump-later fork the docstring describes --
+        # takes effect without editing this call site.
+        check_image_release(read_image_release(self._elspi_release_path),
+                            minimum=MINIMUM_IMAGE_RELEASE, emit=self.emit)
+
+        # Second-cheapest, and it must precede the erase: install_ui_half runs
+        # `uv sync` AFTER the firmware is flashed, so a venv this process
+        # cannot write turns into a new board under an old UI. Refuse now,
+        # while nothing has changed.
+        venv = self.checkout / "ui" / ".venv"
+        bad = unwritable_venv_dirs(venv)
+        if bad:
+            raise UpdateRefused(
+                "The UI's Python environment is not writable by the user this "
+                f"UI runs as, so installing {release.tag}'s packages would fail "
+                "AFTER the firmware had been flashed. Nothing has been changed.\n"
+                f"Not writable: {', '.join(str(p) for p in bad)}\n"
+                f"Fix it once, over SSH:  sudo chown -R $(id -un):$(id -gn) {venv.resolve()}")
+        self.emit(f"Python environment is writable: {venv.resolve()}")
+
         uv = self._uv_finder()
         self.emit(f"uv: {uv}")
 
@@ -662,8 +894,22 @@ class UpdateSession:
         image = parse_image_info(out)
         self.emit(f"Firmware image: rev {image.rev}, {image.length} bytes.")
 
+        # Where the checkout is NOW, so a UI half that fails after the flash
+        # can be undone (_undo_ui_half). A branch is recorded as well as the
+        # commit because the update's own checkout is --detach and leaves the
+        # branch pointing where it was: checking the BRANCH back out restores
+        # exactly the pre-update state, not a detached copy of it.
+        previous_rev = self._run(["git", "rev-parse", "HEAD"], cwd=self.checkout,
+                                 quiet=True, what="git rev-parse HEAD").strip() or None
+        rc, branch = self._runner(["git", "symbolic-ref", "-q", "--short", "HEAD"],
+                                  cwd=self.checkout, timeout=30, emit=None)
+        previous_branch = branch.strip() if rc == 0 and branch.strip() else None
+        self.emit(f"Checkout now: {previous_branch or 'detached'} at "
+                  f"{(previous_rev or 'UNKNOWN')[:12]}.")
+
         return Prepared(release=release, image_path=image_path, image=image,
-                        target_protocol=target_protocol, uv=uv)
+                        target_protocol=target_protocol, uv=uv,
+                        previous_rev=previous_rev, previous_branch=previous_branch)
 
     # -- 2. flash, then THE GATE ------------------------------------------
 
@@ -674,6 +920,7 @@ class UpdateSession:
         :meth:`reflex.dispatchers.board.Board.pause_polling`.
         """
         before = self.read_identity()
+        self._before_flash = before
         self.emit(f"Controller before: {before}.")
         if before.stage != STAGE_APPLICATION:
             raise UpdateRefused(
@@ -694,11 +941,14 @@ class UpdateSession:
         # reports the new rev. The path is explicit because this runs as
         # root -- see manifest_path_for.
         manifest = self._manifest or manifest_path_for(self.checkout)
-        self._run([self.python, self._modbus_flash, prepared.image_path,
-                   "--port", self.port, "--manifest", manifest,
-                   "--record-variant", "release",
-                   "--record-tag", prepared.release.tag], timeout=600,
-                  what="flashing the controller")
+        try:
+            self._run([self.python, self._modbus_flash, prepared.image_path,
+                       "--port", self.port, "--manifest", manifest,
+                       "--record-variant", "release",
+                       "--record-tag", prepared.release.tag], timeout=600,
+                      what="flashing the controller")
+        except UpdateRefused as failed:
+            self._settle_failed_flash(before, failed)       # always raises
 
         after = self.read_identity()
         self.emit(f"Controller after: {after}.")
@@ -712,6 +962,44 @@ class UpdateSession:
                   f"{verdict.identity.app_protocol} matches the "
                   f"{verdict.target_tag} UI.")
         return verdict
+
+    def _settle_failed_flash(self, before: Identity, failed: UpdateRefused):
+        """The flasher exited non-zero: say what state the controller is in,
+        from a FRESH identity read. Always raises.
+
+        Since 2026-09-19 (Open Loops 6aae7131) modbus-flash.py does not leave
+        a board it found running an application parked in the bootloader when
+        a transfer fails before APPLY: it jumps back, proves the previous rev
+        is running, and exits 1 saying NOTHING CHANGED. That morning a
+        transfer glitch on the lathe had left the board in the bootloader,
+        which under this UI is a dead DRO on a machine with no terminal.
+
+        The script's word is not taken for it, here any more than in
+        _revert_firmware: the identity read decides. The previous rev at the
+        previous protocol, in the application, is "nothing changed" -- an
+        ordinary refusal. Anything else fired after the board was written to,
+        so it is a :class:`ProtocolMismatch` that names the state."""
+        try:
+            now = self.read_identity()
+        except UpdateRefused as unreadable:
+            raise ProtocolMismatch(
+                f"The firmware update FAILED, and the controller could not be "
+                f"read afterwards, so what it is running is UNKNOWN. The UI was "
+                f"not changed. Check it with fw/scripts/modbus-flash.py "
+                f"--identity before using the machine.\n{failed}\n{unreadable}") from failed
+        self.emit(f"Controller after the failed flash: {now}.")
+        if (now.stage == STAGE_APPLICATION and now.build_rev == before.build_rev
+                and now.app_protocol == before.app_protocol):
+            raise UpdateRefused(
+                f"The firmware transfer FAILED and nothing changed: the "
+                f"controller is confirmed running its previous firmware "
+                f"({before.build_rev}), and the UI was not changed.\n{failed}") from failed
+        raise ProtocolMismatch(
+            f"The firmware update FAILED, and the controller is NOT running its "
+            f"previous firmware ({before.build_rev}): it reports {now}. The UI "
+            f"was not changed. Recover the controller with "
+            f"fw/scripts/modbus-flash.py (--identity to look, --boot-app if it "
+            f"is in the bootloader) before using the machine.\n{failed}") from failed
 
     def _roll_back(self, prepared: Prepared, before: Identity,
                    after: Identity, refused: FirmwareProtocolMismatch):
@@ -733,32 +1021,9 @@ class UpdateSession:
                   f"{after.app_protocol}, its UI expects "
                   f"{prepared.target_protocol}. Restoring the previous "
                   f"firmware ({before.build_rev}). DO NOT POWER OFF THE MACHINE.")
-        manifest = self._manifest or manifest_path_for(self.checkout)
-        rc, out = self._runner(
-            [self.python, self._modbus_flash, "--revert", "--port", self.port,
-             "--manifest", manifest, "--expect-rev", before.build_rev],
-            cwd=None, timeout=300, emit=self._emit)
-        if rc != 0:
-            raise ProtocolMismatch(
-                f"{refused}\n\nRestoring the previous firmware "
-                f"({before.build_rev}) was attempted and FAILED, so the state "
-                f"above still stands.\n{out.strip()[-600:]}") from refused
-        try:
-            restored = self.read_identity()
-        except UpdateRefused as unreadable:
-            raise ProtocolMismatch(
-                f"{refused}\n\nA rollback to {before.build_rev} reported "
-                f"success, but the controller could not be read afterwards, so "
-                f"what it runs is UNKNOWN.\n{unreadable}") from refused
-        self.emit(f"Controller after rollback: {restored}.")
-        if (restored.stage != STAGE_APPLICATION
-                or restored.build_rev != before.build_rev
-                or restored.app_protocol != self.current_protocol):
-            raise ProtocolMismatch(
-                f"{refused}\n\nA rollback to {before.build_rev} reported "
-                f"success, but the controller now reports {restored}, not the "
-                f"previous firmware at protocol version "
-                f"{self.current_protocol}. Treat the machine as mismatched.") from refused
+        failure = self._revert_firmware(before)
+        if failure:
+            raise ProtocolMismatch(f"{refused}\n\n{failure}") from refused
         raise RolledBack(
             f"REFUSED: the {tag} firmware speaks register protocol version "
             f"{after.app_protocol}, but the {tag} UI expects "
@@ -767,6 +1032,107 @@ class UpdateSession:
             f"firmware ({before.build_rev}) has been restored and confirmed "
             f"running, and the UI was never changed. Do not retry this "
             f"release.") from refused
+
+    def _revert_firmware(self, before: Identity) -> str | None:
+        """Put ``before``'s firmware back and PROVE it; ``None`` on success,
+        else the sentence describing what went wrong.
+
+        Shared by both rollbacks -- the gate's (:meth:`_roll_back`) and the
+        UI half's (:meth:`_undo_ui_half`). Success is decided by a FRESH
+        identity read, never by the revert's exit status: the bootloader kept
+        the outgoing image, ``modbus-flash.py --revert`` copies it back
+        (journaled, power-loss safe, bench-verified 2026-09-13), and only the
+        board saying so makes it true.
+        """
+        manifest = self._manifest or manifest_path_for(self.checkout)
+        rc, out = self._runner(
+            [self.python, self._modbus_flash, "--revert", "--port", self.port,
+             "--manifest", manifest, "--expect-rev", before.build_rev],
+            cwd=None, timeout=300, emit=self._emit)
+        if rc != 0:
+            return (f"Restoring the previous firmware ({before.build_rev}) was "
+                    f"attempted and FAILED, so the state above still stands.\n"
+                    f"{out.strip()[-600:]}")
+        try:
+            restored = self.read_identity()
+        except UpdateRefused as unreadable:
+            return (f"A rollback to {before.build_rev} reported success, but the "
+                    f"controller could not be read afterwards, so what it runs "
+                    f"is UNKNOWN.\n{unreadable}")
+        self.emit(f"Controller after rollback: {restored}.")
+        if (restored.stage != STAGE_APPLICATION
+                or restored.build_rev != before.build_rev
+                or restored.app_protocol != self.current_protocol):
+            return (f"A rollback to {before.build_rev} reported success, but the "
+                    f"controller now reports {restored}, not the previous "
+                    f"firmware at protocol version {self.current_protocol}. "
+                    f"Treat the machine as mismatched.")
+        return None
+
+    def _undo_ui_half(self, prepared: Prepared, failed: Exception):
+        """The UI half failed AFTER a verified flash: put BOTH halves back.
+        Always raises.
+
+        Until 2026-09-17 this path only re-raised, which left new firmware
+        under the old UI with nothing reverted -- and the Update screen then
+        refused a retry ("ALREADY mismatched"), so the touchscreen could
+        neither finish nor undo it (Open Loops 6aaca75b). Ordering, and why:
+
+          1. The CHECKOUT first, back to the branch/commit preflight recorded,
+             and `uv sync` there, because install_ui_half may have got as far
+             as either. If the checkout cannot be restored the firmware is
+             deliberately LEFT NEW: old firmware under a checkout that is
+             already the new release would be mismatched at the next restart,
+             whereas new firmware there matches it.
+          2. Only then the FIRMWARE, via the same proven revert the gate uses.
+
+        The running process never changed -- it is still the old UI -- so a
+        successful undo needs no restart: old UI, old checkout, old firmware.
+        """
+        tag = prepared.release.tag
+        before = self._before_flash
+        self.emit(f"Installing the {tag} UI FAILED after its firmware was "
+                  f"flashed. Putting the previous UI and firmware back. "
+                  f"DO NOT POWER OFF THE MACHINE.")
+
+        if not prepared.previous_rev or before is None:
+            raise ProtocolMismatch(
+                f"{failed}\n\nThe {tag} firmware is on the controller, but the "
+                f"{tag} UI could not be installed, and the previous state was not "
+                f"recorded well enough to restore automatically (checkout: "
+                f"{prepared.previous_rev or 'unknown'}; firmware: "
+                f"{before.build_rev if before else 'unknown'}). The machine is "
+                f"MISMATCHED: new firmware, old UI. Recover over SSH.") from failed
+
+        where = (f"{prepared.previous_branch} ({prepared.previous_rev[:12]})"
+                 if prepared.previous_branch else prepared.previous_rev[:12])
+        restored, sync_rc, out = self._restore_previous_checkout(prepared)
+        if not restored:
+            raise ProtocolMismatch(
+                f"{failed}\n\nPutting the checkout back to {where} ALSO failed, "
+                f"so the {tag} firmware was deliberately LEFT on the controller: "
+                f"the checkout may already hold {tag}, and after a restart that "
+                f"UI matches this firmware, while the previous firmware would "
+                f"not. Restart the UI to run {tag}; if it does not come up, "
+                f"recover over SSH.\n{out.strip()[-400:]}") from failed
+        env_note = ("" if sync_rc == 0 else
+                    f" Re-syncing the previous Python environment FAILED as well "
+                    f"(exit {sync_rc}), so a package {tag} added or changed may "
+                    f"still be installed; the running UI is unaffected until it "
+                    f"restarts.")
+
+        self.emit(f"Restoring the previous firmware ({before.build_rev}).")
+        failure = self._revert_firmware(before)
+        if failure:
+            raise ProtocolMismatch(
+                f"{failed}\n\nThe checkout was put back to {where}, but: "
+                f"{failure}{env_note}") from failed
+        raise RolledBack(
+            f"The {tag} update did not complete: installing its UI failed "
+            f"({str(failed).splitlines()[0]}). Nothing from {tag} was kept: the "
+            f"previous firmware ({before.build_rev}) is restored and confirmed "
+            f"running, and the UI is back on {where}.{env_note} Fix the cause "
+            f"above before trying {tag} again.") from failed
 
     # -- 3. the UI half, reachable only with a verdict ---------------------
 
@@ -801,6 +1167,26 @@ class UpdateSession:
                   f"{prepared.release.tag}.")
         self.restart_service()
 
+    def _restore_previous_checkout(self, prepared: Prepared):
+        """The ONLY other place that runs git checkout / uv sync, and it can
+        only go BACKWARDS: to the branch/commit preflight recorded, never to
+        the release. Returns ``(checked_out, sync_rc, output)``.
+
+        test_update_screen_wired pins that these two commands appear in
+        exactly install_ui_half and here, and that nothing here names the
+        release -- so this cannot become a second way to INSTALL past the gate.
+        """
+        target = prepared.previous_branch or prepared.previous_rev
+        rc, out = self._runner(["git", "checkout", target], cwd=self.checkout,
+                               timeout=300, emit=self._emit)
+        if rc != 0:
+            return False, None, out
+        self.emit(f"Checkout restored to {target}. Re-syncing its Python environment.")
+        sync_rc, sync_out = self._runner([prepared.uv, "sync", "--frozen"],
+                                         cwd=self.checkout / "ui", timeout=3600,
+                                         emit=self._emit)
+        return True, sync_rc, sync_out
+
     def restart_service(self):
         self._restart()
 
@@ -824,14 +1210,18 @@ class UpdateSession:
         read until the service restarts, so no old-UI poll ever lands on new
         firmware.
 
-        THE FAILURE PATHS RESUME THE LINK, including the one that leaves new
-        firmware under the old UI. That state is a mismatch, and it is
-        tempting to leave the link down rather than "let the UI talk to
-        firmware it does not match" -- but the operator has no terminal, and a
-        machine with a dead DRO tells them nothing. Board's connect-time
-        protocol check is the surface built for exactly this: it names which
-        half is older, in words, on the screen. Leaving the link down would
-        suppress the one message that explains what happened.
+        A UI HALF THAT FAILS AFTER THE FLASH IS UNDONE (:meth:`_undo_ui_half`):
+        checkout and packages back, then the firmware back, proven by an
+        identity read. Until 2026-09-17 it was only re-raised, leaving new
+        firmware under the old UI with the Update screen refusing a retry.
+
+        THE FAILURE PATHS RESUME THE LINK, including the ones that still leave
+        a mismatch (an undo that could not complete). It is tempting to leave
+        the link down rather than "let the UI talk to firmware it does not
+        match" -- but the operator has no terminal, and a machine with a dead
+        DRO tells them nothing. The Update screen names the state in words
+        (the raised message), and the Sync Enable button refuses to engage a
+        feed against a mismatched protocol (app.on_servo_enable_pressed).
         """
         prepared = self.preflight(release)
         if pause_link:
@@ -844,7 +1234,11 @@ class UpdateSession:
             raise
         try:
             self.install_ui_half(prepared, verdict)
-        except Exception:
-            if resume_link:
-                resume_link()
-            raise
+        except Exception as failed:
+            # The port stays with the flasher through the undo: the revert
+            # needs it, and the old UI must not poll a board mid-revert.
+            try:
+                self._undo_ui_half(prepared, failed)     # always raises
+            finally:
+                if resume_link:
+                    resume_link()

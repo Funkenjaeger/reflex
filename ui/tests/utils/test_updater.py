@@ -12,22 +12,29 @@ Two mutations were run against this file and both turn it red; each is named
 in the test that catches it.
 """
 
+import os
 from pathlib import Path
 
 import pytest
 
 from reflex.utils import updater
+from reflex.utils.image_requirement import MINIMUM_IMAGE_RELEASE
 from reflex.utils.updater import (
     Identity,
+    ImageRelease,
+    ImageTooOld,
     FirmwareProtocolMismatch,
     ProtocolMismatch,
     Release,
     RolledBack,
     UpdateRefused,
     UpdateSession,
+    check_image_release,
+    parse_elspi_release,
     parse_identity,
     parse_image_info,
     parse_protocol_version,
+    read_image_release,
     resolve_checkout,
     select_releases,
     verify_firmware_half,
@@ -36,6 +43,7 @@ from reflex.utils.updater import (
 CURRENT_PROTOCOL = 9
 TARGET_PROTOCOL = 10        # a release that DID move the register layout
 IMAGE_REV = "abc1234"
+PREVIOUS_REV = "0123456789abcdef0123456789abcdef01234567"  # the checkout's HEAD before
 
 
 # ---------------------------------------------------------------------------
@@ -327,8 +335,22 @@ class FakeRunner:
     def __init__(self, *, board_protocol_after, board_protocol_before=CURRENT_PROTOCOL,
                  target_protocol=TARGET_PROTOCOL, image_rev=IMAGE_REV,
                  board_rev_after=IMAGE_REV, image_valid=True, dirty="",
-                 fail=None, board_after_revert=None):
+                 fail=None, board_after_revert=None,
+                 head_rev=PREVIOUS_REV, head_branch="integration",
+                 board_after_failed_flash=None):
         self.calls = []
+        # What `--identity` reports once the image flash has FAILED (a `fail`
+        # marker matched it): None = what the board ran before, i.e. the
+        # flasher got back to the old application (2026-09-19, Open Loops
+        # 6aae7131); a string = that identity line verbatim; "unreadable" =
+        # the identity read itself fails.
+        self.board_after_failed_flash = board_after_failed_flash
+        self.flash_failed = False
+        # What `git rev-parse HEAD` / `git symbolic-ref` report for the
+        # checkout before the update (preflight records them for the undo).
+        # head_branch=None models a detached checkout.
+        self.head_rev = head_rev
+        self.head_branch = head_branch
         self.board_protocol_before = board_protocol_before
         self.board_protocol_after = board_protocol_after
         self.target_protocol = target_protocol
@@ -350,8 +372,15 @@ class FakeRunner:
 
         for marker in self.fail:
             if marker in joined:
+                if ("modbus-flash.py" in joined and "--identity" not in argv
+                        and "--revert" not in argv):
+                    self.flash_failed = True
                 return 1, f"boom: {marker}"
 
+        if "--identity" in argv and self.flash_failed and self.board_after_failed_flash:
+            if self.board_after_failed_flash == "unreadable":
+                return 1, "no identity window at 2048: no reply within 0.3s to FC3"
+            return 0, self.board_after_failed_flash
         if "--identity" in argv:
             protocol = (self.board_protocol_after if self.flashed
                         else self.board_protocol_before)
@@ -376,6 +405,10 @@ class FakeRunner:
         if argv[:2] == ["git", "show"]:
             # what `git show <tag>:ui/reflex/utils/els_stop_map.py` yields
             return 0, f"PROTOCOL_VERSION = {self.target_protocol}\n"
+        if argv[:3] == ["git", "rev-parse", "HEAD"]:
+            return 0, f"{self.head_rev}\n"
+        if argv[:2] == ["git", "symbolic-ref"]:
+            return (0, f"{self.head_branch}\n") if self.head_branch else (1, "")
         if argv[0] == "git":
             return 0, ""
         if argv[0].endswith("uv"):
@@ -403,6 +436,16 @@ def _session(runner, tmp_path, **kw):
     restarts = []
     kw.setdefault("manifest", tmp_path / "home" / "firmware" / "flashed.json")
     kw.setdefault("checkout", tmp_path / "checkout")
+    if "elspi_release_path" not in kw:
+        # Every pre-existing session test predates the image-release gate
+        # (order 2026-09-14#6) and has no opinion about it, so give it a
+        # file that declares exactly MINIMUM_IMAGE_RELEASE -- allowed, by
+        # the gate's own arithmetic (release < minimum refuses; equal does
+        # not). Tests that DO want to exercise the gate pass their own
+        # elspi_release_path and override this.
+        release_file = tmp_path / "etc-elspi-release"
+        release_file.write_text(f"ELSPI_IMAGE_RELEASE={MINIMUM_IMAGE_RELEASE}\n")
+        kw["elspi_release_path"] = release_file
     s = UpdateSession(
         port="/dev/serial0",
         current_protocol=CURRENT_PROTOCOL,
@@ -701,12 +744,85 @@ def test_refuses_a_machine_that_is_already_mismatched(tmp_path):
     assert r.ran("modbus-flash.py", "reflex-app-1.2.0.bin") == []
 
 
+# Fails the IMAGE FLASH and nothing else: "--record-variant" is only on that
+# command line. Until 2026-09-19 the failed-flash test used the image's file
+# name, which the preflight's `reflex_image.py info <image>` also carries --
+# so it was refused at preflight and never reached a flash at all.
+FLASH_ONLY = "--record-variant"
+
+
 def test_a_failed_flash_does_not_install_the_ui_half(tmp_path):
-    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
-                   fail={"reflex-app-1.2.0.bin"})
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={FLASH_ONLY})
     s = _session(r, tmp_path)
     with pytest.raises(UpdateRefused):
         s.run(RELEASE)
+    assert r.ran("modbus-flash.py", "reflex-app-1.2.0.bin"), "the flash was never reached"
+    assert r.touched_the_ui_half == []
+
+
+# ---------------------------------------------------------------------------
+# a FAILED flash is settled by a fresh identity read (Open Loops 6aae7131).
+# 2026-09-19 on the lathe: a transfer glitch made modbus-flash.py exit 1 with
+# the board left in the bootloader. The flasher now jumps back to the old
+# application and proves it; the updater re-reads the board rather than take
+# the script's word, and says "nothing changed" only when the board does.
+# ---------------------------------------------------------------------------
+
+def test_a_failed_flash_back_on_the_old_firmware_says_nothing_changed(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY})
+    s = _session(r, tmp_path)
+    with pytest.raises(UpdateRefused) as e:
+        s.run(RELEASE)
+    assert not isinstance(e.value, ProtocolMismatch), (
+        "the controller is confirmed on its previous firmware: an ordinary "
+        "refusal, not a mismatch")
+    assert "nothing changed" in str(e.value)
+    assert "0000001" in str(e.value)
+    assert f"boom: {FLASH_ONLY}" in str(e.value), "the flasher's own words are kept"
+    flash_at = r.calls.index(r.ran("modbus-flash.py", "reflex-app-1.2.0.bin")[0])
+    assert any("--identity" in c for c in r.calls[flash_at + 1:]), (
+        "decided by a fresh identity read after the failed flash, not by the exit status")
+    assert r.touched_the_ui_half == []
+    assert r.ran("--revert") == [], "nothing was applied, so nothing is reverted"
+
+
+def test_a_failed_flash_that_left_the_bootloader_is_a_mismatch_naming_it(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY},
+                   board_after_failed_flash=("idMagic=0x454c stage=bootloader "
+                                             "windowVersion=1 rev=0b1c0de appProtocol=0"))
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    msg = str(e.value)
+    assert "nothing changed" not in msg
+    assert "NOT running its previous firmware" in msg and "bootloader" in msg
+    assert "--boot-app" in msg
+    assert r.touched_the_ui_half == []
+
+
+def test_a_failed_flash_on_a_foreign_rev_is_not_nothing_changed(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY},
+                   board_after_failed_flash=("idMagic=0x454c stage=application "
+                                             f"windowVersion=1 rev={IMAGE_REV} "
+                                             f"appProtocol={TARGET_PROTOCOL}"))
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert "nothing changed" not in str(e.value)
+    assert IMAGE_REV in str(e.value)
+
+
+def test_a_failed_flash_then_an_unreadable_board_says_unknown(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY},
+                   board_after_failed_flash="unreadable")
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert "UNKNOWN" in str(e.value) and "nothing changed" not in str(e.value)
     assert r.touched_the_ui_half == []
 
 
@@ -716,3 +832,340 @@ def test_list_releases_goes_through_the_same_filter(tmp_path):
     assert [x.tag for x in s.list_releases(allow_prerelease=False)] == ["v1.1.0"]
     assert [x.tag for x in s.list_releases(allow_prerelease=True)] == [
         "v1.2.0-rc.1", "v1.1.0"]
+
+
+# ---------------------------------------------------------------------------
+# the image-release gate (order 2026-09-14#6) -- /etc/elspi-release and
+# MINIMUM_IMAGE_RELEASE. See the module docstring for why absent/unparseable
+# is release 0 rather than an immediate refusal.
+# ---------------------------------------------------------------------------
+
+def test_parse_elspi_release_reads_key_value_lines():
+    text = (
+        "ELSPI_IMAGE_RELEASE=2\n"
+        "ELSPI_IMAGE_BUILD=42\n"
+        "ELSPI_IMAGE_DATE=2026-09-13\n"
+        "ELSPI_REFLEX_COMMIT=714e246\n"
+    )
+    fields = parse_elspi_release(text)
+    assert fields["ELSPI_IMAGE_RELEASE"] == "2"
+    assert fields["ELSPI_REFLEX_COMMIT"] == "714e246"
+
+
+def test_parse_elspi_release_skips_blanks_and_comments():
+    text = "\n# a comment\nELSPI_IMAGE_RELEASE=3\nnonsense with no equals\n"
+    assert parse_elspi_release(text) == {"ELSPI_IMAGE_RELEASE": "3"}
+
+
+def test_read_image_release_declared(tmp_path):
+    f = tmp_path / "elspi-release"
+    f.write_text("ELSPI_IMAGE_RELEASE=2\n")
+    got = read_image_release(f)
+    assert got == ImageRelease(release=2, declared=True)
+
+
+def test_read_image_release_missing_file_is_undeclared_release_zero(tmp_path):
+    """Case (3)/(4) from the order: a MISSING file, never a crash."""
+    got = read_image_release(tmp_path / "does-not-exist")
+    assert got == ImageRelease(release=0, declared=False)
+
+
+@pytest.mark.parametrize("garbage", [
+    "not a key value file at all, just prose\n",
+    "ELSPI_IMAGE_RELEASE=not-a-number\n",
+    "ELSPI_IMAGE_BUILD=42\n",   # present file, but no ELSPI_IMAGE_RELEASE key
+    "",
+])
+def test_read_image_release_garbage_is_undeclared_never_a_crash(tmp_path, garbage):
+    """Case (5) from the order: a garbage file is treated as absent, and
+    reading it must never raise."""
+    f = tmp_path / "elspi-release"
+    f.write_text(garbage)
+    assert read_image_release(f) == ImageRelease(release=0, declared=False)
+
+
+def test_gate_1_running_newer_than_minimum_is_allowed():
+    """(1) release file says 2, minimum 1 -> allowed."""
+    check_image_release(ImageRelease(release=2, declared=True), minimum=1)
+
+
+def test_gate_2_running_older_than_minimum_refuses_naming_both_numbers():
+    """(2) release file says 1, minimum 2 -> ImageTooOld naming both numbers."""
+    with pytest.raises(ImageTooOld) as e:
+        check_image_release(ImageRelease(release=1, declared=True), minimum=2)
+    assert "1" in str(e.value)
+    assert "2" in str(e.value)
+
+
+def test_gate_3_absent_with_zero_minimum_is_allowed_and_logs_one_line():
+    """(3) file absent, minimum 0 -> allowed and the one-line log emitted."""
+    lines = []
+    check_image_release(ImageRelease(release=0, declared=False), minimum=0,
+                        emit=lines.append)
+    assert len(lines) == 1
+    assert "elspi-release" in lines[0]
+
+
+def test_gate_4_absent_with_nonzero_minimum_refuses():
+    """(4) file absent, minimum 1 -> refused."""
+    lines = []
+    with pytest.raises(ImageTooOld):
+        check_image_release(ImageRelease(release=0, declared=False), minimum=1,
+                            emit=lines.append)
+    # the log line still fires -- the refusal names WHY, the log names WHAT
+    assert len(lines) == 1
+
+
+def test_gate_5_garbage_file_end_to_end_never_crashes_treated_as_absent(tmp_path):
+    """(5) garbage file -> treated as absent, never a crash, end to end
+    through read_image_release + check_image_release together."""
+    f = tmp_path / "elspi-release"
+    f.write_text("total nonsense\n")
+    image = read_image_release(f)
+    assert image == ImageRelease(release=0, declared=False)
+    with pytest.raises(ImageTooOld):
+        check_image_release(image, minimum=1)
+
+
+def test_the_default_minimum_is_the_declared_constant():
+    """check_image_release's default minimum tracks
+    reflex.utils.image_requirement.MINIMUM_IMAGE_RELEASE, not a copy of it."""
+    import inspect
+    default = inspect.signature(check_image_release).parameters["minimum"].default
+    assert default == MINIMUM_IMAGE_RELEASE
+
+
+def test_preflight_refuses_an_image_too_old_before_touching_anything(tmp_path,
+                                                                      monkeypatch):
+    """Integration: the gate is wired into preflight, and fires before uv is
+    even looked for -- no runner call happens at all."""
+    monkeypatch.setattr(updater, "MINIMUM_IMAGE_RELEASE", 1)
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    release_file = tmp_path / "elspi-release"
+    release_file.write_text("ELSPI_IMAGE_RELEASE=0\n")
+    s = _session(r, tmp_path, elspi_release_path=release_file)
+    with pytest.raises(ImageTooOld) as e:
+        s.run(RELEASE)
+    assert "1" in str(e.value)
+    assert "0" in str(e.value)
+    assert r.calls == [], "refused before any tool was even run"
+
+
+def test_preflight_allows_an_image_at_exactly_the_minimum(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    release_file = tmp_path / "elspi-release"
+    release_file.write_text(f"ELSPI_IMAGE_RELEASE={MINIMUM_IMAGE_RELEASE}\n")
+    s = _session(r, tmp_path, elspi_release_path=release_file)
+    s.run(RELEASE)   # does not raise
+    assert r.touched_the_ui_half
+
+
+def test_preflight_allows_a_missing_release_file_when_minimum_is_zero(tmp_path,
+                                                                       monkeypatch):
+    """This is what makes today's v2026.09.13 (no /etc/elspi-release at all)
+    still updatable if MINIMUM_IMAGE_RELEASE were ever shipped as 0 -- the
+    fork the module docstring and CLARIFICATION describe. With the order's
+    own MINIMUM_IMAGE_RELEASE = 1 this same machine is REFUSED (proven by
+    test_preflight_refuses_an_image_too_old_before_touching_anything above,
+    where an explicit release=0 file stands in for "undeclared"); this test
+    pins the minimum=0 branch of the arithmetic in isolation by patching the
+    module constant directly, without needing a second real fixture file.
+    """
+    monkeypatch.setattr(updater, "MINIMUM_IMAGE_RELEASE", 0)
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    s = _session(r, tmp_path, elspi_release_path=tmp_path / "does-not-exist")
+    s.run(RELEASE)   # does not raise
+    assert r.touched_the_ui_half
+
+
+# --------------------------------------------------------------------------
+# last_flashed_rev -- the manifest reader behind the Backup screen's meta.fw
+# --------------------------------------------------------------------------
+# Record shapes copied from elspi's real ~/firmware/flashed.json (2026-09-17).
+_FLASH = ('{"utc":"2026-09-13T15:08:45Z","variant":"unknown","rev":"cb52073",'
+          '"via":"modbus","image":"reflex-app-cb52073.bin","protocol":10}')
+_RELEASE = ('{"utc":"2026-09-13T15:51:51Z","variant":"release","rev":"43ac7c5",'
+            '"via":"modbus","image":"reflex-app-1.2.0-rc.3.bin","protocol":10,"tag":"v1.2.0-rc.3"}')
+_REVERT = ('{"utc":"2026-09-13T01:57:21Z","variant":"revert","rev":"88e57ec",'
+           '"md5":null,"via":"modbus","protocol":10,"reverted_from":"cb52073"}')
+
+
+def _manifest(tmp_path, *lines):
+    path = tmp_path / "flashed.json"
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def test_last_flashed_rev_is_the_last_record_with_its_tag(tmp_path):
+    assert updater.last_flashed_rev(_manifest(tmp_path, _FLASH, _RELEASE)) == "43ac7c5 (v1.2.0-rc.3)"
+
+
+def test_last_flashed_rev_follows_a_revert_to_the_rev_it_restored(tmp_path):
+    assert updater.last_flashed_rev(_manifest(tmp_path, _RELEASE, _REVERT)) == "88e57ec"
+
+
+def test_last_flashed_rev_skips_a_torn_last_line(tmp_path):
+    assert updater.last_flashed_rev(_manifest(tmp_path, _FLASH, '{"utc":"2026-09-1')) == "cb52073"
+
+
+def test_last_flashed_rev_is_none_without_a_manifest(tmp_path):
+    assert updater.last_flashed_rev(tmp_path / "absent.json") is None
+    assert updater.last_flashed_rev(_manifest(tmp_path, "")) is None
+
+
+# --------------------------------------------------------------------------
+# The venv-writable preflight (Open Loops 6aac9465, 2026-09-17)
+# --------------------------------------------------------------------------
+# elspi shipped /opt/reflex-venv root-owned with the UI running as `default`,
+# and install_ui_half's `uv sync` comes AFTER the flash. These pin that an
+# unwritable venv is refused before the board is touched.
+
+_as_root = hasattr(os, "geteuid") and os.geteuid() == 0
+needs_non_root = pytest.mark.skipif(
+    _as_root or not hasattr(os, "geteuid"),
+    reason="permission bits are not enforced for root, or not POSIX")
+
+
+def _venv(tmp_path, *, readonly):
+    """checkout/ui/.venv -> a real venv-shaped dir elsewhere, symlinked like
+    elspi's ui/.venv -> /opt/reflex-venv, with site-packages optionally
+    read-only (the subtree case a top-level check would miss)."""
+    real = tmp_path / "opt" / "reflex-venv"
+    site = real / "lib" / "python3.13" / "site-packages"
+    (site / "kivy").mkdir(parents=True)
+    ui = tmp_path / "checkout" / "ui"
+    ui.mkdir(parents=True, exist_ok=True)
+    (ui / ".venv").symlink_to(real)
+    if readonly:
+        site.chmod(0o555)
+    return real, site
+
+
+@needs_non_root
+def test_an_unwritable_venv_is_refused_before_the_flash(tmp_path):
+    real, site = _venv(tmp_path, readonly=True)
+    try:
+        r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+        s = _session(r, tmp_path)
+        with pytest.raises(UpdateRefused) as e:
+            s.run(RELEASE)
+        msg = str(e.value)
+        assert "not writable" in msg and str(site) in msg
+        assert "chown" in msg, "the refusal names the fix"
+        assert not r.flashed and not r.ran("modbus-flash.py"), "the board was never touched"
+        assert r.touched_the_ui_half == [] and s.restarts == []
+    finally:
+        site.chmod(0o755)
+
+
+@needs_non_root
+def test_a_writable_venv_passes_the_check(tmp_path):
+    real, _site = _venv(tmp_path, readonly=False)
+    assert updater.unwritable_venv_dirs(tmp_path / "checkout" / "ui" / ".venv") == []
+
+
+@needs_non_root
+def test_the_check_walks_the_subtree_not_just_the_top(tmp_path):
+    """The top of the venv is writable; a package directory deep inside is not.
+    uv would fail replacing that package, so the check must see it."""
+    real, site = _venv(tmp_path, readonly=False)
+    deep = site / "kivy"
+    deep.chmod(0o555)
+    try:
+        assert updater.unwritable_venv_dirs(tmp_path / "checkout" / "ui" / ".venv") == [deep]
+    finally:
+        deep.chmod(0o755)
+
+
+def test_a_missing_venv_is_judged_by_where_uv_would_create_it(tmp_path):
+    ui = tmp_path / "ui"
+    ui.mkdir()
+    assert updater.unwritable_venv_dirs(ui / ".venv") == []
+
+
+# --------------------------------------------------------------------------
+# A UI half that fails AFTER a verified flash is undone (Open Loops 6aaca75b)
+# --------------------------------------------------------------------------
+# Until 2026-09-17 run() only re-raised here: new firmware under the old UI,
+# nothing reverted, and the Update screen then refused a retry ("ALREADY
+# mismatched"). Probed with this FakeRunner before the fix.
+
+def _restored_checkout(r):
+    """The undo's own checkout -- of the recorded branch, not of the tag."""
+    return [c for c in r.ran("git", "checkout") if "--detach" not in c]
+
+
+def test_a_failed_checkout_after_the_flash_puts_both_halves_back(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={"checkout --detach"})
+    s = _session(r, tmp_path)
+    with pytest.raises(RolledBack) as e:
+        s.run(RELEASE)
+    assert r.flashed and r.reverted, "flashed, then the firmware put back"
+    assert _restored_checkout(r)[0][-1] == "integration", "the BRANCH, not a detached copy"
+    last_identity = max(i for i, c in enumerate(r.calls) if "--identity" in c)
+    assert last_identity > r.calls.index(r.ran("--revert")[0]), "proved by a read AFTER the revert"
+    msg = str(e.value)
+    assert "0000001" in msg and "integration" in msg and "did not complete" in msg
+    assert s.restarts == [], "the old UI never stopped running; nothing to restart"
+
+
+def test_a_failed_uv_sync_restores_the_checkout_before_the_firmware(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={"sync --frozen"})
+    s = _session(r, tmp_path)
+    with pytest.raises(RolledBack) as e:
+        s.run(RELEASE)
+    restore = r.calls.index(_restored_checkout(r)[0])
+    revert = r.calls.index(r.ran("--revert")[0])
+    assert restore < revert, "checkout back FIRST, then the firmware"
+    # The re-sync of the previous environment hits the same fake failure: the
+    # message must say so rather than claim a clean environment.
+    assert "Re-syncing the previous Python environment FAILED" in str(e.value)
+
+
+def test_a_detached_checkout_is_restored_to_its_commit(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={"sync --frozen"},
+                   head_branch=None)
+    s = _session(r, tmp_path)
+    with pytest.raises(RolledBack):
+        s.run(RELEASE)
+    assert _restored_checkout(r)[0][-1] == PREVIOUS_REV
+
+
+def test_if_the_checkout_cannot_be_restored_the_firmware_is_left_new(tmp_path):
+    """Old firmware under a checkout that may already be the new release would
+    be mismatched at the next restart; new firmware there matches it."""
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={"git checkout"})
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert not isinstance(e.value, RolledBack)
+    assert r.flashed and not r.reverted
+    assert "deliberately LEFT" in str(e.value)
+
+
+def test_a_failed_firmware_revert_is_reported_as_the_state_it_leaves(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={"checkout --detach", "--revert"})
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert not isinstance(e.value, RolledBack)
+    msg = str(e.value)
+    assert "checkout was put back" in msg and "FAILED" in msg
+
+
+def test_the_link_is_resumed_only_after_the_undo(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={"checkout --detach"})
+    s = _session(r, tmp_path)
+    order = []
+    real_runner = s._runner
+
+    def spy(argv, **kw):
+        if "--revert" in " ".join(map(str, argv)):
+            order.append("revert")
+        return real_runner(argv, **kw)
+    s._runner = spy
+    with pytest.raises(RolledBack):
+        s.run(RELEASE, pause_link=lambda: order.append("pause"),
+              resume_link=lambda: order.append("resume"))
+    assert order == ["pause", "revert", "resume"]

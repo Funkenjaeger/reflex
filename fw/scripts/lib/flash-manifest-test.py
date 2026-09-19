@@ -68,10 +68,18 @@ class FakeIdent:
 
 
 class FakeBootloader:
+    # The link counters and the state flash() reads since the resync/resume
+    # and return-to-app work (2026-09-19, Open Loops 6aae7131/6aae7135):
+    # last_head (the bootloader as the run found it), seq (blSeq after the
+    # ERASE, stream()'s base), resyncs/resumed (recorded in the manifest).
     def __init__(self, bus, dry_run):
         self.retries = self.recovered = 0
+        self.resyncs = self.resumed = 0
+        self.seq = 1
+        self.pad = False
+        self.last_head = None
 
-    def describe(self):
+    def describe(self, h=None):
         return "fake"
 
     def erase(self): pass
@@ -82,7 +90,16 @@ class FakeBootloader:
 
 
 class FakeBus:
+    """After a failure flash() looks at the board again (return_to_app /
+    after_apply_report). This bus answers the way a board that is running
+    the previous application does: its identity window, and exception 2 at
+    the bootloader window -- so a failure path here costs no waiting."""
     retries = 0
+
+    def read(self, addr, count, timeout=0.5, attempts=4):
+        if addr == mf.ID_BASE:
+            return [mf.ID_MAGIC, mf.ID_STAGE_APP, 1, 0x1111111 & 0xFFFF, 0x1111111 >> 16, 0, 10, 0]
+        raise mf.ExceptionResponse(3, 2)
 
 
 class ModbusFlashRecords(unittest.TestCase):
@@ -129,6 +146,11 @@ class ModbusFlashRecords(unittest.TestCase):
         self.assertEqual(rec["protocol"], 10)
         self.assertEqual(rec["md5"], hashlib.md5(self.image.read_bytes()).hexdigest())
         self.assertEqual(list(rec)[:6], ["utc", "variant", "probe", "rev", "dirty", "md5"])
+        # The link record (Open Loops 6aae7135): new keys, said even when zero.
+        self.assertEqual({k: rec[k] for k in rec if k.startswith("link_")},
+                         {"link_read_retries": 0, "link_commands_resent": 0,
+                          "link_replies_recovered": 0, "link_resyncs": 0,
+                          "link_chunks_resumed": 0})
 
     def test_record_follows_the_verdict_not_precedes_it(self):
         _, out = self.flash(manifest=self.manifest)

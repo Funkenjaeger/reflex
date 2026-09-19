@@ -1,6 +1,6 @@
 import os
 from kivy.logger import Logger
-from kivy.properties import StringProperty, ObjectProperty
+from kivy.properties import ListProperty, StringProperty, ObjectProperty
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.popup import Popup
 from kivy.lang import Builder
@@ -28,6 +28,10 @@ class CustomPopup(BoxLayout):
     # confirm dialog: the primary button had no callback and behaved
     # identically to Cancel.
     confirm_callback = ObjectProperty(None, allownone=True)
+    # The dialog's share of the window. The default suits a one- or two-line
+    # message; a longer one (the Backup screen's import confirm, seven lines)
+    # clipped its first and last lines at 0.6 x 0.5 on the lathe's 1024x600.
+    popup_size_hint = ListProperty([0.6, 0.5])
 
     def __init__(self, **kwargs):
         # Accept (and repair) the old `on_dismiss_callback` spelling loudly
@@ -42,7 +46,7 @@ class CustomPopup(BoxLayout):
         self._popup = Popup(
             title=self.title,
             content=self,
-            size_hint=(0.6, 0.5),
+            size_hint=tuple(self.popup_size_hint),
             auto_dismiss=False,
         )
 
