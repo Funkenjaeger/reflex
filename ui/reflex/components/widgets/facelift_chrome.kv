@@ -170,6 +170,35 @@
     font_name: app.theme.font_bold
     padding: [dp(12), (self.height - self.line_height) / 2 if self.height > self.line_height else dp(6)]
 
+# Read-only, multi-line output box (System "Operation Output", Network
+# "Status", Update "Update Status"). These were stock TextInputs: white well,
+# black text, whatever the theme. Same themed well as FormTextInput, but a
+# rule of its own rather than <FormOutputText@FormTextInput>: FormTextInput's
+# padding is an expression on height (it centres ONE line), and a subclass
+# rule's plain padding does not stop that expression re-firing, so output
+# text ended up floating mid-box. Monospace for log text.
+<FormOutputText@TextInput>:
+    readonly: True
+    multiline: True
+    background_normal: ''
+    background_active: ''
+    background_disabled_normal: ''
+    background_color: app.theme.recess
+    foreground_color: app.theme.text
+    disabled_foreground_color: app.theme.text_disabled
+    cursor_color: app.theme.accent
+    font_name: app.theme.font_mono
+    padding: [dp(12), dp(8)]
+
+# Plain themed text for a Setup screen: what a bare `Label:` should have been.
+# A stock Label draws white whatever the theme -- 1.38-1.52:1 on the light
+# page (Formats volume, Logs heading, Profiling stats, 2026-09-19).
+# tests/components/test_setup_screens_themed.py keeps stock Label/Button/
+# TextInput off the Setup screens unless they are given a themed colour.
+<ThemedLabel@Label>:
+    color: app.theme.text
+    disabled_color: app.theme.text_disabled
+
 # ── Feeds selector (TabbedPanel + grid of FeedButton) ──────────────────────
 # Only the feed/thread picker uses TabbedPanel, so theming these globally is
 # safe and keeps the picker consistent with the rest of the facelift.

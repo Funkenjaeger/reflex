@@ -5,10 +5,11 @@ from kivy.clock import Clock
 from kivy.logger import Logger
 from kivy.properties import StringProperty, BooleanProperty
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
+from kivy.factory import Factory
 from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
 
+from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>/<ThemedLabel>
 from reflex.utils.kv_loader import load_kv
 from reflex.utils.platform import (
     is_raspberry_pi,
@@ -88,8 +89,8 @@ class SystemScreen(Screen):
     def prompt_reboot(self):
         content = BoxLayout(orientation="vertical", spacing=10, padding=10)
 
-        btn_cancel = Button(text="Cancel", font_size=22)
-        btn_confirm = Button(text="Reboot Now", font_size=22)
+        btn_cancel = Factory.SetupButton(text="Cancel", font_size=22)
+        btn_confirm = Factory.SetupButton(text="Reboot Now", font_size=22)
 
         content.add_widget(btn_confirm)
         content.add_widget(btn_cancel)
@@ -117,8 +118,8 @@ class SystemScreen(Screen):
     def prompt_resize(self):
         content = BoxLayout(orientation="vertical", spacing=10, padding=10)
 
-        btn_cancel = Button(text="Cancel", font_size=22)
-        btn_confirm = Button(text="Confirm Resize", font_size=22)
+        btn_cancel = Factory.SetupButton(text="Cancel", font_size=22)
+        btn_confirm = Factory.SetupButton(text="Confirm Resize", font_size=22)
 
         content.add_widget(btn_confirm)
         content.add_widget(btn_cancel)

@@ -12,13 +12,13 @@
       font_size: 20
       bold: True
       color: app.theme.success if root.fps_current > 25 else (app.theme.warning if root.fps_current > 10 else app.theme.danger)
-    Label:
+    ThemedLabel:
       text: f"Min: {root.fps_min:.1f}"
       font_size: 18
-    Label:
+    ThemedLabel:
       text: f"Max: {root.fps_max:.1f}"
       font_size: 18
-    Label:
+    ThemedLabel:
       text: f"Avg: {root.fps_avg:.1f}"
       font_size: 18
 
@@ -27,17 +27,15 @@
     size_hint_y: None
     height: 48
     spacing: 10
-    Label:
+    ThemedLabel:
       text: f"Frame: {root.frame_time_ms:.1f}ms"
       font_size: 18
     Label:
       text: f"Max frame: {root.frame_time_max_ms:.1f}ms"
       font_size: 18
       color: app.theme.danger if root.frame_time_max_ms > 50 else app.theme.text
-    Label:
-      text: ""
-    Label:
-      text: ""
+    Widget:
+    Widget:
 
   # Controls row
   BoxLayout:
@@ -45,20 +43,20 @@
     height: 60
     spacing: 10
     padding: 0, 5
-    Button:
+    # SetupButtons (they beep on press themselves). Start/Stop keeps its
+    # green/red meaning in the ink rather than a tint of Kivy's stock grey.
+    SetupButton:
       text: "Stop Profiling" if root.is_profiling else "Start Profiling"
       font_size: 22
-      background_color: app.theme.danger if root.is_profiling else app.theme.success
-      on_press: app.beep()
+      color: app.theme.danger_text if root.is_profiling else app.theme.success_text
       on_release: root.toggle_profiling()
-    Button:
+    SetupButton:
       text: "Reset Stats"
       font_size: 22
-      on_press: app.beep()
       on_release: root.reset_stats()
 
   # Status
-  Label:
+  ThemedLabel:
     text: root.status_text
     size_hint_y: None
     height: 30
@@ -71,7 +69,7 @@
   ScrollView:
     do_scroll_x: True
     do_scroll_y: True
-    Label:
+    ThemedLabel:
       text: root.profile_results
       size_hint: None, None
       width: max(self.texture_size[0] + 20, self.parent.width) if self.parent else self.texture_size[0] + 20

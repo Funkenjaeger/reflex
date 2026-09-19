@@ -27,15 +27,15 @@ import threading
 from pathlib import Path
 
 from kivy.clock import Clock
+from kivy.factory import Factory
 from kivy.logger import Logger
 from kivy.properties import (ListProperty, StringProperty, BooleanProperty,
                              NumericProperty)
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
-from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
 
+from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>/<ThemedLabel>
 from reflex.utils import updater
 from reflex.utils.devices import ELS_PROTOCOL_VERSION
 from reflex.utils.kv_loader import load_kv
@@ -164,7 +164,8 @@ class UpdateScreen(Screen):
         was allowed to come back is that it cannot produce one.
         """
         content = BoxLayout(orientation="vertical", spacing=10, padding=10)
-        content.add_widget(Label(
+        # Themed: a stock Label is white, 1.38:1 on the light popup.
+        content.add_widget(Factory.ThemedLabel(
             text=(
                 f"{release.tag} is a pre-release.\n\n"
                 "- It may be unstable or incomplete\n"
@@ -176,8 +177,8 @@ class UpdateScreen(Screen):
 
         buttons = BoxLayout(orientation="horizontal", spacing=10,
                             size_hint_y=None, height=60)
-        btn_cancel = Button(text="Cancel", font_size=22)
-        btn_confirm = Button(text="Install Anyway", font_size=22)
+        btn_cancel = Factory.SetupButton(text="Cancel", font_size=22)
+        btn_confirm = Factory.SetupButton(text="Install Anyway", font_size=22)
         buttons.add_widget(btn_cancel)
         buttons.add_widget(btn_confirm)
         content.add_widget(buttons)

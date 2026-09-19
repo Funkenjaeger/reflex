@@ -11,7 +11,7 @@
     ScreenHeader:
       text: "System"
 
-    Label:
+    ThemedLabel:
       text: "System information is only available on Raspberry Pi"
       size_hint_y: None
       height: self.texture_size[1] + 20
@@ -91,9 +91,7 @@
 
         TitleItem:
           name: "Operation Output"
-        TextInput:
+        FormOutputText:
           size_hint_y: None
           height: 200
-          readonly: True
-          multiline: True
           text: root.status

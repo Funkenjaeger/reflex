@@ -407,14 +407,14 @@ class BackupScreen(Screen):
         """One button per candidate, newest first. Built in Python rather than
         in kv because the rows are data, not layout."""
         from kivy.uix.boxlayout import BoxLayout
-        from kivy.uix.button import Button
+        from kivy.factory import Factory
         from kivy.uix.modalview import ModalView
 
         content = BoxLayout(orientation="vertical", padding=10, spacing=6)
         view = ModalView(size_hint=(0.8, 0.7))
         for ref in refs:
             label = f"{ref.machine_id}  {ref.updated_at}".strip()
-            content.add_widget(Button(
+            content.add_widget(Factory.SetupButton(
                 text=label,
                 on_release=lambda _b, gid=ref.id: (
                     view.dismiss(), self.select_restore_gist(gid))))
