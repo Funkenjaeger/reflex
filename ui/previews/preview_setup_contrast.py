@@ -55,6 +55,7 @@ resource_add_path(os.path.dirname(reflex.__file__))
 from kivy.base import EventLoop  # noqa: E402
 from kivy.clock import Clock  # noqa: E402
 from kivy.core.window import Window  # noqa: E402
+from kivy.factory import Factory  # noqa: E402
 from kivy.uix.label import Label  # noqa: E402
 from kivy.uix.scrollview import ScrollView  # noqa: E402
 from kivy.uix.textinput import TextInput  # noqa: E402
@@ -234,7 +235,7 @@ def is_icon(w):
     return getattr(w, "font_name", "") == app.theme.font_icon
 
 
-def contrast_pass(screen, tag, frame, seen):
+def contrast_pass(screen, tag, frame, seen, gating=True):
     """Measure every text widget fully inside its viewport in this frame."""
     img = Image.open(frame).convert("RGB")
     for w in text_widgets(screen):
@@ -257,7 +258,7 @@ def contrast_pass(screen, tag, frame, seen):
         # A disabled help icon is not drawn at all since 2026-09-19, so this
         # branch should stay empty; it is kept as a belt-and-braces guard in
         # case one is ever shown again. Enabled icons gate like text.
-        (INFO if is_icon(w) and w.disabled else RESULTS).append(line)
+        (RESULTS if gating and not (is_icon(w) and w.disabled) else INFO).append(line)
 
 
 def huge_text_widgets(screen):
@@ -267,9 +268,9 @@ def huge_text_widgets(screen):
     return [w for w in text_widgets(screen) if w.height > Window.height]
 
 
-def scroll_frames(screen, tag):
+def scroll_frames(screen, tag, gating=True):
     """Shoot the screen at several scroll offsets so every row is measured
-    while fully on screen."""
+    while fully on screen. ``gating=False`` reports without failing the run."""
     svs = [w for w in screen.walk(restrict=True) if isinstance(w, ScrollView) and shown(w)]
     seen = {}
     positions = (1.0, 0.75, 0.5, 0.25, 0.0) if svs else (None,)
@@ -278,7 +279,7 @@ def scroll_frames(screen, tag):
             sv.scroll_y = pos
         name = f"{tag}" if i == 0 else f"{tag}_scroll{i}"
         frame = shot(name)
-        contrast_pass(screen, tag, frame, seen)
+        contrast_pass(screen, tag, frame, seen, gating)
         if i == 0:
             img = Image.open(frame).convert("RGB")
             for w in huge_text_widgets(screen):
@@ -291,8 +292,9 @@ def scroll_frames(screen, tag):
                       r >= MIN_RATIO,
                       f"{r:.2f}:1  text rgba {fmt(resolved_color(w))} -> ink {ink} on bg {bg}")
     missed = [label_of(w) for w in text_widgets(screen) if id(w) not in seen]
-    check(f"{tag}: every text widget measured on screen", not missed,
-          f"never fully on screen: {missed}" if missed else f"{len(seen)} measured")
+    (RESULTS if gating else INFO).append(
+        (f"{tag}: every text widget measured on screen", not missed,
+         f"never fully on screen: {missed}" if missed else f"{len(seen)} measured"))
 
 
 # -- per-screen state: what a lathe shows ------------------------------------
@@ -377,6 +379,38 @@ def open_screen(name):
     return app.manager.get_screen(name)
 
 
+def measure_home_and_feed_picker(theme):
+    """The two surfaces OUTSIDE Setup that carried the same dim-text defect.
+
+    Added 2026-09-19 with the text_dim change: an unselected sidebar option,
+    the unselected FEED/THREAD tab and the feed picker's other table all read
+    2.4-2.8:1 on the machine and are fixed by the new text_dim.
+
+    REPORTED, NOT GATED, and that is a deliberate scope line. Measuring these
+    also surfaced two LIGHT-THEME defects that predate this branch and are not
+    dim text:
+      * every Popup is painted OVER by the modal's own 70% black overlay, so
+        the picker's body renders at 30% of `background` (217 -> 66) and its
+        accent_text title measures 1.14:1. Kivy's modalview.kv rule loads when
+        the first Popup is built, i.e. AFTER this app's <Popup> rule, so its
+        overlay instruction ends up last in canvas.before. Fixing it means
+        changing popup chrome, which is not this branch's job.
+      * the SELECTED sidebar option ('INC') is accent_text on accent_bg at
+        2.79:1 -- a token pairing question, not a dim-text one.
+    Both are Evan's call; until then these two surfaces report only.
+    """
+    app.manager.goto("home")
+    settle(30)
+    scroll_frames(app.manager.get_screen("home"), f"home_{theme}", gating=False)
+
+    popup = Factory.FeedsTablePopup()
+    popup.show_with_callback(lambda *a: None, current_mode="Feed")
+    settle(30)
+    scroll_frames(popup, f"feed_picker_{theme}", gating=False)
+    popup.dismiss()
+    settle(10)
+
+
 def run_theme(theme_idx):
     theme = THEMES[theme_idx]
     try:
@@ -395,6 +429,7 @@ def run_theme(theme_idx):
                 PREPARE[name](scr)
                 settle(10)
             scroll_frames(scr, f"{name}_{theme}")
+        measure_home_and_feed_picker(theme)
     except Exception as e:  # never let the Kivy clock swallow it
         import traceback
         traceback.print_exc()
@@ -408,19 +443,24 @@ def run_theme(theme_idx):
 
 def report():
     if INFO:
-        print("\n==== DISABLED HELP ICONS (reported, not gated: design call) ====")
+        print("\n==== REPORTED, NOT GATED (Home, the feed picker, and any "
+              "disabled help icon) ====")
         for label, ok, detail in INFO:
             print(f"{'ok  ' if ok else 'LOW '}  {label}  [{detail}]")
     print("\n==== RESULTS ====")
     for label, ok, detail in RESULTS:
         print(f"{'PASS' if ok else 'FAIL'}  {label}  [{detail}]")
     fails = sum(1 for _, ok, _ in RESULTS if not ok)
-    print(f"\n{len(RESULTS)} checks, {fails} FAIL, {len(INFO)} disabled-icon INFO")
+    lows = sum(1 for _, ok, _ in INFO if not ok)
+    print(f"\n{len(RESULTS)} gated checks, {fails} FAIL; "
+          f"{len(INFO)} reported, {lows} of them under {MIN_RATIO:.0f}:1")
     app.stop()
 
 
 def arm(_dt):
+    from reflex.app import MODE_ELS
     app.use_case = "lathe"
+    app.set_mode(MODE_ELS)      # Home shows the ELS bar, as on the lathe
     app.manager.goto("setup_screen")
     Clock.schedule_once(lambda _dt: run_theme(0), 1.0)
 

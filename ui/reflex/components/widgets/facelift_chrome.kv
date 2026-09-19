@@ -46,10 +46,13 @@
     width: self.height
     # Enabled icon in `text`: text_dim on the page background is 3.96:1 in
     # dark but 2.02-2.25:1 in light (2026-09-19), and an enabled help icon
-    # is a control, so it gets the same floor as text. The DISABLED icon (a
-    # row with no help topic) still draws in Kivy's stock disabled_color on
-    # purpose -- whether it should recede, hide or stay legible is an open
-    # design call; previews/preview_setup_contrast.py reports it, not gates.
+    # is a control, so it gets the same floor as text.
+    #
+    # A row with NO help topic shows NO icon (Evan, 2026-09-19). Kivy's stock
+    # disabled fade measured 2.63:1 dark and 1.10-1.15:1 light -- a control
+    # that cannot be used, drawn just visibly enough to invite a tap. The row
+    # keeps the icon's width, so captions stay aligned down the column.
+    opacity: 0 if self.disabled else 1
     Label:
         text: "\uf059"
         font_name: app.theme.font_icon
@@ -203,8 +206,23 @@
 # Only the feed/thread picker uses TabbedPanel, so theming these globally is
 # safe and keeps the picker consistent with the rest of the facelift.
 <TabbedPanel>:
+    # background_image MUST be cleared, not just tinted: Kivy's default is an
+    # atlas bitmap that is dark whatever background_color says, so in the light
+    # theme the picker's body stayed near-black and its "Select Feed" title --
+    # accent_text, meant for a light panel -- measured 1.14:1 on it.
+    background_image: ''
     background_color: app.theme.background
     border: [0, 0, 0, 0]
+
+<TabbedPanelContent>:
+    # Same story as TabbedPanel above: the content area carries its own stock
+    # dark bitmap, which is what the picker's body actually showed.
+    canvas.before:
+        Color:
+            rgba: app.theme.background
+        Rectangle:
+            pos: self.pos
+            size: self.size
 
 <TabbedPanelStrip>:
     canvas.before:
