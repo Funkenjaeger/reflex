@@ -31,6 +31,19 @@ THE SEQUENCE (decisions/els-modbus-register-map.md, Implemented):
      where, --no-manifest to skip). It records what the board was SEEN
      running, not merely what was sent.
 
+WHEN IT FAILS (Open Loops 6aae7131 / 6aae7135, after 2026-09-19 07:12 on the
+lathe: a transfer lost one chunk four times running and the flasher exited 1
+with the board parked in the bootloader and the old application intact):
+  * a chunk that will not go through is RESYNCED and RESUMED, not fatal --
+    see stream(). Bounded by TRANSFER_BUDGET_S and MAX_RESYNCS;
+  * a failure BEFORE APPLY never leaves the board in the bootloader when it
+    was running an application: the run slot has not been written (the
+    transfer goes to staging), so return_to_app() jumps back and PROVES the
+    previous rev is running before saying "NOTHING CHANGED". Exit is still
+    non-zero -- the update did not happen;
+  * a failure once APPLY may have run is REPORTED, never answered with a
+    blind jump -- see after_apply_report().
+
 Every operation is edge-detected on blSeq and judged on blResult, never on
 blCommand (the firmware clears that the instant it consumes the command).
 
@@ -128,9 +141,41 @@ WRITE_ATTEMPTS = 4
 RETRY_PAUSE = 0.05      # a beat for the bootloader's next poll, small enough
                         # that 222 chunks do not notice it
 
+# --- resync and resume (Open Loops 6aae7135) -----------------------------------
+# 2026-09-19 07:12, on the lathe: a 226-chunk transfer lost the WRITE at
+# 0x08043840 four times running while every status read in between WAS
+# answered ("blSeq never moved from 73"), and the flasher gave up. The same
+# transfer went through minutes later in 13 s. So a chunk that will not go
+# through is not the end of the transfer: resync (read status until the
+# bootloader answers), take from blSeq how many chunks it has accepted, and
+# carry on from there. Bounded twice, so a link that is really gone still
+# ends -- and then return_to_app() applies.
+TRANSFER_BUDGET_S = 180.0   # the whole stream; a clean one is ~13 s
+MAX_RESYNCS = 16
+RESYNC_WAIT_S = 20.0        # one resync: status reads with backoff, at most this long
+RESYNC_PAUSE_FIRST = 0.1
+RESYNC_PAUSE_MAX = 2.0
+PAD_READ_TIMEOUT = 0.15     # see Bootloader.pad
+PAD_AFTER_TROUBLED = 3      # consecutive commands that lost a frame before pad mode
+
+# --- getting back after a failure (Open Loops 6aae7131) -------------------------
+RECOVERY_WAIT_S = 30.0      # how long to keep asking a flaky link for state, per look
+REPORT_WAIT_S = 10.0        # ditto, for the last look before reporting
+JUMP_ATTEMPTS = 3           # each gated on an identity read showing the bootloader
+
 
 class ModbusError(Exception):
     pass
+
+
+class LinkLost(SystemExit):
+    """A command that could not be got through the link: its resends were
+    spent with blSeq unmoved, or blSeq could not be read back at all.
+
+    A SystemExit, so every caller that handled the plain SystemExit these
+    used to be still does; stream() catches this class by name to resync
+    instead. Other SystemExits -- blSeq jumping, a bad blResult -- are the
+    board SAYING something is wrong, and are not resynced."""
 
 
 class Timeout(ModbusError):
@@ -311,29 +356,90 @@ def wait_for_stage(bus: Rtu, stage: int, timeout: float, rev: int | None = None)
 
 # --- bootloader control ------------------------------------------------------
 
+def describe_head(h: list[int]) -> str:
+    return (f"status={STATUS_NAMES.get(h[BL_STATUS], h[BL_STATUS])} seq={h[BL_SEQ]} "
+            f"result={RESULT_NAMES.get(h[BL_RESULT], h[BL_RESULT])} "
+            f"copyState={STATE_NAMES.get(h[BL_COPY_STATE], h[BL_COPY_STATE])} "
+            f"attempts={h[BL_ATTEMPTS]} runValid={h[BL_RUN_VALID]}")
+
+
 class Bootloader:
     def __init__(self, bus: Rtu, dry_run: bool):
         self.bus = bus
         self.dry_run = dry_run
         self.retries = 0        # commands re-sent because they never landed
         self.recovered = 0      # commands that HAD landed; only the reply was lost
+        self.resyncs = 0        # times stream() had to resync (see stream)
+        self.resumed = 0        # ... and carried on from the confirmed chunk
+        self.seq: int | None = None         # blSeq as last confirmed by _expect / resync
+        self.last_head: list[int] | None = None
+        # PAD MODE, switched on by the first resync and left on. The failure
+        # on 2026-09-19 had a shape: every WRITE lost, every status read in
+        # between answered, and afterwards the bootloader answered only every
+        # OTHER request. Against a link that answers alternate frames, the
+        # retry loop's read-then-resend rhythm puts every resend on a lost
+        # slot, four times running. In pad mode each command is preceded by
+        # one throwaway single-try read, which moves the command onto the
+        # other slot. On a healthy link it costs one short read per command.
+        # Whether the real desync is strictly alternate is UNKNOWN (it is a
+        # firmware task of its own); the resync bound holds either way.
+        self.pad = False
+        self.troubled = 0       # commands in a row that lost a frame on the way
 
     def head(self, timeout: float = 0.5) -> list[int]:
-        return self.bus.read(BL_BASE, 16, timeout=timeout)
+        h = self.bus.read(BL_BASE, 16, timeout=timeout)
+        self.last_head = h
+        return h
 
-    def describe(self) -> str:
-        h = self.head()
-        return (f"status={STATUS_NAMES.get(h[BL_STATUS], h[BL_STATUS])} seq={h[BL_SEQ]} "
-                f"result={RESULT_NAMES.get(h[BL_RESULT], h[BL_RESULT])} "
-                f"copyState={STATE_NAMES.get(h[BL_COPY_STATE], h[BL_COPY_STATE])} "
-                f"attempts={h[BL_ATTEMPTS]} runValid={h[BL_RUN_VALID]}")
+    def describe(self, h: list[int] | None = None) -> str:
+        return describe_head(self.head() if h is None else h)
+
+    def _sacrifice(self) -> None:
+        """Pad mode's throwaway read: one try, short timeout, answer unused."""
+        try:
+            self.bus.read(BL_BASE + BL_SEQ, 1, timeout=PAD_READ_TIMEOUT, attempts=1)
+        except ExceptionResponse:
+            raise
+        except ModbusError:
+            pass
 
     def _expect(self, seq_before: int, what: str) -> None:
-        h = self.head()
+        h = self.head(timeout=PAD_READ_TIMEOUT if self.pad else 0.5)
         if h[BL_SEQ] != (seq_before + 1) & 0xFFFF:
             raise SystemExit(f"{what}: blSeq did not move ({seq_before} -> {h[BL_SEQ]}); {self.describe()}")
         if h[BL_RESULT] != 0:
             raise SystemExit(f"{what}: result {RESULT_NAMES.get(h[BL_RESULT], h[BL_RESULT])}; {self.describe()}")
+        self.seq = h[BL_SEQ]
+
+    def resync(self, deadline: float) -> list[int]:
+        """Read the status block until the bootloader answers, backing off.
+
+        One try per read (this loop is the retry), pauses doubling from
+        RESYNC_PAUSE_FIRST to RESYNC_PAUSE_MAX, for at most RESYNC_WAIT_S or
+        until ``deadline``. An exception response is an ANSWER -- the
+        bootloader window is gone, i.e. the board is not in the bootloader
+        any more -- and is raised, not waited out."""
+        t0 = time.monotonic()
+        stop = min(deadline, t0 + RESYNC_WAIT_S)
+        pause = RESYNC_PAUSE_FIRST
+        tries = 0
+        last: ModbusError | None = None
+        while True:
+            try:
+                h = self.bus.read(BL_BASE, 16, timeout=0.5, attempts=1)
+                self.last_head = h
+                return h
+            except ExceptionResponse:
+                raise
+            except ModbusError as e:
+                last = e
+                tries += 1
+                self.bus.retries += 1
+            if time.monotonic() + pause > stop:
+                raise SystemExit(f"resync: the bootloader stopped answering -- {tries} status reads "
+                                 f"over {time.monotonic() - t0:.1f}s went unanswered; last: {last}")
+            time.sleep(pause)
+            pause = min(pause * 2, RESYNC_PAUSE_MAX)
 
     def _params(self, write, what: str) -> None:
         """A parameter write (slot, length, CRC) sets no command register, so
@@ -373,21 +479,29 @@ class Bootloader:
 
         So the decision is made on blSeq for every command alike, never on
         which function code happens to be idempotent."""
-        seq = self.head()[BL_SEQ]
+        # In pad mode blSeq is already known from the last _expect/resync,
+        # and not re-reading it keeps the command on the answered slot.
+        seq = self.seq if (self.pad and self.seq is not None) else self.head()[BL_SEQ]
+        lost = False
         for attempt in range(WRITE_ATTEMPTS):
             try:
+                if self.pad:
+                    self._sacrifice()
                 write()
                 break
             except ExceptionResponse:
                 raise
             except ModbusError as e:
+                lost = True
                 try:
                     # Generous: a lost reply to ERASE or APPLY can leave the
                     # board stalled in flash for seconds yet.
                     now = self.head(timeout=2.0)[BL_SEQ]
+                except ExceptionResponse:
+                    raise
                 except ModbusError as e2:
-                    raise SystemExit(f"{what}: lost the reply ({e}) and then could not read blSeq "
-                                     f"back either ({e2})") from e2
+                    raise LinkLost(f"{what}: lost the reply ({e}) and then could not read blSeq "
+                                   f"back either ({e2})") from e2
                 if now == (seq + 1) & 0xFFFF:
                     self.recovered += 1
                     print(f"  {what}: reply lost but blSeq moved {seq} -> {now}; the command ran ({e})")
@@ -396,13 +510,21 @@ class Bootloader:
                     raise SystemExit(f"{what}: blSeq jumped {seq} -> {now} across a lost frame; "
                                      f"another master on the bus? {self.describe()}")
                 if attempt + 1 >= WRITE_ATTEMPTS:
-                    raise SystemExit(f"{what}: {WRITE_ATTEMPTS} attempts, blSeq never moved from "
-                                     f"{seq}; last: {e}")
+                    raise LinkLost(f"{what}: {WRITE_ATTEMPTS} attempts, blSeq never moved from "
+                                   f"{seq}; last: {e}")
                 self.retries += 1
                 print(f"  {what}: no reply, blSeq still {seq}; resending "
                       f"({attempt + 1}/{WRITE_ATTEMPTS - 1})")
                 time.sleep(RETRY_PAUSE)
         self._expect(seq, what)
+        # A link that loses a frame on EVERY command never needs a resync --
+        # each command limps through on its own retries -- but at a second
+        # or two per chunk. Pad mode is the cure for that rhythm too.
+        self.troubled = self.troubled + 1 if lost else 0
+        if self.troubled >= PAD_AFTER_TROUBLED and not self.pad:
+            self.pad = True
+            print(f"  link: {self.troubled} commands in a row lost a frame; padding every command "
+                  f"with a throwaway read from here on")
 
     def command(self, cmd: int, what: str, timeout: float) -> None:
         if self.dry_run:
@@ -471,7 +593,19 @@ class Bootloader:
             print("  dry-run: would send JUMP")
             return
         seq = self.head()[BL_SEQ]
-        self.bus.write_one(BL_BASE + BL_COMMAND, CMD_JUMP, timeout=2.0)
+        if self.pad:
+            self._sacrifice()
+        try:
+            self.bus.write_one(BL_BASE + BL_COMMAND, CMD_JUMP, timeout=2.0)
+        except ExceptionResponse:
+            raise
+        except ModbusError as e:
+            # What the docstring above always said and the code did not do:
+            # until 2026-09-19 this propagated as a traceback. Whether the
+            # request or only the reply was lost, the caller's idStage wait
+            # is what settles it.
+            print(f"  JUMP: no reply ({e}); watching idStage to see whether it ran")
+            return
         # The reply comes before the jump; the board leaves right after it.
         try:
             self._expect(seq, "JUMP")
@@ -504,18 +638,44 @@ def enter_bootloader(bus: Rtu, ident: Identity, dry_run: bool) -> Identity:
     return ident
 
 
+def link_stats(bus: Rtu, bl: Bootloader) -> dict:
+    """The link's record for this run, as the manifest keys it lands under."""
+    return {"link_read_retries": bus.retries, "link_commands_resent": bl.retries,
+            "link_replies_recovered": bl.recovered, "link_resyncs": bl.resyncs,
+            "link_chunks_resumed": bl.resumed}
+
+
+def print_link(bus: Rtu, bl: Bootloader) -> None:
+    # Say the retry count out loud even when it is zero. A silent retry layer
+    # is how a link that has quietly started losing a tenth of its frames goes
+    # on looking healthy for months. The resync line is added only when there
+    # was one, so a clean flash prints exactly what it always printed.
+    print(f"  link: {bus.retries} read retries, {bl.retries} commands resent, "
+          f"{bl.recovered} replies lost after the command had run")
+    if bl.resyncs:
+        print(f"  link: {bl.resyncs} resyncs, {bl.resumed} transfers resumed from the chunk "
+              f"the bootloader confirmed")
+
+
 def record_flash(manifest, image_path: str, data: bytes, hdr, ident,
-                 variant: str, tag: str | None) -> None:
+                 variant: str, tag: str | None, link: dict | None = None) -> None:
     """Append the manifest record for a flash the board has CONFIRMED.
 
     A failure here is reported, not raised: the board is already running the
     new image, and an exit code saying the flash failed would be a lie that
     sends someone to reflash a good board. ot-state reporting a stale rev is
     the loud signal that the record did not land.
+
+    ``link`` (link_stats) adds the link_* keys, so a link that is getting
+    worse shows in the record of every flash, not only in scrollback. New
+    keys only: readers take the last line's ``rev``/``tag`` and ignore the
+    rest (updater.last_flashed_rev).
     """
     extra = {"image": os.path.basename(image_path), "protocol": ident.app_protocol}
     if tag:
         extra["tag"] = tag
+    if link:
+        extra.update(link)
     rec = flash_manifest.record(
         variant=variant, probe=None if variant == "release" else "unknown",
         rev=f"{hdr.build_rev:07x}", dirty=hdr.dirty,
@@ -525,6 +685,254 @@ def record_flash(manifest, image_path: str, data: bytes, hdr, ident,
         print(f"  recorded in {where}")
     except OSError as e:
         print(f"WARNING: the flash succeeded but was NOT recorded in {manifest}: {e}")
+
+
+def stream(bl: Bootloader, image: bytes, hdr) -> None:
+    """Send the image to staging, chunk by chunk, RESUMING across a link that
+    drops out (Open Loops 6aae7135).
+
+    HOW PROGRESS IS KNOWN. The bootloader keeps no "bytes received" count;
+    what it has is blSeq, bumped exactly once per command it executes
+    (bl_core.c blCoreService), and the target-address registers, which hold
+    the address of the last WRITE it executed. Every command between the
+    ERASE and the VERIFY is one of our WRITEs, in order, so after a resync
+
+        (blSeq - blSeq just after the ERASE) = chunks the bootloader has run
+
+    and that count can only be the failing chunk's index (its request never
+    got there: send it again) or one more (it ran and every reply after it
+    was lost: its target address must then be the failing chunk's, its
+    result OK, and it is NOT written again). Any other count means something
+    other than this transfer moved the counter -- a reset, another master --
+    and the transfer stops rather than guess. On the lathe on 2026-09-19 the
+    arithmetic held: blSeq 60 at 0x08042e18, chunk 59, one ERASE before it.
+
+    Bounded by TRANSFER_BUDGET_S over the whole stream (checked before every
+    chunk, so a transfer that limps without ever needing a resync is bounded
+    too) and MAX_RESYNCS; past
+    either, or when a resync gets no answer, it raises and the caller's
+    return_to_app() takes over."""
+    n = (len(image) + CHUNK_BYTES - 1) // CHUNK_BYTES
+    deadline = time.monotonic() + TRANSFER_BUDGET_S
+    base = bl.seq                               # blSeq after the ERASE
+    i = 0
+    while i < n:
+        off = i * CHUNK_BYTES
+        addr = ri.STAGING_SLOT_BASE + off
+        if time.monotonic() >= deadline:
+            raise SystemExit(f"the {TRANSFER_BUDGET_S:.0f}s transfer budget is spent with {i} of {n} "
+                             f"chunks written; giving up")
+        try:
+            bl.write_chunk(addr, image[off:off + CHUNK_BYTES], hdr.image_length, hdr.crc32)
+            i += 1
+            continue
+        except ExceptionResponse:
+            raise
+        except (LinkLost, ModbusError) as e:
+            failure = e
+        if bl.resyncs >= MAX_RESYNCS:
+            raise SystemExit(f"{failure}; giving up: all {MAX_RESYNCS} resyncs spent")
+        if time.monotonic() >= deadline:
+            raise SystemExit(f"{failure}; giving up: the {TRANSFER_BUDGET_S:.0f}s transfer budget is spent")
+        bl.resyncs += 1
+        print(f"  chunk {i + 1}/{n} at 0x{addr:08x} will not go through; resync "
+              f"{bl.resyncs}/{MAX_RESYNCS} ({failure})")
+        h = bl.resync(deadline)
+        done = (h[BL_SEQ] - base) & 0xFFFF
+        if done == i + 1:
+            last = h[BL_TARGET_LO] | (h[BL_TARGET_HI] << 16)
+            if last != addr or h[BL_RESULT] != 0:
+                raise SystemExit(f"resync: blSeq says chunk {i + 1} ran, but the bootloader's last write "
+                                 f"was at 0x{last:08x} with result "
+                                 f"{RESULT_NAMES.get(h[BL_RESULT], h[BL_RESULT])}; {describe_head(h)}")
+            bl.recovered += 1
+            i += 1
+        elif done != i:
+            raise SystemExit(f"resync: blSeq {h[BL_SEQ]} counts {done} commands since the ERASE "
+                             f"(blSeq {base}), but chunk {i + 1} of {n} was next; something other than "
+                             f"this transfer moved it. Not resuming against a count that does not add "
+                             f"up. {describe_head(h)}")
+        bl.seq = h[BL_SEQ]
+        bl.pad = True
+        bl.resumed += 1
+        print(f"    resumed: the bootloader confirms {i} of {n} chunks written"
+              + (f"; continuing at 0x{ri.STAGING_SLOT_BASE + i * CHUNK_BYTES:08x}" if i < n else ""))
+
+
+def poll_identity(bus: Rtu, wait: float) -> Identity | None:
+    """read_identity for a link that may be flaky: single tries with backoff
+    for up to ``wait`` seconds; None when nothing answered."""
+    t_end = time.monotonic() + wait
+    pause = RESYNC_PAUSE_FIRST
+    while True:
+        try:
+            ident = Identity(bus.read(ID_BASE, ID_SIZE, timeout=0.3, attempts=1))
+            if ident.magic == ID_MAGIC:
+                return ident
+        except ModbusError:
+            pass
+        if time.monotonic() + pause > t_end:
+            return None
+        time.sleep(pause)
+        pause = min(pause * 2, RESYNC_PAUSE_MAX)
+
+
+def poll_head(bus: Rtu, wait: float) -> list[int] | None:
+    """The bootloader status block, same terms. None when nothing answered,
+    or when the answer was that there is no bootloader window (exception)."""
+    t_end = time.monotonic() + wait
+    pause = RESYNC_PAUSE_FIRST
+    while True:
+        try:
+            return bus.read(BL_BASE, 16, timeout=0.5, attempts=1)
+        except ExceptionResponse:
+            return None
+        except ModbusError:
+            pass
+        if time.monotonic() + pause > t_end:
+            return None
+        time.sleep(pause)
+        pause = min(pause * 2, RESYNC_PAUSE_MAX)
+
+
+def apply_never_ran(bus: Rtu, seq_at_apply: int | None) -> bool:
+    """True only when the bootloader PROVES that nothing ran after VERIFY:
+    blSeq unmoved and blStatus still STAGED (a reset would have cleared the
+    staged flag and restarted blSeq). Anything less is treated as 'APPLY may
+    have run', which is the case that must not be answered with a jump."""
+    if seq_at_apply is None:
+        return False
+    h = poll_head(bus, RECOVERY_WAIT_S)
+    return h is not None and h[BL_SEQ] == seq_at_apply and h[BL_STATUS] == 5   # STAGED
+
+
+RECOVER_BY_HAND = ("Recover by hand: `modbus-flash.py --identity` to look; `modbus-flash.py --boot-app` "
+                   "starts whatever the run slot holds; if the board does not answer at all, power-cycle "
+                   "it (the stay-in-bootloader request was consumed on entry, so with a valid run slot the "
+                   "bootloader starts the application by itself); last resort SWD (fw/scripts/flash.sh).")
+
+
+def return_to_app(bus: Rtu, bl: Bootloader, before: Identity | None, start: list[int] | None,
+                  reason, where: str):
+    """A failure BEFORE APPLY: put the board back in the application it was
+    running and PROVE it, then exit non-zero. Always raises SystemExit.
+    (Open Loops 6aae7131.)
+
+    Safe because nothing before APPLY writes the run slot: ERASE, WRITE and
+    VERIFY all address staging. Still checked, not assumed, before each jump:
+    runValid must be 1, no copy may be in flight, and copyState must be what
+    it was when this run found the bootloader. Each JUMP after the first is
+    gated on an identity read showing the board is STILL in the bootloader,
+    so a jump is never sent to a board that already left.
+
+    Proven by an identity read: stage = application AND the rev (and dirty
+    flag) the board reported before this run. Nothing less is reported as
+    'nothing changed'."""
+    print(f"FAILED {where}: {reason}")
+    print_link(bus, bl)
+    if before is None:
+        look = poll_head(bus, REPORT_WAIT_S)
+        raise SystemExit(
+            f"VERDICT: FAILED {where}; the board is in the bootloader "
+            f"({describe_head(look) if look else 'status unreadable'}). It was already in the bootloader "
+            f"when this run began, so there is no previous application rev to prove a return against, and "
+            f"it is not jumped blind. The run slot was not written by this run. {RECOVER_BY_HAND}")
+    print(f"  the run slot was not written (the transfer goes to staging); returning to the "
+          f"previous application {before.rev_str}")
+    start_copy = start[BL_COPY_STATE] if start else None
+    state = "never read"
+    for attempt in range(1, JUMP_ATTEMPTS + 1):
+        ident = poll_identity(bus, RECOVERY_WAIT_S)
+        if ident is None:
+            state = f"the board did not answer its identity window for {RECOVERY_WAIT_S:.0f}s"
+            break
+        if ident.stage == ID_STAGE_APP:
+            _settled(before, ident, where, reason)                   # raises
+        h = poll_head(bus, RECOVERY_WAIT_S)
+        if h is None:
+            state = "the bootloader answered its identity window but not its status block"
+            break
+        state = f"bootloader: {describe_head(h)}"
+        refuse = None
+        if h[BL_RUN_VALID] != 1:
+            refuse = "runValid is not 1: the bootloader does not consider the run slot bootable"
+        elif h[BL_COPY_STATE] in (1, 2, 4) or h[BL_STATUS] == 6:
+            refuse = "a copy is in flight"
+        elif start_copy is not None and h[BL_COPY_STATE] != start_copy:
+            refuse = (f"copyState moved from {STATE_NAMES.get(start_copy, start_copy)} during this run, "
+                      f"so something other than the transfer happened")
+        if refuse:
+            raise SystemExit(f"VERDICT: FAILED {where}, and the board is left in the BOOTLOADER: "
+                             f"not jumping, because {refuse}. {state}. {RECOVER_BY_HAND}")
+        print(f"  JUMP to the application (attempt {attempt}/{JUMP_ATTEMPTS}); {state}")
+        try:
+            bl.jump()
+        except (SystemExit, ModbusError) as e:
+            print(f"  JUMP: {e}")
+        try:
+            ident = wait_for_stage(bus, ID_STAGE_APP, timeout=APP_START_WAIT_S)
+        except SystemExit as e:
+            print(f"  the application did not answer: {e}")
+            continue
+        _settled(before, ident, where, reason)                       # raises
+    else:
+        look = poll_identity(bus, REPORT_WAIT_S)
+        if look is not None and look.stage == ID_STAGE_APP:
+            _settled(before, look, where, reason)                    # raises
+        h = poll_head(bus, REPORT_WAIT_S) if look is not None else None
+        state = (f"bootloader: {describe_head(h)}" if h else
+                 "the board does not answer" if look is None else f"identity: {look}")
+    raise SystemExit(f"VERDICT: FAILED {where}, and the board could NOT be returned to the application "
+                     f"{before.rev_str}: {state}. Nothing was applied: the previous image should still be "
+                     f"intact in the run slot. {RECOVER_BY_HAND}")
+
+
+def _settled(before: Identity, ident: Identity, where: str, reason):
+    if ident.build_rev == before.build_rev and ident.dirty == before.dirty:
+        raise SystemExit(f"VERDICT: FAILED -- NOTHING CHANGED. The flash failed {where} ({reason}); the "
+                         f"previous firmware {ident.rev_str} is running again, protocolVersion "
+                         f"{ident.app_protocol}, confirmed by an identity read.")
+    raise SystemExit(f"VERDICT: FAILED {where}, and the board came back running application "
+                     f"{ident.rev_str}, which is NOT the {before.rev_str} it ran before this flash. "
+                     f"Treat the controller's firmware as unknown until checked. ({reason})")
+
+
+AFTER_APPLY_MEANING = {
+    0: "IDLE: no copy recorded (an APPLY that failed before touching the run slot ends here, as does "
+       "a trial the application has confirmed)",
+    3: "TRIAL: the NEW image is in the run slot, unconfirmed. --boot-app starts it; if it fails to "
+       "start three times the bootloader puts the previous image back by itself",
+    5: "REVERTED: the previous image was copied back into the run slot",
+}
+
+
+def after_apply_report(bus: Rtu, before: Identity | None, hdr, reason) -> str:
+    """A failure once APPLY may have run. Looks, reports, and does NOT jump:
+    from here the run slot may hold the new image, the old one, or a torn
+    copy the bootloader is part-way through repairing, and only the
+    bootloader's journal knows which. Returns the message to exit with."""
+    look = poll_identity(bus, REPORT_WAIT_S)
+    if look is None:
+        state = f"the board does not answer (identity window silent for {REPORT_WAIT_S:.0f}s)"
+    elif look.stage == ID_STAGE_APP:
+        which = ("the NEW image" if look.build_rev == hdr.build_rev else
+                 "the PREVIOUS image" if before and look.build_rev == before.build_rev else
+                 "neither the new nor the previous image")
+        state = f"application {look.rev_str} is running -- {which}"
+    else:
+        h = poll_head(bus, REPORT_WAIT_S)
+        if h is None:
+            state = "in the bootloader; its status block did not answer"
+        else:
+            state = (f"in the bootloader: {describe_head(h)}. copyState "
+                     + AFTER_APPLY_MEANING.get(h[BL_COPY_STATE],
+                                               f"{STATE_NAMES.get(h[BL_COPY_STATE], h[BL_COPY_STATE])}: a "
+                                               f"copy is in flight; the bootloader finishes or undoes it "
+                                               f"at its next start"))
+    prev = (f" To go back to the previous firmware deliberately: `modbus-flash.py --revert "
+            f"--expect-rev {before.rev_str}`." if before else "")
+    return (f"VERDICT: FAILED after APPLY started -- not jumping blind ({reason}).\n"
+            f"  board now: {state}.\n  {RECOVER_BY_HAND}{prev}")
 
 
 def flash(bus: Rtu, image_path: str, dry_run: bool, manifest=None,
@@ -542,6 +950,10 @@ def flash(bus: Rtu, image_path: str, dry_run: bool, manifest=None,
     print(f"board: {ident}")
     if ident.stage == ID_STAGE_APP and ident.build_rev == hdr.build_rev and not hdr.dirty and not ident.dirty:
         print("note: the board already reports this revision; continuing anyway")
+    # What return_to_app must prove came back, if anything goes wrong before
+    # APPLY. None when the board was already in the bootloader: there is then
+    # no running application to go back to, and no rev to prove.
+    before = ident if ident.stage == ID_STAGE_APP else None
     ident = enter_bootloader(bus, ident, dry_run)
     if dry_run and ident.stage != ID_STAGE_BOOTLOADER:
         print("dry-run: stopping before any write (board is still in the application)")
@@ -550,32 +962,42 @@ def flash(bus: Rtu, image_path: str, dry_run: bool, manifest=None,
     bl = Bootloader(bus, dry_run)
     print(f"bootloader: {bl.describe()}")
     t0 = time.monotonic()
-    print("  erasing staging (up to 4 s)...")
-    bl.erase()
-    print(f"  streaming {len(image)} bytes in {(len(image) + CHUNK_BYTES - 1) // CHUNK_BYTES} chunks...")
-    for off in range(0, len(image), CHUNK_BYTES):
-        chunk = image[off:off + CHUNK_BYTES]
-        bl.write_chunk(ri.STAGING_SLOT_BASE + off, chunk, hdr.image_length, hdr.crc32)
-    print("  verifying...")
-    bl.verify(hdr.image_length, hdr.crc32)
+    start = bl.last_head          # the bootloader as this run found it
+    try:
+        print("  erasing staging (up to 4 s)...")
+        bl.erase()
+        print(f"  streaming {len(image)} bytes in {(len(image) + CHUNK_BYTES - 1) // CHUNK_BYTES} chunks...")
+        stream(bl, image, hdr)
+        print("  verifying...")
+        bl.verify(hdr.image_length, hdr.crc32)
+    except (SystemExit, ModbusError) as e:
+        if dry_run:
+            raise
+        return_to_app(bus, bl, before, start, e, "before APPLY")      # always raises
     print("  applying (backup old image, copy new image to the run slot)...")
-    bl.apply()
-    print(f"  {bl.describe()}")
-    print("  jumping...")
-    bl.jump()
-    if dry_run:
-        print(f"VERDICT: dry-run complete, nothing written ({time.monotonic() - t0:.1f}s)")
-        return 0
-    ident = wait_for_stage(bus, ID_STAGE_APP, timeout=APP_START_WAIT_S, rev=hdr.build_rev)
-    # Say the retry count out loud even when it is zero. A silent retry layer
-    # is how a link that has quietly started losing a tenth of its frames goes
-    # on looking healthy for months.
-    print(f"  link: {bus.retries} read retries, {bl.retries} commands resent, "
-          f"{bl.recovered} replies lost after the command had run")
+    seq_at_apply = bl.seq
+    try:
+        bl.apply()
+        print(f"  {bl.describe()}")
+        print("  jumping...")
+        bl.jump()
+        if dry_run:
+            print(f"VERDICT: dry-run complete, nothing written ({time.monotonic() - t0:.1f}s)")
+            return 0
+        ident = wait_for_stage(bus, ID_STAGE_APP, timeout=APP_START_WAIT_S, rev=hdr.build_rev)
+    except (SystemExit, ModbusError) as e:
+        if dry_run:
+            raise
+        if apply_never_ran(bus, seq_at_apply):
+            return_to_app(bus, bl, before, start, e,
+                          "at APPLY, which blSeq proves never ran")    # always raises
+        print_link(bus, bl)
+        raise SystemExit(after_apply_report(bus, before, hdr, e)) from None
+    print_link(bus, bl)
     print(f"VERDICT: OK -- application {ident.rev_str} is running, protocolVersion {ident.app_protocol} "
           f"({time.monotonic() - t0:.1f}s)")
     if manifest:
-        record_flash(manifest, image_path, data, hdr, ident, variant, tag)
+        record_flash(manifest, image_path, data, hdr, ident, variant, tag, link_stats(bus, bl))
     return 0
 
 
