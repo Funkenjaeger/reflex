@@ -67,20 +67,15 @@
           name: "Free"
           disabled: True
           value: root.fs_free_str
-
-        TitleItem:
-          name: "Resize Root Partition"
+        # Read-only. The upstream "Resize Partition" button (1006699a) was
+        # removed 2026-09-19: the operator UI does no system administration,
+        # it could not run as the unprivileged service user anyway, and the
+        # image expands the root partition on first boot.
         ButtonItem:
           name: "Refresh Storage Info"
           value: "Refresh"
           help_file: "system_storage.md"
           on_release: root.refresh_storage_info()
-        ButtonItem:
-          name: "Resize Partition"
-          value: "Running..." if root.is_running else ("Resize" if root.can_resize else "Already full")
-          disabled: not root.can_resize or root.is_running
-          help_file: "system_storage.md"
-          on_release: root.prompt_resize()
 
         TitleItem:
           name: "System"

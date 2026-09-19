@@ -1,4 +1,3 @@
-import asyncio
 import subprocess
 
 from kivy.clock import Clock
@@ -22,9 +21,6 @@ from reflex.utils.platform import (
 log = Logger.getChild(__name__)
 load_kv(__file__)
 
-# Threshold: if partition uses >= 99% of disk, no resize needed
-RESIZE_THRESHOLD = 0.99
-
 
 class SystemScreen(Screen):
     is_pi = BooleanProperty(False)
@@ -37,8 +33,6 @@ class SystemScreen(Screen):
     fs_used_str = StringProperty("N/A")
     fs_free_str = StringProperty("N/A")
     status = StringProperty("")
-    can_resize = BooleanProperty(False)
-    is_running = BooleanProperty(False)
 
     def __init__(self, **kv):
         super().__init__(**kv)
@@ -74,13 +68,6 @@ class SystemScreen(Screen):
             self.fs_used_str = format_bytes(usage["used"])
             self.fs_free_str = format_bytes(usage["available"])
 
-        # Determine if resize is possible
-        if disk_size and part_size:
-            ratio = part_size / disk_size
-            self.can_resize = ratio < RESIZE_THRESHOLD
-        else:
-            self.can_resize = False
-
     def log(self, message: str):
         log.info(message)
         self.status += f"{message}\n"
@@ -113,95 +100,3 @@ class SystemScreen(Screen):
             subprocess.Popen(["sudo", "reboot"])
         except Exception as e:
             self.log(f"Reboot failed: {e}")
-
-    def prompt_resize(self):
-        content = BoxLayout(orientation="vertical", spacing=10, padding=10)
-
-        btn_cancel = Button(text="Cancel", font_size=22)
-        btn_confirm = Button(text="Confirm Resize", font_size=22)
-
-        content.add_widget(btn_confirm)
-        content.add_widget(btn_cancel)
-
-        popup = Popup(
-            title="Resize root partition to fill the entire disk?",
-            content=content,
-            size_hint=(0.6, 0.4),
-            auto_dismiss=False,
-        )
-
-        btn_cancel.bind(on_release=popup.dismiss)
-        btn_confirm.bind(on_release=lambda _: self._start_resize(popup))
-
-        popup.open()
-
-    def _start_resize(self, popup):
-        popup.dismiss()
-        self.is_running = True
-        Clock.schedule_once(lambda dt: asyncio.ensure_future(self._perform_resize()))
-
-    async def _perform_resize(self):
-        self.status = ""
-        self.log("Starting partition resize...")
-
-        # Step 1: growpart
-        self.log(f"Running: growpart {self.disk_device} {self.partition_number}")
-        try:
-            p = subprocess.Popen(
-                ["growpart", self.disk_device, self.partition_number],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            while p.poll() is None:
-                await asyncio.sleep(1)
-
-            stdout = p.stdout.read().decode() if p.stdout else ""
-            stderr = p.stderr.read().decode() if p.stderr else ""
-
-            if stdout:
-                self.log(stdout.strip())
-            if stderr:
-                self.log(stderr.strip())
-
-            if p.returncode != 0:
-                self.log(f"growpart failed with return code {p.returncode}")
-                self.is_running = False
-                return
-            self.log("growpart completed successfully")
-        except FileNotFoundError:
-            self.log("growpart not found - install cloud-guest-utils")
-            self.is_running = False
-            return
-
-        # Step 2: resize2fs
-        self.log(f"Running: resize2fs {self.root_device}")
-        try:
-            p = subprocess.Popen(
-                ["resize2fs", self.root_device],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            while p.poll() is None:
-                await asyncio.sleep(1)
-
-            stdout = p.stdout.read().decode() if p.stdout else ""
-            stderr = p.stderr.read().decode() if p.stderr else ""
-
-            if stdout:
-                self.log(stdout.strip())
-            if stderr:
-                self.log(stderr.strip())
-
-            if p.returncode != 0:
-                self.log(f"resize2fs failed with return code {p.returncode}")
-                self.is_running = False
-                return
-            self.log("resize2fs completed successfully")
-        except FileNotFoundError:
-            self.log("resize2fs not found - install e2fsprogs")
-            self.is_running = False
-            return
-
-        self.log("Resize complete! Refreshing storage info...")
-        self.refresh_storage_info()
-        self.is_running = False

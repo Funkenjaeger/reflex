@@ -271,9 +271,7 @@ def prepare_system(screen):
     screen.fs_total_str = "28.7 GB"
     screen.fs_used_str = "6.1 GB"
     screen.fs_free_str = "21.4 GB"
-    screen.can_resize = False       # the lathe's card is already expanded
-    screen.is_running = False
-    screen.status = "Partition already uses the whole disk"
+    screen.status = "Rebooting..."
 
 
 def run_theme(theme_idx):
