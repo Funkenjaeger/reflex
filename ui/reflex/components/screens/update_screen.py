@@ -66,9 +66,21 @@ class UpdateScreen(Screen):
         app start, for a screen the operator may never open -- on a machine
         that is frequently on a workshop network with no route out. Nothing
         here is needed until the screen is looked at.
+
+        The pre-release toggle is restored first, from ``Device-0.yaml``
+        (2026-09-19: it used to reset to off on every visit).
         """
-        if not self.busy and not self.releases:
+        device = self._device()
+        if device is not None:
+            self.allow_experimental = bool(device.offer_prereleases)
+        if not self.busy and not self._catalogue:
             self.schedule_refresh_releases()
+
+    @staticmethod
+    def _device():
+        from reflex.app import MainApp
+        app = MainApp.get_running_app()
+        return getattr(app, "device", None)
 
     # ------------------------------------------------------------------
     # status
@@ -101,8 +113,11 @@ class UpdateScreen(Screen):
         self._set_releases()
 
     def _fetch_releases(self):
+        """Finals AND pre-releases, whatever the toggle says: the toggle then
+        only filters (_set_releases). Until 2026-09-19 the fetch honoured the
+        toggle, so turning it on showed nothing new until Refresh was tapped."""
         session = self._session()
-        return session.list_releases(allow_prerelease=self.allow_experimental)
+        return session.list_release_catalogue()
 
     def _set_releases(self):
         """Rebuild the dropdown from the catalogue and the experimental flag.
@@ -122,6 +137,9 @@ class UpdateScreen(Screen):
 
     def on_allow_experimental(self, instance, value):
         self._set_releases()
+        device = self._device()
+        if device is not None and device.offer_prereleases != value:
+            device.offer_prereleases = value
 
     def on_selected_release(self, instance, value):
         self.enable_update_button = bool(value) and value != self.current_release
@@ -192,8 +210,19 @@ class UpdateScreen(Screen):
     def _do_install(self, release):
         self.busy = True
         self.enable_update_button = False
+        # After the warning line has been laid out (next frame), bring the
+        # status box into view: during an update it is what the operator
+        # watches, and at rest it sits mostly below the fold.
+        Clock.schedule_once(self._scroll_to_status, 0.1)
         Clock.schedule_once(
             lambda dt: asyncio.ensure_future(self.perform_install(release)))
+
+    def _scroll_to_status(self, *_):
+        """The status box is the last thing on the screen, so the bottom of
+        the scroller shows all of it, with the warning line just above."""
+        scroller = getattr(self, "ids", {}).get("scroller")
+        if scroller is not None:
+            scroller.scroll_y = 0
 
     async def perform_install(self, release):
         """Run the update off the Kivy thread so the screen keeps drawing.

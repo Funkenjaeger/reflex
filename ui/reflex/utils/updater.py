@@ -836,6 +836,22 @@ class UpdateSession:
         payload = self._fetch_json(GITHUB_RELEASES_URL)
         return select_releases(payload, allow_prerelease=allow_prerelease)
 
+    def list_release_catalogue(self) -> list[Release]:
+        """Pre-releases AND finals from one fetch, newest first, so the Update
+        screen's pre-release toggle only filters and never has to re-fetch.
+
+        Both selections, not just the pre-release one: each is capped at
+        RELEASE_LIST_LIMIT, and a run of release candidates must not push the
+        newest finals out of the list the toggle-off view is filtered from.
+        Finals missing from the first list are older than all of it, so
+        appending them keeps newest-first."""
+        payload = self._fetch_json(GITHUB_RELEASES_URL)
+        out = select_releases(payload, allow_prerelease=True)
+        seen = {r.tag for r in out}
+        out += [r for r in select_releases(payload, allow_prerelease=False)
+                if r.tag not in seen]
+        return out
+
     # -- 1. preflight ------------------------------------------------------
 
     def preflight(self, release: Release) -> Prepared:

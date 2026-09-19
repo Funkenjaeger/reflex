@@ -1258,3 +1258,17 @@ def test_a_granted_restart_is_reported_as_restarting(tmp_path):
     s = _session(r, tmp_path)
     assert s.run(RELEASE) is True
     assert s.restarts == [1]
+
+
+def test_the_catalogue_keeps_the_newest_finals_behind_a_run_of_candidates(tmp_path):
+    """The Update screen fetches once and filters locally. Twelve release
+    candidates fill the capped pre-release selection; the finals must still
+    be there for the toggle-off view."""
+    payload = ([_payload_item(f"v2.0.0-rc.{i}", prerelease=True) for i in range(12, 0, -1)]
+               + [_payload_item("v1.1.0"), _payload_item("v1.0.1")])
+    s = _session(FakeRunner(board_protocol_after=TARGET_PROTOCOL), tmp_path)
+    s._fetch_json = lambda url: payload
+    tags = [r.tag for r in s.list_release_catalogue()]
+    assert tags[0] == "v2.0.0-rc.12", "newest first"
+    assert tags[-2:] == ["v1.1.0", "v1.0.1"]
+    assert len(tags) == len(set(tags))

@@ -32,6 +32,10 @@ THE THREE TIERS
     * ``current_mode`` in ANY file -- the operating mode last selected on the
       home screen (``Device-0.yaml``). Added 2026-09-16 with that stem; no
       stem carried the key before, so this is an addition, not a re-tier.
+    * ``offer_prereleases`` in ANY file -- the Software Update screen's
+      "Offer pre-releases" toggle (``Device-0.yaml``). An operator preference
+      about which releases to be shown, not a fact about the machine. Added
+      2026-09-19 with the key itself.
     * ``syncRatioNum`` / ``syncRatioDen`` ONLY in a file whose data carries
       ``spindleMode: true``. On a spindle axis these two are the
       degrees-per-revolution presentation of the encoder and the ELS bar
@@ -72,7 +76,7 @@ OPERATIONAL: Tier = "operational"
 IGNORED: Tier = "ignored"
 
 #: Operational in every file, no matter what the file is.
-OPERATIONAL_KEYS = frozenset({"offsets", "current_mode"})
+OPERATIONAL_KEYS = frozenset({"offsets", "current_mode", "offer_prereleases"})
 
 #: Operational only when the file's own data says the axis is the spindle.
 SPINDLE_ONLY_OPERATIONAL_KEYS = frozenset({"syncRatioNum", "syncRatioDen"})
