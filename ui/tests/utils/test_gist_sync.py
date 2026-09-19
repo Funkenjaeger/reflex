@@ -425,6 +425,7 @@ def test_installing_the_hook_syncs_on_a_recorded_change(tmp_path, monkeypatch,
     calls = []
     monkeypatch.setattr(gist_sync, "sync_if_enabled",
                         lambda *a, **kw: calls.append(1))
+    monkeypatch.setattr(gist_sync, "_start_worker", lambda fn: fn())
 
     gist_sync.install_ledger_hook()
     gist_sync.install_ledger_hook()  # idempotent
@@ -438,6 +439,75 @@ def test_installing_the_hook_syncs_on_a_recorded_change(tmp_path, monkeypatch,
         commissioning_ledger.clear_change_observers()
 
     assert calls == [1], "one sync for the one real change, and none for the no-op"
+
+
+def test_app_start_rearms_the_hook_when_sync_is_on(state_dir, monkeypatch):
+    """MUTATION EVIDENCE. Found on the lathe 2026-09-19: sync ON, token
+    present, ledger growing, gist untouched since the toggle was flipped --
+    the hook lived only in the process that flipped it."""
+    from reflex.utils import commissioning_ledger
+    monkeypatch.setattr(gist_sync, "GIST_CLIENT_ID", "Ov23-test")
+    commissioning_ledger.clear_change_observers()
+    try:
+        gist_sync.set_enabled(True)
+        assert gist_sync.install_ledger_hook_if_enabled() is True
+        assert gist_sync._on_commissioning_change in commissioning_ledger._change_observers
+    finally:
+        commissioning_ledger.clear_change_observers()
+
+
+def test_app_start_registers_nothing_when_sync_is_off(state_dir, monkeypatch):
+    from reflex.utils import commissioning_ledger
+    monkeypatch.setattr(gist_sync, "GIST_CLIENT_ID", "Ov23-test")
+    commissioning_ledger.clear_change_observers()
+    gist_sync.set_enabled(False)
+    assert gist_sync.install_ledger_hook_if_enabled() is False
+    assert commissioning_ledger._change_observers == []
+
+
+def test_app_build_calls_the_rearm():
+    """The re-arm is only a fix if the app calls it at start."""
+    import ast
+    import inspect
+    from reflex import app
+    tree = ast.parse(inspect.getsource(app.MainApp.build).lstrip())
+    called = {n.func.attr for n in ast.walk(tree)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+    assert "install_ledger_hook_if_enabled" in called
+
+
+def test_the_hook_syncs_off_the_calling_thread(monkeypatch):
+    """The ledger notifies from inside a config save on the Kivy thread; an
+    HTTPS round trip there freezes the screen."""
+    import threading
+    done = threading.Event()
+    seen = []
+
+    def fake_sync(*a, **kw):
+        seen.append(threading.get_ident())
+        done.set()
+    monkeypatch.setattr(gist_sync, "sync_if_enabled", fake_sync)
+    gist_sync._on_commissioning_change(1)
+    assert done.wait(5), "the sync never ran"
+    assert seen and seen[0] != threading.get_ident()
+
+
+def test_changes_during_a_sync_coalesce_into_one_more(monkeypatch):
+    runs = []
+    workers = []
+
+    def fake_sync(*a, **kw):
+        runs.append(1)
+        if len(runs) == 1:              # two more changes land mid-sync
+            gist_sync._on_commissioning_change(1)
+            gist_sync._on_commissioning_change(1)
+    monkeypatch.setattr(gist_sync, "sync_if_enabled", fake_sync)
+    monkeypatch.setattr(gist_sync, "_start_worker", lambda fn: workers.append(fn))
+    gist_sync._on_commissioning_change(1)
+    [worker] = workers
+    worker()
+    assert runs == [1, 1], "one sync, then exactly one more for everything that landed during it"
+    assert not gist_sync._sync_lock.locked()
 
 
 # ── restore ─────────────────────────────────────────────────────────────────

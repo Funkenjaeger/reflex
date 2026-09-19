@@ -36,6 +36,11 @@ THE THREE TIERS
       "Offer pre-releases" toggle (``Device-0.yaml``). An operator preference
       about which releases to be shown, not a fact about the machine. Added
       2026-09-19 with the key itself.
+    * ``feed_name`` / ``current_feeds_index`` in ANY file -- the feed picked
+      on the ELS bar (``ElsBar-0.yaml``). Re-tiered 2026-09-19: as the
+      commissioning default, every feed pick was ledgered as a machine change
+      (10 of the lathe's 13 ledger lines as of that day), and each would be a
+      gist revision once auto-sync worked.
     * ``syncRatioNum`` / ``syncRatioDen`` ONLY in a file whose data carries
       ``spindleMode: true``. On a spindle axis these two are the
       degrees-per-revolution presentation of the encoder and the ELS bar
@@ -76,7 +81,8 @@ OPERATIONAL: Tier = "operational"
 IGNORED: Tier = "ignored"
 
 #: Operational in every file, no matter what the file is.
-OPERATIONAL_KEYS = frozenset({"offsets", "current_mode", "offer_prereleases"})
+OPERATIONAL_KEYS = frozenset({"offsets", "current_mode", "offer_prereleases",
+                              "feed_name", "current_feeds_index"})
 
 #: Operational only when the file's own data says the axis is the spindle.
 SPINDLE_ONLY_OPERATIONAL_KEYS = frozenset({"syncRatioNum", "syncRatioDen"})

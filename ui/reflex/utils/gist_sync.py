@@ -50,6 +50,7 @@ cutting metal; it just has a stale gist.
 """
 import json
 import os
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -586,24 +587,77 @@ def fetch_bundle(gist_id: str, *, transport=None) -> dict:
 
 # ── the ledger hook ─────────────────────────────────────────────────────────
 
+_sync_lock = threading.Lock()
+_sync_again = False
+
+
+def _start_worker(fn) -> None:
+    """Seam: tests replace this to run the worker inline."""
+    threading.Thread(target=fn, name="gist-sync", daemon=True).start()
+
+
 def _on_commissioning_change(count: int) -> None:
     """Registered with :func:`reflex.utils.commissioning_ledger.on_change`.
 
     Runs AFTER the ledger line and its snapshot are on disk, outside the
     ledger's write path, and swallows everything (``sync_if_enabled`` ->
     ``sync_now``). ``count`` is unused beyond "something moved".
+
+    OFF THE CALLING THREAD (2026-09-19). The ledger notifies from inside a
+    config save, which is the Kivy thread; a sync is an HTTPS round trip, so
+    running it inline froze the screen for as long as GitHub took -- or for
+    the whole timeout on a shop network with no route out. Changes that land
+    while a sync is running are coalesced into one more sync afterwards.
     """
-    sync_if_enabled()
+    global _sync_again
+    if not _sync_lock.acquire(blocking=False):
+        _sync_again = True
+        return
+    _start_worker(_sync_worker)
+
+
+def _sync_worker() -> None:
+    global _sync_again
+    try:
+        while True:
+            _sync_again = False
+            sync_if_enabled()
+            if not _sync_again:
+                break
+    finally:
+        _sync_lock.release()
+    if _sync_again:                 # arrived between the check and the release
+        _on_commissioning_change(0)
 
 
 def install_ledger_hook() -> None:
     """Make a recorded commissioning change trigger a sync. Idempotent.
 
-    Called from the Setup screen when the toggle goes on, so a machine that
-    never opted in never registers anything at all.
+    Called from the Setup screen when the toggle goes on, and at app start
+    by :func:`install_ledger_hook_if_enabled` -- so a machine that never opted
+    in never registers anything at all.
     """
     from reflex.utils import commissioning_ledger
     commissioning_ledger.on_change(_on_commissioning_change)
+
+
+def install_ledger_hook_if_enabled() -> bool:
+    """At app start: re-arm the hook when sync is on. Never raises.
+
+    THE HOOK LIVES IN MEMORY; THE TOGGLE LIVES ON DISK. Until 2026-09-19 only
+    the Backup screen's toggle installed it, so the first UI restart after
+    turning sync on silently stopped every automatic sync while the screen
+    still showed it ON. Measured on the lathe: sync enabled and a token
+    present, the ledger growing on 09-19, and the gist last written on
+    09-17 21:08 -- the moment the toggle was flipped.
+    """
+    try:
+        if is_configured() and is_enabled():
+            install_ledger_hook()
+            return True
+    except Exception as e:  # a lathe must boot whatever the gist state is
+        log.error(f"gist sync: could not re-arm the ledger hook at start ({e})")
+    return False
 
 
 def bundle_contains_token(text: str) -> bool:
