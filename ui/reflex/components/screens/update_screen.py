@@ -208,7 +208,7 @@ class UpdateScreen(Screen):
             f"Updating {self.current_release} -> {release.tag}. "
             "Both the controller firmware and this UI will be replaced.")
         try:
-            await asyncio.get_running_loop().run_in_executor(
+            restarting = await asyncio.get_running_loop().run_in_executor(
                 None, self._install_blocking, release)
         except updater.UpdateRefused as e:
             self.update_status(str(e))
@@ -217,7 +217,12 @@ class UpdateScreen(Screen):
             self.update_status(f"Update failed: {e}")
             log.exception("update failed")
         else:
-            self.update_status("Update applied. Restarting.")
+            if restarting:
+                self.update_status("Update applied. Restarting.")
+            else:
+                self.update_status(
+                    f"Update applied, but the UI did not restart. Tap Exit "
+                    f"Application to start {release.tag}.")
         finally:
             self.busy = False
             self.on_selected_release(self, self.selected_release)
@@ -256,7 +261,7 @@ class UpdateScreen(Screen):
         from reflex.app import MainApp
         board = getattr(MainApp.get_running_app(), "board", None)
         session = self._session()
-        session.run(
+        return session.run(
             release,
             pause_link=(lambda: self._on_kivy_thread(
                 board.pause_polling, "release the serial port")) if board else None,
