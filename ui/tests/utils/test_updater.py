@@ -336,8 +336,16 @@ class FakeRunner:
                  target_protocol=TARGET_PROTOCOL, image_rev=IMAGE_REV,
                  board_rev_after=IMAGE_REV, image_valid=True, dirty="",
                  fail=None, board_after_revert=None,
-                 head_rev=PREVIOUS_REV, head_branch="integration"):
+                 head_rev=PREVIOUS_REV, head_branch="integration",
+                 board_after_failed_flash=None):
         self.calls = []
+        # What `--identity` reports once the image flash has FAILED (a `fail`
+        # marker matched it): None = what the board ran before, i.e. the
+        # flasher got back to the old application (2026-09-19, Open Loops
+        # 6aae7131); a string = that identity line verbatim; "unreadable" =
+        # the identity read itself fails.
+        self.board_after_failed_flash = board_after_failed_flash
+        self.flash_failed = False
         # What `git rev-parse HEAD` / `git symbolic-ref` report for the
         # checkout before the update (preflight records them for the undo).
         # head_branch=None models a detached checkout.
@@ -364,8 +372,15 @@ class FakeRunner:
 
         for marker in self.fail:
             if marker in joined:
+                if ("modbus-flash.py" in joined and "--identity" not in argv
+                        and "--revert" not in argv):
+                    self.flash_failed = True
                 return 1, f"boom: {marker}"
 
+        if "--identity" in argv and self.flash_failed and self.board_after_failed_flash:
+            if self.board_after_failed_flash == "unreadable":
+                return 1, "no identity window at 2048: no reply within 0.3s to FC3"
+            return 0, self.board_after_failed_flash
         if "--identity" in argv:
             protocol = (self.board_protocol_after if self.flashed
                         else self.board_protocol_before)
@@ -729,12 +744,85 @@ def test_refuses_a_machine_that_is_already_mismatched(tmp_path):
     assert r.ran("modbus-flash.py", "reflex-app-1.2.0.bin") == []
 
 
+# Fails the IMAGE FLASH and nothing else: "--record-variant" is only on that
+# command line. Until 2026-09-19 the failed-flash test used the image's file
+# name, which the preflight's `reflex_image.py info <image>` also carries --
+# so it was refused at preflight and never reached a flash at all.
+FLASH_ONLY = "--record-variant"
+
+
 def test_a_failed_flash_does_not_install_the_ui_half(tmp_path):
-    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
-                   fail={"reflex-app-1.2.0.bin"})
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={FLASH_ONLY})
     s = _session(r, tmp_path)
     with pytest.raises(UpdateRefused):
         s.run(RELEASE)
+    assert r.ran("modbus-flash.py", "reflex-app-1.2.0.bin"), "the flash was never reached"
+    assert r.touched_the_ui_half == []
+
+
+# ---------------------------------------------------------------------------
+# a FAILED flash is settled by a fresh identity read (Open Loops 6aae7131).
+# 2026-09-19 on the lathe: a transfer glitch made modbus-flash.py exit 1 with
+# the board left in the bootloader. The flasher now jumps back to the old
+# application and proves it; the updater re-reads the board rather than take
+# the script's word, and says "nothing changed" only when the board does.
+# ---------------------------------------------------------------------------
+
+def test_a_failed_flash_back_on_the_old_firmware_says_nothing_changed(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY})
+    s = _session(r, tmp_path)
+    with pytest.raises(UpdateRefused) as e:
+        s.run(RELEASE)
+    assert not isinstance(e.value, ProtocolMismatch), (
+        "the controller is confirmed on its previous firmware: an ordinary "
+        "refusal, not a mismatch")
+    assert "nothing changed" in str(e.value)
+    assert "0000001" in str(e.value)
+    assert f"boom: {FLASH_ONLY}" in str(e.value), "the flasher's own words are kept"
+    flash_at = r.calls.index(r.ran("modbus-flash.py", "reflex-app-1.2.0.bin")[0])
+    assert any("--identity" in c for c in r.calls[flash_at + 1:]), (
+        "decided by a fresh identity read after the failed flash, not by the exit status")
+    assert r.touched_the_ui_half == []
+    assert r.ran("--revert") == [], "nothing was applied, so nothing is reverted"
+
+
+def test_a_failed_flash_that_left_the_bootloader_is_a_mismatch_naming_it(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY},
+                   board_after_failed_flash=("idMagic=0x454c stage=bootloader "
+                                             "windowVersion=1 rev=0b1c0de appProtocol=0"))
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    msg = str(e.value)
+    assert "nothing changed" not in msg
+    assert "NOT running its previous firmware" in msg and "bootloader" in msg
+    assert "--boot-app" in msg
+    assert r.touched_the_ui_half == []
+
+
+def test_a_failed_flash_on_a_foreign_rev_is_not_nothing_changed(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY},
+                   board_after_failed_flash=("idMagic=0x454c stage=application "
+                                             f"windowVersion=1 rev={IMAGE_REV} "
+                                             f"appProtocol={TARGET_PROTOCOL}"))
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert "nothing changed" not in str(e.value)
+    assert IMAGE_REV in str(e.value)
+
+
+def test_a_failed_flash_then_an_unreadable_board_says_unknown(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL,
+                   fail={FLASH_ONLY},
+                   board_after_failed_flash="unreadable")
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert "UNKNOWN" in str(e.value) and "nothing changed" not in str(e.value)
     assert r.touched_the_ui_half == []
 
 
