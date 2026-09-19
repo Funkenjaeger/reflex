@@ -11,7 +11,7 @@ one at Kivy's default, from the day they were introduced (02def60).
 
 This pins the rule shape: a Form* control that themes an enabled text colour
 must theme the disabled twin too. The pixels are measured by
-previews/preview_system_screen.py; the palette values by test_theme_contrast.py.
+previews/preview_setup_contrast.py; the palette values by test_theme_contrast.py.
 """
 import os
 import re

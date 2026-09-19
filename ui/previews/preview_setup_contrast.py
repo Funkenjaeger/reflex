@@ -1,37 +1,45 @@
-"""Headless PNGs + text-contrast assertions for Setup > System, dark AND light.
+"""Headless PNGs + text-contrast assertions for EVERY Setup screen, dark AND light.
 
 WHY THIS EXISTS. Reported by Evan at the lathe on 2026-09-19: "most of the
 entries under the main Setup > System menu are invisible, at least in dark
 mode." No unit test could see it -- every widget was there, laid out, with the
 right text; the text was simply drawn in a colour the eye could not find on
-its background. So this check reads the PIXELS: it renders the real System
+its background. So this check reads the PIXELS: it renders each real Setup
 screen at the lathe's 1024x600 in each built-in theme, scrolls through the
 whole list, and for every visible label, button and text field measures the
 contrast of the most contrasting pixel in the text's own box against that
-box's dominant (background) colour. Anything under MIN_RATIO fails.
+box's dominant (background) colour. Anything under MIN_RATIO fails, and any
+failure makes the run exit non-zero.
 
-Only the platform boundary is stubbed: `is_pi` is forced on (off a Pi the whole
-list is hidden behind a "only available on Raspberry Pi" notice) and the
-storage strings are set to what a lathe shows. Everything else -- the kv
-rules, the theme, the disabled states -- is production.
+It began as a System-only check (425bb50) with an info-only --sweep of the
+other screens. The sweep found the same class of defect on eight more screens
+(OFF toggles, a disabled Backup button dimmed by alpha, unthemed stock
+Button/Label/TextInput drawing white on the light theme), so since 2026-09-19
+every screen reachable from the Setup menu gates -- the menu itself, its twelve
+sub-screens, and the screens those open (one input, one axis, the log viewer,
+the colour and font pickers).
 
-Icon-font glyphs (the row help "?") are measured and printed as INFO but do
-not gate: they are chrome, and whether a disabled help icon should recede is a
-design decision, not a legibility defect.
+Only the platform boundary is stubbed: `is_pi` is forced on for System (off a
+Pi the whole list is hidden behind a notice) and a few screens get the state a
+lathe shows (a status line, a disabled button) so that state is measured too.
+Everything else -- the kv rules, the theme, the disabled states -- is
+production.
 
---sweep also renders every other Setup sub-screen in both themes and prints
-their contrast results as INFO (not gating), to find other screens with the
-same defect.
+ONE DELIBERATE EXCEPTION: a DISABLED row-help "?" icon (a row with no help
+topic) is measured and reported as INFO, not gated. Whether a no-help icon
+should recede, be hidden, or be dimmed legibly is a design decision still open
+(2026-09-19), not a legibility defect. An ENABLED help icon is a control and
+gates like text.
 
 Run (WSL):
     cd ui && xvfb-run -a -s "-screen 0 1024x600x24" uv run \\
-        python previews/preview_system_screen.py [--sweep]
+        python previews/preview_setup_contrast.py [--only system,backup]
 """
 import os
 import sys
 import tempfile
 
-os.environ["HOME"] = tempfile.mkdtemp(prefix="reflex-system-preview-")
+os.environ["HOME"] = tempfile.mkdtemp(prefix="reflex-setup-contrast-")
 os.environ.setdefault("KIVY_NO_ARGS", "1")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
@@ -58,13 +66,21 @@ from reflex.app import MainApp  # noqa: E402
 OUT_DIR = os.environ.get("OUT_DIR") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "out")
 os.makedirs(OUT_DIR, exist_ok=True)
-SCRATCH = os.path.join(OUT_DIR, "_system_scratch.png")
+SCRATCH = os.path.join(OUT_DIR, "_setup_contrast_scratch.png")
 
 MIN_RATIO = 3.0          # WCAG large-text floor; every row here is >= 18 px
 THEMES = ("dark", "light")
-SWEEP = "--sweep" in sys.argv
-SWEEP_SCREENS = ("machine", "inputs_setup", "axes_setup", "servo", "network",
-                 "formats", "logs", "profiling", "update", "els_setup", "backup")
+
+
+def _arg(flag):
+    if flag in sys.argv:
+        i = sys.argv.index(flag)
+        if i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return None
+
+
+ONLY = set(filter(None, (_arg("--only") or "").split(",")))
 
 RESULTS = []
 INFO = []
@@ -97,7 +113,7 @@ def check(label, ok, detail):
     RESULTS.append((label, bool(ok), detail))
 
 
-# ── contrast arithmetic (WCAG 2.x relative luminance) ──────────────────────
+# -- contrast arithmetic (WCAG 2.x relative luminance) -----------------------
 def _lin(c):
     c = c / 255.0
     return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
@@ -118,7 +134,7 @@ def fmt(c):
     return "(" + ", ".join(f"{v:.2f}" for v in c) + ")"
 
 
-# ── which widgets carry text, and where is that text ───────────────────────
+# -- which widgets carry text, and where is that text ------------------------
 def shown(w):
     """Visible in the tree: no zero-opacity ancestor, non-empty box."""
     node = w
@@ -192,6 +208,8 @@ def measure(img, w):
     sx = img.width / Window.width
     sy = img.height / Window.height
     x0, y0, x1, y1 = text_box(w)
+    vx0, vy0, vx1, vy1 = viewport(w)
+    x0, y0, x1, y1 = max(x0, vx0), max(y0, vy0), min(x1, vx1), min(y1, vy1)
     px0, px1 = int(x0 * sx) + 1, int(x1 * sx) - 1
     py0, py1 = int(H - y1 * sy) + 1, int(H - y0 * sy) - 1
     if px1 <= px0 or py1 <= py0:
@@ -213,7 +231,11 @@ def label_of(w):
     return f"{kind} {t[:40]!r}"
 
 
-def contrast_pass(screen, tag, frame, seen, gating):
+def is_icon(w):
+    return getattr(w, "font_name", "") == app.theme.font_icon
+
+
+def contrast_pass(screen, tag, frame, seen):
     """Measure every text widget fully inside its viewport in this frame."""
     img = Image.open(frame).convert("RGB")
     for w in text_widgets(screen):
@@ -233,34 +255,48 @@ def contrast_pass(screen, tag, frame, seen, gating):
         detail = (f"{r:.2f}:1  text rgba {fmt(resolved_color(w))} -> ink {ink} "
                   f"on bg {bg}{state}")
         line = (f"{tag}: {label_of(w)} contrast >= {MIN_RATIO:.0f}:1", r >= MIN_RATIO, detail)
-        # Icon glyphs (the row help "?") are chrome, not text: reported, not
-        # gated -- a disabled help icon on a row with no help is meant to
-        # recede, and how far is a design call this check does not make.
-        is_icon = getattr(w, "font_name", "") == app.theme.font_icon
-        (RESULTS if gating and not is_icon else INFO).append(line)
+        # The one exemption (see the module docstring): a DISABLED help icon
+        # is reported, not gated -- how far a no-help icon should recede is
+        # a design call this check does not make. Enabled icons gate.
+        (INFO if is_icon(w) and w.disabled else RESULTS).append(line)
 
 
-def scroll_frames(screen, tag, gating):
+def huge_text_widgets(screen):
+    """Text widgets taller than the window (a long log file, a profiler
+    dump): they can never be fully on screen, so they are measured on their
+    visible part instead."""
+    return [w for w in text_widgets(screen) if w.height > Window.height]
+
+
+def scroll_frames(screen, tag):
     """Shoot the screen at several scroll offsets so every row is measured
-    while fully on screen; returns the frame paths."""
+    while fully on screen."""
     svs = [w for w in screen.walk(restrict=True) if isinstance(w, ScrollView) and shown(w)]
     seen = {}
-    frames = []
     positions = (1.0, 0.75, 0.5, 0.25, 0.0) if svs else (None,)
     for i, pos in enumerate(positions):
         for sv in svs:
             sv.scroll_y = pos
         name = f"{tag}" if i == 0 else f"{tag}_scroll{i}"
         frame = shot(name)
-        frames.append(frame)
-        contrast_pass(screen, tag, frame, seen, gating)
+        contrast_pass(screen, tag, frame, seen)
+        if i == 0:
+            img = Image.open(frame).convert("RGB")
+            for w in huge_text_widgets(screen):
+                m = measure(img, w)
+                if m is None or id(w) in seen:
+                    continue
+                seen[id(w)] = w
+                r, bg, ink = m
+                check(f"{tag}: {label_of(w)} contrast >= {MIN_RATIO:.0f}:1 (visible part)",
+                      r >= MIN_RATIO,
+                      f"{r:.2f}:1  text rgba {fmt(resolved_color(w))} -> ink {ink} on bg {bg}")
     missed = [label_of(w) for w in text_widgets(screen) if id(w) not in seen]
-    if gating:
-        check(f"{tag}: every text widget measured on screen", not missed,
-              f"never fully on screen: {missed}" if missed else f"{len(seen)} measured")
-    return frames
+    check(f"{tag}: every text widget measured on screen", not missed,
+          f"never fully on screen: {missed}" if missed else f"{len(seen)} measured")
 
 
+# -- per-screen state: what a lathe shows ------------------------------------
 def prepare_system(screen):
     screen.is_pi = True
     screen.root_device = "/dev/mmcblk0p2"
@@ -276,27 +312,99 @@ def prepare_system(screen):
     screen.status = "Partition already uses the whole disk"
 
 
+def prepare_backup(screen):
+    # Every build today has no OAuth client id: all three gist buttons are
+    # disabled and the note says why. That is the state on the lathe.
+    screen.gist_configured = False
+    screen.gist_enabled = False
+    screen.status_text = "Exported commissioning bundle to /media/usb/reflex"
+
+
+def prepare_update(screen):
+    screen.releases = ["v1.2.0-rc.3", "v1.1.4"]
+    screen.selected_release = "v1.2.0-rc.3"
+    screen.enable_update_button = False   # nothing newer selected
+    screen.status = "Already on the newest release"
+
+
+def prepare_network(screen):
+    screen.status_text = "Connected to shop-wifi (192.168.1.40)"
+
+
+def prepare_profiling(screen):
+    panel = next(w for w in screen.walk(restrict=True)
+                 if type(w).__name__ == "ProfilingPanel")
+    panel.status_text = "Profiler stopped. Results below."
+    panel.profile_results = (
+        "=== Sorted by CUMULATIVE time ===\n"
+        "   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n"
+        "      120    0.004    0.000    0.310    0.003 dro.py:88(update)\n")
+
+
+def prepare_log_viewer(screen):
+    # A short, fixed log rather than this run's own: the real one is hundreds
+    # of lines, which can never all be on screen for measuring, and differs
+    # from run to run.
+    path = os.path.join(os.environ["HOME"], "kivy_26-09-19_0.txt")
+    with open(path, "w") as fh:
+        fh.write("[INFO   ] [Reflex      ] v1.2.0-rc.3 starting\n"
+                 "[INFO   ] [Board       ] connected, protocol v7\n"
+                 "[WARNING] [Servo       ] following error 0.012 mm\n"
+                 "[INFO   ] [Formats     ] theme -> light\n")
+    screen.load_file(path)
+
+
+PREPARE = {
+    "system": prepare_system,
+    "backup": prepare_backup,
+    "update": prepare_update,
+    "network": prepare_network,
+    "profiling": prepare_profiling,
+    "log_viewer": prepare_log_viewer,
+}
+
+
+def setup_screens():
+    """The Setup menu, every sub-screen it opens, and the screens those open
+    (first input, first axis, log viewer, colour/font pickers)."""
+    names = ["setup_screen", "machine", "inputs_setup", "axes_setup", "servo",
+             "network", "formats", "system", "logs", "profiling", "update",
+             "els_setup", "backup"]
+    have = app.manager.screen_names
+    nested = [n for n in have if n.startswith("input_")][:1]
+    nested += [n for n in have if n.startswith("axis_")][:1]
+    nested += ["log_viewer", "color_picker", "font_picker"]
+    out = names + nested
+    return [n for n in out if not ONLY or n in ONLY]
+
+
+def open_screen(name):
+    if name in ("log_viewer", "color_picker", "font_picker"):
+        scr = getattr(app, name)
+        if not app.manager.has_screen(name):
+            app.manager.add_widget(scr)
+        return scr
+    return app.manager.get_screen(name)
+
+
 def run_theme(theme_idx):
     theme = THEMES[theme_idx]
     try:
         app.formats.theme = theme
         settle()
         check(f"{theme}: theme applied", app.theme.name == theme, app.theme.name)
-        system = app.manager.get_screen("system")
-        prepare_system(system)
-        app.manager.goto("system")
-        settle(30)
-        scroll_frames(system, f"system_{theme}", gating=True)
-        if SWEEP:
-            for name in SWEEP_SCREENS:
-                try:
-                    scr = app.manager.get_screen(name)
-                except Exception as e:  # screen not registered for this use case
-                    INFO.append((f"sweep {name}", False, f"not available: {e}"))
-                    continue
-                app.manager.goto(name)
+        for name in setup_screens():
+            try:
+                scr = open_screen(name)
+            except Exception as e:  # screen not registered for this use case
+                check(f"{name}_{theme}: screen available", False, repr(e))
+                continue
+            app.manager.goto(name)
+            settle(30)
+            if name in PREPARE:
+                PREPARE[name](scr)
                 settle(30)
-                scroll_frames(scr, f"sweep_{name}_{theme}", gating=False)
+            scroll_frames(scr, f"{name}_{theme}")
     except Exception as e:  # never let the Kivy clock swallow it
         import traceback
         traceback.print_exc()
@@ -310,12 +418,14 @@ def run_theme(theme_idx):
 
 def report():
     if INFO:
-        print("\n==== SWEEP (info, not gating) ====")
+        print("\n==== DISABLED HELP ICONS (reported, not gated: design call) ====")
         for label, ok, detail in INFO:
             print(f"{'ok  ' if ok else 'LOW '}  {label}  [{detail}]")
     print("\n==== RESULTS ====")
     for label, ok, detail in RESULTS:
         print(f"{'PASS' if ok else 'FAIL'}  {label}  [{detail}]")
+    fails = sum(1 for _, ok, _ in RESULTS if not ok)
+    print(f"\n{len(RESULTS)} checks, {fails} FAIL, {len(INFO)} disabled-icon INFO")
     app.stop()
 
 
