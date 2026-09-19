@@ -48,6 +48,8 @@
     "els_cal_max_spread_steps",
     "els_cal_measured_legs",
     "els_cal_motion_thresh_counts",
+    "els_overshoot_correction",
+    "els_overshoot_margin_counts",
     "els_resync_z_tol_counts",
     "els_takeup_margin_floor_steps",
     "els_takeup_margin_pct",

@@ -87,6 +87,12 @@ class TickReads:
     def reference_latched(self) -> bool:
         return bool(self._get('referenceLatched', 0))
 
+    # Which scale the firmware compares against stopPosition -- and so whose
+    # fastData.scaleSpeed is the live Z rate the overshoot correction keys on
+    # (the same scales[scaleIndex].speed that stopTriggerZSpeed copies).
+    def scale_index(self) -> int:
+        return int(self._get('scaleIndex', 0))
+
 
 class ElsStopHal:
     """Domain-named operations against the elsStop register block."""
@@ -218,6 +224,21 @@ class ElsStopHal:
         if not self._board.connected:
             return
         self._board.device['elsStop']['stopPosition'] = encoder_counts
+
+    def set_stop_offset(self, counts: int) -> None:
+        """Stop-overshoot correction: fire the stop `counts` EARLY.
+
+        protocolVersion 11. A separate 16-bit register rather than a rewritten
+        stopPosition, which stays the exact target: Modbus FC16 stores a 32-bit
+        value one half at a time and the ISR could see it torn, while a single
+        16-bit register is atomic. The firmware clamps to [0,
+        ELS_STOP_OFFSET_MAX] and treats negative as 0. Written LIVE, through
+        the rate limiter in fsms/els_overshoot.py -- every call here is a
+        Modbus exchange on the tick.
+        """
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['stopOffset'] = int(counts)
 
     def set_scale_index(self, scale_index: int) -> None:
         if not self._board.connected:

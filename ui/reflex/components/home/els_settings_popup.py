@@ -29,6 +29,13 @@ class ElsSettingsPopup(Popup):
     cal_ceiling_mm = NumericProperty(0.0)
     cal_motion_thresh_counts = NumericProperty(0)
 
+    # Stop-overshoot correction. The toggle binds straight to the dispatcher;
+    # the margin goes through here so a negative entry is refused rather than
+    # stored (a negative margin would aim PAST the measured coast).
+    OVERSHOOT_WARNING = ("Fires the stop early by the measured coast; "
+                         "verify at a shoulder before relying on it.")
+    overshoot_margin_counts = NumericProperty(1)
+
     def __init__(self, **kv):
         super().__init__(**kv)
         from reflex.app import MainApp
@@ -36,6 +43,7 @@ class ElsSettingsPopup(Popup):
         self.backlash_mm = self._steps_to_mm(self.app.els.els_backlash_steps)
         self.cal_ceiling_mm = self._steps_to_mm(self.app.els.els_cal_ceiling_steps)
         self.cal_motion_thresh_counts = int(self.app.els.els_cal_motion_thresh_counts)
+        self.overshoot_margin_counts = int(self.app.els.els_overshoot_margin_counts)
 
     def _servo_mm_per_step(self) -> float:
         servo = self.app.servo
@@ -83,6 +91,15 @@ class ElsSettingsPopup(Popup):
             self.app.els.els_cal_motion_thresh_counts = counts
             self._push_cal_limits()
             log.info(f"Calibration motion threshold: {counts} Z counts")
+
+    def on_overshoot_margin_counts(self, _instance, value):
+        counts = max(0, int(value))
+        if counts != value:
+            self.overshoot_margin_counts = counts
+            return
+        if counts != int(self.app.els.els_overshoot_margin_counts):
+            self.app.els.els_overshoot_margin_counts = counts
+            log.info(f"Stop coast correction margin: {counts} Z counts")
 
     def _push_cal_limits(self):
         """Send the limits to firmware as soon as they change.
