@@ -44,11 +44,17 @@
     # IconButton; a dynamic class based directly on Label/Button loses that race.
     size_hint_x: None
     width: self.height
+    # Enabled icon in `text`: text_dim on the page background is 3.96:1 in
+    # dark but 2.02-2.25:1 in light (2026-09-19), and an enabled help icon
+    # is a control, so it gets the same floor as text. The DISABLED icon (a
+    # row with no help topic) still draws in Kivy's stock disabled_color on
+    # purpose -- whether it should recede, hide or stay legible is an open
+    # design call; previews/preview_setup_contrast.py reports it, not gates.
     Label:
         text: "\uf059"
         font_name: app.theme.font_icon
         font_size: dp(19)
-        color: app.theme.text_dim
+        color: app.theme.text
         size_hint: 1, 1
         pos_hint: {'x': 0, 'y': 0}
         halign: 'center'
@@ -90,13 +96,19 @@
             width: 1.0
 
 # ON/OFF toggle: green-cyan accent fill when on, quiet slate when off.
+# OFF is drawn in `text`, not `text_dim`: text_dim on the `surface` pill
+# measured 2.38:1 dark / 2.82:1 light (Setup > Formats/Network/Servo/Update,
+# 2026-09-19) -- the word OFF was the least legible thing on those screens.
+# ON vs OFF stays distinct through the fill (accent_bg vs surface), the
+# border (accent vs border) and the ink (accent_text vs text), not through
+# making OFF hard to read.
 <FormToggle@ToggleButton>:
     background_normal: ''
     background_down: ''
     background_color: 0, 0, 0, 0
     font_name: app.theme.font_bold
     font_size: app.formats.font_size
-    color: app.theme.accent_text if self.state == 'down' else app.theme.text_dim
+    color: app.theme.accent_text if self.state == 'down' else app.theme.text
     disabled_color: app.theme.text_disabled
     canvas.before:
         Color:
