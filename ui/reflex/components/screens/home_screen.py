@@ -11,6 +11,10 @@ from reflex.components.home.elsbar import ElsBar
 from reflex.components.home.index_mode_layout import IndexModeLayout
 from reflex.components.home.jog_mode_layout import JogModeLayout
 from reflex.components.home.statusbar import StatusBar
+# Imported for its side effect: defining the class registers it with Kivy's
+# Factory, which is what lets home_screen.kv name `UncommissionedBanner`, and
+# it loads the banner's own kv rule. Must precede this module's load_kv().
+from reflex.components.home.uncommissioned_banner import UncommissionedBanner  # noqa: F401
 from reflex.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)

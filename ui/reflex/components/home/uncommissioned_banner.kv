@@ -1,0 +1,86 @@
+<UncommissionedBanner>:
+  # THE BINDING THAT MAKES THIS A STATE AND NOT A DECORATION. `uncommissioned`
+  # is set by MainApp.latch_commissioning_state() before any widget exists, so
+  # this rule evaluates once, on the way up, and never flips afterwards.
+  active: app.uncommissioned
+
+  orientation: "vertical"
+  size_hint_x: 1
+  # height / opacity / disabled are NOT here on purpose: they are decided in
+  # UncommissionedBanner._apply_active() so that a test can actually run the
+  # collapse. See the class docstring -- a kv expression can only be checked as
+  # text under this repo's mock GL backend, and "does the banner disappear on a
+  # commissioned machine" is too load-bearing for a text match.
+  padding: dp(9), dp(4)
+  spacing: dp(1)
+
+  canvas.before:
+    # Amber, the same `warning` token the operator already reads as "caution"
+    # on the notice strip, and OPAQUE -- this covers nothing, it IS the top of
+    # the screen, and a translucent fill over the background gradient would
+    # wash out at exactly the brightness a machine shop is lit at.
+    Color:
+      rgba: app.theme.warning if root.active else (0, 0, 0, 0)
+    RoundedRectangle:
+      pos: self.pos
+      size: self.size
+      radius: [dp(6)]
+
+  BoxLayout:
+    orientation: "horizontal"
+    spacing: dp(8)
+
+    Label:
+      # SEVERITY IS NOT CARRIED BY COLOUR ALONE (statusbar.kv, same reasoning):
+      # circle-exclamation says it too, for a dirty screen or low light.
+      text: ""
+      font_name: app.theme.font_icon
+      font_size: dp(18)
+      color: app.theme.background
+      size_hint_x: None
+      width: dp(22)
+      halign: 'center'
+      valign: 'middle'
+      text_size: self.size
+
+    Label:
+      id: label_headline
+      text: root.headline
+      font_name: app.theme.font_bold
+      font_size: dp(17)
+      color: app.theme.background
+      size_hint_x: None
+      width: self.texture_size[0]
+      halign: 'left'
+      valign: 'middle'
+      text_size: None, self.height
+
+    Label:
+      id: label_detail
+      text: root.detail
+      font_name: app.theme.font_bold
+      font_size: dp(13)
+      color: app.theme.background
+      halign: 'left'
+      valign: 'middle'
+      text_size: self.size
+      # Ellipsis rather than wrap: the strip's height is fixed (see the class
+      # docstring on why it must not resize), so a second line would be
+      # silently clipped. The headline carries the state on its own; this row
+      # is the elaboration.
+      shorten: True
+      shorten_from: 'right'
+
+  Label:
+    id: label_remedy
+    text: root.remedy
+    font_name: app.theme.font_mono
+    font_size: dp(12)
+    color: app.theme.background
+    size_hint_y: None
+    height: dp(16)
+    halign: 'left'
+    valign: 'middle'
+    text_size: self.size
+    shorten: True
+    shorten_from: 'right'
