@@ -26,14 +26,23 @@ THE BAR IS THE RESTORE CONTRACT'S OWN, DELIBERATELY. elspi
     NYAML="$(find "${SRC}" -maxdepth 1 -name '*.yaml' | wc -l)"
     [ "${NYAML}" -ge 15 ] || die "... partial capture. REFUSING ..."
 
-``docs/provisioning.md`` states the same thing in prose: "a non-empty
-``Els-0.yaml`` must be present, and there must be at least 15 ``.yaml`` files
-(the live machine carried 19 at last count)". :func:`is_commissioned` is that
-gate, re-expressed once in Python against a LIVE config directory rather than a
-capture. Two answers that must agree are two answers that will eventually
-disagree, so the numbers here are named constants with the shell's values, and
+``docs/provisioning.md`` states the same thing in prose: a non-empty
+``Els-0.yaml`` must be present, and there must be at least 15 ``.yaml`` files.
+:func:`is_commissioned` is that gate, re-expressed once in Python against a
+LIVE config directory rather than a capture. Two answers that must agree are
+two answers that will eventually disagree, so the numbers here are named
+constants with the shell's values, and
 :mod:`tests.utils.test_commissioning_state` pins the boundary cases the shell's
 own ``deltas/tests/test-restore-contract.sh`` pins.
+
+HOW MUCH SLACK THERE ACTUALLY IS: 2 FILES, NOT 4 (corrected 2026-09-22). The
+live machine carries **17** ``.yaml`` files, so the margin over the 15-file bar
+is two -- lose three dispatchers' files and a fully commissioned lathe reads as
+a partial capture. It was 19 until 2026-09-19, when four stray
+``ElsAdvancedBar-*.yaml`` files went away and ``Device-0.yaml`` was added.
+``docs/provisioning.md`` still says 19 in its own prose; correcting the elspi
+half is a separate change and is NOT quoted here as if it agreed, because a
+stale quotation is indistinguishable from a checked one.
 
 The depth matters as much as the count: ``-maxdepth 1``. The app's own
 ``ledger/snapshots/*.yaml`` live under the config directory, and a recursive
@@ -66,7 +75,31 @@ WHAT THIS MODULE DOES NOT DO. It never creates, repairs or completes a config
 directory. Refusing to invent commissioned data is the property being
 protected: only a human at the lathe with an indicator on the work knows the
 backlash, and :func:`is_commissioned` returning ``False`` is a statement that
-nobody has done that yet -- not a task to be worked around.
+nobody has done that yet -- not a task to be worked around. The single file it
+ever writes is :data:`DISMISSAL_MARKER`, which is not configuration and is
+never read as any.
+
+AND IT NEVER DELETES THAT MARKER, INCLUDING WHEN IT BECOMES REDUNDANT. Once a
+hand-commissioned directory genuinely passes :func:`is_commissioned`, the
+marker no longer decides anything, and tidying it away at that point is
+tempting. Three reasons not to:
+
+* it would make the state NON-MONOTONIC. Remove the marker at 15 files, then
+  lose one -- a dispatcher retired in an upgrade, an operator deleting a file
+  over SSH -- and a machine somebody commissioned by hand silently reverts to
+  refusing writes, with the decision that authorised them already destroyed.
+  The marker costs an inode; that failure costs an afternoon at the lathe with
+  no terminal to diagnose it from.
+* it is PROVENANCE. "These numbers came from a capture" and "these numbers were
+  typed in by hand" are different claims about the same directory, and the
+  marker is the only place the difference is recorded. Anyone reading this
+  machine's ledger later wants it.
+* deleting it is a WRITE to the config directory, taken automatically, on the
+  startup path of the module whose whole purpose is not touching configuration
+  it did not measure.
+
+Removing it is a deliberate operator act -- ``rm`` the file -- and that act
+means exactly what it says: put the warning back.
 """
 from pathlib import Path
 
@@ -82,10 +115,28 @@ log = Logger.getChild(__name__)
 ANCHOR_FILE = "Els-0.yaml"
 
 #: Minimum ``*.yaml`` files, directly in the directory, for the configuration
-#: to count as whole. 15 with the live machine at 19 -- the slack is there so
+#: to count as whole. 15 with the live machine at 17 -- the slack is there so
 #: that removing a dispatcher does not read as a partial capture, and it is the
-#: restore script's number rather than a second opinion.
+#: restore script's number rather than a second opinion. Two files of slack, so
+#: the margin is thin: see the module docstring.
 MIN_YAML_FILES = 15
+
+#: The operator's hand-commissioning decision, recorded as a FILE WHOSE
+#: EXISTENCE IS THE SETTING (the same idiom as ``gist_sync.enabled_path``).
+#:
+#: IT HAS NO ``.yaml`` EXTENSION, AND THAT IS A CORRECTNESS PROPERTY, not a
+#: naming taste. :func:`is_commissioned` counts ``*.yaml`` files; a marker that
+#: matched that glob would be a gate that votes in its own election -- drop it
+#: on a directory sitting one file short of :data:`MIN_YAML_FILES` and the
+#: directory would pass the restore contract on the strength of the marker
+#: alone. ``tests/utils/test_commissioning_dismissal.py`` pins exactly that
+#: arm.
+#:
+#: It also does not travel. ``commissioning_bundle.build`` globs ``*.yaml``, so
+#: the marker is never exported, and elspi's capture takes ``*.yaml`` too --
+#: dismissal is a decision about THIS card, and importing another machine's
+#: bundle must not silently import its decision.
+DISMISSAL_MARKER = "commissioning-dismissed"
 
 
 def is_commissioned(directory=None) -> bool:
@@ -127,24 +178,109 @@ def is_commissioned(directory=None) -> bool:
         return False
 
 
+def dismissal_marker_path(directory=None) -> Path:
+    """Where :data:`DISMISSAL_MARKER` lives for ``directory``."""
+    path = Path(directory) if directory is not None else config_dir()
+    return path / DISMISSAL_MARKER
+
+
+def is_dismissed(directory=None) -> bool:
+    """Has a human already chosen to commission this card by hand?
+
+    A SEPARATE question from :func:`is_commissioned`, deliberately, and they
+    are never folded into one predicate. ``is_commissioned`` answers "does this
+    directory hold measured configuration" -- a fact about files that the
+    restore script and this module must agree on to the letter. This answers
+    "did the operator take responsibility for filling it in", which is a fact
+    about a person. Only :func:`latch` consults both.
+    """
+    try:
+        return dismissal_marker_path(directory).is_file()
+    except OSError as e:
+        log.error(f"commissioning state: cannot read the dismissal marker ({e})")
+        return False
+
+
+def _yaml_signature(path) -> tuple | None:
+    """Name, inode, size and mtime of every ``*.yaml`` directly in ``path``.
+
+    The thing :func:`config_changed_since_latch` compares. ``()`` for a missing
+    directory -- an honest empty answer -- and ``None`` when the directory could
+    not be read at all, which callers must treat as "cannot prove anything".
+
+    THE INODE IS IN THERE FOR ``_atomic_dump``. ``commissioning_bundle`` writes
+    every restored file as a temp file plus ``os.replace``, so the result is a
+    NEW inode under an old name. On a filesystem with coarse mtime granularity
+    a same-second replacement of same-sized content would otherwise compare
+    equal, and this check exists precisely to catch that write. An unstable
+    inode (some network filesystems) can only make this report "changed" when
+    nothing did, which costs the operator a restart they did not need and never
+    opens the gate at the wrong moment.
+    """
+    try:
+        p = Path(path)
+        if not p.is_dir():
+            return ()
+        out = []
+        for item in sorted(p.glob("*.yaml")):
+            if not item.is_file():
+                continue
+            st = item.stat()
+            out.append((item.name, st.st_ino, st.st_size, st.st_mtime_ns))
+        return tuple(out)
+    except OSError as e:
+        log.error(f"commissioning state: cannot read {path} ({e})")
+        return None
+
+
 #: The latched answer for this process. ``None`` means nobody has asked.
 _latched: bool | None = None
 
+#: The directory :func:`latch` judged, and its ``*.yaml`` content at that
+#: moment. Both are ``None`` until something latches.
+_latch_dir: Path | None = None
+_yaml_at_latch: tuple | None = None
+
 
 def latch(directory=None) -> bool:
-    """Evaluate :func:`is_commissioned` ONCE and remember it. Returns it.
+    """Evaluate the gate ONCE and remember it. Returns it.
 
     Called from :meth:`reflex.app.MainApp.build` before any
     ``SavingDispatcher`` is constructed. Idempotent in effect but not in
     intent: calling it twice re-reads the directory, which is why exactly one
     caller in the application does.
+
+    TWO WAYS THE GATE STARTS OPEN, and they are not the same statement. The
+    directory meets the restore contract (:func:`is_commissioned`) -- somebody
+    measured this machine and the capture is here. Or the marker is present
+    (:func:`is_dismissed`) -- somebody stood at this lathe, read the modal and
+    undertook to enter the numbers by hand. A machine in the second state is
+    still not commissioned in the restore contract's sense, and
+    :func:`is_commissioned` keeps saying so; what the marker changes is whether
+    this process refuses to write.
+
+    It also records the directory's ``*.yaml`` content, which is the baseline
+    :func:`config_changed_since_latch` measures against.
     """
-    global _latched
-    _latched = is_commissioned(directory)
-    if _latched:
+    global _latched, _latch_dir, _yaml_at_latch
+    where = Path(directory) if directory is not None else config_dir()
+    _latch_dir = where
+    _yaml_at_latch = _yaml_signature(where)
+
+    commissioned = is_commissioned(directory)
+    dismissed = is_dismissed(directory)
+    _latched = commissioned or dismissed
+
+    if commissioned:
         log.info("commissioning state: commissioned")
+    elif dismissed:
+        log.warning(
+            f"commissioning state: UNCOMMISSIONED but DISMISSED -- {where} "
+            f"does not meet the restore contract, and {DISMISSAL_MARKER} says "
+            f"an operator chose to commission this machine by hand. Config "
+            f"writes are allowed. Delete that file to put the warning back."
+        )
     else:
-        where = Path(directory) if directory is not None else config_dir()
         log.warning(
             f"commissioning state: UNCOMMISSIONED -- {where} does not meet the "
             f"restore contract (non-empty {ANCHOR_FILE} plus >= "
@@ -152,6 +288,112 @@ def latch(directory=None) -> bool:
             f"UI says so on screen."
         )
     return _latched
+
+
+def config_changed_since_latch() -> bool:
+    """Has anything written a ``*.yaml`` into the config directory since
+    :func:`latch` looked at it?
+
+    ON AN UNCOMMISSIONED MACHINE NOTHING CAN, and that is what makes this
+    worth asking. ``saving_dispatcher.write_settings`` refuses every write
+    while the gate is closed, so between :func:`latch` and the first
+    :func:`dismiss` the set of ``*.yaml`` files is frozen BY THE GATE ITSELF.
+    A change therefore means something outside the gate put configuration on
+    this card while the app was running -- an in-app bundle import, an ``scp``
+    over SSH, a hand-edit -- and in every one of those cases the files on disk
+    and the dispatchers in memory now disagree.
+
+    Fails CLOSED: an unreadable directory reports "changed", because the
+    question being asked is "can I prove nothing arrived", and an error is not
+    a proof.
+    """
+    if _latch_dir is None:
+        return False
+    now = _yaml_signature(_latch_dir)
+    if now is None or _yaml_at_latch is None:
+        return True
+    return now != _yaml_at_latch
+
+
+def dismissal_available() -> bool:
+    """May the operator open the gate by hand, right now?
+
+    ``False`` in three situations, each for its own reason:
+
+    * nothing ever latched -- there is no machine under this process to make a
+      decision about (tests, previews, ``tools/``);
+    * the gate is already open -- a commissioned machine has nothing to
+      dismiss, and a card dismissed on an earlier boot is already past this;
+    * **configuration arrived since the latch** -- see
+      :func:`config_changed_since_latch`. This is the hard one, and it is a
+      CORRECTNESS bar rather than a caution. ``commissioning_bundle.apply``
+      writes restored YAML straight to disk with its own ``_atomic_dump``
+      while every dispatcher in memory is still holding its in-code defaults.
+      Opening the gate at that moment means the next property change -- a
+      slider nudged, a format toggled -- serialises those defaults over the
+      values just restored, and the operator's own import is what destroys
+      their configuration. A restart is the remedy and the only one; the
+      existence of a button does not change the ordering the restore contract
+      is built on.
+    """
+    if _latched is None:
+        return False
+    if _latched:
+        return False
+    return not config_changed_since_latch()
+
+
+def dismiss() -> bool:
+    """THE re-latch path. Open the write gate and record why, persistently.
+
+    This is the named function :func:`clear_latch`'s docstring says does not
+    exist, and the reason it can exist now is that it is gated on
+    :func:`dismissal_available` rather than on a caller's good intentions. A
+    second inline gate in ``write_settings`` was the alternative and is the
+    failure mode this module was written to avoid: a duplicated rule is the
+    copy nobody edits.
+
+    Returns ``True`` only if the gate is now open and the marker is on disk.
+    Refuses -- loudly, in the log, and without touching the filesystem -- when
+    :func:`dismissal_available` says no. A caller MUST NOT interpret ``False``
+    as "try again"; it means the answer to this operator's question is a
+    restart.
+    """
+    global _latched
+    if not dismissal_available():
+        log.warning(
+            "commissioning state: refusing to dismiss. Either nothing latched, "
+            "the gate is already open, or configuration arrived since the "
+            "latch (an import or a restore) -- in which case the dispatchers "
+            "in memory still hold defaults and opening the gate would write "
+            "them over what was just restored. Restart the machine."
+        )
+        return False
+
+    marker = dismissal_marker_path(_latch_dir)
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            "This machine was NOT commissioned from a capture. An operator "
+            "dismissed the uncommissioned warning in the UI, undertaking to "
+            "enter the machine's configuration by hand.\n"
+            "While this file exists, reflex-ui saves settings on this card.\n"
+            "Delete it to put the warning back and stop saving.\n"
+        )
+    except OSError as e:
+        log.error(
+            f"commissioning state: cannot write {marker} ({e}); the gate stays "
+            f"shut rather than opening for one session and forgetting"
+        )
+        return False
+
+    _latched = True
+    log.warning(
+        f"commissioning state: DISMISSED by the operator. {marker} written; "
+        f"config writes are now allowed and stay allowed on the next boot. "
+        f"Every value saved from here is this machine's baseline."
+    )
+    return True
 
 
 def latched() -> bool:
@@ -164,15 +406,21 @@ def latched() -> bool:
 
 
 def clear_latch() -> None:
-    """Forget the latched answer. For tests, and only for tests.
+    """Forget the latched answer AND the directory baseline. Tests only.
 
-    There is deliberately no "re-latch after the operator imports a bundle"
-    path. An in-app import (``Setup > Backup``) writes the restored YAML to
-    disk, but every dispatcher in memory is still holding its in-code defaults;
-    re-opening the gate at that moment would let the next property change write
-    those defaults straight back over the values just restored. The restore
-    contract's own ordering -- restore, THEN run -- is the answer, and the
-    banner says to restart.
+    THE ONE RE-LATCH PATH IS :func:`dismiss`, AND IT IS STILL NOT AN IMPORT
+    PATH. Until 2026-09-22 this docstring said there was no way to re-open the
+    gate at all, because an in-app import (``Setup > Backup``) writes the
+    restored YAML to disk while every dispatcher in memory is still holding
+    its in-code defaults -- re-opening the gate at that moment lets the next
+    property change write those defaults straight back over the values just
+    restored. That hazard is unchanged and :func:`dismissal_available` is
+    where it is now enforced, by measuring the directory rather than by
+    refusing everybody. What :func:`dismiss` adds is the OTHER operator: the
+    one with no capture to restore, who is going to measure this lathe and
+    type the numbers in, and who previously had no way to use the app at all.
     """
-    global _latched
+    global _latched, _latch_dir, _yaml_at_latch
     _latched = None
+    _latch_dir = None
+    _yaml_at_latch = None

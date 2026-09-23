@@ -1,18 +1,23 @@
 <UncommissionedBanner>:
   # THE BINDING THAT MAKES THIS A STATE AND NOT A DECORATION. `uncommissioned`
   # is set by MainApp.latch_commissioning_state() before any widget exists, so
-  # this rule evaluates once, on the way up, and never flips afterwards.
+  # this rule evaluates once, on the way up. It moves exactly once afterwards,
+  # and only ever True -> False: UncommissionedBanner._gate_opened() writes it
+  # when the operator confirms dismissal in the modal, which is the same event
+  # that opens the write gate.
   active: app.uncommissioned
 
-  orientation: "vertical"
+  # ONE ROW. `horizontal` is the change of 2026-09-22 -- see the class
+  # docstring on why the elaboration and the remedy moved into the modal.
+  orientation: "horizontal"
   size_hint_x: 1
   # height / opacity / disabled are NOT here on purpose: they are decided in
   # UncommissionedBanner._apply_active() so that a test can actually run the
   # collapse. See the class docstring -- a kv expression can only be checked as
   # text under this repo's mock GL backend, and "does the banner disappear on a
   # commissioned machine" is too load-bearing for a text match.
-  padding: dp(9), dp(4)
-  spacing: dp(1)
+  padding: dp(9), dp(2)
+  spacing: dp(8)
 
   canvas.before:
     # Amber, the same `warning` token the operator already reads as "caution"
@@ -26,61 +31,64 @@
       size: self.size
       radius: [dp(6)]
 
-  BoxLayout:
-    orientation: "horizontal"
-    spacing: dp(8)
-
-    Label:
-      # SEVERITY IS NOT CARRIED BY COLOUR ALONE (statusbar.kv, same reasoning):
-      # circle-exclamation says it too, for a dirty screen or low light.
-      text: ""
-      font_name: app.theme.font_icon
-      font_size: dp(18)
-      color: app.theme.background
-      size_hint_x: None
-      width: dp(22)
-      halign: 'center'
-      valign: 'middle'
-      text_size: self.size
-
-    Label:
-      id: label_headline
-      text: root.headline
-      font_name: app.theme.font_bold
-      font_size: dp(17)
-      color: app.theme.background
-      size_hint_x: None
-      width: self.texture_size[0]
-      halign: 'left'
-      valign: 'middle'
-      text_size: None, self.height
-
-    Label:
-      id: label_detail
-      text: root.detail
-      font_name: app.theme.font_bold
-      font_size: dp(13)
-      color: app.theme.background
-      halign: 'left'
-      valign: 'middle'
-      text_size: self.size
-      # Ellipsis rather than wrap: the strip's height is fixed (see the class
-      # docstring on why it must not resize), so a second line would be
-      # silently clipped. The headline carries the state on its own; this row
-      # is the elaboration.
-      shorten: True
-      shorten_from: 'right'
+  Label:
+    # SEVERITY IS NOT CARRIED BY COLOUR ALONE (statusbar.kv, same reasoning):
+    # circle-exclamation says it too, for a dirty screen or low light.
+    #
+    # THE GLYPH WAS MISSING UNTIL 2026-09-22: this line read `text: ""` from
+    # the day the file was written, so the comment above described an icon
+    # that was never on the screen and the strip carried severity by colour
+    # alone -- the exact thing it says it does not do.  is the same
+    # codepoint statusbar.kv uses for its warning notice; written escaped,
+    # which is the other spelling already in this repo (plot_toolbar.kv), so
+    # an editor cannot silently eat it the way a raw private-use byte can.
+    text: ""
+    font_name: app.theme.font_icon
+    font_size: dp(16)
+    color: app.theme.background
+    size_hint_x: None
+    width: dp(20)
+    halign: 'center'
+    valign: 'middle'
+    text_size: self.size
 
   Label:
-    id: label_remedy
-    text: root.remedy
-    font_name: app.theme.font_mono
-    font_size: dp(12)
+    id: label_headline
+    text: root.headline
+    font_name: app.theme.font_bold
+    font_size: dp(16)
     color: app.theme.background
-    size_hint_y: None
-    height: dp(16)
+    size_hint_x: None
+    width: self.texture_size[0]
+    halign: 'left'
+    valign: 'middle'
+    text_size: None, self.height
+
+  Label:
+    id: label_detail
+    text: root.detail
+    font_name: app.theme.font_bold
+    font_size: dp(13)
+    color: app.theme.background
     halign: 'left'
     valign: 'middle'
     text_size: self.size
+    # Ellipsis rather than wrap: the strip is one line by construction now, so
+    # a second line would be silently clipped. This row is the only one that
+    # may be shortened -- the headline carries the state at its natural width
+    # and the hint at its own, so neither the state nor the way to act on it
+    # can be the thing that gets elided on a narrow screen.
     shorten: True
     shorten_from: 'right'
+
+  Label:
+    id: label_hint
+    text: root.hint
+    font_name: app.theme.font_mono
+    font_size: dp(12)
+    color: app.theme.background
+    size_hint_x: None
+    width: self.texture_size[0]
+    halign: 'right'
+    valign: 'middle'
+    text_size: None, self.height

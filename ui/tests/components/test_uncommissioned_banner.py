@@ -49,7 +49,7 @@ SEEN-RED -- each mutation applied alone, then reverted (``git diff
     ``test_the_banner_sits_in_the_bars_container``.
 """
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -86,15 +86,26 @@ class TestTheWidgetNamesTheState:
     def test_the_detail_says_what_it_means_for_the_numbers_on_screen(self, banner):
         detail = banner().detail.lower()
         assert "default" in detail
-        assert "not be saved" in detail
+        assert "not saved" in detail or "not be saved" in detail
 
-    def test_the_remedy_names_both_the_restore_and_the_restart(self, banner):
-        """Importing a capture while the app runs leaves every dispatcher
-        holding defaults in memory -- see commissioning_state.clear_latch. The
-        restart is half the remedy, so the strip has to say it."""
-        remedy = banner().remedy.lower()
-        assert "restore" in remedy
-        assert "restart" in remedy
+    def test_the_strip_says_there_is_more_behind_it(self, banner):
+        """A warning that happens to react to touch is a warning nobody
+        touches. The remedies moved into the modal on 2026-09-22, so the strip
+        has to advertise that the modal is there -- otherwise the operator's
+        only way out is one they are never told about."""
+        assert banner().hint.strip() != ""
+
+    def test_the_strip_carries_no_remedy_of_its_own(self, banner):
+        """Where the remedies went, pinned so a future edit does not quietly
+        put a truncated one back on the strip.
+
+        Both ways out need a paragraph each -- the restore names SSH and the
+        restart, the dismissal has to say what it costs -- and a `shorten:
+        True` label on a 1024px strip is where a paragraph goes to become an
+        ellipsis. tests/components/test_uncommissioned_details.py is where the
+        wording is now asserted.
+        """
+        assert not hasattr(banner(), "remedy")
 
 
 class TestItTakesTheScreenOnlyWhenItShould:
@@ -136,6 +147,77 @@ class TestItTakesTheScreenOnlyWhenItShould:
         assert strip.height == dp(BANNER_HEIGHT_DP)
 
 
+class TestTappingItIsTheOnlyWayToTheModal:
+    """Added 2026-09-22 with the shrink. The strip stopped carrying the
+    remedies, so the tap is now load-bearing: if it does not open the modal
+    the operator is left with one word and no way to act on it."""
+
+    def test_the_strip_is_a_button(self, banner):
+        """Not a decoration that a future kv edit could make tappable: the
+        behaviour is in the class, where the collapse can disable it."""
+        from kivy.uix.behaviors import ButtonBehavior
+        assert isinstance(banner(), ButtonBehavior)
+
+    def test_a_tap_opens_the_details_modal(self, banner):
+        strip = banner()
+        strip.active = True
+        with patch("reflex.components.home.uncommissioned_details.open_details") as opened:
+            strip.dispatch("on_release")
+        opened.assert_called_once()
+
+    def test_a_collapsed_strip_cannot_open_anything(self, banner):
+        """A real touch, through the real dispatch path, on a collapsed strip.
+
+        The zero-height widget still COLLIDES with a touch at its own origin,
+        so this is not vacuous: something has to refuse it, and asserting on
+        the outcome rather than on the mechanism means it stays a test if the
+        mechanism changes.
+        """
+        strip = banner()
+        assert strip.disabled is True
+        touch = MagicMock()
+        touch.x, touch.y, touch.pos = 0, 0, (0, 0)
+        touch.is_mouse_scrolling = False
+        touch.ud = {}
+        with patch("reflex.components.home.uncommissioned_details.open_details") as opened:
+            strip.on_touch_down(touch)
+            strip.on_touch_up(touch)
+        opened.assert_not_called()
+
+    def test_there_is_no_dismiss_affordance_on_the_strip_itself(self):
+        """A warning with several ways to silence it silences itself. The
+        modal is the ONE route: no swipe, no long-press, no button in the kv."""
+        text = BANNER_KV.read_text(encoding="utf-8").lower()
+        for forbidden in ("on_long_press", "swipe", "on_touch_move", "button:"):
+            assert forbidden not in text, (
+                f"the strip grew a {forbidden!r} affordance; dismissal belongs "
+                f"to the modal alone")
+
+    def test_a_confirmed_dismissal_collapses_the_strip(self, banner):
+        """The banner and the write gate are the same fact. If the strip stayed
+        up after the gate opened the screen would be lying about the machine."""
+        strip = banner()
+        strip.active = True
+        strip._gate_opened()
+        assert strip.active is False
+        assert strip.height == 0
+        assert strip.opacity == 0
+
+    def test_the_dismissal_callback_updates_the_app_property_too(self, banner):
+        """One answer, two readers: app.uncommissioned is what the kv binds and
+        commissioning_state.latched() is what the save gate reads. Collapsing
+        only the widget would leave them disagreeing for the rest of the
+        session."""
+        strip = banner()
+        strip.active = True
+        app = MagicMock()
+        app.uncommissioned = True
+        with patch("reflex.components.home.uncommissioned_banner.App"
+                   ".get_running_app", return_value=app):
+            strip._gate_opened()
+        assert app.uncommissioned is False
+
+
 class TestItIsActuallyWiredUp:
     """The cdb6b4c class of defect: correct at every layer, connected at none."""
 
@@ -169,7 +251,7 @@ class TestItIsActuallyWiredUp:
         """Generalised the way test_statusbar_peak.py generalises its defect: a
         future string property added here and never put in the kv fails."""
         text = BANNER_KV.read_text(encoding="utf-8")
-        for prop in ("headline", "detail", "remedy"):
+        for prop in ("headline", "detail", "hint"):
             assert f"root.{prop}" in text, (
                 f"UncommissionedBanner maintains {prop} but its kv never "
                 f"renders it")
