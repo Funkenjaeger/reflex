@@ -38,6 +38,7 @@
   "Device": [
     "current_mode",
     "id_override",
+    "offer_prereleases",
     "use_case"
   ],
   "Els": [

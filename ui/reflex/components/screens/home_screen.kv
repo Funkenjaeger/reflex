@@ -38,3 +38,16 @@
       id: bars_container
       orientation: "vertical"
       size_hint: 1, 1
+
+      # ── "This lathe has never been measured" ───────────────────────────────
+      # FIRST CHILD, so it sits above the status bar and above every mode
+      # layout, which HomePage.__init__ adds after it. Declared here rather
+      # than added in Python because its visibility is a pure function of
+      # app.uncommissioned -- there is no state for a constructor to manage,
+      # and a widget that is always present but zero-height when commissioned
+      # cannot be forgotten by a future code path that builds the screen
+      # differently. Collapses to nothing on a commissioned machine; see
+      # reflex/components/home/uncommissioned_banner.py for why it is a state
+      # on this screen rather than a screen of its own.
+      UncommissionedBanner:
+        id: uncommissioned_banner

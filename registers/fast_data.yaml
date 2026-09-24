@@ -53,17 +53,20 @@ types:
   float:  {bytes: 4}   # IEEE-754 binary32, little-endian, as the STM32 lays it out
 
 fields:
-  - {id: 1, name: servoCurrent,      type: uint32, access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): mirror of servo.currentSteps, updated by updateSpeedTask"}
-  - {id: 2, name: servoDesired,      type: uint32, access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): mirror of servo.desiredSteps, updated by updateSpeedTask"}
+  - {id: 1, name: servoCurrent,      type: uint32, access: ro_firmware, group: all, mirror_of: servo.currentSteps, doc: "READ-ONLY (firmware-owned): mirror of servo.currentSteps, updated by updateSpeedTask"}
+  - {id: 2, name: servoDesired,      type: uint32, access: ro_firmware, group: all, mirror_of: servo.desiredSteps, doc: "READ-ONLY (firmware-owned): mirror of servo.desiredSteps, updated by updateSpeedTask"}
   # SIGNED since protocolVersion 11 (2026-09-18), matching the servo.stepsToGo
   # it mirrors (int32, negative on reverse moves; Ramps.c handles < 0). Until
   # 11 this was uint32 -- upstream fd251ea8, 2024 -- so a reverse move decoded
   # as ~4.29e9 in the flight and phase recorders. Same size, no offset moved;
-  # the layout fingerprint covers types, so the fix rides 11's bump.
-  - {id: 3, name: stepsToGo,         type: int32,  access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): mirror of servo.stepsToGo (signed: negative on reverse moves), updated by ramp algorithm"}
+  # the layout fingerprint covers types, so the fix rides 11's bump. This is
+  # the field build/2026-09-12-5's mirror_of gate (d7de6de) was written to
+  # catch: it was uint32 over servo.stepsToGo's int32 for months and nothing
+  # but this declaration would have refused it.
+  - {id: 3, name: stepsToGo,         type: int32,  access: ro_firmware, group: all, mirror_of: servo.stepsToGo, doc: "READ-ONLY (firmware-owned): mirror of servo.stepsToGo (signed: negative on reverse moves), updated by ramp algorithm"}
   - {id: 4, name: servoSpeed,        type: float,  access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): output step rate (steps/100ms), updated by servoEnableTask"}
-  - {id: 5, name: scaleCurrent,      type: int32, count: SCALES_COUNT, access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): mirror of scales[i].position, updated by ISR"}
-  - {id: 6, name: scaleSpeed,        type: int32, count: SCALES_COUNT, access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): mirror of scales[i].speed, updated by updateSpeedTask"}
+  - {id: 5, name: scaleCurrent,      type: int32, count: SCALES_COUNT, access: ro_firmware, group: all, mirror_of: "scales[].position", doc: "READ-ONLY (firmware-owned): mirror of scales[i].position, updated by ISR"}
+  - {id: 6, name: scaleSpeed,        type: int32, count: SCALES_COUNT, access: ro_firmware, group: all, mirror_of: "scales[].speed", doc: "READ-ONLY (firmware-owned): mirror of scales[i].speed, updated by updateSpeedTask"}
   - {id: 7, name: cycles,            type: uint32, access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): ISR execution time in CPU cycles, updated by updateSpeedTask"}
   - {id: 8, name: executionInterval, type: uint32, access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): ISR interval in CPU cycles, updated by ISR"}
   - {id: 9, name: servoMode,         type: uint16, access: bidirectional, group: all, doc: "SW write: 0=disabled, 1=sync/index (also set by firmware), 2=jog"}

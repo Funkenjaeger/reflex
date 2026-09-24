@@ -27,6 +27,7 @@ from reflex.dispatchers.formats import FormatsDispatcher
 from reflex.dispatchers.input import InputDispatcher
 from reflex.dispatchers.servo import ServoDispatcher
 from reflex.fsms.ui_controller import ElsUiController
+from reflex.utils import commissioning_state
 
 # Operating modes (must match home_screen mode_layouts keys and ModePopup buttons)
 MODE_INDEX = 1
@@ -94,6 +95,14 @@ class MainApp(App):
     use_case = StringProperty(DEFAULT_USE_CASE)
 
     device: DeviceDispatcher = ObjectProperty(None, allownone=True)
+
+    # ── Commissioning state, decided once in build() ─────────────────────────
+    # True when this card does NOT meet the restore contract, i.e. nobody has
+    # measured this lathe yet and every value on screen is an in-code default.
+    # kv binds it (home_screen.kv -> UncommissionedBanner) so the operator is
+    # TOLD, because they have no terminal and a log line reaches nobody. See
+    # reflex/utils/commissioning_state.py for the predicate and the bar.
+    uncommissioned = BooleanProperty(False)
 
     def _get_patterns_available(self):
         """Does this use case expose the pattern screen at all?
@@ -222,7 +231,26 @@ class MainApp(App):
     def get_spindle_axis(self):
         return self.board.get_spindle_axis()
 
+    def latch_commissioning_state(self):
+        """Decide, once, whether this machine is commissioned, and expose it.
+
+        FIRST THING build() DOES, and the order is the whole point: every
+        SavingDispatcher constructed below reads its file and -- when it is
+        absent -- would save its in-code defaults, so the answer has to be
+        latched before the first one exists. Its own method rather than two
+        lines inline so a test can ask the app the question against a
+        temporary config directory without building a window.
+        """
+        commissioned = commissioning_state.latch()
+        self.uncommissioned = not commissioned
+        return commissioned
+
     def build(self):
+        # Before anything else: this decides whether the dispatchers below are
+        # allowed to persist anything at all, and whether the home screen comes
+        # up wearing an UNCOMMISSIONED banner.
+        self.latch_commissioning_state()
+
         # Neutralize Kivy's stock exit_on_escape default app-side. On elspi,
         # ~/.kivy/config.ini is regenerable machine state (deploy/reflex-ui.service
         # runs as root, so this is /root/.kivy/config.ini) -- we don't want the
@@ -316,6 +344,10 @@ class MainApp(App):
         # a card that cannot write its snapshot must still boot into a lathe.
         from reflex.utils import commissioning_bundle
         commissioning_bundle.snapshot_if_changed("startup")
+        # Gist sync's toggle is on disk but its ledger hook is in memory:
+        # re-arm it on every start, or a restart silently ends auto-sync.
+        from reflex.utils import gist_sync
+        gist_sync.install_ledger_hook_if_enabled()
 
         self.els_uic = ElsUiController(els=self.els, board=self.board)
 

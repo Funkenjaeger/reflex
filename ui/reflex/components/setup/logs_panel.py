@@ -3,11 +3,12 @@ import os
 import re
 
 from kivy.clock import Clock
+from kivy.factory import Factory
 from kivy.logger import Logger, FileHandler
 from kivy.properties import ListProperty
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
 
+from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>/<ThemedLabel>
 from reflex.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
@@ -67,8 +68,11 @@ class LogsPanel(BoxLayout):
         app = MainApp.get_running_app()
         font_size = app.formats.font_size if app else 24
 
+        # Themed SetupButtons, not stock Buttons: a stock disabled Button draws
+        # white at 30% (1.30:1 on the light theme) -- "No log files found" is
+        # exactly the disabled case.
         if not self.log_files:
-            file_list.add_widget(Button(
+            file_list.add_widget(Factory.SetupButton(
                 text="No log files found",
                 size_hint_y=None, height=60,
                 font_size=font_size, disabled=True,
@@ -77,7 +81,7 @@ class LogsPanel(BoxLayout):
 
         for path in self.log_files:
             filename = os.path.basename(path)
-            btn = Button(
+            btn = Factory.SetupButton(
                 text=filename,
                 size_hint_y=None, height=60,
                 font_size=font_size,

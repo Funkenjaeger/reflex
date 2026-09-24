@@ -44,7 +44,10 @@ class FontPickerEntry(BoxLayout):
         self.bind(pos=self._update_bg, size=self._update_bg, selected=self._update_bg)
         self.app.theme.bind(surface=self._update_bg, accent_bg=self._update_bg)
 
-        # Name label on the left
+        # Name label on the left. `text`, not `text_dim`: text_dim on the
+        # `surface` row measured 2.38:1 dark / 2.82:1 light, and 1.78:1 on the
+        # selected row's accent_bg in light (2026-09-19) -- the font NAME is
+        # what the operator is choosing by, so it must be readable.
         self._name_label = Label(
             size_hint_x=0.35,
             halign="left",
@@ -52,9 +55,9 @@ class FontPickerEntry(BoxLayout):
             shorten=True,
             shorten_from="right",
             padding=[10, 0],
-            color=self.app.theme.text_dim,
+            color=self.app.theme.text,
         )
-        self.app.theme.bind(text_dim=lambda _i, v: setattr(self._name_label, "color", v))
+        self.app.theme.bind(text=lambda _i, v: setattr(self._name_label, "color", v))
         self._name_label.font_name = "fonts/Manrope-Bold.ttf"
         self._name_label.font_size = 18
 
