@@ -35,7 +35,9 @@ extern "C" {
 typedef enum { BL_BOOT_STAY = 0, BL_BOOT_JUMP = 1 } blBootDecision_t;
 
 typedef struct {
-  uint16_t regs[ELS_BL_SIZE];   /* the control window as the host sees it */
+  uint16_t regs[ELS_BL_SIZE];   /* the control window as the host sees it; the
+                                 * blDiag counters at [ELS_BL_DIAG..] are zeroed
+                                 * by blCoreInit and moved only by bl_diag.h */
   uint16_t attempts;            /* boot-attempt count read at boot          */
   uint8_t  copyState;           /* ELS_BL_STATE_* from the journal          */
   uint8_t  runValid;            /* RUN passes header + CRC + vectors        */

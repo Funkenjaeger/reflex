@@ -29,9 +29,10 @@ under "Not proven on hardware" in `../todo.md`.
   instruction fetch on this single-bank part -- was simply never read. The
   DMA fills SRAM through both, and the IDLE flag latches, so a frame that
   completed during a multi-second erase is still there when the loop returns.
-* Serves the identity window at 2048 (`idStage` = 1) and the control window at
-  2304. The app serves the identity window too (`idStage` = 2) and answers
-  exception 2 at 2304.
+* Serves the identity window at 2048 (`idStage` = 1), the control window at
+  2304, and the read-only receiver counters `blDiag` at 2420 (below). The app
+  serves the identity window too (`idStage` = 2) and answers exception 2 at
+  2304 and 2420.
 
 ```
 sector 0  0x08000000  16 KB   bootloader (WRP once commissioned)
@@ -131,6 +132,47 @@ second REVERT answers `NO_BACKUP`.
   grants a fresh three attempts. That is why the copy-state marker is NOT there
   but in the flash journal (sector 1): a power loss mid-copy is resumed or
   aborted on the next boot without ever jumping into a torn image.
+
+## Receiver diagnostics (`blDiag`, 2420..2427, added 2026-09-23)
+
+Eight read-only uint16 counters, so a bench session can see what the receiver
+did during a transfer instead of inferring it from the host's timeouts. They
+were added after the 2026-09-19 and 2026-09-23 transfers stalled part-way and
+recovered on their own; root cause not established. Read them with one FC3
+of 8 registers at 2420 (a read straddling 2419/2420 is exception 2: it is
+its own window). Any write that touches them is exception 2. Each counter
+saturates at 65535 and is zeroed only at boot (so reading them from the
+bootloader after a transfer is fine; a reset or a JUMP loses them).
+
+| Reg | Name | Counts |
+|-----|------|--------|
+| 2420 | `framesTaken` | IDLE-delimited runs handed to the Modbus layer |
+| 2421 | `crcErrors` | of those, dropped for a bad Modbus CRC |
+| 2422 | `badFrames` | of those, dropped silently for anything else: runt, over 256 bytes, wrong slave address, wrong length for its function code. Frames answered with an exception are NOT counted. |
+| 2423 | `overflowDrops` | runs longer than a frame (a stall spanning two frames), dropped by the ring |
+| 2424 | `errOre` | USART overrun flags cleared by the receiver (with the DMA healthy this should stay 0) |
+| 2425 | `errFe` | USART framing-error flags, likewise |
+| 2426 | `errNe` | USART noise flags, likewise |
+| 2427 | `dmaRestarts` | receive DMA stream found dead and re-armed after boot |
+
+How to read them: `framesTaken` should track the host's request count. If it
+runs well ahead, with `badFrames` rising about one per request, the bootloader
+is hearing something besides the host — for example its own replies echoed
+by the transceiver (an unverified hypothesis these counters can confirm or
+rule out). The flag counters are a floor, not a census: a flag the DMA's own
+DR read clears first goes uncounted (see `blHwUartPoll` in `src/bl_hw.c`).
+Only the `framesTaken`/`crcErrors`/`badFrames`/`overflowDrops` arithmetic is
+covered by native tests; the flag and restart counts exist only on the chip.
+
+**Error-branch fix, same date, UNVERIFIED ON HARDWARE until the bench
+session.** `blHwUartPoll`'s ORE/FE/NE branch used to read `USART1->DR`
+unconditionally to clear the flags, which can steal the byte the DMA was about
+to fetch — the exact trap the IDLE branch already guarded against (Open Loops
+6aae713c, a code-read suspect for the stalls). It now does what the IDLE
+branch does: re-read SR, and while RXNE is up leave the flags latched and
+return. The one exception is a dead DMA stream (disabled, or an error flag
+set): nothing will ever fetch DR then, so waiting on RXNE would leave the
+bootloader deaf for good; it reads DR and re-arms the stream as before.
 
 ## Bring-up procedure (elspi; the parent session runs these over SSH, Evan power-cycles)
 

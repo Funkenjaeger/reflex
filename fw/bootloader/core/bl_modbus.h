@@ -2,9 +2,11 @@
  * bl_modbus.h -- the bootloader's Modbus RTU slave, bytes in, bytes out.
  *
  * Serves FC 3 / 6 / 16 on slave address 17 (the app's address, Ramps.h
- * MODBUS_ADDRESS), over exactly two register windows: the identity window
- * (read-only) and the bootloader control window (read/write), resolved by
- * the same modbus_window.h the app uses. A write that leaves blCommand
+ * MODBUS_ADDRESS), over the identity window (read-only) and the bootloader
+ * control window (read/write, with its blDiag tail served as a separate
+ * read-only window), resolved by the same modbus_window.h the app uses.
+ * Frames it drops without a reply are counted in blDiag (CRC errors apart
+ * from every other reject; bl_diag.h). A write that leaves blCommand
  * nonzero is executed to completion BEFORE the reply is sent, so the host
  * never has a request in flight while the flash interface is stalled by an
  * erase; the reply's arrival is "the operation finished", and blSeq /

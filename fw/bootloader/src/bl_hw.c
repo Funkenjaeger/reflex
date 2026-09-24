@@ -15,6 +15,7 @@
 #include "bl_port.h"
 #include "bl_hw.h"
 #include "bl_rxring.h"
+#include "bl_diag.h"
 #include "els_identity.h"
 
 /* HSI is 16 MHz, APB2 prescaler 1 at reset -> 115200 needs USARTDIV 8.6875:
@@ -264,7 +265,7 @@ void blHwInit(void)
   USART1->CR3 |= USART_CR3_DMAR;      /* stream armed first, then requests */
 }
 
-uint32_t blHwUartPoll(uint8_t *frame)
+uint32_t blHwUartPoll(uint8_t *frame, uint16_t *diag)
 {
   uint32_t sr = USART1->SR;
 
@@ -277,13 +278,43 @@ uint32_t blHwUartPoll(uint8_t *frame)
      * rather than just noting. FE/NE still mean a mangled character on the
      * wire, which the DMA stores as garbage like any other byte.
      *
-     * All three are cleared by the same SR-then-DR read that clears IDLE; sr
-     * above was the SR half. Either way the run sitting in the ring is
-     * suspect, so drop it and resynchronize -- the client retries. */
+     * All three are cleared by the same SR-then-DR read that clears IDLE, so
+     * this branch walks into the SAME TRAP the IDLE branch below documents: a
+     * software DR read while RXNE is up steals the byte the DMA was about to
+     * fetch, and the ring comes up a byte short -- a corruption no flag
+     * reports, landing in whatever frame that byte belonged to, which may be
+     * the client's retry of the frame that raised the error. Until 2026-09-23 this
+     * branch read DR unconditionally (Open Loops 6aae713c; a code-read suspect
+     * for the 09-19 and 09-23 mid-transfer stalls, NOT bench-verified).
+     *
+     * So, as below: re-read SR, and while RXNE is up return with the flags
+     * still latched -- they do not expire -- and come back next poll. That
+     * re-read is also the SR half of the clear, which is why the flags are
+     * counted from it: whatever it saw, the DR read clears. Two limits, both
+     * unmeasured: unlike at IDLE the line may be busy here, so a byte can
+     * still complete in the few cycles between that SR read and the DR read
+     * (the guard shrinks the window to those cycles, it cannot close it);
+     * and the DMA's own DR fetch after our SR read may clear the flags before
+     * we do, in which case they go uncounted. The counters are a floor.
+     *
+     * EXCEPT WHEN THE STREAM IS DEAD. Then nothing will ever fetch DR, RXNE
+     * stays up forever, and waiting for it to drop would leave the bootloader
+     * deaf with the watchdog still being kicked -- the one outcome worse than
+     * the bug. A dead stream steals nothing, so read DR and re-arm. Which case
+     * this is has to be decided BEFORE the RXNE test, not after as it was. */
+    uint32_t dead = (DMA2->LISR & BL_RX_DMA_ERRS) != 0u ||
+                    (BL_RX_DMA_STREAM->CR & DMA_SxCR_EN) == 0u;
+    sr = USART1->SR;
+    if (!dead && (sr & USART_SR_RXNE)) return 0u;
     (void)USART1->DR;
-    if ((DMA2->LISR & BL_RX_DMA_ERRS) != 0u ||
-        (BL_RX_DMA_STREAM->CR & DMA_SxCR_EN) == 0u) {
+    if (sr & USART_SR_ORE) blDiagBump(diag, ELS_BL_DG_ERR_ORE);
+    if (sr & USART_SR_FE)  blDiagBump(diag, ELS_BL_DG_ERR_FE);
+    if (sr & USART_SR_NE)  blDiagBump(diag, ELS_BL_DG_ERR_NE);
+    /* Either way the run sitting in the ring is suspect, so drop it and
+     * resynchronize -- the client retries. */
+    if (dead) {
       rxDmaStart();                          /* clears the flags, tail to 0 */
+      blDiagBump(diag, ELS_BL_DG_DMA_RESTARTS);
     } else {
       rxTail = blRxRingHead(BL_RX_DMA_STREAM->NDTR);
     }
@@ -305,7 +336,7 @@ uint32_t blHwUartPoll(uint8_t *frame)
     if (USART1->SR & USART_SR_RXNE) return 0u;
     (void)USART1->DR;
     return blRxRingTake(rxRing, BL_RX_DMA_STREAM->NDTR, &rxTail,
-                        frame, BL_HW_FRAME_MAX);
+                        frame, BL_HW_FRAME_MAX, diag);
   }
 
   return 0u;
