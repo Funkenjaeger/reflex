@@ -8,10 +8,15 @@
 # and render the glyph as tofu. Same race FormHelpButton and IconButton
 # document in their own kv.
 
+# HIDDEN, NOT FADED, when there is no help topic for the row (Evan's call,
+# 2026-09-19). Kivy's stock 30% fade read at ~1.1:1 in the light theme, so the
+# choice was between making a dead control clearly visible and showing none at
+# all: every "?" on screen now opens something. The row keeps the icon's width
+# (opacity, not size), so the label column does not shift between rows.
 <HelpButton>:
     size_hint: None, None
     size: dp(44), dp(44)
-    opacity: 0.4 if self.disabled else 1
+    opacity: 0 if self.disabled else 1
 
     Label:
         text: "\uf059"

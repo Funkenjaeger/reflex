@@ -33,7 +33,10 @@ The layout pass additionally REFUSES to emit on: a group over its request
 budget, a seq field sitting above anything it acknowledges (the 2026-08-22
 torn-read bug shape), an unresolved array-length constant, a constant whose
 value in the C header no longer matches the schema, two structs overlapping in
-the parent, or modbus-flash.py hardcoding a register the schema disagrees with.
+the parent, modbus-flash.py hardcoding a register the schema disagrees with, or
+a `mirror_of:` field (a publishing copy of another struct's field, e.g.
+fastData.stepsToGo mirroring servo.stepsToGo) whose type or length disagrees
+with the field it mirrors -- see check_mirrors().
 
     python tools/genregs.py --pin      pin the current layout's fingerprint for
                                        the current protocol_version
@@ -115,6 +118,7 @@ def load_schemas():
         raise GenError("no schemas in registers/")
     schemas = sorted((Schema(p) for p in paths), key=lambda s: s.base)
     validate_parent(schemas)
+    check_mirrors(schemas)
     return schemas
 
 
@@ -274,6 +278,74 @@ def validate_parent(schemas):
             errs.append(f"{s.struct} at register {s.base} is not {s.align}-byte aligned")
     if errs:
         raise GenError("parent layout:\n  - " + "\n  - ".join(errs))
+
+
+MIRROR_RE = re.compile(r"^(\w+)(\[\])?\.(\w+)$")
+
+
+def check_mirrors(schemas):
+    """Resolve every `mirror_of:` against the schema that owns that parent
+    member, and REFUSE TO EMIT on a type or length disagreement.
+
+    THE BUG THIS CLOSES (2026-09-12, build/2026-09-12-5 d7de6de). fastData_t is
+    a publishing copy of fields that live in servo_t and input_t; before this,
+    that fact was carried only in `doc:` prose ("mirror of servo.stepsToGo").
+    The prose was true and the TYPE was not -- fastData.stepsToGo was uint32
+    over servo.stepsToGo's int32 -- so a 1287-step reverse indexing move
+    published as 4294966009, and nothing caught it: the register-map contract
+    test compares the two SIDES of the RS-485 link, and both sides mirrored the
+    wrong type faithfully.
+
+    `mirror_of: member.field` (or `member[].field` when the member is an array
+    in the parent, e.g. `scales[].position`) turns that prose into a checked
+    declaration. Unlike the original gate -- which had to re-parse the
+    hand-maintained Ramps.h text, because servo_t and input_t were still
+    hand-written there -- servo_t and input_t are schemas too now (Open Loops
+    6a9f3106), so the source of truth is the sibling Schema this generator
+    already loaded: no header text, no re-parsing, one fewer thing that can
+    disagree with itself. A mirror_of naming a parent_member or field that does
+    not exist refuses exactly like a type or length mismatch does; nothing
+    here warns.
+    """
+    by_member = {s.meta["parent_member"]: s for s in schemas}
+    for s in schemas:
+        for item in s.items:
+            spec = item.get("mirror_of")
+            if item["pad"] or not spec:
+                continue
+            m = MIRROR_RE.match(str(spec))
+            if not m:
+                raise GenError(f"{s.struct}.{item['name']}: mirror_of {spec!r} is not of the "
+                               f"form member.field or member[].field")
+            member, is_array, srcfield = m.group(1), bool(m.group(2)), m.group(3)
+            if member not in by_member:
+                raise GenError(f"{s.struct}.{item['name']} mirrors {spec}, but no loaded schema "
+                               f"declares parent_member {member!r}")
+            src = by_member[member]
+            src_item = next((i for i in src.items if not i["pad"] and i["name"] == srcfield), None)
+            if src_item is None:
+                raise GenError(f"{s.struct}.{item['name']} mirrors {spec}, but {src.struct} "
+                               f"({src.rel}) has no field {srcfield!r}")
+            if is_array and src.parent_count <= 1:
+                raise GenError(f"{s.struct}.{item['name']} mirrors {spec} as an array, but "
+                               f"{member} ({src.rel}) is not an array member of the parent -- "
+                               f"write {member}.{srcfield}")
+            if not is_array and src.parent_count > 1:
+                raise GenError(f"{s.struct}.{item['name']} mirrors {spec}, but {member} "
+                               f"({src.rel}) is an array of {src.parent_count} -- write "
+                               f"{member}[].{srcfield}")
+            if item["type"] != src_item["type"]:
+                raise GenError(
+                    f"{s.struct.removesuffix('_t')}.{item['name']} is {item['type']} but mirrors "
+                    f"{spec}, {src_item['type']} in {src.rel} (id {src_item['id']})")
+            # An array mirror has to be as long as the number of elements it is
+            # replicated over, or the tail of the source silently stops being
+            # published -- that reads as "that scale is dead", not as drift.
+            want_cnt = src.parent_count if is_array else 1
+            if item["count"] != want_cnt:
+                raise GenError(
+                    f"{s.struct.removesuffix('_t')}.{item['name']} is [{item['count']}] but "
+                    f"mirrors {spec}, {want_cnt} of them in {src.rel}")
 
 
 def protocol_version(schemas):

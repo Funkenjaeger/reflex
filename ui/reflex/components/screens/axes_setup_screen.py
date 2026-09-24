@@ -1,9 +1,9 @@
 from kivy.logger import Logger
 from kivy.properties import ObjectProperty
-from kivy.uix.button import Button
-from kivy.uix.label import Label
+from kivy.factory import Factory
 from kivy.uix.screenmanager import Screen
 
+from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>/<ThemedLabel>
 from reflex.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
@@ -23,11 +23,12 @@ class AxesSetupScreen(Screen):
         self._rebuild_buttons()
 
     def _get_all_items(self):
-        """Build the list of (label, callback) for all items including the Add button."""
+        """Build the list of (label, callback, ink) for all items including the
+        Add button. `ink` names a theme colour for the label, or None."""
         items = []
         for i, ax in enumerate(self.app.axes):
             items.append((f"Axis {i}: {ax.axis_name}", lambda _, a=ax: self._goto_axis(a), None))
-        items.append(("+ Add Axis", lambda _: self._add_axis(), [0.2, 0.6, 0.2, 1]))
+        items.append(("+ Add Axis", lambda _: self._add_axis(), "success_text"))
         return items
 
     def _rebuild_buttons(self):
@@ -41,10 +42,12 @@ class AxesSetupScreen(Screen):
         start = self._page * ITEMS_PER_PAGE
         page_items = items[start:start + ITEMS_PER_PAGE]
 
-        for label, callback, color in page_items:
-            btn = Button(text=label, font_size=22)
-            if color:
-                btn.background_color = color
+        for label, callback, ink in page_items:
+            btn = Factory.SetupButton(text=label, font_size=22)
+            if ink:
+                # Add Axis was a green-tinted stock Button; it keeps the green
+                # as themed ink. Rebuilt on every entry, so it follows the theme.
+                btn.color = getattr(self.app.theme, ink)
             btn.bind(on_release=callback)
             container.add_widget(btn)
 
@@ -57,10 +60,13 @@ class AxesSetupScreen(Screen):
             footer.height = 0
             return
         footer.height = 60
-        prev_btn = Button(text="Previous", font_size=22, disabled=self._page == 0)
+        # Themed, not stock: a stock disabled Button (Previous on page 1, Next
+        # on the last page) draws white at 30%, 1.30:1 on the light theme,
+        # and a stock Label draws white on the light page (1.38:1).
+        prev_btn = Factory.SetupButton(text="Previous", font_size=22, disabled=self._page == 0)
         prev_btn.bind(on_release=lambda _: self._change_page(-1))
-        page_label = Label(text=f"Page {self._page + 1} / {total_pages}", font_size=22)
-        next_btn = Button(text="Next", font_size=22, disabled=self._page >= total_pages - 1)
+        page_label = Factory.ThemedLabel(text=f"Page {self._page + 1} / {total_pages}", font_size=22)
+        next_btn = Factory.SetupButton(text="Next", font_size=22, disabled=self._page >= total_pages - 1)
         next_btn.bind(on_release=lambda _: self._change_page(1))
         footer.add_widget(prev_btn)
         footer.add_widget(page_label)

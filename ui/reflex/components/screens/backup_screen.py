@@ -56,7 +56,7 @@ from kivy.properties import BooleanProperty, StringProperty
 from kivy.uix.screenmanager import Screen
 
 from reflex.components.popups.custom_popup import CustomPopup
-from reflex.components.screens import setup_screen  # noqa: F401 -- defines <SetupButton>, used by backup_screen.kv
+from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>, used by backup_screen.kv
 from reflex.components.widgets import qr_code
 from reflex.utils import commissioning_bundle, gist_sync, usb
 from reflex.utils.kv_loader import load_kv
@@ -360,8 +360,12 @@ class BackupScreen(Screen):
             if gist_id:
                 self._post_status(f"Synced to gist {gist_id}")
             else:
+                # A rejected sign-in has turned sync OFF; show that, and say
+                # why rather than promising a retry that cannot succeed.
+                self._dispatch_to_ui(self.refresh_gist_state)
                 self._post_status(
-                    "Gist sync failed -- will retry at the next change.")
+                    gist_sync.last_error
+                    or "Gist sync failed -- will retry at the next change.")
 
         self._run_async(work)
 
@@ -382,6 +386,11 @@ class BackupScreen(Screen):
         def work():
             try:
                 refs = gist_sync.list_machine_gists()
+            except gist_sync.SignInExpired as e:
+                gist_sync.sign_in_expired()
+                self._dispatch_to_ui(self.refresh_gist_state)
+                self._post_status(str(e))
+                return
             except gist_sync.GistSyncError as e:
                 self._post_status(str(e))
                 return
@@ -407,14 +416,14 @@ class BackupScreen(Screen):
         """One button per candidate, newest first. Built in Python rather than
         in kv because the rows are data, not layout."""
         from kivy.uix.boxlayout import BoxLayout
-        from kivy.uix.button import Button
+        from kivy.factory import Factory
         from kivy.uix.modalview import ModalView
 
         content = BoxLayout(orientation="vertical", padding=10, spacing=6)
         view = ModalView(size_hint=(0.8, 0.7))
         for ref in refs:
             label = f"{ref.machine_id}  {ref.updated_at}".strip()
-            content.add_widget(Button(
+            content.add_widget(Factory.SetupButton(
                 text=label,
                 on_release=lambda _b, gid=ref.id: (
                     view.dismiss(), self.select_restore_gist(gid))))
@@ -431,6 +440,11 @@ class BackupScreen(Screen):
         def work():
             try:
                 doc = gist_sync.fetch_bundle(gist_id)
+            except gist_sync.SignInExpired as e:
+                gist_sync.sign_in_expired()
+                self._dispatch_to_ui(self.refresh_gist_state)
+                self._post_status(str(e))
+                return
             except gist_sync.GistSyncError as e:
                 self._post_status(str(e))
                 return

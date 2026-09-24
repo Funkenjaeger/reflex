@@ -434,6 +434,7 @@ RELEASE = Release(tag="v1.2.0", prerelease=False,
 
 def _session(runner, tmp_path, **kw):
     restarts = []
+    kw.setdefault("restart", lambda: restarts.append(1))
     kw.setdefault("manifest", tmp_path / "home" / "firmware" / "flashed.json")
     kw.setdefault("checkout", tmp_path / "checkout")
     if "elspi_release_path" not in kw:
@@ -454,7 +455,6 @@ def _session(runner, tmp_path, **kw):
         download=lambda url, dest: (dest.write_bytes(b"x"), dest)[1],
         fetch_json=lambda url: PAYLOAD,
         uv_finder=lambda: "/usr/bin/uv",
-        restart=lambda: restarts.append(1),
         python="/usr/bin/python3",
         **kw,
     )
@@ -1169,3 +1169,106 @@ def test_the_link_is_resumed_only_after_the_undo(tmp_path):
         s.run(RELEASE, pause_link=lambda: order.append("pause"),
               resume_link=lambda: order.append("resume"))
     assert order == ["pause", "revert", "resume"]
+
+
+# --------------------------------------------------------------------------
+# The restart at the end of an update (2026-09-19)
+# --------------------------------------------------------------------------
+# Since the 2026-09-13 image the UI runs as the service user, and a bare
+# `systemctl restart` from it is refused by polkit. The old fire-and-forget
+# Popen never saw that: the screen said "Restarting." and stayed on the old UI.
+
+class _FakeProc:
+    def __init__(self, rc=None, out=b""):
+        self._rc, self.stdout = rc, __import__("io").BytesIO(out)
+
+    def wait(self, timeout=None):
+        if self._rc is None:
+            raise updater.subprocess.TimeoutExpired("sudo", timeout)
+        return self._rc
+
+
+def _real_restart_session(tmp_path, monkeypatch, proc):
+    seen = []
+
+    def fake_popen(argv, **kw):
+        seen.append((list(argv), kw))
+        if isinstance(proc, Exception):
+            raise proc
+        return proc
+    monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
+    s = UpdateSession(checkout=tmp_path, port="/dev/null", current_protocol=1,
+                      workdir=tmp_path / "w")
+    return s, seen
+
+
+def test_the_restart_is_exactly_the_command_sudoers_grants(tmp_path, monkeypatch):
+    """sudoers matches arguments literally: the image's rule is
+    `NOPASSWD: /usr/bin/systemctl restart reflex-ui.service`. Any other spelling
+    (bare `systemctl`, a --no-block, another order) falls back to a password
+    prompt nobody can answer. -n makes that refusal immediate."""
+    s, seen = _real_restart_session(tmp_path, monkeypatch, _FakeProc(rc=None))
+    s.restart_service()
+    [(argv, kw)] = seen
+    assert argv == ["sudo", "-n", "/usr/bin/systemctl", "restart", "reflex-ui.service"]
+    assert kw.get("start_new_session") is True
+    assert kw.get("stdin") is updater.subprocess.DEVNULL
+
+
+def test_a_refused_restart_is_raised_not_swallowed(tmp_path, monkeypatch):
+    """MUTATION EVIDENCE. The pre-2026-09-19 fire-and-forget restart returns
+    here as if all were well."""
+    s, _ = _real_restart_session(
+        tmp_path, monkeypatch, _FakeProc(rc=1, out=b"sudo: a password is required\n"))
+    with pytest.raises(updater.ServiceRestartFailed) as e:
+        s.restart_service()
+    assert "exited 1" in str(e.value) and "password is required" in str(e.value)
+
+
+def test_a_restart_still_running_is_read_as_under_way(tmp_path, monkeypatch):
+    s, _ = _real_restart_session(tmp_path, monkeypatch, _FakeProc(rc=None))
+    s.restart_service()                     # no raise: systemd is stopping us
+
+
+def test_a_missing_sudo_is_a_failed_restart(tmp_path, monkeypatch):
+    s, _ = _real_restart_session(tmp_path, monkeypatch, FileNotFoundError("sudo"))
+    with pytest.raises(updater.ServiceRestartFailed):
+        s.restart_service()
+
+
+def test_a_failed_restart_keeps_the_update_and_says_exit_application(tmp_path):
+    """Both halves are installed and match; a refused restart must NOT be
+    handled as a failed UI half (which would put both back). run() reports it
+    so the screen can say what to do."""
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    lines = []
+
+    def refuse():
+        raise updater.ServiceRestartFailed("`sudo -n ...` exited 1")
+    s = _session(r, tmp_path, restart=refuse, emit=lines.append)
+    assert s.run(RELEASE) is False
+    assert r.flashed and not r.reverted, "the new firmware stays"
+    assert _restored_checkout(r) == [], "the checkout stays on the release"
+    said = "\n".join(lines)
+    assert "Exit Application" in said and RELEASE.tag in said
+
+
+def test_a_granted_restart_is_reported_as_restarting(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    s = _session(r, tmp_path)
+    assert s.run(RELEASE) is True
+    assert s.restarts == [1]
+
+
+def test_the_catalogue_keeps_the_newest_finals_behind_a_run_of_candidates(tmp_path):
+    """The Update screen fetches once and filters locally. Twelve release
+    candidates fill the capped pre-release selection; the finals must still
+    be there for the toggle-off view."""
+    payload = ([_payload_item(f"v2.0.0-rc.{i}", prerelease=True) for i in range(12, 0, -1)]
+               + [_payload_item("v1.1.0"), _payload_item("v1.0.1")])
+    s = _session(FakeRunner(board_protocol_after=TARGET_PROTOCOL), tmp_path)
+    s._fetch_json = lambda url: payload
+    tags = [r.tag for r in s.list_release_catalogue()]
+    assert tags[0] == "v2.0.0-rc.12", "newest first"
+    assert tags[-2:] == ["v1.1.0", "v1.0.1"]
+    assert len(tags) == len(set(tags))

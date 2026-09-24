@@ -26,7 +26,7 @@ import configparser
 import os
 
 from kivy.logger import Logger
-from kivy.properties import NumericProperty, StringProperty
+from kivy.properties import BooleanProperty, NumericProperty, StringProperty
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
 
@@ -83,16 +83,21 @@ def read_legacy_device_section(path) -> dict | None:
 
 
 class DeviceDispatcher(SavingDispatcher):
-    """``use_case`` (commissioning tier) and ``current_mode`` (operational
-    tier; see ``reflex/utils/commissioning_scope.py``).
+    """``use_case`` (commissioning tier), ``current_mode`` and
+    ``offer_prereleases`` (operational tier; see
+    ``reflex/utils/commissioning_scope.py``).
 
     ``MainApp`` keeps its own ``use_case`` / ``current_mode`` properties for kv
     bindings and mirrors them into this object, which only persists them.
+    ``offer_prereleases`` is the Software Update screen's "Offer pre-releases"
+    toggle, read and written by that screen directly (added 2026-09-19: until
+    then it reset to off on every visit).
     """
     _save_class_name = "Device"
 
     use_case = StringProperty(DEFAULT_USE_CASE)
     current_mode = NumericProperty(DEFAULT_MODE)
+    offer_prereleases = BooleanProperty(False)
 
     def read_settings(self):
         # Before the base class looks at the file: when the stem is missing it

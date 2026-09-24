@@ -103,6 +103,22 @@ def test_current_mode_is_operational():
     assert tier("Device-0", "current_mode", data) == OPERATIONAL
 
 
+def test_the_prerelease_toggle_is_operational():
+    """An operator's view preference: toggling it must not read as the
+    machine's commissioning changing."""
+    data = {"use_case": "lathe", "current_mode": 2, "offer_prereleases": True,
+            "id_override": "0"}
+    assert tier("Device-0", "offer_prereleases", data) == OPERATIONAL
+
+
+@pytest.mark.parametrize("key", ["feed_name", "current_feeds_index"])
+def test_the_els_bar_feed_pick_is_operational(key):
+    """Every feed pick was ledgered as a machine change (lathe, 2026-09-19)."""
+    data = {"feed_name": "0.040", "current_feeds_index": 19, "mode_name": "FEED",
+            "id_override": "0"}
+    assert tier("ElsBar-0", key, data) == OPERATIONAL
+
+
 def test_a_device_stem_passes_the_apply_gate():
     """apply() refuses a section with no commissioning key; a real Device-0
     must never be refused."""

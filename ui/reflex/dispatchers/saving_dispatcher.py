@@ -7,7 +7,7 @@ from kivy.logger import Logger
 from kivy.event import EventDispatcher
 from kivy.properties import StringProperty, NumericProperty, BooleanProperty, ObservableList, partial
 
-from reflex.utils import commissioning_ledger
+from reflex.utils import commissioning_ledger, commissioning_state
 from reflex.utils.paths import config_dir
 
 log = Logger.getChild(__name__)
@@ -113,6 +113,34 @@ def read_settings(file: str):
 
 
 def write_settings(file: str, data, triggered_by: Optional[str] = ""):
+    # ── THE UNCOMMISSIONED GATE ──────────────────────────────────────────────
+    # One check, in the one function that both writes the file and records the
+    # commissioning event, rather than a copy per dispatcher. On a machine that
+    # does not meet the restore contract (reflex.utils.commissioning_state,
+    # latched once by MainApp.build before any dispatcher exists) there is
+    # nothing here worth persisting: every value in `data` is an in-code
+    # default, not a measurement of this lathe.
+    #
+    # BOTH HALVES OF THE REFUSAL MATTER, and it is the file half that is easy
+    # to miss. Skipping only the ledger record would still leave ~19 default
+    # YAML files on the card -- which is itself past the restore contract's
+    # 15-file bar, so the NEXT boot would latch "commissioned" on invented
+    # geometry and the uncommissioned state would last exactly one session.
+    # Refusing the write is what keeps the card honestly empty until a human
+    # has restored a real capture onto it.
+    #
+    # Returning False (the same value an OSError returns) is honest: nothing
+    # was written. No caller branches on it today; the log line and the
+    # on-screen banner are how anyone finds out.
+    if not commissioning_state.latched():
+        log.warning(
+            f"Refusing to save {triggered_by or 'settings'} to {file}: this "
+            f"machine is UNCOMMISSIONED. These are in-code defaults, not "
+            f"measured values, and writing them would record them as the "
+            f"commissioning baseline."
+        )
+        return False
+
     log.info(f"Saving {triggered_by}: {file}")
     # Read the outgoing state BEFORE overwriting it -- this is the last moment
     # it exists. `None` when the file is new, which the ledger treats as the

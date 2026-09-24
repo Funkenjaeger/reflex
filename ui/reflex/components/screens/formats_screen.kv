@@ -123,17 +123,17 @@
           size_hint_y: None
           height: 32
           orientation: "horizontal"
-          Button:
+          # SetupButton beeps on press itself.
+          SetupButton:
             size_hint_x: 0.2
             text: "Test"
-            on_press: app.beep()
           Slider:
             size_hint_x: 0.7
             min: 0
             max: 0.5
             value: root.formats.volume
             on_touch_up: root.formats.volume = self.value
-          Label:
+          ThemedLabel:
             size_hint_x: 0.1
             text: "{}".format(int(root.formats.volume * 200))
             font_name: "fonts/iosevka-regular.ttf"

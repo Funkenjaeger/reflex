@@ -59,9 +59,8 @@ fields:
   - {id: 2, name: currentSpeed,     type: float,  access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): live ramp speed, managed by ramp algorithm"}
   - {id: 3, name: jogSpeed,         type: float,  access: sw_write,    group: all, doc: "SW write: jog target speed (steps/s); negative = reverse"}
   - {id: 4, name: acceleration,     type: float,  access: sw_write,    group: all, doc: "SW write: ramp acceleration (steps/s²)"}
-  # SIGNED here, while its mirror fastData.stepsToGo is UNSIGNED -- a known
-  # mismatch tracked separately. Transcribed as-is: this cutover is layout-
-  # identical by requirement and changes no type.
+  # SIGNED, and so is its mirror fastData.stepsToGo since protocolVersion 11
+  # (2026-09-18; until then the mirror was uint32 -- see fast_data.yaml).
   - {id: 5, name: stepsToGo,        type: int32,  access: sw_write,    group: all, doc: "SW write: remaining steps for indexing move; firmware decrements toward zero"}
   - {id: 6, name: destinationSteps, type: uint32, access: sw_write,    group: all, doc: "SW write: absolute destination step count for indexing mode"}
   - {id: 7, name: currentSteps,     type: uint32, access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): step counter incremented/decremented by ISR"}
