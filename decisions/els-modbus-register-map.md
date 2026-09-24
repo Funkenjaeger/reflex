@@ -192,6 +192,18 @@ The per-chunk transfer is ONE FC16 from `blCommand` (+3) through the end of
 CRC, slot, write length and 200 bytes of data in one frame, then one FC3 of the
 head to edge-detect `blSeq`. Two transactions per 200 bytes.
 
+**`blDiag`, +116..123 (registers 2420..2427), appended 2026-09-23.** Eight
+read-only receiver counters, uint16, saturating at 0xFFFF, zeroed only at
+boot: `framesTaken`, `crcErrors`, `badFrames`, `overflowDrops`, `errOre`,
+`errFe`, `errNe`, `dmaRestarts` (`ELS_BL_DG_*`; meanings in
+`fw/bootloader/README.md`). `ELS_BL_SIZE` is 124. They are served as their
+own read-only window rather than as more RO registers inside the writable
+one: republishing on read, which protects `blRunValid` and friends, has no
+truth to republish a counter from once a host has overwritten it. So any
+write touching +116.. is exception 2, and so is a read straddling +115/+116;
+every address below +116 resolves exactly as before, and the per-chunk FC16
+above (ending at +115) is unchanged. The app still answers exception 2 here.
+
 ### Slots and the image
 
 Run slot sector 5, staging sector 6, and -- the choice left open above --

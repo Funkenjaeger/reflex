@@ -64,7 +64,7 @@ int main(void)
 
   /* Resident. */
   for (;;) {
-    uint32_t n = blHwUartPoll(reqBuf);
+    uint32_t n = blHwUartPoll(reqBuf, &core.regs[ELS_BL_DIAG]);
     blPortWatchdogKick();
     if (n == 0u) continue;
     uint32_t m = blModbusHandle(&core, blIdentityWindow, reqBuf, n, respBuf);
