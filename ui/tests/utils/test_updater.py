@@ -337,8 +337,12 @@ class FakeRunner:
                  board_rev_after=IMAGE_REV, image_valid=True, dirty="",
                  fail=None, board_after_revert=None,
                  head_rev=PREVIOUS_REV, head_branch="integration",
-                 board_after_failed_flash=None):
+                 board_after_failed_flash=None, flash_fail_output=None):
         self.calls = []
+        # What the failed IMAGE flash prints before exiting 1: None = just
+        # "boom: <marker>"; a string = that text (modbus-flash.py's verdict),
+        # with the boom line after it.
+        self.flash_fail_output = flash_fail_output
         # What `--identity` reports once the image flash has FAILED (a `fail`
         # marker matched it): None = what the board ran before, i.e. the
         # flasher got back to the old application (2026-09-19, Open Loops
@@ -375,6 +379,8 @@ class FakeRunner:
                 if ("modbus-flash.py" in joined and "--identity" not in argv
                         and "--revert" not in argv):
                     self.flash_failed = True
+                    if self.flash_fail_output:
+                        return 1, f"{self.flash_fail_output}\nboom: {marker}"
                 return 1, f"boom: {marker}"
 
         if "--identity" in argv and self.flash_failed and self.board_after_failed_flash:
@@ -824,6 +830,92 @@ def test_a_failed_flash_then_an_unreadable_board_says_unknown(tmp_path):
         s.run(RELEASE)
     assert "UNKNOWN" in str(e.value) and "nothing changed" not in str(e.value)
     assert r.touched_the_ui_half == []
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-23, the lathe's update to v1.2.0-rc.5: the flasher could not get
+# the board back ("the board does not answer"), the controller was left in
+# the bootloader with a dead DRO, and the only advice on the screen was a
+# command line. When the flasher's own verdict says nothing was applied, the
+# step an operator WITHOUT a terminal can take -- power-cycle -- comes first.
+# ---------------------------------------------------------------------------
+
+# modbus-flash.py's could-not-return verdict, as it ends a run (the head is
+# what matters here; it is well over the 600 characters the message keeps).
+FLASHER_COULD_NOT_RETURN = (
+    "FAILED before APPLY: the 180s transfer budget is spent with 120 of 226 chunks written; giving up\n"
+    "  link: 3 read retries, 40 commands resent, 0 replies lost after the command had run\n"
+    "  the run slot was not written (the transfer goes to staging); returning to the previous "
+    "application 1dfa05c\n"
+    "VERDICT: FAILED before APPLY, and the board could NOT be returned to the application 1dfa05c.\n"
+    "  WHAT TO DO NOW, no terminal needed: turn the machine OFF, wait 10 seconds, and turn it back ON. "
+    + "x" * 400 + "\n"
+    "  Board state: the board did not answer its identity window in 149 s of looking.\n"
+    "  With a terminal (SSH to the Pi): Recover by hand: `modbus-flash.py --identity` to look; "
+    "`modbus-flash.py --boot-app` starts whatever the run slot holds; last resort SWD.")
+IN_BOOTLOADER = "idMagic=0x454c stage=bootloader windowVersion=1 rev=0b1c0de appProtocol=0"
+
+
+def test_a_failed_flash_left_in_the_bootloader_leads_with_the_power_cycle(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={FLASH_ONLY},
+                   flash_fail_output=FLASHER_COULD_NOT_RETURN,
+                   board_after_failed_flash=IN_BOOTLOADER)
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    msg = str(e.value)
+    step = msg.find("turn the machine OFF, wait 10 seconds, and turn it back ON")
+    assert 0 <= step < msg.find("With a terminal") < msg.find("--boot-app"), (
+        "the operator's power-cycle comes before the terminal recovery")
+    assert "bench-verified" in msg and "not proven" in msg, "it says the path is not proven yet"
+    assert "reads normally" in msg, "and what to check after it"
+    assert "NOT running its previous firmware" in msg and "bootloader" in msg
+    assert r.touched_the_ui_half == []
+
+
+def test_a_failed_flash_then_unreadable_leads_with_the_power_cycle(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={FLASH_ONLY},
+                   flash_fail_output=FLASHER_COULD_NOT_RETURN,
+                   board_after_failed_flash="unreadable")
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    msg = str(e.value)
+    assert "UNKNOWN" in msg
+    step = msg.find("turn the machine OFF")
+    assert 0 <= step < msg.find("--identity"), "power-cycle first, then the terminal check"
+
+
+@pytest.mark.parametrize("flasher_said", [
+    # after APPLY started: the run slot may hold the NEW image
+    "VERDICT: FAILED after APPLY started -- not jumping blind (boom).\n  board now: in the bootloader",
+    # the flasher REFUSED to jump: a power-cycle does not start a run slot it distrusts
+    "VERDICT: FAILED before APPLY, and the board is left in the BOOTLOADER: not jumping, because "
+    "runValid is not 1",
+    # no verdict at all
+    "Traceback (most recent call last):",
+])
+def test_no_power_cycle_promise_unless_the_flasher_says_nothing_was_applied(tmp_path, flasher_said):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={FLASH_ONLY},
+                   flash_fail_output=flasher_said, board_after_failed_flash=IN_BOOTLOADER)
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert "turn the machine OFF" not in str(e.value)
+    assert "--boot-app" in str(e.value)
+
+
+def test_no_power_cycle_for_a_board_running_a_foreign_application(tmp_path):
+    # A power-cycle just starts that application again; it is not the fix.
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={FLASH_ONLY},
+                   flash_fail_output=FLASHER_COULD_NOT_RETURN,
+                   board_after_failed_flash=("idMagic=0x454c stage=application "
+                                             f"windowVersion=1 rev={IMAGE_REV} "
+                                             f"appProtocol={TARGET_PROTOCOL}"))
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert "WHAT TO DO NOW" not in str(e.value).split("failed (exit")[0]
 
 
 def test_list_releases_goes_through_the_same_filter(tmp_path):
