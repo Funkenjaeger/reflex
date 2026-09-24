@@ -15,6 +15,24 @@ timeouts (a sector erase stalls the board for 1-4 s), and can send the one
     modbus-flash.py --boot-app                 tell a resident bootloader to jump
     modbus-flash.py --revert [--expect-rev R]  put the previous image back (see revert())
 
+BENCH DIAGNOSTICS (read-only, or one deliberately damaged READ; never a write):
+    modbus-flash.py --link-probe N [--probe-interval S]
+        N single-try status reads (bootloader: the 16-register status block;
+        application: the identity window), S seconds apart (default 0.25).
+        One mark per read -- `.` answered, `x` no answer, `E` exception --
+        in rows of 50, then: answered/total, the longest run of misses, and
+        whether the misses ALTERNATE with answers. In the bootloader it also
+        prints the link counters at register 2420 before and after, when the
+        bootloader has them (see DIAG_BASE). Exit 0 when every read answered.
+    modbus-flash.py --inject KIND [--link-probe N] [--inject-seed S]
+        Bootloader only; refused in the application. Sends ONE damaged frame
+        and prints its bytes, then a short link probe (default 40 reads) so
+        its effect is visible. KIND: garbage (20 random bytes, none of which
+        forms a frame with a valid CRC), truncated (a status-block READ
+        request cut after 3 bytes), badcrc (that READ with its CRC inverted),
+        burst (that READ twice back to back, no inter-frame gap). Nothing it
+        sends can reach a write or a command register.
+
 THE SEQUENCE (decisions/els-modbus-register-map.md, Implemented):
   1. read the identity window at 2048 FIRST, ALWAYS; refuse on any idMagic
      mismatch -- nothing else is known to be safe to read;
@@ -40,7 +58,11 @@ with the board parked in the bootloader and the old application intact):
     was running an application: the run slot has not been written (the
     transfer goes to staging), so return_to_app() jumps back and PROVES the
     previous rev is running before saying "NOTHING CHANGED". Exit is still
-    non-zero -- the update did not happen;
+    non-zero -- the update did not happen. It keeps looking for a board that
+    has gone quiet for up to RECOVERY_TOTAL_S (2026-09-23: the lathe's
+    bootloader was silent for the old 30 s and answered minutes later), and
+    when it still cannot get back its verdict leads with the power-cycle an
+    operator without a terminal can do;
   * a failure once APPLY may have run is REPORTED, never answered with a
     blind jump -- see after_apply_report().
 
@@ -57,6 +79,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import random
 import struct
 import sys
 import time
@@ -159,9 +182,54 @@ PAD_READ_TIMEOUT = 0.15     # see Bootloader.pad
 PAD_AFTER_TROUBLED = 3      # consecutive commands that lost a frame before pad mode
 
 # --- getting back after a failure (Open Loops 6aae7131) -------------------------
-RECOVERY_WAIT_S = 30.0      # how long to keep asking a flaky link for state, per look
-REPORT_WAIT_S = 10.0        # ditto, for the last look before reporting
+RECOVERY_WAIT_S = 30.0      # apply_never_ran's look for blSeq after a lost APPLY
+REPORT_WAIT_S = 10.0        # how long to keep asking a flaky link, for the last look before reporting
 JUMP_ATTEMPTS = 3           # each gated on an identity read showing the bootloader
+# PATIENT RECOVERY (2026-09-23). The lathe's in-app update to v1.2.0-rc.5 spent
+# its transfer budget in resyncs, then return_to_app got no answer to its
+# identity looks for RECOVERY_WAIT_S (30 s), which was then also the whole of
+# its patience, and it gave up: "the board does not answer", bootloader
+# resident, dead DRO, operator with no terminal. Minutes later -- the UI
+# polling again -- the bootloader answered, and `--boot-app` worked on the first
+# try. On 2026-09-19 the same bootloader answered every OTHER request, idle
+# host, until it was re-entered. So after a bad frame it is intermittent, not
+# dead, and the host is what gave up. Why it goes quiet is NOT known (a
+# bootloader fix is being built separately and is unverified), so this does
+# not model it: it keeps asking for RECOVERY_TOTAL_S from the moment recovery
+# starts. The spacing is jittered between RECOVERY_PAUSE_MIN and _MAX rather
+# than fixed or doubling, because a fixed rhythm can phase-lock onto whatever
+# periodic state the bootloader is in and miss every window it answers in;
+# frame-for-frame alternation answers any spacing, and 30 s of total silence
+# on 09-23 says that was not all that was going on. The JUMP gates are
+# untouched; only how long the host keeps looking changes.
+RECOVERY_TOTAL_S = 150.0
+RECOVERY_PAUSE_MIN = 0.3
+RECOVERY_PAUSE_MAX = 2.0
+RECOVERY_PROGRESS_S = 10.0  # a "still looking" line this often, for the Update screen's status box
+_rng = random.Random()      # the jitter; the tests reseed it
+
+# --- bootloader link diagnostics (2026-09-23) ------------------------------------
+# A READ-ONLY window the bootloader build now on the bench adds after its
+# 116-register block: eight uint16 counters of what its receive path saw.
+# Bootloaders in the field today do not have it and answer a read there with
+# exception 2 (illegal data address) -- which means "no diagnostics", never a
+# failure: read_diag returns None for it, as for silence. It is read only
+# right after the BOOTLOADER window has answered, never against an
+# application, whose register map is not the bootloader's.
+DIAG_BASE = BL_BASE + 116   # 2420
+DIAG_NAMES = ("framesTaken", "crcErrors", "badFrames", "overflowDrops",
+              "errOre", "errFe", "errNe", "dmaRestarts")
+DIAG_SIZE = len(DIAG_NAMES)
+
+# --- bench link probe and fault injection (2026-09-23) ---------------------------
+PROBE_INTERVAL_S = 0.25     # --probe-interval default: the pause after each probe read
+PROBE_READ_TIMEOUT = 0.3    # one probe read; a 16-register reply is ~3 ms at 115200
+PROBE_ROW = 50
+ALTERNATING_MIN = 8         # reads of strict answered/missed alternation to call it alternating
+INJECT_KINDS = ("garbage", "truncated", "badcrc", "burst")
+INJECT_PROBE_READS = 40     # --inject's probe when --link-probe does not say
+INJECT_LISTEN_S = 0.5       # how long to collect whatever answers the injected frame
+INJECT_GARBAGE_BYTES = 20
 
 
 class ModbusError(Exception):
@@ -275,6 +343,21 @@ class Rtu:
         body += struct.pack(f">{len(values)}H", *[v & 0xFFFF for v in values])
         self._xact(body, timeout)
 
+    def send_raw(self, data: bytes, listen: float) -> bytes:
+        """--inject only: put ``data`` on the wire EXACTLY as given -- no CRC
+        added, no framing -- in one write, so a burst leaves with no
+        inter-frame gap; then collect whatever comes back for ``listen``
+        seconds, unparsed. The caller builds ``data`` (inject_frame) and is
+        what guarantees it cannot be a write."""
+        self.ser.reset_input_buffer()
+        self.ser.write(data)
+        self.ser.flush()
+        deadline = time.monotonic() + listen
+        buf = b""
+        while time.monotonic() < deadline:
+            buf += self.ser.read(256)
+        return buf
+
 
 # --- identity ----------------------------------------------------------------
 
@@ -356,11 +439,39 @@ def wait_for_stage(bus: Rtu, stage: int, timeout: float, rev: int | None = None)
 
 # --- bootloader control ------------------------------------------------------
 
-def describe_head(h: list[int]) -> str:
-    return (f"status={STATUS_NAMES.get(h[BL_STATUS], h[BL_STATUS])} seq={h[BL_SEQ]} "
-            f"result={RESULT_NAMES.get(h[BL_RESULT], h[BL_RESULT])} "
-            f"copyState={STATE_NAMES.get(h[BL_COPY_STATE], h[BL_COPY_STATE])} "
-            f"attempts={h[BL_ATTEMPTS]} runValid={h[BL_RUN_VALID]}")
+def describe_head(h: list[int], diag: list[int] | None = None) -> str:
+    """The status block in words; with ``diag`` (read_diag), the bootloader's
+    link counters appended -- the failure reports pass it, so a failure on a
+    bootloader that has the window says what its receive path saw."""
+    s = (f"status={STATUS_NAMES.get(h[BL_STATUS], h[BL_STATUS])} seq={h[BL_SEQ]} "
+         f"result={RESULT_NAMES.get(h[BL_RESULT], h[BL_RESULT])} "
+         f"copyState={STATE_NAMES.get(h[BL_COPY_STATE], h[BL_COPY_STATE])} "
+         f"attempts={h[BL_ATTEMPTS]} runValid={h[BL_RUN_VALID]}")
+    return s + (f"; diag {describe_diag(diag)}" if diag else "")
+
+
+def describe_diag(d: list[int]) -> str:
+    return " ".join(f"{name}={v}" for name, v in zip(DIAG_NAMES, d))
+
+
+def read_diag(bus: Rtu, tries: int = 2) -> list[int] | None:
+    """The bootloader's link counters at DIAG_BASE, or None.
+
+    None covers BOTH "this bootloader has no such window" (exception 2 --
+    every bootloader in the field on 2026-09-23) and "no answer": the counters
+    are extra information and never a reason to fail. Single tries, not
+    Rtu.read's retries, so a missing window costs one frame and the retry
+    count in the link line and the manifest stays the flash's own. Call it
+    only right after the bootloader window answered (see DIAG_BASE)."""
+    for _ in range(tries):
+        try:
+            d = bus.read(DIAG_BASE, DIAG_SIZE, timeout=PROBE_READ_TIMEOUT, attempts=1)
+        except ExceptionResponse:
+            return None
+        except ModbusError:
+            continue
+        return d if len(d) == DIAG_SIZE else None
+    return None
 
 
 class Bootloader:
@@ -811,6 +922,97 @@ RECOVER_BY_HAND = ("Recover by hand: `modbus-flash.py --identity` to look; `modb
                    "it (the stay-in-bootloader request was consumed on entry, so with a valid run slot the "
                    "bootloader starts the application by itself); last resort SWD (fw/scripts/flash.sh).")
 
+# What the verdict leads with when return_to_app cannot get the board back
+# (2026-09-23). The in-app updater runs this script on a machine whose
+# operator usually has NO terminal, and the verdict above it told him to run
+# modbus-flash.py. The step he CAN take comes first, in plain words; the SSH
+# path stays, after it. The claim underneath -- power-on with a valid run slot
+# starts the application, because the stay request was consumed on entry --
+# is what bl_core is written to do, but on 2026-09-23 it had not been tried
+# on the bench after a failed transfer, so the text says it is being verified
+# rather than promise it. Update it (and the updater's copy) once it has been.
+POWER_CYCLE_STEP = (
+    "WHAT TO DO NOW, no terminal needed: turn the machine OFF, wait 10 seconds, and turn it back ON. "
+    "Nothing was applied, so the previous firmware is still in the controller, and when its run slot "
+    "is valid the bootloader starts it by itself at power-on. Then check that the controller reads "
+    "normally: the position displays show and follow the machine. This power-cycle recovery is still "
+    "being bench-verified, so it is expected to work but not proven; if the controller does not read "
+    "normally afterwards, it needs the terminal recovery below.")
+
+
+class _Patience:
+    """return_to_app's looks at a board that may have gone quiet: single-try
+    reads, jittered spacing, one absolute deadline for all of them, and a
+    progress line every RECOVERY_PROGRESS_S (see RECOVERY_TOTAL_S).
+
+    A look always makes at least one read, even past the deadline, so a
+    look after a JUMP attempt that ran long still asks once."""
+
+    def __init__(self, bus: Rtu):
+        self.bus = bus
+        self.t0 = time.monotonic()
+        self.deadline = self.t0 + RECOVERY_TOTAL_S
+        self.missed = 0             # reads that got no answer, all looks together
+        self.silent_since: float | None = None
+        self.next_note = self.t0 + RECOVERY_PROGRESS_S
+
+    def time_left(self) -> bool:
+        return time.monotonic() < self.deadline
+
+    def _miss(self) -> bool:
+        """Count a miss, say so now and then, pause. False: out of time."""
+        self.missed += 1
+        now = time.monotonic()
+        if self.silent_since is None:
+            self.silent_since = now
+        pause = _rng.uniform(RECOVERY_PAUSE_MIN, RECOVERY_PAUSE_MAX)
+        if now + pause > self.deadline:
+            return False
+        if now >= self.next_note:
+            print(f"  recovery: still looking for the board -- {now - self.t0:.0f} s of "
+                  f"{RECOVERY_TOTAL_S:.0f} s, {self.missed} reads unanswered so far. Please wait.",
+                  flush=True)
+            self.next_note = now + RECOVERY_PROGRESS_S
+        time.sleep(pause)
+        return True
+
+    def _answered(self) -> None:
+        if self.silent_since is not None:
+            quiet = time.monotonic() - self.silent_since
+            if quiet >= RECOVERY_PROGRESS_S:
+                print(f"  recovery: the board answered again after {quiet:.0f} s without an answer",
+                      flush=True)
+            self.silent_since = None
+
+    def identity(self) -> Identity | None:
+        """poll_identity's job, patiently. None: nothing answered in time."""
+        while True:
+            try:
+                ident = Identity(self.bus.read(ID_BASE, ID_SIZE, timeout=0.3, attempts=1))
+                if ident.magic == ID_MAGIC:
+                    self._answered()
+                    return ident
+            except ModbusError:
+                pass
+            if not self._miss():
+                return None
+
+    def head(self) -> tuple[list[int] | None, bool]:
+        """(status block, False), or (None, gone): gone is True when the
+        bootloader window answered with an EXCEPTION -- the board is no longer
+        in the bootloader -- and False when nothing answered in time."""
+        while True:
+            try:
+                h = self.bus.read(BL_BASE, 16, timeout=0.5, attempts=1)
+                self._answered()
+                return h, False
+            except ExceptionResponse:
+                return None, True
+            except ModbusError:
+                pass
+            if not self._miss():
+                return None, False
+
 
 def return_to_app(bus: Rtu, bl: Bootloader, before: Identity | None, start: list[int] | None,
                   reason, where: str):
@@ -827,30 +1029,47 @@ def return_to_app(bus: Rtu, bl: Bootloader, before: Identity | None, start: list
 
     Proven by an identity read: stage = application AND the rev (and dirty
     flag) the board reported before this run. Nothing less is reported as
-    'nothing changed'."""
-    print(f"FAILED {where}: {reason}")
+    'nothing changed'.
+
+    Patient since 2026-09-23: a board that stops answering is asked again,
+    jittered, for up to RECOVERY_TOTAL_S across all the looks (see there),
+    not given up on after one 30 s look. What is gated, and how, is exactly
+    what it was."""
+    print(f"FAILED {where}: {reason}", flush=True)
     print_link(bus, bl)
     if before is None:
         look = poll_head(bus, REPORT_WAIT_S)
         raise SystemExit(
             f"VERDICT: FAILED {where}; the board is in the bootloader "
-            f"({describe_head(look) if look else 'status unreadable'}). It was already in the bootloader "
-            f"when this run began, so there is no previous application rev to prove a return against, and "
-            f"it is not jumped blind. The run slot was not written by this run. {RECOVER_BY_HAND}")
+            f"({describe_head(look, read_diag(bus)) if look else 'status unreadable'}). It was already in "
+            f"the bootloader when this run began, so there is no previous application rev to prove a return "
+            f"against, and it is not jumped blind. The run slot was not written by this run. {RECOVER_BY_HAND}")
     print(f"  the run slot was not written (the transfer goes to staging); returning to the "
-          f"previous application {before.rev_str}")
+          f"previous application {before.rev_str}", flush=True)
     start_copy = start[BL_COPY_STATE] if start else None
     state = "never read"
+    look = _Patience(bus)        # every look below shares its RECOVERY_TOTAL_S
     for attempt in range(1, JUMP_ATTEMPTS + 1):
-        ident = poll_identity(bus, RECOVERY_WAIT_S)
-        if ident is None:
-            state = f"the board did not answer its identity window for {RECOVERY_WAIT_S:.0f}s"
-            break
-        if ident.stage == ID_STAGE_APP:
-            _settled(before, ident, where, reason)                   # raises
-        h = poll_head(bus, RECOVERY_WAIT_S)
+        h = None
+        while h is None:
+            ident = look.identity()
+            if ident is None:
+                state = (f"the board did not answer its identity window in "
+                         f"{time.monotonic() - look.t0:.0f} s of looking ({look.missed} single-try reads "
+                         f"unanswered, {RECOVERY_PAUSE_MIN}-{RECOVERY_PAUSE_MAX:.0f} s apart)")
+                break
+            if ident.stage == ID_STAGE_APP:
+                _settled(before, ident, where, reason)               # raises
+            h, gone = look.head()
+            if h is None and not (gone and look.time_left()):
+                # gone = the bootloader window answered with an exception
+                # between the identity read and this one, i.e. the board has
+                # just left the bootloader: look at the identity again, while
+                # there is time. Silence is the other case, and final.
+                state = ("the bootloader answered its identity window but not its status block"
+                         + (" (it answered there with an exception)" if gone else ""))
+                break
         if h is None:
-            state = "the bootloader answered its identity window but not its status block"
             break
         state = f"bootloader: {describe_head(h)}"
         refuse = None
@@ -862,9 +1081,12 @@ def return_to_app(bus: Rtu, bl: Bootloader, before: Identity | None, start: list
             refuse = (f"copyState moved from {STATE_NAMES.get(start_copy, start_copy)} during this run, "
                       f"so something other than the transfer happened")
         if refuse:
+            # The counters are read only here, at the verdict: a read before
+            # a JUMP would shift the request rhythm the jump rides on.
             raise SystemExit(f"VERDICT: FAILED {where}, and the board is left in the BOOTLOADER: "
-                             f"not jumping, because {refuse}. {state}. {RECOVER_BY_HAND}")
-        print(f"  JUMP to the application (attempt {attempt}/{JUMP_ATTEMPTS}); {state}")
+                             f"not jumping, because {refuse}. bootloader: "
+                             f"{describe_head(h, read_diag(bus))}. {RECOVER_BY_HAND}")
+        print(f"  JUMP to the application (attempt {attempt}/{JUMP_ATTEMPTS}); {state}", flush=True)
         try:
             bl.jump()
         except (SystemExit, ModbusError) as e:
@@ -880,11 +1102,18 @@ def return_to_app(bus: Rtu, bl: Bootloader, before: Identity | None, start: list
         if look is not None and look.stage == ID_STAGE_APP:
             _settled(before, look, where, reason)                    # raises
         h = poll_head(bus, REPORT_WAIT_S) if look is not None else None
-        state = (f"bootloader: {describe_head(h)}" if h else
+        state = (f"bootloader: {describe_head(h, read_diag(bus))}" if h else
                  "the board does not answer" if look is None else f"identity: {look}")
+    # The operator's step first: the in-app updater shows this to someone
+    # with no terminal (see POWER_CYCLE_STEP). Then the facts, then SSH.
+    was_valid = (" runValid was 1 when this run found the bootloader."
+                 if start and start[BL_RUN_VALID] == 1 else "")
     raise SystemExit(f"VERDICT: FAILED {where}, and the board could NOT be returned to the application "
-                     f"{before.rev_str}: {state}. Nothing was applied: the previous image should still be "
-                     f"intact in the run slot. {RECOVER_BY_HAND}")
+                     f"{before.rev_str}.\n"
+                     f"  {POWER_CYCLE_STEP}\n"
+                     f"  Board state: {state}. Nothing was applied: the previous image should still be "
+                     f"intact in the run slot.{was_valid}\n"
+                     f"  With a terminal (SSH to the Pi): {RECOVER_BY_HAND}")
 
 
 def _settled(before: Identity, ident: Identity, where: str, reason):
@@ -924,7 +1153,7 @@ def after_apply_report(bus: Rtu, before: Identity | None, hdr, reason) -> str:
         if h is None:
             state = "in the bootloader; its status block did not answer"
         else:
-            state = (f"in the bootloader: {describe_head(h)}. copyState "
+            state = (f"in the bootloader: {describe_head(h, read_diag(bus))}. copyState "
                      + AFTER_APPLY_MEANING.get(h[BL_COPY_STATE],
                                                f"{STATE_NAMES.get(h[BL_COPY_STATE], h[BL_COPY_STATE])}: a "
                                                f"copy is in flight; the bootloader finishes or undoes it "
@@ -1065,7 +1294,186 @@ def record_revert(manifest, ident, reverted_from: str | None) -> None:
         print(f"WARNING: the revert succeeded but was NOT recorded in {manifest}: {e}")
 
 
+# --- bench diagnostics (2026-09-23) ------------------------------------------------
+# Two bench tools for the question 2026-09-19 and 2026-09-23 left open: after a
+# bad frame the bootloader answered every other request (09-19) or nothing at
+# all for over 30 s (09-23), and both times came good later. --link-probe
+# measures that pattern instead of inferring it from a failed flash;
+# --inject makes one bad frame of a known kind on purpose, so the pattern
+# can be tied to what caused it. Both are read-only: every request they
+# make is an FC3 read, and the one damaged frame is built from a READ (or
+# is garbage proven to contain no frame with a valid CRC) -- see inject_frame.
+
+def probe_marks(bus: Rtu, n: int, interval: float, bootloader: bool) -> str:
+    """n single-try reads, one mark each, printed live in rows of PROBE_ROW."""
+    addr, count = (BL_BASE, 16) if bootloader else (ID_BASE, ID_SIZE)
+    marks = []
+    for k in range(n):
+        if k % PROBE_ROW == 0:
+            print(f"  {k:5d} ", end="", flush=True)
+        try:
+            bus.read(addr, count, timeout=PROBE_READ_TIMEOUT, attempts=1)
+            m = "."
+        except ExceptionResponse:
+            m = "E"
+        except ModbusError:
+            m = "x"
+        marks.append(m)
+        print(m, end="\n" if (k + 1) % PROBE_ROW == 0 or k + 1 == n else "", flush=True)
+        if k + 1 < n:
+            time.sleep(interval)
+    return "".join(marks)
+
+
+def summarize_marks(marks: str) -> list[str]:
+    """The probe's verdict lines. ALTERNATING means a stretch of at least
+    ALTERNATING_MIN reads that go strictly answered/missed/answered/... --
+    the 2026-09-19 afterstate -- as opposed to misses in runs."""
+    total, ok, exc = len(marks), marks.count("."), marks.count("E")
+    lines = [f"probe: {ok}/{total} answered, {marks.count('x')} missed, {exc} exceptions"]
+    run = best = best_at = 0
+    for i, m in enumerate(marks):
+        run = run + 1 if m == "x" else 0
+        if run > best:
+            best, best_at = run, i - run + 1
+    lines.append(f"probe: longest run of misses: {best}" + (f" (from read {best_at})" if best else ""))
+    alt = alt_best = alt_at = 0
+    for i, m in enumerate(marks):
+        if m in ".x" and i and alt and marks[i - 1] in ".x" and marks[i - 1] != m:
+            alt += 1
+        else:
+            alt = 1 if m in ".x" else 0
+        if alt > alt_best:
+            alt_best, alt_at = alt, i - alt + 1
+    if "x" not in marks:
+        lines.append("probe: no misses, so nothing to alternate")
+    elif alt_best >= ALTERNATING_MIN:
+        lines.append(f"probe: misses ALTERNATE with answers: reads {alt_at}-{alt_at + alt_best - 1} "
+                     f"({alt_best} reads) go strictly answered/missed")
+    else:
+        lines.append(f"probe: misses do not alternate (longest strictly alternating stretch: "
+                     f"{alt_best} reads; {ALTERNATING_MIN} would count)")
+    return lines
+
+
+def _print_diag_change(d0: list[int] | None, d1: list[int] | None, sent: str) -> None:
+    if d0 is None:
+        return
+    if d1 is None:
+        print("diag after:  no answer (the window answered before the probe)")
+        return
+    print(f"diag after:  {describe_diag(d1)}")
+    print("diag change: " + " ".join(f"{name}+{(b - a) & 0xFFFF}"
+                                     for name, a, b in zip(DIAG_NAMES, d0, d1))
+          + f"  (between the two diag reads this run sent {sent})")
+
+
+def _diag_before(bus: Rtu) -> list[int] | None:
+    d = read_diag(bus)
+    print(f"diag before: {describe_diag(d)}" if d is not None else
+          f"diag: register {DIAG_BASE} not served (a bootloader without the diagnostics window, "
+          f"or no answer) -- probing without counters")
+    return d
+
+
+def link_probe(bus: Rtu, n: int, interval: float) -> int:
+    """--link-probe: see the module docstring. Reads only. Exit 0 when every
+    read answered, 1 otherwise, so a bench loop can count bad runs."""
+    ident = read_identity(bus)
+    print(f"board: {ident}")
+    bootloader = ident.stage == ID_STAGE_BOOTLOADER
+    d0 = _diag_before(bus) if bootloader else None
+    if not bootloader:
+        print("application: probing the identity window; the diagnostics window is the bootloader's "
+              "and is not read here")
+    what = ("bootloader status block (16 registers at 2304)" if bootloader else
+            f"identity window ({ID_SIZE} registers at {ID_BASE})")
+    print(f"probe: {n} single-try reads of the {what}, {interval:.2f} s apart, "
+          f"{PROBE_READ_TIMEOUT} s timeout each ('.' answered, 'x' no answer, 'E' exception)")
+    marks = probe_marks(bus, n, interval, bootloader)
+    for line in summarize_marks(marks):
+        print(line)
+    if bootloader:
+        _print_diag_change(d0, read_diag(bus) if d0 is not None else None, f"{n} probe reads")
+    return 0 if marks.count(".") == len(marks) else 1
+
+
+def _crc_frame(body: bytes) -> bytes:
+    return body + struct.pack("<H", crc16(body))
+
+
+def holds_valid_frame(data: bytes) -> bool:
+    """True when ANY contiguous slice of 4 bytes or more ends in a valid
+    Modbus CRC of the bytes before it -- i.e. whatever framing the receiver
+    lands on inside ``data``, could it see one good frame?"""
+    for i in range(len(data)):
+        for j in range(i + 4, len(data) + 1):
+            if struct.unpack("<H", data[j - 2:j])[0] == crc16(data[i:j - 2]):
+                return True
+    return False
+
+
+def inject_frame(kind: str, address: int, rng: random.Random) -> bytes:
+    """The one damaged frame --inject sends. Every kind is built from the
+    status-block READ (FC3, 16 registers at 2304) or is garbage that
+    holds_valid_frame proves has no valid frame anywhere in it, so nothing
+    sent can execute as a write or reach the command register."""
+    read = _crc_frame(struct.pack(">BBHH", address, 3, BL_BASE, 16))
+    if kind == "truncated":
+        return read[:3]
+    if kind == "badcrc":
+        return read[:-2] + bytes(b ^ 0xFF for b in read[-2:])
+    if kind == "burst":
+        return read + read
+    if kind == "garbage":
+        while True:
+            data = bytes(rng.randrange(256) for _ in range(INJECT_GARBAGE_BYTES))
+            if not holds_valid_frame(data):
+                return data
+    raise ValueError(f"unknown --inject kind {kind!r}; one of {', '.join(INJECT_KINDS)}")
+
+
+def inject(bus: Rtu, kind: str, n: int, interval: float, seed: int | None) -> int:
+    """--inject: see the module docstring. Refused unless the board SAYS it
+    is in the bootloader: the application's receive path is not what is
+    being studied, and a bad frame into a running lathe controller is not a
+    bench experiment."""
+    if kind not in INJECT_KINDS:
+        raise SystemExit(f"--inject {kind!r}: one of {', '.join(INJECT_KINDS)}")
+    ident = read_identity(bus)
+    print(f"board: {ident}")
+    if ident.stage != ID_STAGE_BOOTLOADER:
+        raise SystemExit(f"REFUSING --inject: the board is in the {ident.stage_name}, and fault "
+                         f"injection is for the bootloader only. `--enter-bootloader` first, on a bench.")
+    if seed is None:
+        seed = int.from_bytes(os.urandom(4), "big")
+    frame = inject_frame(kind, bus.address, random.Random(seed))
+    d0 = _diag_before(bus)
+    print(f"inject {kind}: sending {len(frame)} bytes: {frame.hex(' ')}"
+          + (f"  (seed {seed}; --inject-seed {seed} repeats it)" if kind == "garbage" else ""), flush=True)
+    heard = bus.send_raw(frame, INJECT_LISTEN_S)
+    print(f"inject {kind}: heard back within {INJECT_LISTEN_S} s: {heard.hex(' ') if heard else 'nothing'}")
+    print(f"probe: {n} single-try reads of the bootloader status block, {interval:.2f} s apart "
+          f"('.' answered, 'x' no answer, 'E' exception)")
+    marks = probe_marks(bus, n, interval, True)
+    for line in summarize_marks(marks):
+        print(line)
+    _print_diag_change(d0, read_diag(bus) if d0 is not None else None,
+                       f"the injected {kind} bytes and {n} probe reads")
+    return 0 if marks.count(".") == len(marks) else 1
+
+
 def main(argv: list[str]) -> int:
+    # The in-app updater reads this script's output through a pipe and shows
+    # it line by line in the Update screen's status box (updater.py
+    # subprocess_runner). Through a pipe Python block-buffers stdout, so
+    # unless the service's environment sets PYTHONUNBUFFERED (nothing in this
+    # repo does, 2026-09-23) the progress lines -- recovery's "still looking"
+    # among them -- reached the box only when the flasher exited.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):   # pragma: no cover -- a replaced stdout
+        pass
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("image", nargs="?", help="slotted reflex-fw.bin (built with REFLEX_APP_BASE=0x08020000)")
     ap.add_argument("--port", default="/dev/ttyUSB0")
@@ -1087,10 +1495,35 @@ def main(argv: list[str]) -> int:
                     help="what the image is, for the record: 'release' for a published "
                          "release asset (implies no diagnostic probe)")
     ap.add_argument("--record-tag", default=None, help="release tag, for the record")
+    bench = ap.add_argument_group(
+        "bench diagnostics", "read-only link measurements for a board on the bench; never a write "
+        "(see the module docstring)")
+    bench.add_argument("--link-probe", type=int, default=None, metavar="N",
+                       help="N single-try status reads, one mark each ('.' answered, 'x' no answer, "
+                            "'E' exception) in rows of 50, then answered/total, longest run of misses, "
+                            "whether misses alternate, and the bootloader's diag counters (register "
+                            f"{DIAG_BASE}) before and after when it has them. With --inject: the probe's "
+                            f"length (default {INJECT_PROBE_READS})")
+    bench.add_argument("--probe-interval", type=float, default=PROBE_INTERVAL_S, metavar="S",
+                       help="pause after each probe read (default %(default)s s)")
+    bench.add_argument("--inject", choices=INJECT_KINDS, default=None, metavar="KIND",
+                       help="BOOTLOADER ONLY: send one damaged frame (" + ", ".join(INJECT_KINDS) +
+                            "), print its bytes, then a short link probe")
+    bench.add_argument("--inject-seed", type=int, default=None, metavar="S",
+                       help="with --inject garbage: the random seed, to repeat a run's bytes")
     args = ap.parse_args(argv[1:])
+    if args.link_probe is not None and args.link_probe < 1:
+        ap.error("--link-probe needs N >= 1")
+    if args.probe_interval < 0:
+        ap.error("--probe-interval must be >= 0")
 
     bus = Rtu(args.port, args.baud, args.address)
     try:
+        if args.inject:
+            return inject(bus, args.inject, args.link_probe or INJECT_PROBE_READS,
+                          args.probe_interval, args.inject_seed)
+        if args.link_probe is not None:
+            return link_probe(bus, args.link_probe, args.probe_interval)
         if args.identity:
             ident = read_identity(bus)
             print(ident)
@@ -1121,7 +1554,8 @@ def main(argv: list[str]) -> int:
                           manifest=None if args.no_manifest else args.manifest,
                           expect_rev=args.expect_rev)
         if not args.image:
-            ap.error("an image, --identity, --enter-bootloader, --boot-app or --revert is required")
+            ap.error("an image, --identity, --enter-bootloader, --boot-app, --revert, --link-probe or "
+                     "--inject is required")
         return flash(bus, args.image, args.dry_run,
                      manifest=None if args.no_manifest else args.manifest,
                      variant=args.record_variant, tag=args.record_tag)
