@@ -755,17 +755,22 @@ def urllib_fetch_json(url: str):
 # command line for someone with no terminal). Mirrors modbus-flash.py's
 # POWER_CYCLE_STEP; say the same thing in both. It rests on the bootloader
 # starting a valid run slot by itself at power-on (the stay request is
-# consumed on entry, bl_core.c), which had NOT been bench-verified after a
-# failed transfer on 2026-09-23 -- hence "still being bench-verified".
+# consumed on entry, bl_core.c). Not yet tried after a failed transfer on
+# 2026-09-23; bench-verified on the lathe 2026-09-24, 2 of 2 -- a controller
+# parked in its bootloader, and a bootloader gone silent part-way through a
+# real transfer, both back on their own firmware with the UI reconnected
+# after off / 10 s / on. The text claims those two cases and no more.
 POWER_CYCLE_STEP = (
     "WHAT TO DO NOW, no terminal needed: turn the machine OFF, wait 10 "
     "seconds, and turn it back ON. Nothing was applied, so the previous "
     "firmware is still in the controller, and when its run slot is valid the "
-    "bootloader starts it by itself at power-on. Then check that the "
-    "controller reads normally: the position displays show and follow the "
-    "machine. This power-cycle recovery is still being bench-verified, so it "
-    "is expected to work but not proven; if the controller does not read "
-    "normally afterwards, it needs the terminal recovery below.")
+    "bootloader starts it by itself at power-on. This is the recovery that "
+    "has been tested on the lathe: it brought back a controller left waiting "
+    "in its bootloader, and one whose bootloader had gone silent part-way "
+    "through a firmware transfer. Then check that the controller reads "
+    "normally: the position displays show and follow the machine. If the "
+    "controller does not read normally afterwards, it needs the terminal "
+    "recovery below.")
 
 
 def _flasher_says_nothing_applied(output: str) -> bool:

@@ -169,11 +169,16 @@ EOF
     ssh "$HOST" 'mkdir -p ~/firmware'
     TARGET_BL="firmware/reflex-bl.elf"
     TARGET_APP="firmware/reflex-app.bin"
+    # The preflight's openocd script travels with the images: openocd runs
+    # THERE, so -f has to name a file that exists there.
+    TARGET_OPTCR_CFG="firmware/sector0-optcr.cfg"
     scp -q "$BL_ELF" "$HOST:$TARGET_BL"
     scp -q "$APP_BIN" "$HOST:$TARGET_APP"
+    scp -q "$SECTOR0_OPTCR_CFG" "$HOST:$TARGET_OPTCR_CFG"
+    OPTCR_MD5="$(md5sum "$SECTOR0_OPTCR_CFG" | cut -d' ' -f1)"
     # Same reasoning as flash.sh: a transfer that can silently truncate is
     # worth verifying before it is written to a machine with moving parts.
-    for pair in "$TARGET_BL:$BL_MD5" "$TARGET_APP:$APP_MD5"; do
+    for pair in "$TARGET_BL:$BL_MD5" "$TARGET_APP:$APP_MD5" "$TARGET_OPTCR_CFG:$OPTCR_MD5"; do
         remote_path="${pair%:*}"; want="${pair##*:}"
         got="$(ssh "$HOST" "md5sum $remote_path | cut -d' ' -f1")"
         [ "$want" = "$got" ] || {
@@ -186,6 +191,7 @@ EOF
 else
     TARGET_BL="$REPO/$BL_ELF"
     TARGET_APP="$REPO/$APP_BIN"
+    TARGET_OPTCR_CFG="$SECTOR0_OPTCR_CFG"
     RUN=(bash -c)
     WHERE="this machine"
     mkdir -p ~/firmware
@@ -205,10 +211,20 @@ OCD="openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c 'transport select
 # what it finds: programming a bootloader over an existing bootloader, or over
 # a legacy application, is exactly what this script is for.
 # ---------------------------------------------------------------------------
-# 'reset run' after the read, for the reason flash.sh's preflight has one:
-# openocd exiting does not resume a halted core, and on --dry-run or an abort
-# below there is no later write step to reset it.
-PROBE_CMD="$OCD -c 'init; reset halt; flash info 0; reset run; shutdown'"
+# The read is lib/sector0-optcr.cfg, given with -f: it reads FLASH_OPTCR so the
+# write-protection check below has something to decide on, and it ends with
+# 'reset run', for the reason flash.sh's preflight has one -- openocd exiting
+# does not resume a halted core, and on --dry-run or an abort below there is
+# no later write step to reset it.
+#
+# A FILE, NOT Tcl in this string, for two reasons. On the probe host's openocd
+# nothing a -c command prints reaches the output (see the file's header), so
+# -c could only have carried the read, not the answer. And this string is
+# re-parsed by `bash -c` or by the remote login shell under --host; the Tcl's
+# brackets, $ and double quotes would have to survive that, which is the
+# word-splitting class of bug this script has had before. A path in single
+# quotes is the only thing the shell sees.
+PROBE_CMD="$OCD -f '$TARGET_OPTCR_CFG'"
 echo "checking the ST-Link can reach the target from ${WHERE}"
 PROBE_OUT="$(mktemp)"
 trap 'rm -f "$PROBE_OUT"' EXIT
@@ -228,21 +244,46 @@ fi
 
 # WRP on sector 0 is a legitimate state -- a commissioned board has it -- and
 # it makes the bootloader write below fail. Say so now rather than after the
-# erase. Not fatal: a wording this does not recognize must not block
-# provisioning an unprotected board. The match itself is in lib/sector0.sh and
-# tested there; the grep it replaced also matched "not protected", so this
-# warning fired on every board and meant nothing.
-if sector0_wrp_reported "$PROBE_OUT"; then
-    cat <<EOF
+# erase. Not fatal either way. The decision is in lib/sector0.sh and tested
+# there and in lib/flash-preflight-test.sh.
+#
+# Its history is two warnings that meant nothing: until 2026-09-11 a grep that
+# also matched "not protected" fired on every board, and until 2026-09-24 the
+# fixed grep read `flash info 0` output that this openocd never prints, so it
+# could not fire at all. Hence the third arm: when the state could not be
+# read, say THAT, rather than stay silent as if it were clear.
+WRP_CLEAR_CMD="$OCD -c 'init; reset halt; flash protect 0 0 0 off; shutdown'"
+wrp=0
+SECTOR0_OPTCR=""
+sector0_wrp_reported "$PROBE_OUT" || wrp=$?
+case "$wrp" in
+    0)
+        cat <<EOF
 
-NOTE: openocd reports write protection on flash bank 0. If that covers sector
-0, programming the bootloader will fail. Clear it and power-cycle first:
+NOTE: sector 0 is WRITE-PROTECTED (FLASH_OPTCR=$SECTOR0_OPTCR, nWRP bit 16 clear).
+Programming the bootloader will fail. Clear it and power-cycle first:
 
-  $OCD -c 'init; reset halt; flash protect 0 0 0 off; shutdown'
+  $WRP_CLEAR_CMD
 
 (fw/bootloader/README.md step 9b. RDP stays at level 0 throughout.)
 EOF
-fi
+        ;;
+    1)
+        echo "sector 0 is not write-protected (FLASH_OPTCR=$SECTOR0_OPTCR)"
+        ;;
+    *)
+        cat <<EOF
+
+NOTE: could not read sector 0's write protection -- openocd's output carried
+no OPTCR line. It may or may not be protected. If programming the bootloader
+fails below, protection is the first thing to check; clearing it is:
+
+  $WRP_CLEAR_CMD
+
+and then a power cycle (fw/bootloader/README.md step 9b).
+EOF
+        ;;
+esac
 echo
 
 # ---------------------------------------------------------------------------

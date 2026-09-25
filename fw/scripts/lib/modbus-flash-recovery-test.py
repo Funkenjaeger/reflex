@@ -220,7 +220,7 @@ class Lathe:
             count = struct.unpack(">H", frame[4:6])[0]
             if reg == 2048:
                 vals = self.identity()[:count]
-            elif self.stage == 1 and self.diag is not None and reg == 2420 and count <= 8:
+            elif self.stage == 1 and self.diag is not None and reg == 2420 and count <= len(self.diag):
                 vals = self.diag[:count]
             elif self.stage == 1 and 2304 <= reg and reg + count <= 2304 + 116:
                 self.publish()
@@ -671,13 +671,19 @@ def s_stuck_dead(mf, image, tmp):
     check("NOTHING CHANGED" not in msg and no_success(r) and r.records == [],
           f"{tag}: claims neither success nor 'nothing changed'")
     # 2026-09-23: the operator the in-app updater shows this to has no
-    # terminal. The power-cycle comes FIRST, says it is not proven yet, and
-    # the SSH text stays, after it.
+    # terminal. The power-cycle comes FIRST and the SSH text stays, after it.
+    # 2026-09-24: bench-verified 2 of 2, so it says it has been tested, no
+    # longer "not proven" -- and still what to check, and what if not.
     step = msg.find("turn the machine OFF, wait 10 seconds, and turn it back ON")
     check(0 <= step < msg.find("--boot-app") and step < msg.find("Board state:"),
           f"{tag}: the power-cycle step leads, before the board state and the SSH recovery")
-    check("bench-verified" in msg and "not proven" in msg and "reads normally" in msg,
-          f"{tag}: says the power-cycle path is not proven yet, and what to check after it")
+    check("tested on the lathe" in msg and "left waiting in its bootloader" in msg
+          and "gone silent part-way through a firmware transfer" in msg,
+          f"{tag}: says the power-cycle recovery is tested, naming the two cases it was tested on")
+    check("not proven" not in msg and "bench-verified" not in msg,
+          f"{tag}: the 'not proven yet' wording is gone")
+    check("reads normally" in msg and "does not read normally afterwards" in msg,
+          f"{tag}: says what to check after the power cycle, and what to do if it fails")
     check("runValid was 1" in msg, f"{tag}: names the run slot's validity as this run found it")
     # getattr: --client may be a copy from before RECOVERY_TOTAL_S existed
     check(r.elapsed < mf.TRANSFER_BUDGET_S + mf.RESYNC_WAIT_S + getattr(mf, "RECOVERY_TOTAL_S", 0) + 90,
@@ -842,16 +848,16 @@ def s_diag_in_failure(mf, image, tmp):
 
     def nojump_diag(b):
         nojump(b)
-        b.diag = [0, 7, 3, 0, 0, 1, 0, 2]
+        b.diag = [0, 7, 3, 0, 0, 1, 0, 2, 1]
     r = scenario(mf, image, tmp, "diag-bench", nojump_diag)
     msg = r.exit_msg or ""
     check("runValid=1; diag framesTaken=" in msg and "crcErrors=7 badFrames=3" in msg
-          and "dmaRestarts=2" in msg,
+          and "dmaRestarts=2 clockHse=1" in msg,
           f"diag/bench bootloader: the counters follow the status line ({msg[msg.find('Board state'):][:220]})")
     check(r.board.commands().count("JUMP") == mf.JUMP_ATTEMPTS,
           f"diag/bench bootloader: reading the counters changed nothing about the jumps")
 
-    # read_diag itself, straight: exception -> None, silence -> None, window -> 8 values
+    # read_diag itself, straight: exception -> None, silence -> None, window -> 9 values
     clock = Clock()
     mf.time = types.SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep)
     board = Lathe(clock, stage=1)
@@ -867,9 +873,13 @@ def s_diag_in_failure(mf, image, tmp):
     check(mf.read_diag(bus) is None, "diag/read_diag: silence reads as None")
     board.stage = 1
     board.diag = [5, 0, 0, 0, 0, 0, 0, 0]
+    check(mf.read_diag(bus) is None,
+          "diag/read_diag: the 09-23 bench bootloader's 8-register window refuses a 9-register "
+          "read (exception 2), which reads as None")
+    board.diag = [5, 0, 0, 0, 0, 0, 0, 0, 1]
     got = mf.read_diag(bus)
-    check(got is not None and len(got) == 8 and got[0] == 6,
-          f"diag/read_diag: a bootloader with the window gives its 8 counters ({got})")
+    check(got is not None and len(got) == 9 and got[0] == 6 and got[8] == 1,
+          f"diag/read_diag: a bootloader with the window gives its 9 registers, clock flag last ({got})")
 
 
 # --- bench tools: --link-probe and --inject (2026-09-23) ------------------------------
@@ -928,7 +938,7 @@ def s_link_probe(mf, image, tmp):
     pattern = "." * 10 + "x." * 10 + "xxxx" + "." * 16 + "E" + "x.x"
     assert len(pattern) == 54
     b = bench(mf, lambda bus: mf.link_probe(bus, len(pattern), 0.25),
-              diag=[100, 0, 0, 0, 0, 0, 0, 0], faults=[scripted(pattern)])
+              diag=[100, 0, 0, 0, 0, 0, 0, 0, 1], faults=[scripted(pattern)])
     rows = [l[8:] for l in b.out.splitlines() if l.startswith("      0 ") or l.startswith("     50 ")]
     check(rows == [pattern[:50], pattern[50:]],
           f"probe: the marks are the pattern, in rows of 50 ({rows})")
@@ -980,7 +990,7 @@ def s_inject(mf, image, tmp):
     check(expected["truncated"].hex() == "110309", "inject: (sanity) truncated is 11 03 09")
     for kind in ("truncated", "badcrc", "burst", "garbage"):
         b = bench(mf, lambda bus, k=kind: mf.inject(bus, k, 40, 0.25, 12345),
-                  diag=[0, 0, 0, 0, 0, 0, 0, 0])
+                  diag=[0, 0, 0, 0, 0, 0, 0, 0, 1])
         line = next((l for l in b.out.splitlines() if l.startswith(f"inject {kind}: sending")), "")
         printed = bytes.fromhex(line.split(":", 2)[2].split("(")[0].strip()) if line else b""
         odd = [f for f in b.sent if not is_fc3_request(f)]

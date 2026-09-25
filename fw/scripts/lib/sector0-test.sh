@@ -114,16 +114,28 @@ if [ "$rc" = 31 ]; then echo "ok   underivable constants -> UNDERIVABLE (31), no
 else echo "FAIL underivable constants -> exit $rc, expected 31"; fail=1; fi
 
 # --- provision.sh's write-protect warning ----------------------------------------
-# openocd's own three wordings for a sector. The old grep matched "protected"
-# inside "not protected", so the warning fired on every unprotected board.
-wrp() {  # wrp <expect yes|no> <state words> <description>
-    printf '#  0: 0x00000000 (0x4000 16kB) %s\n#  1: 0x00004000 (0x4000 16kB) protected\n' "$2" > "$TMP/finfo"
-    if sector0_wrp_reported "$TMP/finfo"; then got=yes; else got=no; fi
+# Decided from FLASH_OPTCR as lib/sector0-optcr.cfg prints it: nWRP bit 16 is
+# sector 0, active low. Three answers, and the third -- no OPTCR line -- must
+# never come out as "protected" or as "not protected". Until 2026-09-24 this
+# parsed `flash info 0`, which the lathe's openocd never prints, so it could
+# not fire; the `none` arm is that output.
+wrp() {  # wrp <expect protected|clear|unknown> <optcr|none|unreadable> <description>
+    local rc=0 got
+    s0fx_optcr_output "$2" > "$TMP/optcr"
+    sector0_wrp_reported "$TMP/optcr" || rc=$?
+    case "$rc" in 0) got=protected ;; 1) got=clear ;; 2) got=unknown ;; *) got="exit-$rc" ;; esac
     if [ "$got" = "$1" ]; then echo "ok   $3 -> $got"; else echo "FAIL $3 -> $got (expected $1)"; fail=1; fi
 }
-wrp yes "protected"                "flash info: sector 0 protected"
-wrp no  "not protected"            "flash info: sector 0 not protected (sector 1 protected)"
-wrp no  "protection state unknown" "flash info: sector 0 protection unknown"
+wrp protected 0x0ffeaacd  "OPTCR 0x0ffeaacd: sector 0 protected (real reading)"
+wrp clear     0x0fffaacd  "OPTCR 0x0fffaacd: nothing protected (real reading)"
+wrp clear     0x0ffdaacd  "OPTCR 0x0ffdaacd: sector 1 protected, NOT sector 0"
+wrp protected 0x0ffeaaCD  "OPTCR in mixed-case hex: still read"
+wrp unknown   none        "no OPTCR line (what the old flash-info probe got)"
+wrp unknown   unreadable  "OPTCR=unreadable (the cfg's failed read)"
+# The value is handed back for the caller to print as evidence.
+sector0_wrp_reported <(s0fx_optcr_output 0x0ffeaacd) || true
+if [ "${SECTOR0_OPTCR:-}" = 0x0ffeaacd ]; then echo "ok   SECTOR0_OPTCR carries the value read"
+else echo "FAIL SECTOR0_OPTCR is '${SECTOR0_OPTCR:-}', expected 0x0ffeaacd"; fail=1; fi
 
 # --- against the real artifacts ---------------------------------------------------
 #

@@ -94,3 +94,28 @@ sector0_fixture() {
             return 99 ;;
     esac
 }
+
+# What openocd prints for lib/sector0-optcr.cfg, for sector0_wrp_reported.
+# $1 is the FLASH_OPTCR value to report (0x0ffeaacd), or `none` for a run that
+# printed no OPTCR line at all -- the shape every run of the old `flash info 0`
+# probe had on the lathe's openocd -- or `unreadable` for the cfg's own
+# failed-read line. The banner is the shape of the real output, not a copy of
+# any one run; only the last line is ever parsed.
+s0fx_optcr_output() {  # s0fx_optcr_output <0x........|none|unreadable>
+    cat <<'BANNER'
+Open On-Chip Debugger 0.12.0+dev (fixture)
+Licensed under GNU GPL v2
+Info : clock speed 2000 kHz
+Info : STLINK V2 (fixture)
+Info : Target voltage: 3.240000
+Info : [stm32f4x.cpu] Cortex-M4 r0p1 processor detected
+Info : [stm32f4x.cpu] target has 6 breakpoints, 4 watchpoints
+[stm32f4x.cpu] halted due to debug-request, current mode: Thread
+xPSR: 0x01000000 pc: 0x08000d5c msp: 0x20020000
+BANNER
+    case "$1" in
+        none) ;;
+        unreadable) echo "OPTCR=unreadable" ;;
+        *) echo "OPTCR=$1" ;;
+    esac
+}

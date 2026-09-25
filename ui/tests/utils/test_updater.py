@@ -867,8 +867,14 @@ def test_a_failed_flash_left_in_the_bootloader_leads_with_the_power_cycle(tmp_pa
     step = msg.find("turn the machine OFF, wait 10 seconds, and turn it back ON")
     assert 0 <= step < msg.find("With a terminal") < msg.find("--boot-app"), (
         "the operator's power-cycle comes before the terminal recovery")
-    assert "bench-verified" in msg and "not proven" in msg, "it says the path is not proven yet"
+    assert "tested on the lathe" in msg, "it says the power-cycle recovery has been tested"
+    assert ("left waiting in its bootloader" in msg
+            and "gone silent part-way through a firmware transfer" in msg), (
+        "naming the two cases it was tested on, and no more")
+    assert "not proven" not in msg and "bench-verified" not in msg, (
+        "the 2026-09-23 'not proven yet' wording is gone")
     assert "reads normally" in msg, "and what to check after it"
+    assert "does not read normally afterwards" in msg, "and what to do if it does not"
     assert "NOT running its previous firmware" in msg and "bootloader" in msg
     assert r.touched_the_ui_half == []
 

@@ -209,16 +209,19 @@ RECOVERY_PROGRESS_S = 10.0  # a "still looking" line this often, for the Update 
 _rng = random.Random()      # the jitter; the tests reseed it
 
 # --- bootloader link diagnostics (2026-09-23) ------------------------------------
-# A READ-ONLY window the bootloader build now on the bench adds after its
-# 116-register block: eight uint16 counters of what its receive path saw.
-# Bootloaders in the field today do not have it and answer a read there with
-# exception 2 (illegal data address) -- which means "no diagnostics", never a
-# failure: read_diag returns None for it, as for silence. It is read only
-# right after the BOOTLOADER window has answered, never against an
-# application, whose register map is not the bootloader's.
+# A READ-ONLY window the bootloader adds after its 116-register block: eight
+# uint16 counters of what its receive path saw, then (2026-09-24) clockHse, 1
+# when it runs on the 8 MHz crystal -- 0 means it fell back to the internal
+# RC, whose baud error stalled every transfer until then. Older bootloaders
+# (5a5ee43 and before: none; the 09-23 bench build d325bac: 8 registers)
+# answer this 9-register read with exception 2 (illegal data address) --
+# which means "no diagnostics", never a failure: read_diag returns None for
+# it, as for silence. It is read only right after the BOOTLOADER window has
+# answered, never against an application, whose register map is not the
+# bootloader's.
 DIAG_BASE = BL_BASE + 116   # 2420
 DIAG_NAMES = ("framesTaken", "crcErrors", "badFrames", "overflowDrops",
-              "errOre", "errFe", "errNe", "dmaRestarts")
+              "errOre", "errFe", "errNe", "dmaRestarts", "clockHse")
 DIAG_SIZE = len(DIAG_NAMES)
 
 # --- bench link probe and fault injection (2026-09-23) ---------------------------
@@ -928,15 +931,19 @@ RECOVER_BY_HAND = ("Recover by hand: `modbus-flash.py --identity` to look; `modb
 # modbus-flash.py. The step he CAN take comes first, in plain words; the SSH
 # path stays, after it. The claim underneath -- power-on with a valid run slot
 # starts the application, because the stay request was consumed on entry --
-# is what bl_core is written to do, but on 2026-09-23 it had not been tried
-# on the bench after a failed transfer, so the text says it is being verified
-# rather than promise it. Update it (and the updater's copy) once it has been.
+# is what bl_core is written to do. On 2026-09-23 it had not been tried after
+# a failed transfer and the text said "not proven"; it was bench-verified on
+# the lathe 2026-09-24, 2 of 2: a controller parked in its bootloader, and a
+# bootloader gone completely silent part-way through a real transfer, both
+# came back on their own firmware with the UI reconnected after off / 10 s /
+# on. The text claims those two cases and no more. The updater has a copy.
 POWER_CYCLE_STEP = (
     "WHAT TO DO NOW, no terminal needed: turn the machine OFF, wait 10 seconds, and turn it back ON. "
     "Nothing was applied, so the previous firmware is still in the controller, and when its run slot "
-    "is valid the bootloader starts it by itself at power-on. Then check that the controller reads "
-    "normally: the position displays show and follow the machine. This power-cycle recovery is still "
-    "being bench-verified, so it is expected to work but not proven; if the controller does not read "
+    "is valid the bootloader starts it by itself at power-on. This is the recovery that has been tested "
+    "on the lathe: it brought back a controller left waiting in its bootloader, and one whose bootloader "
+    "had gone silent part-way through a firmware transfer. Then check that the controller reads "
+    "normally: the position displays show and follow the machine. If the controller does not read "
     "normally afterwards, it needs the terminal recovery below.")
 
 
