@@ -13,10 +13,12 @@ in the test that catches it.
 """
 
 import os
+import re
 from pathlib import Path
 
 import pytest
 
+from tests.fw_repo import require_or_skip_reason
 from reflex.utils import updater
 from reflex.utils.image_requirement import MINIMUM_IMAGE_RELEASE
 from reflex.utils.updater import (
@@ -922,6 +924,67 @@ def test_no_power_cycle_for_a_board_running_a_foreign_application(tmp_path):
     with pytest.raises(ProtocolMismatch) as e:
         s.run(RELEASE)
     assert "WHAT TO DO NOW" not in str(e.value).split("failed (exit")[0]
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-25 08:32, the lathe: the controller REFUSED to reboot into its
+# bootloader because an ELS job was engaged, and the Update screen said only
+# FAILED. modbus-flash.py now recognises the refusal and says so; the session
+# must lead with it -- it was never a transfer failure -- and keep the
+# flasher's words, since that string is what the status box shows.
+# ---------------------------------------------------------------------------
+
+# modbus-flash.py's refusal verdict, as its SystemExit prints it.
+FLASHER_REFUSED = (
+    "  application 43ac7c5: requesting reboot into the bootloader (register 168)\n"
+    "REFUSED: the controller would not reboot into its bootloader because an ELS job is engaged.\n"
+    "  It consumed the reboot request without acknowledging it (bootCommand reads 0, bootSeq "
+    "still 3) and is still running the application 43ac7c5; the firmware refuses to reboot "
+    "while elsStop.enable is set.\n"
+    "  Disengage the ELS job -- the Update screen offers to do it -- and try again. Nothing was "
+    "written: the bootloader was never entered.")
+
+
+def test_an_els_refusal_says_so_first_and_keeps_the_flashers_words(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={FLASH_ONLY},
+                   flash_fail_output=FLASHER_REFUSED)
+    s = _session(r, tmp_path)
+    with pytest.raises(UpdateRefused) as e:
+        s.run(RELEASE)
+    msg = str(e.value)
+    assert not isinstance(e.value, ProtocolMismatch), "nothing changed: an ordinary refusal"
+    assert msg.startswith("The update did not start: the controller REFUSED to reboot "
+                          "into its bootloader because an ELS job is engaged.")
+    assert "Nothing changed" in msg and "0000001" in msg
+    assert "Install offers to disengage it" in msg
+    assert "transfer FAILED" not in msg, "no transfer was attempted"
+    assert updater.FLASHER_REFUSED_ELS in msg, "the flasher's own verdict line is kept"
+    assert r.touched_the_ui_half == []
+    assert r.ran("--revert") == []
+
+
+def test_an_els_refusal_on_a_board_that_changed_is_still_a_mismatch(tmp_path):
+    """The refusal wording is only for a board CONFIRMED unchanged; anything
+    else keeps the mismatch path, whatever the flasher printed."""
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL, fail={FLASH_ONLY},
+                   flash_fail_output=FLASHER_REFUSED,
+                   board_after_failed_flash=IN_BOOTLOADER)
+    s = _session(r, tmp_path)
+    with pytest.raises(ProtocolMismatch) as e:
+        s.run(RELEASE)
+    assert "did not start" not in str(e.value)
+
+
+def test_the_refusal_marker_is_the_flashers_own_text():
+    """FLASHER_REFUSED_ELS is copied from modbus-flash.py's BOOT_REFUSED_ELS
+    (the flasher is a script, not an importable module). Pinned so a reword
+    on either side fails here instead of silently losing the diagnosis."""
+    fw, reason = require_or_skip_reason()
+    if fw is None:
+        pytest.skip(reason)
+    src = (fw / "scripts" / "modbus-flash.py").read_text(encoding="utf-8")
+    flat = re.sub(r'"\s*\n\s*"', "", src)          # join the implicit concatenation
+    assert f'BOOT_REFUSED_ELS = ("{updater.FLASHER_REFUSED_ELS}")' in flat
 
 
 def test_list_releases_goes_through_the_same_filter(tmp_path):

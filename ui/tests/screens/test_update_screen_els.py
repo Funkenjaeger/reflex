@@ -346,3 +346,21 @@ def test_cancelling_the_pre_release_question_leaves_the_job_engaged(rig):
     assert rig.ctrl._els_fsm.state == "stopped"
     assert len(rig.dialogs) == 1
     rig.do_install.assert_not_called()
+
+
+# ─── the flasher's refusal reaches the status box ────────────────────────────
+
+def test_a_refused_reboot_is_what_the_status_box_says(rig):
+    """perform_install puts the session's refusal on the screen verbatim; the
+    updater leads it with the refusal (tests/utils/test_updater.py). This is
+    the last hop: the words the operator reads."""
+    from reflex.utils.updater import FLASHER_REFUSED_ELS, UpdateRefused
+    refusal = UpdateRefused(
+        "The update did not start: the controller REFUSED to reboot into its "
+        "bootloader because an ELS job is engaged. ...\n"
+        f"flashing the controller failed (exit 1).\n{FLASHER_REFUSED_ELS}.")
+    with patch.object(rig.screen, "_install_blocking", side_effect=refusal):
+        asyncio.run(rig.screen.perform_install(FINAL))
+    assert any(line.startswith("The update did not start") and FLASHER_REFUSED_ELS in line
+               for line in rig.status), rig.status
+    assert rig.screen.busy is False
