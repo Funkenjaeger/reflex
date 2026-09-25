@@ -87,14 +87,19 @@ nav:
   - Advanced features:
       - Picking up an existing thread: guide/picking-up-a-thread.md
       - Widening a groove: guide/widening-a-groove.md
+      - "Stop coast correction (experimental)": guide/stop-coast-correction.md
   - Setup:
       - setup/index.md
       - Installing on a Pi: setup/installing.md
       - Axes and scales: setup/axes-and-scales.md
       - Servo and leadscrew: setup/servo-and-leadscrew.md
       - Backlash calibration: setup/backlash-calibration.md
+  - Looking after it:
+      - Updating Reflex: guide/updating.md
+      - Backing up your settings: guide/backing-up.md
   - Troubleshooting:
       - When it refuses: guide/when-it-refuses.md
+      - The UNCOMMISSIONED strip: guide/uncommissioned.md
   - Reference:
       - reference/index.md
       - Register map: reference/register-map.md

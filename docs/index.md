@@ -171,7 +171,10 @@ rows move from planned to released as tags are cut.
 | power feeding to a shoulder | [Feeding to a shoulder](guide/feeding-to-a-shoulder.md) |
 | cutting a thread | [Cutting a thread](guide/cutting-a-thread.md) |
 | setting up a new machine | [Setup](setup/index.md) — axes, scales, servo, backlash |
+| updating to a new release | [Updating Reflex](guide/updating.md) |
+| keeping a copy of the settings | [Backing up your settings](guide/backing-up.md) |
 | looking at a message | [When it refuses](guide/when-it-refuses.md) |
+| seeing UNCOMMISSIONED | [The UNCOMMISSIONED strip](guide/uncommissioned.md) |
 | after the meaning of one field | [Reference](reference/index.md) — the in-app help index |
 
 ---

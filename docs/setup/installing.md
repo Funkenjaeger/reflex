@@ -280,6 +280,11 @@ That is [Setup](index.md), and it is done on the touchscreen rather than over
 SSH. Do it in the order given there; the reasoning for the order is on that
 page.
 
+Until it is done, the home screen shows an **UNCOMMISSIONED** strip and no
+setting is saved. If you have a backup of this machine's settings, restore
+it instead of commissioning by hand. Both routes are on
+[The UNCOMMISSIONED strip](../guide/uncommissioned.md).
+
 ---
 
 ## Where everything lives
@@ -325,6 +330,10 @@ flashes the controller firmware over the RS-485 link — no ST-Link, no power
 cycle, about thirteen seconds — and then checks out the matching UI tag. You
 do not need SSH, and you do not need to work out whether the firmware half
 changed.
+
+The operator's walk-through, including the ELS dialog and what to do when an
+update fails, is [Updating Reflex](../guide/updating.md). What follows is
+what happens underneath.
 
 A release is one version covering both halves, so the two are only ever
 installed together:
