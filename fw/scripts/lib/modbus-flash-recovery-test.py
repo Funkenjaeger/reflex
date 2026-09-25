@@ -149,6 +149,16 @@ class Lathe:
         # badFrames, ...). None = a field bootloader of 2026-09-23, which has
         # no such window and answers a read there with exception 2.
         self.diag = None
+        # The application's bootCommand/bootSeq pair (elsStop, registers
+        # BOOT_REG and BOOT_REG + 1). `engaged` is an ELS job holding
+        # elsStop.enable: the firmware then CONSUMES a boot command without
+        # acking it -- bootCommand back to 0, bootSeq unmoved, still the
+        # application (Ramps.c elsBootCommandTick). It consumes on its ~100 ms
+        # task tick, not on the write, so the host sees bootCommand = 1 first.
+        self.engaged = False
+        self.boot_command = 0
+        self.boot_seq = 7
+        self.boot_consume_at = None
 
     # -- wire ------------------------------------------------------------------
     def handle(self, frame: bytes) -> bytes:
@@ -214,12 +224,22 @@ class Lathe:
             rev, proto = BL_REV, 0
         return [0x454C, self.stage, 1, rev & 0xFFFF, rev >> 16, 0, proto, 0]
 
+    def app_tick(self):
+        """The application's servoEnableTask, as far as bootCommand goes."""
+        if self.boot_consume_at is not None and self.clock.t >= self.boot_consume_at:
+            self.boot_consume_at = None
+            self.boot_command = 0                 # consumed; refused, so no ack
+
     def process(self, frame, info) -> bytes:
         fc, reg = info.fc, info.reg
+        if self.stage == 2:
+            self.app_tick()
         if fc == 3:
             count = struct.unpack(">H", frame[4:6])[0]
             if reg == 2048:
                 vals = self.identity()[:count]
+            elif self.stage == 2 and BOOT_REG <= reg and reg + count <= BOOT_REG + 2:
+                vals = [self.boot_command, self.boot_seq][reg - BOOT_REG:reg - BOOT_REG + count]
             elif self.stage == 1 and self.diag is not None and reg == 2420 and count <= len(self.diag):
                 vals = self.diag[:count]
             elif self.stage == 1 and 2304 <= reg and reg + count <= 2304 + 116:
@@ -230,6 +250,11 @@ class Lathe:
             return self._ok(bytes([17, 3, 2 * count]) + struct.pack(f">{count}H", *vals))
         if self.stage == 2:
             if fc == 6 and reg == BOOT_REG and struct.unpack(">H", frame[4:6])[0] == 1:
+                if self.engaged:
+                    self.boot_command = 1
+                    self.boot_consume_at = self.clock.t + 0.1
+                    return self._ok(frame[:6])
+                self.boot_seq += 1
                 self.enter_bootloader()
                 return self._ok(frame[:6])
             return self._exc(fc)
@@ -1013,7 +1038,61 @@ def s_inject(mf, image, tmp):
     check(b.board.diag[1] >= 1, f"inject: (sanity) the fake counted the damaged frame ({b.board.diag})")
 
 
+def mute_boot_request(b, i):
+    """The reboot request lands, but its reply is lost."""
+    if i.kind == "boot":
+        return "mute"
+
+
+def bootloader_traffic(board):
+    """Every frame addressed to the bootloader window (2304..), of any kind."""
+    return [k for _, k, _, _ in board.log if k in ("cmd", "write", "param")]
+
+
+def s_engaged(mf, image, tmp):
+    """2026-09-25 08:32 on the lathe: the reboot into the bootloader was
+    REFUSED because an ELS job was engaged, and the flasher waited its 10 s
+    and said only "timed out ... stage=application". It must say the
+    controller refused, why, and what to do -- early, and before any byte
+    goes to a bootloader."""
+    r = scenario(mf, image, tmp, "engaged", lambda b: setattr(b, "engaged", True))
+    tag = "engaged"
+    msg = r.exit_msg or ""
+    check(r.rc not in (0, None) and msg.startswith(mf.BOOT_REFUSED_ELS),
+          f"{tag}: fails naming the refusal ({msg[:160]})")
+    check("ELS job is engaged" in msg and "Disengage the ELS job" in msg
+          and "Update screen offers" in msg and "try again" in msg,
+          f"{tag}: says why, and what to do")
+    check("bootSeq still 7" in msg and "43ac7c5" in msg,
+          f"{tag}: names the evidence and the application still running")
+    check("timed out" not in r.everything, f"{tag}: not the plain timeout")
+    check(r.elapsed < 3.0, f"{tag}: stops waiting early ({r.elapsed:.1f}s of the 10 s)")
+    check(bootloader_traffic(r.board) == [] and r.board.commands() == [],
+          f"{tag}: nothing sent to a bootloader ({bootloader_traffic(r.board)[:5]})")
+    check(r.board.stage == 2 and r.board.run_rev == OLD_REV and r.board.boot_seq == 7,
+          f"{tag}: the board is still on its old application, bootSeq unmoved")
+    check(r.records == [], f"{tag}: nothing recorded in the manifest")
+
+
+def s_engaged_unacked(mf, image, tmp):
+    """Same refusal, but the reboot request's REPLY was lost. Without the ack
+    the flasher cannot tell "consumed and refused" from "never arrived", so it
+    must not claim a refusal: the plain timeout, still before any bootloader
+    traffic."""
+    def setup(b):
+        b.engaged = True
+        b.faults.append(mute_boot_request)
+    r = scenario(mf, image, tmp, "engagedunacked", setup)
+    tag = "engaged-unacked"
+    msg = r.exit_msg or ""
+    check(r.rc not in (0, None) and "timed out after 10s waiting for stage 1" in msg,
+          f"{tag}: the plain timeout ({msg[:160]})")
+    check("REFUSED" not in r.everything, f"{tag}: no refusal claimed without the ack")
+    check(bootloader_traffic(r.board) == [], f"{tag}: nothing sent to a bootloader")
+
+
 SCENARIOS = {
+    "engaged": s_engaged, "engagedunacked": s_engaged_unacked,
     "silent60": s_silent_then_answers, "diag": s_diag_in_failure,
     "probe": s_link_probe, "inject": s_inject,
     "jumpreply": s_jump_reply_lost,

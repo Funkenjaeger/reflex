@@ -9,7 +9,7 @@ satisfied, on a scratch copy of the tree -- the real repo is never touched:
   0. the unmodified copy regenerates and --checks green (else the rest is moot)
   1. reorder two fields, regenerate, --check    -> RED, naming the missing bump
   2. --pin over the existing version            -> REFUSED
-  3. same edit + bump + flash-table entry + pin -> GREEN
+  3. same edit + bump + flash-table entries + pin -> GREEN
 
 Run: python tools/test_layout_fingerprint_seen_red.py   (exit 0 = all as expected)
 """
@@ -84,12 +84,16 @@ try:
     ver = int(re.search(r"^protocol_version:\s*(\d+)",
                         io.open(os.path.join(tmp, "registers/els_stop.yaml"),
                                 encoding="utf-8").read(), re.M).group(1))
-    boot = json.load(io.open(os.path.join(ROOT, "registers/offsets.json"),
-                             encoding="utf-8"))["protocol_versions"][str(ver)]["bootCommand"]
+    exported = json.load(io.open(os.path.join(ROOT, "registers/offsets.json"),
+                                 encoding="utf-8"))["protocol_versions"][str(ver)]
+    boot, seq = exported["bootCommand"], exported["bootSeq"]
     edit("registers/els_stop.yaml", r"^protocol_version:\s*%d\b" % ver,
          "protocol_version: %d" % (ver + 1))
     edit("fw/scripts/modbus-flash.py", r"^(APP_BOOT_COMMAND_REG\s*=\s*\{[^}]*)\}",
          r"\1, %d: %d}" % (ver + 1, boot))
+    # The bootSeq table is checked the same way since 2026-09-25.
+    edit("fw/scripts/modbus-flash.py", r"^(APP_BOOT_SEQ_REG\s*=\s*\{[^}]*)\}",
+         r"\1, %d: %d}" % (ver + 1, seq))
     rc, out = run()
     expect("3. bumped but not yet pinned: regenerate still nonzero (no pin)",
            rc != 0 and "no pinned layout fingerprint" in out, out)

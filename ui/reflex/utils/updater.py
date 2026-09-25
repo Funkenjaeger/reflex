@@ -785,6 +785,23 @@ def _flasher_says_nothing_applied(output: str) -> bool:
                for where in ("before APPLY", "at APPLY, which blSeq proves never ran"))
 
 
+# modbus-flash.py's BOOT_REFUSED_ELS, the first words of its verdict when the
+# controller consumed the reboot request without acknowledging it -- which the
+# firmware does only while an ELS job is engaged (Ramps.c elsBootCommandTick).
+# Copied, not imported: the flasher is a script run as a subprocess from the
+# checkout, not a module of this package. Change both together.
+FLASHER_REFUSED_ELS = ("REFUSED: the controller would not reboot into its bootloader "
+                       "because an ELS job is engaged")
+
+
+def _flasher_says_els_refused(output: str) -> bool:
+    """True when the flasher stopped because the controller REFUSED to reboot
+    under an engaged ELS job -- before any byte went to a bootloader. The
+    2026-09-25 08:32 failure on the lathe, which the screen reported as a
+    bare FAILED."""
+    return FLASHER_REFUSED_ELS in output
+
+
 @dataclass
 class Prepared:
     """Everything preflight established, before anything was changed."""
@@ -1085,6 +1102,16 @@ class UpdateSession:
         self.emit(f"Controller after the failed flash: {now}.")
         if (now.stage == STAGE_APPLICATION and now.build_rev == before.build_rev
                 and now.app_protocol == before.app_protocol):
+            if _flasher_says_els_refused(getattr(failed, "output", "") or ""):
+                # Not a transfer failure: no transfer began. Said first, in
+                # the operator's terms, with the flasher's own words after.
+                raise UpdateRefused(
+                    f"The update did not start: the controller REFUSED to "
+                    f"reboot into its bootloader because an ELS job is "
+                    f"engaged. Nothing changed: the controller is confirmed "
+                    f"running its previous firmware ({before.build_rev}), and "
+                    f"the UI was not changed. Disengage ELS and install again "
+                    f"-- Install offers to disengage it for you.\n{failed}") from failed
             raise UpdateRefused(
                 f"The firmware transfer FAILED and nothing changed: the "
                 f"controller is confirmed running its previous firmware "

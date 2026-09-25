@@ -118,6 +118,8 @@ def main(argv):
         boot_reg = mf.APP_BOOT_COMMAND_REG[ident.app_protocol]
         tail = bus.read(boot_reg, 2)
         check(tail == [0, 0], "bootCommand/bootSeq read as 0 at the client's register index")
+        check(mf.APP_BOOT_SEQ_REG.get(ident.app_protocol) == boot_reg + 1,
+              "the client's bootSeq register is the one behind bootCommand")
 
         # Where the struct ENDS. This number is now READ FROM THE GENERATED MAP
         # rather than written here.

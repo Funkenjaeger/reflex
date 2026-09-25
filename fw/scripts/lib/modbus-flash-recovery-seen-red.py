@@ -15,6 +15,13 @@ watching the scenario that pins it go red.
      exception at register 2420 out. Scenario "diag" must go red.
   M5 "no operator step": the power-cycle step dropped from the could-not-
      return verdict. Scenario "dead" must go red.
+  M6 "no refusal check": enter_bootloader's recognition of a REFUSED reboot
+     (bootCommand consumed, bootSeq unmoved -- an ELS job engaged, 2026-09-25)
+     never matches, so the flasher waits out its 10 s and says only "timed
+     out". Scenario "engaged" must go red.
+  M7 "refusal without the ack": the refusal check armed even when the reboot
+     request went unacknowledged, so a request that may never have arrived is
+     reported as refused. Scenario "engagedunacked" must go red.
 
 Each mutation is made on a scratch copy of fw/scripts (never on the tree),
 its anchor is asserted present exactly once BEFORE the edit and the edit is
@@ -57,6 +64,14 @@ MUTANTS = [
     ("M5 no operator step", "dead",
      '                     f"  {POWER_CYCLE_STEP}\\n"\n',
      '                     f""\n'),
+    # 2026-09-25: the ELS-engaged refusal is not recognised.
+    ("M6 no refusal check", "engaged",
+     "        if cmd == 0 and seq == seq_before:\n",
+     "        if False:\n"),
+    # ... or is claimed on an unacknowledged request.
+    ("M7 refusal without the ack", "engagedunacked",
+     "    if acked and seq_before is not None:\n",
+     "    if seq_before is not None:\n"),
 ]
 
 
