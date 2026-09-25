@@ -353,12 +353,13 @@ class MainApp(App):
 
         self.beep()
 
-        import importlib.metadata
-        dist = importlib.metadata.distribution("reflex")
-        origin = dist.read_text('direct_url.json')
-        self.version = "v" + importlib.metadata.version("reflex")
-        if origin and '"dir_info": {"editable": true}' in origin:
-            self.version = self.version + "*"
+        # The release as its tag reads (v1.2.0-rc.7, not the package's
+        # 1.2.0rc7). No "*" for an editable install any more: the lathe's
+        # install IS editable by design (uv sync of the checkout), so the mark
+        # was on every machine and meant nothing -- and it pushed pre-release
+        # versions past the status bar's box, where they wrapped (2026-09-25).
+        from reflex.utils import release_version
+        self.version = release_version.installed_tag()
 
         self._apply_mouse_cursor()
         self.formats.bind(hide_mouse_cursor=lambda *_: self._apply_mouse_cursor())
