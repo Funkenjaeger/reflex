@@ -40,8 +40,9 @@ static blCore_t core;
 static uint8_t  reqBuf[BL_HW_FRAME_MAX];
 static uint8_t  respBuf[BL_MODBUS_MAX_FRAME];
 
-/* Called by the CMSIS startup before main. Nothing to do: HSI, no PLL, VTOR
- * at 0x08000000 where this table already is. */
+/* Called by the CMSIS startup before main. Nothing to do: the switch to the
+ * crystal is blHwInit's (it needs a fallback), no PLL, VTOR at 0x08000000
+ * where this table already is. */
 void SystemInit(void)
 {
 }
@@ -54,9 +55,10 @@ static void jumpNow(void)
 
 int main(void)
 {
-  blHwInit();
+  uint32_t onHse = blHwInit();
   blHwArmWatchdog();
-  blCoreInit(&core);
+  blCoreInit(&core);                   /* zeroes regs, so the flag goes in after */
+  core.regs[ELS_BL_DIAG + ELS_BL_DG_CLOCK_HSE] = (uint16_t)onHse;
 
   if (blCoreBoot(&core) == BL_BOOT_JUMP) {
     jumpNow();

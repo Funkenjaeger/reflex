@@ -8,7 +8,9 @@
 
 #define BL_HW_FRAME_MAX 256u
 
-void     blHwInit(void);
+/* Returns 1 when the chip is running on the HSE crystal, 0 when the crystal
+ * did not start and it stayed on HSI (ELS_BL_DG_CLOCK_HSE). */
+uint32_t blHwInit(void);
 /* Frame length when one completed, else 0. `diag` is the blDiag counters
  * (bl_diag.h), bumped for frames taken, overflow drops, USART error flags and
  * DMA restarts; NULL counts nothing. */

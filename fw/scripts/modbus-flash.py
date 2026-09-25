@@ -209,16 +209,19 @@ RECOVERY_PROGRESS_S = 10.0  # a "still looking" line this often, for the Update 
 _rng = random.Random()      # the jitter; the tests reseed it
 
 # --- bootloader link diagnostics (2026-09-23) ------------------------------------
-# A READ-ONLY window the bootloader build now on the bench adds after its
-# 116-register block: eight uint16 counters of what its receive path saw.
-# Bootloaders in the field today do not have it and answer a read there with
-# exception 2 (illegal data address) -- which means "no diagnostics", never a
-# failure: read_diag returns None for it, as for silence. It is read only
-# right after the BOOTLOADER window has answered, never against an
-# application, whose register map is not the bootloader's.
+# A READ-ONLY window the bootloader adds after its 116-register block: eight
+# uint16 counters of what its receive path saw, then (2026-09-24) clockHse, 1
+# when it runs on the 8 MHz crystal -- 0 means it fell back to the internal
+# RC, whose baud error stalled every transfer until then. Older bootloaders
+# (5a5ee43 and before: none; the 09-23 bench build d325bac: 8 registers)
+# answer this 9-register read with exception 2 (illegal data address) --
+# which means "no diagnostics", never a failure: read_diag returns None for
+# it, as for silence. It is read only right after the BOOTLOADER window has
+# answered, never against an application, whose register map is not the
+# bootloader's.
 DIAG_BASE = BL_BASE + 116   # 2420
 DIAG_NAMES = ("framesTaken", "crcErrors", "badFrames", "overflowDrops",
-              "errOre", "errFe", "errNe", "dmaRestarts")
+              "errOre", "errFe", "errNe", "dmaRestarts", "clockHse")
 DIAG_SIZE = len(DIAG_NAMES)
 
 # --- bench link probe and fault injection (2026-09-23) ---------------------------

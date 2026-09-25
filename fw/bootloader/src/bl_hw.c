@@ -2,10 +2,12 @@
  * bl_hw.c -- the STM32F411CE underneath the bootloader core: bl_port.h for
  * the core, plus the UART byte driver, the watchdog, and the jump.
  *
- * Bare registers, no HAL, no interrupts. The chip runs on the 16 MHz HSI it
- * woke up with; nothing in RCC is changed except peripheral clock enables,
- * and those are undone before the jump, so the app starts from what is for
- * every practical purpose the reset state (VTOR aside, which it sets itself).
+ * Bare registers, no HAL, no interrupts. The chip runs on the 8 MHz HSE
+ * crystal (falling back to the 16 MHz HSI it woke up with if the crystal does
+ * not start); beyond that nothing in RCC is changed except peripheral clock
+ * enables. All of it is undone before the jump -- clock back to HSI, HSE
+ * off -- so the app starts from what is for every practical purpose the
+ * reset state (VTOR aside, which it sets itself).
  *
  * NO DIRECTION PIN. The RS-485 driver enable is derived from TXD in hardware
  * on this board (Ramps.c EN_Port = NULL); the UART is simply written.
@@ -18,9 +20,70 @@
 #include "bl_diag.h"
 #include "els_identity.h"
 
-/* HSI is 16 MHz, APB2 prescaler 1 at reset -> 115200 needs USARTDIV 8.6875:
- * mantissa 8, fraction 11/16 -> 0x8B (115108 baud, -0.08%). */
-#define BL_UART_BRR      0x8Bu
+/* ---- clock -------------------------------------------------------------
+ *
+ * THE CRYSTAL, NOT THE RC, and this is the fix for every stalled over-the-wire
+ * transfer through 2026-09-24. Until then this program ran on the HSI it
+ * woke up with. HSI is an RC oscillator, trimmed to +/-1% at 25 C and allowed
+ * several percent over temperature; the lathe's chip MEASURED 15.42 MHz, 3.6%
+ * slow (DWT cycle count over SWD against the Pi's clock, three 5 s windows),
+ * so the bootloader talked at ~111,000 baud to a host at 115,200. That is at
+ * the edge of what a 16x-oversampled UART tolerates: the USART flagged noise
+ * (NE) on received bytes, the receiver dropped every frame holding one, and a
+ * 200-byte WRITE, with 200 chances to catch one, almost never got through while
+ * 8-byte status reads usually did. Worse the longer it sat resident, as the
+ * die cooled from the app's 100 MHz. Trimming HSITRIM to 16.0 MHz live made
+ * the same link 100/100 with zero NE, and a full transfer that had failed at
+ * 265 s passed in 12.3 s. The app never had the problem: it runs its PLL
+ * from HSE (Core/Src/main.c SystemClock_Config).
+ *
+ * The board's crystal is 8 MHz (Core/Inc/stm32f4xx_hal_conf.h HSE_VALUE; the
+ * 25 MHz in system_stm32f4xx.c is CMSIS's unused default, and the app's
+ * measured 100.006 MHz = 8 / PLLM 4 * PLLN 100 / PLLP 2 confirms it). SYSCLK
+ * = HSE directly, no PLL: 8 MHz needs zero flash wait states and no voltage
+ * scaling, so nothing else in this program changes except that it runs at
+ * half the speed. HSE startup is ~2 ms typical; the wait is bounded (~0.2 s at
+ * 16 MHz) and a crystal that never comes up leaves the chip on HSI with the HSI
+ * divisor -- degraded exactly as before, never deaf -- and says so in
+ * blDiag (ELS_BL_DG_CLOCK_HSE = 0). No clock security system: a crystal that
+ * dies AFTER the switch stops the core, the IWDG (on LSI) resets it, and the
+ * next boot lands in the fallback. */
+#define BL_HSE_WAIT_LOOPS 0x80000u
+
+/* USART1 is on APB2, prescaler 1 at reset, so its clock is SYSCLK.
+ * HSE 8 MHz:  USARTDIV 4.3403 -> mantissa 4, fraction  5/16 -> 0x45
+ *             (115942 baud, +0.64%, and stable: a crystal does not drift).
+ * HSI 16 MHz: USARTDIV 8.6875 -> mantissa 8, fraction 11/16 -> 0x8B
+ *             (115108 baud, -0.08% at exactly 16 MHz, which the RC is not). */
+#define BL_UART_BRR_HSE  0x45u
+#define BL_UART_BRR_HSI  0x8Bu
+
+/* Switch SYSCLK to HSE. Returns 1 on the crystal, 0 left on HSI. */
+static uint32_t clockToHse(void)
+{
+  RCC->CR |= RCC_CR_HSEON;
+  for (uint32_t i = 0; i < BL_HSE_WAIT_LOOPS; i++) {
+    if (RCC->CR & RCC_CR_HSERDY) {
+      RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW) | RCC_CFGR_SW_HSE;
+      while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_HSE) { }
+      return 1u;
+    }
+  }
+  RCC->CR &= ~RCC_CR_HSEON;
+  return 0u;
+}
+
+/* Back to the reset clock for the jump: SYSCLK on HSI, HSE off. The app's
+ * SystemClock_Config assumes it starts there, and HAL_RCC_OscConfig will not
+ * reconfigure an HSE that is currently the system clock. */
+static void clockToHsi(void)
+{
+  RCC->CR |= RCC_CR_HSION;                      /* never turned off, but cheap */
+  while (!(RCC->CR & RCC_CR_HSIRDY)) { }
+  RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW) | RCC_CFGR_SW_HSI;
+  while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_HSI) { }
+  RCC->CR &= ~RCC_CR_HSEON;
+}
 
 /* ---- CRC unit ---------------------------------------------------------- */
 
@@ -233,8 +296,10 @@ static void rxDmaStart(void)
   rxTail = 0u;
 }
 
-void blHwInit(void)
+uint32_t blHwInit(void)
 {
+  uint32_t onHse = clockToHse();
+
   /* Clocks: GPIOA, CRC, DMA2, USART1, PWR. */
   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_CRCEN | RCC_AHB1ENR_DMA2EN;
   RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
@@ -251,7 +316,7 @@ void blHwInit(void)
   USART1->CR1 = 0u;
   USART1->CR2 = 0u;
   USART1->CR3 = 0u;
-  USART1->BRR = BL_UART_BRR;
+  USART1->BRR = onHse ? BL_UART_BRR_HSE : BL_UART_BRR_HSI;
   USART1->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
 
   /* Empty DR and disarm any IDLE the line already latched before the DMA
@@ -263,6 +328,7 @@ void blHwInit(void)
 
   rxDmaStart();
   USART1->CR3 |= USART_CR3_DMAR;      /* stream armed first, then requests */
+  return onHse;
 }
 
 uint32_t blHwUartPoll(uint8_t *frame, uint16_t *diag)
@@ -377,6 +443,10 @@ void blHwJump(uint32_t appBase)
   RCC->APB2ENR  &= ~RCC_APB2ENR_USART1EN;
   RCC->AHB1RSTR |=  RCC_AHB1RSTR_DMA2RST;
   RCC->AHB1RSTR &= ~RCC_AHB1RSTR_DMA2RST;
+
+  /* UART is off and reset, so its baud no longer matters: clock back to the
+   * reset source before the app's SystemClock_Config sees it. */
+  clockToHsi();
 
   /* GPIOA back to its reset image (RM0383 8.4: MODER 0xA8000000,
    * OSPEEDR 0x0C000000, PUPDR 0x64000000, OTYPER/AFR 0). */

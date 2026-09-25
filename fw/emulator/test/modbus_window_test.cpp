@@ -104,13 +104,15 @@ int main() {
     check(ELS_BL_BASE > ELS_ID_BASE + ELS_ID_SIZE, "control window is above the identity window");
     check(ELS_ID_BASE >= 4 * mainSize, "identity base is well clear of the struct (>= 4x today's size)");
     check(ELS_BL_DATA == 16 && ELS_BL_DATA_REGS == 100, "control window: 16 head registers + 100 data");
-    check(ELS_BL_DIAG == ELS_BL_DATA + ELS_BL_DATA_REGS && ELS_BL_DIAG == 116 && ELS_BL_DIAG_REGS == 8,
-          "blDiag: 8 registers appended directly after blData, at +116");
-    check(ELS_BL_SIZE == 124 && ELS_BL_SIZE == ELS_BL_DIAG + ELS_BL_DIAG_REGS, "control window: 124 registers in all");
+    check(ELS_BL_DIAG == ELS_BL_DATA + ELS_BL_DATA_REGS && ELS_BL_DIAG == 116 && ELS_BL_DIAG_REGS == 9,
+          "blDiag: 9 registers appended directly after blData, at +116");
+    check(ELS_BL_SIZE == 125 && ELS_BL_SIZE == ELS_BL_DIAG + ELS_BL_DIAG_REGS, "control window: 125 registers in all");
     check(ELS_BL_DG_FRAMES_TAKEN == 0 && ELS_BL_DG_CRC_ERRORS == 1 && ELS_BL_DG_BAD_FRAMES == 2 &&
           ELS_BL_DG_OVERFLOW_DROPS == 3 && ELS_BL_DG_ERR_ORE == 4 && ELS_BL_DG_ERR_FE == 5 &&
-          ELS_BL_DG_ERR_NE == 6 && ELS_BL_DG_DMA_RESTARTS == 7 && ELS_BL_DG_DMA_RESTARTS < ELS_BL_DIAG_REGS,
+          ELS_BL_DG_ERR_NE == 6 && ELS_BL_DG_DMA_RESTARTS == 7,
           "blDiag: counter order pinned");
+    check(ELS_BL_DG_CLOCK_HSE == 8 && ELS_BL_DG_CLOCK_HSE == ELS_BL_DIAG_REGS - 1,
+          "blDiag: the clock flag is the last register, after the counters (modbus-flash.py DIAG_NAMES)");
 
     printf("%s\n", failures ? "FAILURES" : "all passed");
     return failures ? 1 : 0;
