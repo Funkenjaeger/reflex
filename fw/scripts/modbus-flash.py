@@ -931,15 +931,19 @@ RECOVER_BY_HAND = ("Recover by hand: `modbus-flash.py --identity` to look; `modb
 # modbus-flash.py. The step he CAN take comes first, in plain words; the SSH
 # path stays, after it. The claim underneath -- power-on with a valid run slot
 # starts the application, because the stay request was consumed on entry --
-# is what bl_core is written to do, but on 2026-09-23 it had not been tried
-# on the bench after a failed transfer, so the text says it is being verified
-# rather than promise it. Update it (and the updater's copy) once it has been.
+# is what bl_core is written to do. On 2026-09-23 it had not been tried after
+# a failed transfer and the text said "not proven"; it was bench-verified on
+# the lathe 2026-09-24, 2 of 2: a controller parked in its bootloader, and a
+# bootloader gone completely silent part-way through a real transfer, both
+# came back on their own firmware with the UI reconnected after off / 10 s /
+# on. The text claims those two cases and no more. The updater has a copy.
 POWER_CYCLE_STEP = (
     "WHAT TO DO NOW, no terminal needed: turn the machine OFF, wait 10 seconds, and turn it back ON. "
     "Nothing was applied, so the previous firmware is still in the controller, and when its run slot "
-    "is valid the bootloader starts it by itself at power-on. Then check that the controller reads "
-    "normally: the position displays show and follow the machine. This power-cycle recovery is still "
-    "being bench-verified, so it is expected to work but not proven; if the controller does not read "
+    "is valid the bootloader starts it by itself at power-on. This is the recovery that has been tested "
+    "on the lathe: it brought back a controller left waiting in its bootloader, and one whose bootloader "
+    "had gone silent part-way through a firmware transfer. Then check that the controller reads "
+    "normally: the position displays show and follow the machine. If the controller does not read "
     "normally afterwards, it needs the terminal recovery below.")
 
 

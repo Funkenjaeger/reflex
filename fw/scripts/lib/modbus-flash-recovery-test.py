@@ -671,13 +671,19 @@ def s_stuck_dead(mf, image, tmp):
     check("NOTHING CHANGED" not in msg and no_success(r) and r.records == [],
           f"{tag}: claims neither success nor 'nothing changed'")
     # 2026-09-23: the operator the in-app updater shows this to has no
-    # terminal. The power-cycle comes FIRST, says it is not proven yet, and
-    # the SSH text stays, after it.
+    # terminal. The power-cycle comes FIRST and the SSH text stays, after it.
+    # 2026-09-24: bench-verified 2 of 2, so it says it has been tested, no
+    # longer "not proven" -- and still what to check, and what if not.
     step = msg.find("turn the machine OFF, wait 10 seconds, and turn it back ON")
     check(0 <= step < msg.find("--boot-app") and step < msg.find("Board state:"),
           f"{tag}: the power-cycle step leads, before the board state and the SSH recovery")
-    check("bench-verified" in msg and "not proven" in msg and "reads normally" in msg,
-          f"{tag}: says the power-cycle path is not proven yet, and what to check after it")
+    check("tested on the lathe" in msg and "left waiting in its bootloader" in msg
+          and "gone silent part-way through a firmware transfer" in msg,
+          f"{tag}: says the power-cycle recovery is tested, naming the two cases it was tested on")
+    check("not proven" not in msg and "bench-verified" not in msg,
+          f"{tag}: the 'not proven yet' wording is gone")
+    check("reads normally" in msg and "does not read normally afterwards" in msg,
+          f"{tag}: says what to check after the power cycle, and what to do if it fails")
     check("runValid was 1" in msg, f"{tag}: names the run slot's validity as this run found it")
     # getattr: --client may be a copy from before RECOVERY_TOTAL_S existed
     check(r.elapsed < mf.TRANSFER_BUDGET_S + mf.RESYNC_WAIT_S + getattr(mf, "RECOVERY_TOTAL_S", 0) + 90,
