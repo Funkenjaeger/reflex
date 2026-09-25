@@ -696,6 +696,22 @@ def check_external_consumers(schemas):
             f"modbus-flash.py maps protocolVersion {version} to register "
             f"{table[version]}, the schema puts bootCommand at {want}")
 
+    # bootSeq, the ack the flasher reads to recognise a REFUSED reboot
+    # (2026-09-25). Same hand-copied whitelist, same hard failure: a stale
+    # entry would compare against some other register and could report a
+    # refusal that did not happen.
+    if "bootSeq" not in exported:
+        return
+    m = re.search(r"^APP_BOOT_SEQ_REG\s*=\s*\{([^}]*)\}", text, re.M)
+    if not m:
+        raise GenError("modbus-flash.py has no APP_BOOT_SEQ_REG table to check")
+    seq_table = {int(k): int(v) for k, v in re.findall(r"(\d+)\s*:\s*(\d+)", m.group(1))}
+    want = exported["bootSeq"]
+    if seq_table.get(version) != want:
+        raise GenError(
+            f"modbus-flash.py APP_BOOT_SEQ_REG maps protocolVersion {version} to "
+            f"{seq_table.get(version)}, the schema puts bootSeq at {want}")
+
 
 FINGERPRINTS = "registers/layout-fingerprints.json"
 
@@ -764,7 +780,8 @@ def check_fingerprint(schemas):
                 f"no longer matches the fingerprint pinned for protocolVersion {version} "
                 f"in {FINGERPRINTS} (pinned {pins[version][:16]}..., now {have[:16]}...). "
                 f"Bump protocol_version in the schema that carries it, add the new "
-                f"version to modbus-flash.py APP_BOOT_COMMAND_REG, regenerate, and pin "
+                f"version to modbus-flash.py APP_BOOT_COMMAND_REG and APP_BOOT_SEQ_REG, "
+                f"regenerate, and pin "
                 f"the new fingerprint with `python tools/genregs.py --pin`. Never re-pin "
                 f"an existing version: firmware that says {version} is already in the field.")
     return None

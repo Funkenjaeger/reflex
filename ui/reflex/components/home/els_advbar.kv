@@ -262,8 +262,10 @@
           # disengaging RELEASES the held carriage. Sync Enable stays live and is
           # the unambiguous way to stop. With the spindle STOPPED nothing can
           # move, so the button stays live even with sync armed (operator
-          # decision 2026-08-17). See ui_controller.toggle_engage, which refuses
-          # the same case defensively so a kv change cannot silently reopen it.
+          # decision 2026-08-17). See ui_controller.disengage_refusal, which
+          # refuses both cases (is_running is controller.in_cycle) defensively so
+          # a kv change cannot silently reopen them -- and which the Update
+          # screen asks before it offers to disengage (2026-09-25).
           disabled: root.is_running or (root.controller.engaged and bool(app.servo.servoMode) and app.els.spindle_is_running)
           led_on: root.controller.engaged
           led_color: app.theme.led_off if not root.controller.engaged else (app.theme.danger if root.controller.els_stop_active else app.theme.success)

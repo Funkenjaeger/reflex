@@ -43,6 +43,14 @@ from reflex.utils.kv_loader import load_kv
 log = Logger.getChild(__name__)
 load_kv(__file__)
 
+# How long "Disengage and Install" waits for the controller to report
+# elsStop.enable == 0 before refusing to start. The board is polled at 30 Hz
+# and the disengage writes are synchronous, so a healthy link answers within a
+# tick or two; three seconds is patience for a link that is retrying, not for
+# a controller that is holding the job -- that one is refused.
+ELS_RELEASE_TIMEOUT_S = 3.0
+ELS_RELEASE_POLL_S = 0.1
+
 
 class UpdateScreen(Screen):
     releases = ListProperty([])
@@ -58,6 +66,9 @@ class UpdateScreen(Screen):
         super().__init__(**kv)
         self._catalogue: dict[str, updater.Release] = {}
         self.status = ""
+        # True while a "Disengage and Install" waits for the controller to
+        # report the ELS job released (see _await_firmware_release).
+        self._releasing_els = False
 
     def on_pre_enter(self, *args):
         """Fetch on entry rather than at construction.
@@ -162,7 +173,27 @@ class UpdateScreen(Screen):
             emit=self.update_status,
         )
 
+    @staticmethod
+    def _els_controller():
+        """The app's ONE ElsUiController (app.els_uic), or None without an app.
+
+        Never a second one: the controller owns the domain FSM and the elsStop
+        HAL, and a second instance would be a second writer to the same
+        registers with its own idea of whether ELS is engaged."""
+        from reflex.app import MainApp
+        app = MainApp.get_running_app()
+        return getattr(app, "els_uic", None)
+
+    @staticmethod
+    def _board():
+        from reflex.app import MainApp
+        return getattr(MainApp.get_running_app(), "board", None)
+
     def install_release(self):
+        if self._releasing_els:
+            # A disengage is waiting on the controller's word; a second tap
+            # must not start a second install behind it.
+            return
         release = self._catalogue.get(self.selected_release)
         if release is None:
             self.update_status("No release selected.")
@@ -170,12 +201,170 @@ class UpdateScreen(Screen):
         if release.prerelease:
             self._confirm_prerelease(release)
         else:
+            self._install_unless_engaged(release)
+
+    def _install_unless_engaged(self, release):
+        """Install, unless an ELS job is engaged -- then ask first.
+
+        WHY (2026-09-25 08:32, the lathe): the firmware refuses to reboot into
+        its bootloader while elsStop.enable is set (Ramps.c
+        elsBootCommandTick), so an update started over an engaged job fails
+        at the first step. The operator had left the job engaged-idle
+        overnight, and the only way out was to back all the way out to the
+        home screen, disengage, and come back. Now the screen offers it.
+
+        ORDER: the pre-release question (if any) comes FIRST and this one
+        second, because this one has a side effect. "Disengage and Install"
+        disengages and then starts the install with no further question, so
+        answering it is always the last thing the operator does; asked the
+        other way round, cancelling the pre-release dialog would have
+        disengaged the job for nothing. Asked here, after the pre-release
+        dialog closes, so it sees the machine as it is now.
+        """
+        uic = self._els_controller()
+        if uic is None or not uic.engaged:
             self._do_install(release)
+            return
+        self._confirm_disengage(release, uic)
+
+    def _confirm_disengage(self, release, uic):
+        """The ELS dialog. Offers "Disengage and Install" only when the SAME
+        rules the ADV bar's Disengage button obeys would allow it
+        (ElsUiController.disengage_refusal); otherwise it says what to do
+        instead and offers only OK.
+
+        THE BLOCKER, NAMED FOR THIS SCREEN (Evan, 2026-09-25). The shared
+        sync refusal reads "Turn Sync Enable off before disengaging" -- right
+        for the ADV bar mid-cut, where Sync Enable is the escape hatch, but
+        wrong here: sync is on almost whenever advanced ELS is engaged, and
+        with the spindle STOPPED disengage is allowed with sync on (operator
+        decision 2026-08-17). What actually blocks an update is the turning
+        spindle, and refusing on it is correct, so the dialog says that."""
+        from reflex.fsms.ui_controller import DISENGAGE_REFUSED_SYNC
+        refusal = uic.disengage_refusal()
+        lead = (f"An ELS job is engaged.\n\n"
+                f"Installing {release.tag} reboots the controller, which ends "
+                f"the ELS job, so it has to be disengaged first.")
+        if refusal is None:
+            text = f"{lead}\n\nDisengage ELS and install {release.tag}?"
+        else:
+            if refusal == DISENGAGE_REFUSED_SYNC:
+                reason = "The spindle is turning. Stop the spindle"
+            else:
+                reason = refusal
+            text = (f"{lead} It cannot be disengaged right now:\n\n"
+                    f"{reason}.\n\n"
+                    f"Then tap Install Selected Release again.")
+        content = BoxLayout(orientation="vertical", spacing=10, padding=10)
+        content.add_widget(Factory.ThemedLabel(
+            text=text, halign="left", valign="top", text_size=(None, None)))
+
+        buttons = BoxLayout(orientation="horizontal", spacing=10,
+                            size_hint_y=None, height=60)
+        popup = Popup(title="ELS job engaged", content=content,
+                      size_hint=(0.7, 0.5), auto_dismiss=False)
+        if refusal is None:
+            btn_cancel = Factory.SetupButton(text="Cancel", font_size=22)
+            btn_confirm = Factory.SetupButton(text="Disengage and Install",
+                                              font_size=22)
+            buttons.add_widget(btn_cancel)
+            buttons.add_widget(btn_confirm)
+            btn_cancel.bind(on_release=popup.dismiss)
+            btn_confirm.bind(on_release=lambda _: (
+                popup.dismiss(), self._disengage_then_install(release, uic)))
+        else:
+            btn_ok = Factory.SetupButton(text="OK", font_size=22)
+            buttons.add_widget(btn_ok)
+            btn_ok.bind(on_release=popup.dismiss)
+        content.add_widget(buttons)
+        popup.open()
+
+    def _disengage_then_install(self, release, uic):
+        """Disengage through the ADV bar's own path, then install only once
+        the CONTROLLER says the job is released.
+
+        uic.disengage() re-applies the rules (the machine may have changed
+        while the dialog was up) and, when they allow it, disables the domain
+        FSM -- whose teardown writes sync off, elsStop.enable = 0 and a feed
+        stop over Modbus. Those are writes; the flasher's reboot request is
+        refused if the BOARD still holds enable = 1, and once the install
+        starts this UI pauses polling and hands the port away, so there is no
+        second chance to look. Hence the wait on firmware_els_enable().
+        """
+        refusal = uic.disengage()
+        if refusal is not None:
+            self.update_status(
+                f"Update not started: ELS was not disengaged. {refusal}.")
+            return
+        self.update_status("ELS disengaged. Waiting for the controller to "
+                           "confirm the ELS job is released.")
+        self._releasing_els = True
+        self.enable_update_button = False
+        Clock.schedule_once(lambda dt: asyncio.ensure_future(
+            self._install_once_released(release, uic)))
+
+    async def _install_once_released(self, release, uic):
+        try:
+            released = await self._await_firmware_release(uic)
+        finally:
+            self._releasing_els = False
+        if not released:
+            self.update_status(
+                f"Update not started: the controller did not confirm the ELS "
+                f"job released within {ELS_RELEASE_TIMEOUT_S:.0f} s of "
+                f"disengaging, so it would refuse to reboot. ELS is disengaged "
+                f"here; the controller firmware and this UI are unchanged. "
+                f"Check the controller connection and try again.")
+            log.error("update not started: firmware elsStop.enable not seen "
+                      "cleared after disengage")
+            self.on_selected_release(self, self.selected_release)
+            return
+        self.update_status("The controller reports the ELS job released.")
+        self._do_install(release)
+
+    async def _await_firmware_release(self, uic, timeout=None, poll=None) -> bool:
+        """True once a board tick AFTER the disengage has read elsStop.enable
+        as 0 from the controller; False if that has not happened by `timeout`.
+
+        "After the disengage" is the tick count, not the clock: the snapshot
+        the controller reads is refreshed once per board tick, and one taken
+        before the teardown's writes would still say 1 -- or, worse, a stale
+        0 from some earlier moment would say "released" about a job that is
+        not. Board.update refreshes the snapshot BEFORE bumping update_tick,
+        on the Kivy thread the disengage also ran on, so the first tick
+        counted here read the registers after the writes. A fabricated read
+        (no link, failed refresh) is None from firmware_els_enable and never
+        counts as released.
+        """
+        timeout = ELS_RELEASE_TIMEOUT_S if timeout is None else timeout
+        poll = ELS_RELEASE_POLL_S if poll is None else poll
+        board = self._board()
+        if board is None:
+            return False
+        ticks = [0]
+
+        def _count(*_):
+            ticks[0] += 1
+
+        board.bind(update_tick=_count)
+        try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout
+            while True:
+                if ticks[0] >= 1 and uic.firmware_els_enable() is False:
+                    return True
+                if loop.time() >= deadline:
+                    return False
+                await asyncio.sleep(poll)
+        finally:
+            board.unbind(update_tick=_count)
 
     def _confirm_prerelease(self, release):
-        """The one confirmation in this screen, and it is NOT the gate.
+        """One of the screen's two confirmations, and NEITHER is the gate.
 
-        This asks whether the operator meant to install a release candidate.
+        This asks whether the operator meant to install a release candidate;
+        the other (_confirm_disengage, 2026-09-25) asks to disengage an
+        engaged ELS job, which the controller will not reboot under.
         The protocol check in :func:`reflex.utils.updater.verify_firmware_half`
         has no dialog and no override -- there is deliberately no "install
         anyway" for a mismatched pair, because the whole reason the feature
@@ -205,7 +394,7 @@ class UpdateScreen(Screen):
                       size_hint=(0.7, 0.5), auto_dismiss=False)
         btn_cancel.bind(on_release=popup.dismiss)
         btn_confirm.bind(on_release=lambda _: (popup.dismiss(),
-                                               self._do_install(release)))
+                                               self._install_unless_engaged(release)))
         popup.open()
 
     def _do_install(self, release):
