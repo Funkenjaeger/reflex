@@ -1,14 +1,16 @@
-Stop Coast Correction
-=====================
+Stop Overshoot Correction
+=========================
 
 The ELS stop tells the leadscrew to stop when the Z scale reaches your
-**Stop Z**. The carriage does not stop dead: it coasts on a little, and
-the faster it was feeding, the further it coasts. On this machine that is
-nothing when you crank by hand, about 0.05 mm at a slow feed and a little
-over 0.2 mm at the fastest feed measured.
+**Stop Z**. The carriage does not stop dead: the servo drive has latency,
+so it keeps driving the leadscrew for a moment after the stop fires, and
+the carriage overshoots. The faster it was feeding, the further it
+overshoots. On this machine that is nothing when you crank by hand, about
+0.05 mm at a slow feed and a little over 0.2 mm at the fastest feed
+measured.
 
 With this setting **ON**, the controller fires the stop *early* by the
-measured coast for the speed the carriage is approaching at, so the
+measured overshoot for the speed the carriage is approaching at, so the
 carriage comes to rest just **short** of Stop Z instead of just past it.
 Your Stop Z itself never changes.
 
@@ -25,16 +27,16 @@ setup: the Z scale's resolution and the servo's maximum speed and
 acceleration. If any of those change, the table no longer describes the
 machine. Turn the correction off until it has been re-measured.
 
-## Coast margin
+## Overshoot margin
 
-Extra Z counts of early stop added on top of the measured coast, so the
+Extra Z counts of early stop added on top of the measured overshoot, so the
 carriage lands a little short rather than exactly on the worst case seen.
 **1** is the setting it was sized for. Larger values stop further short;
-0 aims at the worst measured coast with nothing to spare.
+0 aims at the worst measured overshoot with nothing to spare.
 
 ## Faster than measured
 
 If the carriage approaches faster than anything in the table, the
 correction holds at its largest measured value and a notice says so once
-per pass. The carriage may then coast further than the correction allows
-for, so check that stop by eye.
+per pass. The carriage may then overshoot further than the correction
+allows for, so check that stop by eye.

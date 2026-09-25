@@ -87,7 +87,7 @@ nav:
   - Advanced features:
       - Picking up an existing thread: guide/picking-up-a-thread.md
       - Widening a groove: guide/widening-a-groove.md
-      - "Stop coast correction (experimental)": guide/stop-coast-correction.md
+      - "Stop overshoot correction (experimental)": guide/stop-overshoot-correction.md
   - Setup:
       - setup/index.md
       - Installing on a Pi: setup/installing.md
