@@ -21,6 +21,12 @@
  *     them the resynchronization checks and nothing else, which is the point.
  *   - blRxRingHead returning `ndtr` instead of `BL_RX_RING_SIZE - ndtr`:
  *     12 red.
+ * (seen red 2026-09-23, the blDiag counters, each applied alone and reverted:)
+ *   - the FRAMES_TAKEN bump removed: 4 red, all in the diag block.
+ *   - the OVERFLOW_DROPS bump removed: 1 red, "an oversized run counts one
+ *     overflow drop".
+ *   - bl_diag.h incrementing without the 0xFFFF test: both saturation checks
+ *     here red (and two in bl_core_test I7).
  */
 #include <cstdio>
 #include <cstdint>
@@ -29,6 +35,7 @@
 
 extern "C" {
 #include "bl_rxring.h"
+#include "els_identity.h"
 }
 
 static int failures = 0;
@@ -73,13 +80,13 @@ int main() {
         uint32_t tail = 0;
         auto req = pattern(235, 0x11);          /* the real FC16 chunk size */
         s.receive(req);
-        uint32_t n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX);
+        uint32_t n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, nullptr);
         check(n == 235u, "a 235-byte frame comes out as 235 bytes");
         check(memcmp(frame, req.data(), 235) == 0, "...with the bytes in order");
         check(tail == 235u, "...and the tail sits on the write head");
 
         /* Nothing new since: an IDLE with no bytes must not fabricate one. */
-        check(blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX) == 0u,
+        check(blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, nullptr) == 0u,
               "a second take with no new bytes yields nothing");
     }
 
@@ -90,11 +97,11 @@ int main() {
         /* Park the head 40 bytes from the end, consume that, then send 200. */
         auto filler = pattern(BL_RX_RING_SIZE - 40u, 0x40);
         s.receive(filler);
-        (void)blRxRingTake(s.ring, s.ndtr, &tail, frame, BL_RX_RING_SIZE);
+        (void)blRxRingTake(s.ring, s.ndtr, &tail, frame, BL_RX_RING_SIZE, nullptr);
 
         auto req = pattern(200, 0xA3);
         s.receive(req);
-        uint32_t n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX);
+        uint32_t n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, nullptr);
         check(n == 200u, "a frame straddling the ring end still measures 200");
         check(memcmp(frame, req.data(), 200) == 0,
               "...and reassembles across the wrap in order");
@@ -108,7 +115,7 @@ int main() {
         auto req = pattern(75, 0x5A);           /* the 40-byte-payload frame */
         s.receive(req);                          /* landed during an erase */
         /* Many polls later, one latched IDLE. */
-        uint32_t n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX);
+        uint32_t n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, nullptr);
         check(n == 75u && memcmp(frame, req.data(), 75) == 0,
               "a frame that landed during a stall is intact afterwards");
     }
@@ -121,13 +128,13 @@ int main() {
          * two 235-byte frames, one latched IDLE, 470 bytes in the ring. */
         s.receive(pattern(235, 0x11));
         s.receive(pattern(235, 0x11));
-        uint32_t n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX);
+        uint32_t n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, nullptr);
         check(n == 0u, "470 bytes under one IDLE is not a frame");
         check(tail == 470u, "...and the run is dropped, not carried forward");
 
         auto next = pattern(235, 0xC0);
         s.receive(next);
-        n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX);
+        n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, nullptr);
         check(n == 235u && memcmp(frame, next.data(), 235) == 0,
               "resync: the frame after an oversized run comes out intact");
     }
@@ -137,7 +144,7 @@ int main() {
         Stream s;
         uint32_t tail = 0;
         s.receive(pattern(FRAME_MAX, 0x77));
-        check(blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX) == FRAME_MAX,
+        check(blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, nullptr) == FRAME_MAX,
               "a run of exactly frameMax is delivered, not dropped");
 
         check(blRxRingHead(0u) == 0u,
@@ -155,10 +162,54 @@ int main() {
         for (int i = 0; i < 40; i++) {
             auto req = pattern(97, (uint8_t)i);
             s.receive(req);
-            uint32_t n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX);
+            uint32_t n = blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, nullptr);
             if (n != 97u || memcmp(frame, req.data(), 97) != 0) { ok = false; break; }
         }
         check(ok, "40 frames of 97 bytes (3.8 laps of the ring) all intact");
+    }
+
+    /* --- blDiag: frames taken and overflow drops (2026-09-23) ------------
+     * The ring owns two of the eight receiver counters. The other six are
+     * bumped by bl_modbus.c (tested in bl_core_test section I) and by the
+     * USART error branch of blHwUartPoll, which is register code on the chip
+     * and is NOT exercised by any native test: ORE/FE/NE and DMA restarts are
+     * seen only on hardware. */
+    {
+        Stream s;
+        uint32_t tail = 0;
+        uint16_t diag[ELS_BL_DIAG_REGS] = {0};
+
+        s.receive(pattern(235, 0x11));
+        (void)blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, diag);
+        check(diag[ELS_BL_DG_FRAMES_TAKEN] == 1 && diag[ELS_BL_DG_OVERFLOW_DROPS] == 0,
+              "diag: a delivered frame counts one frame taken, no drop");
+
+        (void)blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, diag);
+        check(diag[ELS_BL_DG_FRAMES_TAKEN] == 1 && diag[ELS_BL_DG_OVERFLOW_DROPS] == 0,
+              "diag: an IDLE with nothing new counts nothing");
+
+        s.receive(pattern(235, 0x11));
+        s.receive(pattern(235, 0x11));
+        (void)blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, diag);
+        check(diag[ELS_BL_DG_FRAMES_TAKEN] == 1 && diag[ELS_BL_DG_OVERFLOW_DROPS] == 1,
+              "diag: an oversized run counts one overflow drop and no frame");
+
+        bool untouched = true;
+        for (unsigned i = 0; i < ELS_BL_DIAG_REGS; i++)
+            if (i != ELS_BL_DG_FRAMES_TAKEN && i != ELS_BL_DG_OVERFLOW_DROPS && diag[i] != 0) untouched = false;
+        check(untouched, "diag: the ring touches no other counter");
+
+        diag[ELS_BL_DG_FRAMES_TAKEN] = 0xFFFEu;
+        diag[ELS_BL_DG_OVERFLOW_DROPS] = 0xFFFFu;
+        s.receive(pattern(10, 1)); (void)blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, diag);
+        s.receive(pattern(10, 2)); (void)blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, diag);
+        s.receive(pattern(300, 3)); (void)blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, diag);
+        check(diag[ELS_BL_DG_FRAMES_TAKEN] == 0xFFFFu, "diag: frames taken saturates at 0xFFFF, never wraps");
+        check(diag[ELS_BL_DG_OVERFLOW_DROPS] == 0xFFFFu, "diag: overflow drops stays at 0xFFFF, never wraps");
+
+        s.receive(pattern(12, 4));
+        check(blRxRingTake(s.ring, s.ndtr, &tail, frame, FRAME_MAX, nullptr) == 12u,
+              "diag: a NULL counter block is accepted and counts nothing");
     }
 
     printf("%s\n", failures ? "FAILURES" : "all passed");

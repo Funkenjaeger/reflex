@@ -45,6 +45,11 @@ uint32_t blRxRingHead(uint32_t ndtr);
  *
  * Returns the frame length, or 0 when there was nothing new or too much.
  *
+ *   diag     the blDiag counters (bl_diag.h), or NULL: a returned frame bumps
+ *            ELS_BL_DG_FRAMES_TAKEN, a too-much run ELS_BL_DG_OVERFLOW_DROPS,
+ *            and "nothing new" neither -- it is the ordinary result of an
+ *            IDLE with no bytes behind it.
+ *
  * `*tail` jumps to the write head in EVERY case, including the too-much case.
  * That is the resynchronization: if this core was stalled through the gap
  * between two frames -- a long erase, or a client that retried -- the run
@@ -57,7 +62,8 @@ uint32_t blRxRingHead(uint32_t ndtr);
  * no earlier IDLE seen, and it degrades to a dropped frame the client retries,
  * not to a mis-framed one. Growing the ring is the lever if it ever matters. */
 uint32_t blRxRingTake(const volatile uint8_t *ring, uint32_t ndtr,
-                      uint32_t *tail, uint8_t *frame, uint32_t frameMax);
+                      uint32_t *tail, uint8_t *frame, uint32_t frameMax,
+                      uint16_t *diag);
 
 #ifdef __cplusplus
 }

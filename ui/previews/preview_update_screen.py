@@ -160,8 +160,8 @@ def capture(_dt):
         # the pre-2026-09-19 screen (which had no ids) for the seen-red.
         warn = next(w for w in screen.walk() if isinstance(w, Label)
                     and "DO NOT POWER OFF" in (w.text or ""))
-        box = next(w for w in screen.walk() if isinstance(w, TextInput))
-        scroller = next(w for w in screen.walk() if isinstance(w, ScrollView))
+        box = screen.ids.status_box
+        scroller = screen.ids.scroller
         warn.texture_update()
         tw, th = warn.texture_size
         check("U1 warning text inside its own box",
@@ -170,6 +170,31 @@ def capture(_dt):
         check("U1 warning inside the window", *on_screen(warn))
         check("U2 status box wholly in view after the scroll", *visible_in(box, scroller))
         check("U2 warning in view too", *visible_in(warn, scroller))
+
+        # U5 (2026-09-23, the rc.5 install): touching the box brought up the
+        # dock keyboard and did not scroll it. Fill it past its height, check
+        # it sits on the newest line, then DRAG it with a real touch.
+        screen.status = "".join(f"flasher line {i}\n" for i in range(60))
+        settle()
+        check("U5 status box is not a text field (cannot take focus)",
+              not isinstance(box, TextInput) and isinstance(box, ScrollView),
+              "TextInput" if isinstance(box, TextInput) else "ScrollView + Label")
+        check("U5 box follows the newest line", box.scroll_y <= 0.01, f"scroll_y={box.scroll_y:.2f}")
+        from kivy.tests.common import UnitTestTouch
+        x0, y0, x1, y1 = rect(box)
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        t = UnitTestTouch(cx, cy)
+        t.touch_down()
+        for step in range(1, 9):
+            t.touch_move(cx, cy - step * 12)     # drag down: reveal older lines
+            settle(2)
+        t.touch_up()
+        settle(20)
+        check("U5 a drag scrolls the box", box.scroll_y > 0.05, f"scroll_y={box.scroll_y:.2f}")
+        focused = [w for top in Window.children for w in top.walk()
+                   if isinstance(w, TextInput) and w.focus]
+        check("U5 the touch focused no text field (no keyboard)", not focused,
+              f"focused: {[type(w).__name__ for w in focused]}")
 
         shot("update_busy")
     except Exception as e:  # never let the Kivy clock swallow it

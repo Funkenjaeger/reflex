@@ -79,7 +79,8 @@ enum {
  * ---------------------------------------------------------------------- */
 #define ELS_BL_BASE       2304u
 #define ELS_BL_DATA_REGS  100u
-#define ELS_BL_SIZE       (16u + ELS_BL_DATA_REGS)   /* 116 registers */
+#define ELS_BL_DIAG_REGS  9u                  /* appended 2026-09-23, +1 09-24 */
+#define ELS_BL_SIZE       (16u + ELS_BL_DATA_REGS + ELS_BL_DIAG_REGS)   /* 125 registers */
 
 enum {
   ELS_BL_STATUS = 0,        /* RO  ELS_BL_STATUS_*                             */
@@ -98,7 +99,39 @@ enum {
   ELS_BL_ATTEMPTS,          /* RO  boot-attempt counter as read at this boot   */
   ELS_BL_COPY_STATE,        /* RO  ELS_BL_STATE_* from the flash journal       */
   ELS_BL_RUN_VALID,         /* RO  1 if the RUN slot passes header + CRC       */
-  ELS_BL_DATA = 16          /* RW  blData[100], written with FC 0x10           */
+  ELS_BL_DATA = 16,         /* RW  blData[100], written with FC 0x10           */
+  ELS_BL_DIAG = 116         /* RO  blDiag[9], ELS_BL_DG_* below                */
+};
+
+/* blDiag -- receiver diagnostics, appended 2026-09-23 after two field
+ * transfers in which the bootloader stopped answering part-way and recovered
+ * on its own minutes later, with no way to see what its receiver was doing.
+ *
+ * A SEPARATE READ-ONLY WINDOW at ELS_BL_BASE + ELS_BL_DIAG (2420), not part
+ * of the writable control window below it: any write that touches it, alone
+ * or as the tail of an FC16, is exception 2 -- the identity window's
+ * protection, not the republish-on-read the RO head registers get. A read is
+ * served only wholly inside it (modbus_window.h: no straddling), so a read
+ * spanning blData and blDiag is exception 2 as it always was.
+ *
+ * Every counter is uint16 and SATURATES at 0xFFFF (never wraps), and is zeroed
+ * only at boot. The last register is not a counter but a boot-time flag (see
+ * its comment). Offsets relative to ELS_BL_DIAG: */
+enum {
+  ELS_BL_DG_FRAMES_TAKEN = 0,  /* IDLE-delimited runs handed to the Modbus layer    */
+  ELS_BL_DG_CRC_ERRORS,        /* of those, rejected for a bad Modbus CRC           */
+  ELS_BL_DG_BAD_FRAMES,        /* rejected silently for anything else: runt, over-
+                                * long, wrong slave address, wrong length for its FC */
+  ELS_BL_DG_OVERFLOW_DROPS,    /* runs longer than a frame, dropped by the ring      */
+  ELS_BL_DG_ERR_ORE,           /* USART overrun flag, cleared by the receiver        */
+  ELS_BL_DG_ERR_FE,            /* USART framing-error flag, likewise                 */
+  ELS_BL_DG_ERR_NE,            /* USART noise flag, likewise                         */
+  ELS_BL_DG_DMA_RESTARTS,      /* receive DMA stream re-armed after boot             */
+  ELS_BL_DG_CLOCK_HSE          /* FLAG, set once at boot: 1 = running on the 8 MHz
+                                * crystal; 0 = the crystal did not start and the
+                                * bootloader fell back to the internal RC (HSI),
+                                * whose baud error is what broke transfers until
+                                * 2026-09-24 -- a 0 here means expect that again */
 };
 
 /* 32-bit values span two registers, LOW word at the lower address -- the
