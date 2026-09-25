@@ -231,7 +231,16 @@ class UpdateScreen(Screen):
         """The ELS dialog. Offers "Disengage and Install" only when the SAME
         rules the ADV bar's Disengage button obeys would allow it
         (ElsUiController.disengage_refusal); otherwise it says what to do
-        instead and offers only OK."""
+        instead and offers only OK.
+
+        THE BLOCKER, NAMED FOR THIS SCREEN (Evan, 2026-09-25). The shared
+        sync refusal reads "Turn Sync Enable off before disengaging" -- right
+        for the ADV bar mid-cut, where Sync Enable is the escape hatch, but
+        wrong here: sync is on almost whenever advanced ELS is engaged, and
+        with the spindle STOPPED disengage is allowed with sync on (operator
+        decision 2026-08-17). What actually blocks an update is the turning
+        spindle, and refusing on it is correct, so the dialog says that."""
+        from reflex.fsms.ui_controller import DISENGAGE_REFUSED_SYNC
         refusal = uic.disengage_refusal()
         lead = (f"An ELS job is engaged.\n\n"
                 f"Installing {release.tag} reboots the controller, which ends "
@@ -239,8 +248,12 @@ class UpdateScreen(Screen):
         if refusal is None:
             text = f"{lead}\n\nDisengage ELS and install {release.tag}?"
         else:
+            if refusal == DISENGAGE_REFUSED_SYNC:
+                reason = "The spindle is turning. Stop the spindle"
+            else:
+                reason = refusal
             text = (f"{lead} It cannot be disengaged right now:\n\n"
-                    f"{refusal}.\n\n"
+                    f"{reason}.\n\n"
                     f"Then tap Install Selected Release again.")
         content = BoxLayout(orientation="vertical", spacing=10, padding=10)
         content.add_widget(Factory.ThemedLabel(

@@ -307,10 +307,32 @@ def test_sync_armed_and_spindle_turning_offers_no_disengage(rig):
     [d] = rig.dialogs
     assert d.title == "ELS job engaged"
     assert [b.text for b in d.buttons] == ["OK"]
-    assert "Turn Sync Enable off" in d.body
     d.button("OK").press()
     assert rig.ctrl._els_fsm.state == "stopped"
     rig.do_install.assert_not_called()
+
+
+def test_the_turning_spindle_is_named_as_the_blocker(rig):
+    """Evan 2026-09-25: refusing while the spindle turns is right, but the
+    message must name the actual blocker. Sync is on almost whenever advanced
+    ELS is engaged, and with the spindle stopped disengage is allowed with
+    sync on -- so "Turn Sync Enable off" pointed at the wrong thing."""
+    engaged_idle(rig.ctrl, sync=True, spindle=True)
+    install(rig)
+    [d] = rig.dialogs
+    assert "The spindle is turning. Stop the spindle." in d.body
+    assert "Sync Enable" not in d.body
+
+
+def test_sync_on_with_the_spindle_stopped_is_offered(rig):
+    """The common case: sync on, spindle stopped. The offer is made and
+    confirming disengages (the teardown clears sync)."""
+    engaged_idle(rig.ctrl, sync=True, spindle=False)
+    install(rig)
+    [d] = rig.dialogs
+    assert [b.text for b in d.buttons] == ["Cancel", "Disengage and Install"]
+    d.button("Disengage and Install").press()
+    assert rig.ctrl._els_fsm.state == "disabled"
 
 
 def test_a_running_cycle_offers_no_disengage(rig):
