@@ -51,6 +51,13 @@ BLINK_TARGET = {
 # I/O and touches no registers -- it compares one float against another.
 NOTICE_SWEEP_SECONDS = 0.1
 
+# The two operator-fixable disengage refusals (ElsUiController.
+# disengage_refusal). Module constants because two surfaces show them -- the
+# notice strip and the Update screen's "ELS job engaged" dialog -- and the
+# dialog's tests assert the instruction it names.
+DISENGAGE_REFUSED_SYNC = "Turn Sync Enable off before disengaging"
+DISENGAGE_REFUSED_CYCLE = "Stop the cycle before disengaging"
+
 
 # ── Thread-phase offset readout ──────────────────────────────────────────────
 # The operator-facing text lives HERE rather than in utils/devices.py (where
@@ -1259,24 +1266,37 @@ class ElsUiController(EventDispatcher):
         """
         return bool(self._board.servo.servoMode)
 
-    def toggle_engage(self):
-        """Engage/disengage button intent. Drives the domain FSM.
+    def disengage_refusal(self) -> str | None:
+        """Why the operator may NOT disengage right now, or None if they may.
 
-        EVERY REFUSAL BELOW ALSO NOTIFIES (migrated 2026-08-23). This method is
-        the app's clearest example of the problem the notice surface exists for:
-        four paths that end in `return` with nothing but a log line, on a button
-        whose entire feedback is that the LED card changes state. The
-        no-Z-axis path is not hypothetical -- an unmapped ELS Z axis (or simply
-        no controller connected) makes Engage a button that does nothing, with
-        the explanation written to a file the operator has no way to read while
-        standing at the lathe.
+        THE ONE SET OF DISENGAGE RULES. Two callers ask it: the ADV bar's
+        Engage/Disengage button (through toggle_engage -> disengage) and the
+        Update screen, which since 2026-09-25 offers to disengage an engaged
+        job before it asks the controller to reboot into its bootloader --
+        the firmware refuses that reboot while elsStop.enable is set
+        (Ramps.c elsBootCommandTick), and on 2026-09-25 08:32 an ELS job left
+        engaged-idle overnight failed an update with no reason on screen. The
+        Update screen asks HERE, before it offers the button, so it can say
+        what to do instead of offering a button that would be refused.
 
-        The log lines stay. The log is the record and the notice is the
-        surface; they answer different questions ("what happened during that
-        session" vs "why did nothing happen just now") and neither replaces the
-        other.
+        The answer is the operator instruction, worded to be shown as is.
+        Order matters: the first rule that applies is the one reported.
+
+          * sync motion armed with the spindle turning -- see the long comment
+            below; the escape hatch is Sync Enable;
+          * a cycle running (cutting / retracting) -- the ADV bar's kv greys
+            the button on `is_running` (= in_cycle) for the same reason; this
+            is that rule, here, so the button and the Update screen cannot
+            disagree and a kv change cannot silently reopen it;
+          * anything the domain FSM will not do (may_disable) -- in practice
+            only 'disabled' itself, i.e. a stale tap racing the `engaged`
+            mirror.
+
+        Not engaged at all is None: there is nothing to refuse.
         """
-        if self.engaged and self.is_feeding and self._els.spindle_is_running:
+        if not self.engaged:
+            return None
+        if self.is_feeding and self._els.spindle_is_running:
             # REFUSE. "Disable the stop" while sync motion is armed is an
             # ambiguous instruction: it reads equally as "stop the carriage" and
             # as "remove the stop and keep going". The firmware resolves it the
@@ -1300,6 +1320,32 @@ class ElsUiController(EventDispatcher):
             # pending motion, hardware-verified 2026-08-17. With the spindle
             # RUNNING the original reasoning stands: the escape hatch is the
             # Sync Enable button, which stays live -- press it, then disengage.
+            return DISENGAGE_REFUSED_SYNC
+        if self.in_cycle:
+            return DISENGAGE_REFUSED_CYCLE
+        if not self._els_fsm.may_disable():
+            return f"Disengage ignored — ELS is {self._els_fsm.state}"
+        return None
+
+    def disengage(self) -> str | None:
+        """Disengage ELS if the rules allow it; otherwise say why, and do nothing.
+
+        Returns None when the domain FSM was disabled (on_enter_disabled has
+        run its teardown -- sync off, enable 0, feed stop -- by the time this
+        returns: the FSM is not mid-transition here), else the refusal from
+        disengage_refusal(), which has also been put on the notice strip.
+
+        Returning is not the same as the CONTROLLER having released the job:
+        the writes are Modbus writes. A caller that needs the firmware's own
+        word -- the Update screen, before it hands the port to the flasher --
+        waits on firmware_els_enable() reading False.
+        """
+        refusal = self.disengage_refusal()
+        if refusal is None:
+            if self.engaged:
+                self._els_fsm.disable()
+            return None
+        if refusal == DISENGAGE_REFUSED_SYNC:
             log.info(
                 "Disengage refused — sync motion is armed. Turn Sync Enable off "
                 "first (equivalent to opening the half nut)."
@@ -1307,25 +1353,61 @@ class ElsUiController(EventDispatcher):
             # WARNING, not info: the operator has to go and change something
             # before this button will work. The notice says WHAT to change,
             # because "refused" on its own leaves them pressing it again.
-            self.notify("Turn Sync Enable off before disengaging",
-                        NOTICE_WARNING)
-            return
+            self.notify(refusal, NOTICE_WARNING)
+        elif refusal == DISENGAGE_REFUSED_CYCLE:
+            log.info("Disengage refused — a cycle is running "
+                     f"(ui={self._ui_fsm.state}, els={self._els_fsm.state})")
+            # WARNING for the same reason as sync: something must change first.
+            self.notify(refusal, NOTICE_WARNING)
+        else:
+            log.warning(
+                f"Disengage ignored — not valid from '{self._els_fsm.state}'"
+            )
+            # INFO, not warning: this branch is the double-tap race guard
+            # (the button is already disabled mid-cycle), so nothing is
+            # wrong with the machine and nothing needs fixing. It says the
+            # press was seen and ignored, which is all the operator needs.
+            self.notify(refusal, NOTICE_INFO)
+        return refusal
+
+    def firmware_els_enable(self) -> bool | None:
+        """elsStop.enable as the CONTROLLER last reported it, or None when
+        there is no trustworthy reading.
+
+        Read from the board's once-per-tick elsStop snapshot (hal.tick), the
+        same mirror every ELS poller reads, so asking costs no Modbus traffic.
+        An empty snapshot (link down, failed refresh) makes TickReads return
+        a FABRICATED 0 -- which here would read as "released", the one wrong
+        answer that matters -- so the read is bracketed by the fabrication
+        counter and a fabricated value comes back as None, never False.
+        """
+        baseline = self._hal.reads_baseline()
+        enabled = self._hal.tick.enable()
+        if self._hal.reads_fabricated_since(baseline):
+            return None
+        return enabled
+
+    def toggle_engage(self):
+        """Engage/disengage button intent. Drives the domain FSM.
+
+        EVERY REFUSAL BELOW ALSO NOTIFIES (migrated 2026-08-23). This method is
+        the app's clearest example of the problem the notice surface exists for:
+        four paths that end in `return` with nothing but a log line, on a button
+        whose entire feedback is that the LED card changes state. The
+        no-Z-axis path is not hypothetical -- an unmapped ELS Z axis (or simply
+        no controller connected) makes Engage a button that does nothing, with
+        the explanation written to a file the operator has no way to read while
+        standing at the lathe.
+
+        The log lines stay. The log is the record and the notice is the
+        surface; they answer different questions ("what happened during that
+        session" vs "why did nothing happen just now") and neither replaces the
+        other.
+        """
         if self.engaged:
-            # Guard the trigger: disable() is only valid from stopped/retracting/
-            # alarm. The button is disabled mid-cycle, but check anyway so a
-            # stray press can never raise MachineError inside a kv handler.
-            if self._els_fsm.may_disable():
-                self._els_fsm.disable()
-            else:
-                log.warning(
-                    f"Disengage ignored — not valid from '{self._els_fsm.state}'"
-                )
-                # INFO, not warning: this branch is the double-tap race guard
-                # (the button is already disabled mid-cycle), so nothing is
-                # wrong with the machine and nothing needs fixing. It says the
-                # press was seen and ignored, which is all the operator needs.
-                self.notify(f"Disengage ignored — ELS is {self._els_fsm.state}",
-                            NOTICE_INFO)
+            # One path for every disengage the operator asks for: this button,
+            # and the Update screen's "Disengage and Install" (2026-09-25).
+            self.disengage()
         elif self._els.get_z_axis() is None:
             # No Z (leadscrew) axis assigned — engaging would arm ELS against a
             # non-existent axis and crash on_enter_stopped. Refuse instead of

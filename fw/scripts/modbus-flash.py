@@ -140,7 +140,20 @@ STATE_NAMES = {0: "IDLE", 1: "BACKUP", 2: "COPY", 3: "TRIAL", 4: "REVERT", 5: "R
 # of protocolVersion 10's alignment pads, so no group grew and nothing moved.
 # Listed separately for the whitelist reason above; genregs --check verifies it.
 APP_BOOT_COMMAND_REG = {8: 232, 9: 232, 10: 168, 11: 168}
+# bootSeq, the firmware's ack of an ACCEPTED boot command, is the uint16 right
+# behind bootCommand in every layout above (Ramps.h: the two were appended as a
+# pair in protocolVersion 8 and moved together in 10). A table of its own, not
+# "bootCommand + 1", for the whitelist reason above; genregs --check verifies
+# it against registers/offsets.json exactly as it does APP_BOOT_COMMAND_REG.
+APP_BOOT_SEQ_REG = {8: 233, 9: 233, 10: 169, 11: 169}
 BOOT_CMD_BOOTLOADER = 1
+# How many polls must see the refusal signature (bootCommand 0, bootSeq
+# unmoved, idStage still the application) before the flasher believes it. Two,
+# because the firmware clears bootCommand and bumps bootSeq in two statements
+# (Ramps.c elsBootCommandTick) and the Modbus task can read between them; an
+# ACCEPTED command resets the board in that same task tick, so by the next poll
+# it is in the bootloader or silent, never still showing the signature.
+BOOT_REFUSAL_SIGHTINGS = 2
 
 CHUNK_BYTES = BL_DATA_REGS * 2   # 200
 
@@ -417,7 +430,14 @@ APP_START_WAIT_S = 45.0
 APP_START_NORMAL_S = 5.0
 
 
-def wait_for_stage(bus: Rtu, stage: int, timeout: float, rev: int | None = None) -> Identity:
+def wait_for_stage(bus: Rtu, stage: int, timeout: float, rev: int | None = None,
+                   not_yet=None) -> Identity:
+    """Poll the identity window until it shows `stage` (and `rev`).
+
+    ``not_yet(ident)`` is called with every answered identity that is not the
+    one awaited; it may raise SystemExit to stop waiting early with a verdict
+    of its own (enter_bootloader's refusal check). Silence is never passed to
+    it: a board that does not answer keeps the plain timeout."""
     t0 = time.monotonic()
     deadline = t0 + timeout
     last = None
@@ -433,6 +453,8 @@ def wait_for_stage(bus: Rtu, stage: int, timeout: float, rev: int | None = None)
                           f" running, but its first start may have hung and been reset.")
                 return ident
             last = str(ident)
+            if not_yet is not None:
+                not_yet(ident)
         except ModbusError as e:
             last = str(e)
         time.sleep(0.2)
@@ -741,15 +763,79 @@ def enter_bootloader(bus: Rtu, ident: Identity, dry_run: bool) -> Identity:
     if dry_run:
         print(f"  dry-run: would write bootCommand=1 at register {reg} and wait for the bootloader")
         return ident
+    # bootSeq BEFORE the request: the baseline a refusal is recognised by.
+    seq_reg = APP_BOOT_SEQ_REG.get(ident.app_protocol)
+    seq_before = None
+    if seq_reg is not None:
+        try:
+            seq_before = bus.read(seq_reg, 1)[0]
+        except ModbusError as e:
+            print(f"  (bootSeq at register {seq_reg} unreadable: {e}; a refusal will show only as a timeout)")
     print(f"  application {ident.rev_str}: requesting reboot into the bootloader (register {reg})")
+    acked = False
     try:
         bus.write_one(reg, BOOT_CMD_BOOTLOADER)
+        acked = True
     except ModbusError as e:
         # the reset can land before the reply is out
         print(f"  (no reply to the reboot command: {e})")
-    ident = wait_for_stage(bus, ID_STAGE_BOOTLOADER, timeout=10.0)
+    watch = None
+    if acked and seq_before is not None:
+        watch = _boot_refusal_watch(bus, reg, seq_reg, seq_before)
+    ident = wait_for_stage(bus, ID_STAGE_BOOTLOADER, timeout=10.0, not_yet=watch)
     print(f"  bootloader {ident.rev_str} answered")
     return ident
+
+
+# The refusal verdict's first words. ui/reflex/utils/updater.py looks for this
+# exact text in the flasher's output to tell the operator why the update did
+# not start; change both together.
+BOOT_REFUSED_ELS = ("REFUSED: the controller would not reboot into its bootloader "
+                    "because an ELS job is engaged")
+
+
+def _boot_refusal_watch(bus: Rtu, boot_reg: int, seq_reg: int, seq_before: int):
+    """A wait_for_stage ``not_yet`` hook that recognises the firmware REFUSING
+    the reboot, and stops the wait with a verdict that says so.
+
+    WHY (2026-09-25 08:32, the lathe): the in-app update to v1.2.0-rc.6 failed
+    after this function's plain 10 s wait printed "timed out ... waiting for
+    stage 1; last: ... stage=application" -- true, and useless: the firmware
+    had REFUSED because an ELS job was engaged, and nothing said so.
+
+    THE SIGNATURE (Ramps.h, elsBootCommandTick): the firmware clears
+    bootCommand on consume; it bumps bootSeq only for a command it ACCEPTS,
+    and one it accepts resets the board in the same task tick. A consumed
+    bootCommand (reads 0) with bootSeq unmoved while idStage still reads the
+    application is therefore a refusal, and the only refusal of a well-formed
+    command is elsStop.enable != 0 -- a live ELS job. Only armed when the
+    request was ACKNOWLEDGED: an unacknowledged write may never have arrived,
+    and "bootCommand 0, bootSeq unmoved" is then also just what nothing looks
+    like. Those keep the plain timeout.
+
+    Nothing has been sent to a bootloader when this fires: the board never
+    left the application."""
+    seen = [0]
+
+    def not_yet(ident: Identity) -> None:
+        if ident.magic != ID_MAGIC or ident.stage != ID_STAGE_APP:
+            return
+        try:
+            cmd = bus.read(boot_reg, 1, timeout=0.3, attempts=1)[0]
+            seq = bus.read(seq_reg, 1, timeout=0.3, attempts=1)[0]
+        except ModbusError:
+            return
+        if cmd == 0 and seq == seq_before:
+            seen[0] += 1
+            if seen[0] >= BOOT_REFUSAL_SIGHTINGS:
+                raise SystemExit(
+                    f"{BOOT_REFUSED_ELS}.\n"
+                    f"  It consumed the reboot request without acknowledging it (bootCommand reads 0,"
+                    f" bootSeq still {seq}) and is still running the application {ident.rev_str}; the"
+                    f" firmware refuses to reboot while elsStop.enable is set.\n"
+                    f"  Disengage the ELS job -- the Update screen offers to do it -- and try again."
+                    f" Nothing was written: the bootloader was never entered.")
+    return not_yet
 
 
 def link_stats(bus: Rtu, bl: Bootloader) -> dict:
