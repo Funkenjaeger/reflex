@@ -22,6 +22,7 @@
         size_hint_x: None
         width: 250
         text: "Back"
+        disabled: root.back_disabled
         on_press: app.beep()
         on_release:
           app.manager.back()

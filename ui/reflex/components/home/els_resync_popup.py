@@ -70,6 +70,9 @@ DRIFTED_TEXT = (
     "seated it — until it seats firmly, then press Re-seated."
 )
 
+NO_AXES_TEXT = ("No Z or spindle axis is assigned — map them in setup and "
+                "connect the controller first.")
+
 HELP_TITLE = "Picking up an existing thread"
 
 HELP_TEXT = (
@@ -209,10 +212,35 @@ class ThreadResyncPopup(Popup):
         self.app = MainApp.get_running_app()
         self._resync = self._build_controller()
         self._poll_ev = None
+        self._refuse_at_entry()
         # on_state does not fire for the property's default, so the opening
         # state has to be classified explicitly rather than relying on the
         # declared defaults happening to agree with the table.
         self._apply_severity(self.state)
+
+    def _refuse_at_entry(self) -> None:
+        """Open straight into REFUSED when the procedure cannot work.
+
+        THE POINT IS THE ORDER, NOT THE REFUSAL. Every condition consulted
+        here was already refused — but only at Begin, which the operator
+        reaches by doing what JOG_TEXT says: moving the carriage by hand,
+        CLOSING THE HALF NUT, and pulling the carriage back against the
+        anti-cutting flank. Being told "no thread pitch is set" after that is
+        the complaint this fixes (bench run 2026-08-30).
+
+        The message is still shown, which is why this lives here rather than
+        as a disabled settings-menu button: a greyed button cannot say which
+        of the five conditions stopped it, and that objection — recorded in
+        els_settings_popup.open_thread_resync — is a good one.
+        """
+        if self._resync is None:
+            self.state = "refused"
+            self.body_text = NO_AXES_TEXT
+            return
+        refusal = self._resync.entry_refusal()
+        if refusal is not None:
+            self.state = "refused"
+            self.body_text = refusal
 
     # ── severity ─────────────────────────────────────────────────────
     def on_state(self, _instance, value):
@@ -256,9 +284,12 @@ class ThreadResyncPopup(Popup):
     def begin(self):
         """Operator finished the coarse jog."""
         if self._resync is None:
+            # Unreachable now that _refuse_at_entry runs first (the Begin
+            # button only renders in state "jog"), and kept anyway: it is the
+            # guard for anything that stands this popup up without __init__,
+            # which previews/preview_walkthrough_shots.py does.
             self.state = "refused"
-            self.body_text = ("No Z or spindle axis is assigned — map them in "
-                              "setup and connect the controller first.")
+            self.body_text = NO_AXES_TEXT
             return
         self._start_alignment()
 

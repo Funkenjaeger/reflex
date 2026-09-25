@@ -38,7 +38,17 @@ class ElsFsm:
         {'trigger': 'retract_done', 'source': 'retracting', 'dest': '='},
         {'trigger': 'cut', 'source': 'stopped', 'dest': 'cutting', 'conditions': ['is_ready_to_cut']}, 
         {'trigger': 'stop_active', 'source': 'cutting', 'dest': 'stopped'},
-        {'trigger': 'disable', 'source': ['stopped', 'retracting', 'alarm'], 'dest': 'disabled'},
+        # 'cutting' IS a valid source, added 2026-09-01. Until then the only way
+        # out of 'cutting' was stop_active (the carriage actually reaching the
+        # shoulder) or fault -- so a cut ABANDONED by turning Sync Enable off
+        # left the FSM parked in 'cutting' forever: engaged, LED green "Armed",
+        # and the Disengage button greyed by in_cycle. Evan, 2026-09-01, on the
+        # bench: the only escape was to open the half nut and push the carriage
+        # past the stop point by hand to publish stop_active. The drive is
+        # de-energized by then and the cut is over; the FSM should say so.
+        {'trigger': 'disable',
+         'source': ['stopped', 'retracting', 'cutting', 'alarm'],
+         'dest': 'disabled'},
         {'trigger': 'fault', 'source': '*', 'dest': 'alarm'},
     ]
 

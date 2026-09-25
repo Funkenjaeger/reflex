@@ -33,3 +33,23 @@ def diag_dir() -> Path:
     if override:
         return Path(override).expanduser()
     return config_dir() / "diag"
+
+
+def flight_dir() -> Path:
+    """Return the directory the flight recorder rotates its poll log through.
+
+    A SIBLING of :func:`diag_dir`, not a child, and the difference is the
+    retention policy rather than tidiness. Everything under ``diag`` is written
+    once and kept until somebody copies it off the machine; everything here is
+    AUTOMATICALLY DELETED when the byte budget is reached. Nesting an
+    auto-pruned tree inside the directory people hand-copy captures out of is a
+    way to lose a capture -- and the operator has no terminal, so they would
+    never see it go.
+
+    Set ``REFLEX_FLIGHT_DIR`` to override independently (a USB stick, a tmpfs,
+    or somewhere with more room than the SD card).
+    """
+    override = os.environ.get("REFLEX_FLIGHT_DIR")
+    if override:
+        return Path(override).expanduser()
+    return config_dir() / "flight"

@@ -20,6 +20,32 @@ os.environ.setdefault("KIVY_NO_ARGS", "1")
 import pytest
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _flight_recorder_sandbox(tmp_path_factory):
+    """Keep the flight recorder off the developer's real home directory.
+
+    FlightRecorder proves its directory is writable IN ITS CONSTRUCTOR -- that
+    self-test is the mechanism that makes an unwritable path loud at startup
+    instead of silently discovered during a cut, so it is not something to
+    weaken for tests. The consequence is that every test which builds an
+    ElsUiController would otherwise mkdir and write a status file under
+    ``~/.config/reflex/flight``.
+
+    Session-scoped and env-based rather than per-test, because the pollution is
+    a property of constructing the controller at all, not of any one test. Tests
+    that care about the recorder's files pass ``directory=`` explicitly and
+    never see this.
+
+    ``setdefault``, so an explicitly exported ``REFLEX_FLIGHT_DIR`` still wins.
+    That is how a system-test run gets pointed at a directory somebody can open
+    afterwards -- the only way to confirm the recorder CAPTURES a real
+    emulator-driven cut rather than merely failing to crash during one.
+    """
+    os.environ.setdefault("REFLEX_FLIGHT_DIR",
+                          str(tmp_path_factory.mktemp("flight")))
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _headless_window():
     """Give widget-instantiating tests a stub Window under the mock backend.

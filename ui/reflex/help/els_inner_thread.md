@@ -29,8 +29,9 @@ the controller which direction "out of the cut" is.
 
 ## Notes
 
-- The flag only matters when the bar is in wizard mode and threading
-  is selected. Stop-only and stop+retract modes ignore it.
+- The flag matters wherever a diameter has been committed and threading
+  is selected — wizard mode, and stop + retract when **Safe diameter**
+  is on. Stop-only ignores it, because it has no Retract to gate.
 - The diameter values you enter (Major ø, Minor ø) are interpreted
   the same way regardless of this setting — they're the X-axis
   positions at the major and minor thread diameters.

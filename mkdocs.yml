@@ -58,7 +58,14 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
-  - pymdownx.superfences
+  # The mermaid fence is what renders the system-architecture diagram. Without
+  # this custom fence a ```mermaid block is just a code listing -- Material
+  # ships the mermaid loader, but only for blocks it has been told are diagrams.
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:
@@ -70,6 +77,7 @@ plugins:
 
 nav:
   - Home: index.md
+  - What Reflex changes: vs-upstream.md
   - Getting started:
       - The screen: guide/the-screen.md
       - The three stop modes: guide/operator-modes.md
@@ -79,16 +87,24 @@ nav:
   - Advanced features:
       - Picking up an existing thread: guide/picking-up-a-thread.md
       - Widening a groove: guide/widening-a-groove.md
+      - "Stop overshoot correction (experimental)": guide/stop-overshoot-correction.md
   - Setup:
       - setup/index.md
       - Installing on a Pi: setup/installing.md
       - Axes and scales: setup/axes-and-scales.md
       - Servo and leadscrew: setup/servo-and-leadscrew.md
       - Backlash calibration: setup/backlash-calibration.md
+  - Looking after it:
+      - Updating Reflex: guide/updating.md
+      - Backing up your settings: guide/backing-up.md
   - Troubleshooting:
       - When it refuses: guide/when-it-refuses.md
+      - The UNCOMMISSIONED strip: guide/uncommissioned.md
   - Reference:
       - reference/index.md
+      - Register map: reference/register-map.md
   - Design notes:
-      - decisions/repo-structure-monorepo.md
+      - System architecture: design/architecture.md
+      - Capturing the commissioning values: design/commissioning-capture.md
       - design/els-command-channel.md
+      - ELS safety case: design/els-safety-case.md

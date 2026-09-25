@@ -120,3 +120,8 @@ emulator.log
 .claude/
 # Firmware build variants (build/ is listed above; --diag uses build-diag/)
 /build-*/
+
+# Python bytecode from scripts/ (reflex_image.py imported by modbus-flash.py)
+__pycache__/
+# The bootloader has its own build tree
+/bootloader/build/

@@ -29,6 +29,14 @@ class ElsSettingsPopup(Popup):
     cal_ceiling_mm = NumericProperty(0.0)
     cal_motion_thresh_counts = NumericProperty(0)
 
+    # Stop-overshoot correction. The toggle binds straight to the dispatcher;
+    # the margin goes through here so a negative entry is refused rather than
+    # stored (a negative margin would aim PAST the measured coast). Its caution
+    # (fires early; verify at a shoulder) lives in the setting's help topic,
+    # help/els_overshoot_correction.md, like every other setting's -- the
+    # one-line warning label that sat under the toggle was removed 2026-09-19.
+    overshoot_margin_counts = NumericProperty(1)
+
     def __init__(self, **kv):
         super().__init__(**kv)
         from reflex.app import MainApp
@@ -36,6 +44,7 @@ class ElsSettingsPopup(Popup):
         self.backlash_mm = self._steps_to_mm(self.app.els.els_backlash_steps)
         self.cal_ceiling_mm = self._steps_to_mm(self.app.els.els_cal_ceiling_steps)
         self.cal_motion_thresh_counts = int(self.app.els.els_cal_motion_thresh_counts)
+        self.overshoot_margin_counts = int(self.app.els.els_overshoot_margin_counts)
 
     def _servo_mm_per_step(self) -> float:
         servo = self.app.servo
@@ -84,6 +93,15 @@ class ElsSettingsPopup(Popup):
             self._push_cal_limits()
             log.info(f"Calibration motion threshold: {counts} Z counts")
 
+    def on_overshoot_margin_counts(self, _instance, value):
+        counts = max(0, int(value))
+        if counts != value:
+            self.overshoot_margin_counts = counts
+            return
+        if counts != int(self.app.els.els_overshoot_margin_counts):
+            self.app.els.els_overshoot_margin_counts = counts
+            log.info(f"Stop overshoot correction margin: {counts} Z counts")
+
     def _push_cal_limits(self):
         """Send the limits to firmware as soon as they change.
 
@@ -121,6 +139,16 @@ class ElsSettingsPopup(Popup):
         true about the job and silent about the mode, and the wizard would walk
         its whole procedure in feed mode to latch a reference against
         threadPitchSteps = 0.
+
+        AND THE REFUSAL MOVED TO OPEN TIME 2026-08-31. The paragraph above
+        stayed true and stayed insufficient: refusing is not the same as
+        refusing in time. The wizard opened on JOG_TEXT, which tells the
+        operator to close the half nut and haul the carriage back by hand,
+        and only the Begin button at the end of that consulted any of these
+        conditions. ThreadResync.entry_refusal is now also evaluated in
+        ThreadResyncPopup.__init__, so the modal opens straight into REFUSED
+        with the reason. The button here is still deliberately NOT gated, for
+        exactly the reason this docstring has always given.
         """
         from reflex.components.home.els_resync_popup import ThreadResyncPopup
         ThreadResyncPopup().open()

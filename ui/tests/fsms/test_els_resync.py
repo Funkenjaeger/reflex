@@ -395,6 +395,31 @@ def test_missing_ack_times_out_as_refusal():
     assert rc.state == ResyncState.REFUSED
 
 
+def test_the_timeout_names_BOTH_causes_of_a_missing_ack():
+    """A refusal that names the wrong control is worse than a vague one.
+
+    Since 2026-08-31 the firmware consumes latchCommand without a seq edge for
+    TWO reasons: the job disengaged (elsStop.enable == 0), or the servo drive
+    is de-energised (fastData.servoMode == 0, at which point it has lost
+    custody of the leadscrew and a reference would be worthless). Both arrive
+    here as the same silence, so the message has to cover both -- it used to
+    say only "the job may have disengaged", sending an operator whose real
+    problem was Sync Enable to go check the ELS stop.
+    """
+    rc, machine, hal = _controller()
+    rc.begin_alignment()
+    _dwell(rc)
+    hal._enable = False
+    assert rc.request_latch()
+    for _ in range(rc.LATCH_TIMEOUT_POLLS):
+        rc.poll()
+
+    msg = rc.message.lower()
+    assert "els stop" in msg, "must still name the disengage cause"
+    assert "sync enable" in msg, "must name the de-energised drive cause"
+    assert "retry" in msg, "and must say what to do next"
+
+
 def test_firmware_disagreeing_with_baseline_is_a_red_flag():
     """The ack arrives but the firmware's latched Z is not the Z this
     controller was watching — host and firmware do not share a coherent view

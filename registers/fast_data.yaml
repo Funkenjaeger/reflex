@@ -1,0 +1,78 @@
+# =============================================================================
+# reflex register schema -- SINGLE SOURCE OF TRUTH for fastData_t
+# =============================================================================
+# Generates, and is never generated from:
+#   fw/Core/Inc/Ramps_generated.h     struct + static_assert per field
+#   ui/reflex/utils/fast_data_map.py  decoder + the DEFINITION reflex-ui parses
+#   docs/reference/register-map.md    the documented map
+#
+# The tick-rate block: read as one FC3 request per board tick alongside the
+# elsStop hot group (see the tick-cost note at the foot of els_stop.yaml), so
+# it carries the same fail-over-budget refusal the hot group does.
+#
+# TRANSCRIBED, NOT REDESIGNED (2026-09-18, Open Loops 6a9f3106). Field list,
+# order, types and padding are exactly the hand-written struct this replaced in
+# fw/Core/Inc/Ramps.h, and the `doc:` strings are its per-field comments
+# verbatim. The cutover was required to leave the firmware image byte-identical.
+#
+# TRAILING PADDING. servoMode is a lone uint16 at the tail of a 4-aligned
+# struct: 58 bytes of fields in a 60-byte object. As for servo_t, the generator
+# computes the 2-byte tail pad -- implicit in C, explicit in reflex-ui's
+# DEFINITION (which used to carry a hand-placed `uint16_t _pad0`), and pinned
+# by static_assert(sizeof(fastData_t) == 60).
+# =============================================================================
+
+schema_version: 1
+
+meta:
+  struct: fastData_t
+  short_name: fastData
+  macro_prefix: FAST_DATA
+  parent: rampsSharedData_t
+  parent_member: fastData
+  parent_count: 1
+  parent_offset_registers: 74    # after servo (8..25) and scales[4] (26..73)
+  register_width_bits: 16
+  endianness: little
+  py_out: ui/reflex/utils/fast_data_map.py
+
+layout:
+  - group: all
+    doc: >
+      The whole struct. Firmware-published mirrors of the live servo and scale
+      state, refreshed by the ISR and updateSpeedTask, plus the servo mode.
+      Read as one request per board tick.
+    budget_registers: 75        # the tick-read budget the elsStop hot group uses
+    fail_over_budget: true
+
+types:
+  uint16: {bytes: 2}
+  int16:  {bytes: 2}
+  uint32: {bytes: 4}
+  int32:  {bytes: 4}
+  float:  {bytes: 4}   # IEEE-754 binary32, little-endian, as the STM32 lays it out
+
+fields:
+  - {id: 1, name: servoCurrent,      type: uint32, access: ro_firmware, group: all, mirror_of: servo.currentSteps, doc: "READ-ONLY (firmware-owned): mirror of servo.currentSteps, updated by updateSpeedTask"}
+  - {id: 2, name: servoDesired,      type: uint32, access: ro_firmware, group: all, mirror_of: servo.desiredSteps, doc: "READ-ONLY (firmware-owned): mirror of servo.desiredSteps, updated by updateSpeedTask"}
+  # SIGNED since protocolVersion 11 (2026-09-18), matching the servo.stepsToGo
+  # it mirrors (int32, negative on reverse moves; Ramps.c handles < 0). Until
+  # 11 this was uint32 -- upstream fd251ea8, 2024 -- so a reverse move decoded
+  # as ~4.29e9 in the flight and phase recorders. Same size, no offset moved;
+  # the layout fingerprint covers types, so the fix rides 11's bump. This is
+  # the field build/2026-09-12-5's mirror_of gate (d7de6de) was written to
+  # catch: it was uint32 over servo.stepsToGo's int32 for months and nothing
+  # but this declaration would have refused it.
+  - {id: 3, name: stepsToGo,         type: int32,  access: ro_firmware, group: all, mirror_of: servo.stepsToGo, doc: "READ-ONLY (firmware-owned): mirror of servo.stepsToGo (signed: negative on reverse moves), updated by ramp algorithm"}
+  - {id: 4, name: servoSpeed,        type: float,  access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): output step rate (steps/100ms), updated by servoEnableTask"}
+  - {id: 5, name: scaleCurrent,      type: int32, count: SCALES_COUNT, access: ro_firmware, group: all, mirror_of: "scales[].position", doc: "READ-ONLY (firmware-owned): mirror of scales[i].position, updated by ISR"}
+  - {id: 6, name: scaleSpeed,        type: int32, count: SCALES_COUNT, access: ro_firmware, group: all, mirror_of: "scales[].speed", doc: "READ-ONLY (firmware-owned): mirror of scales[i].speed, updated by updateSpeedTask"}
+  - {id: 7, name: cycles,            type: uint32, access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): ISR execution time in CPU cycles, updated by updateSpeedTask"}
+  - {id: 8, name: executionInterval, type: uint32, access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): ISR interval in CPU cycles, updated by ISR"}
+  - {id: 9, name: servoMode,         type: uint16, access: bidirectional, group: all, doc: "SW write: 0=disabled, 1=sync/index (also set by firmware), 2=jog"}
+
+constants:
+  SCALES_COUNT:
+    value: 4
+    source: fw/Core/Inc/Scales.h
+    on_mismatch: fail

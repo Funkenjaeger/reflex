@@ -39,6 +39,10 @@ def _engage(ctrl):
     need this — the bar refuses to enable Start/Stop or action until the
     operator has hit Engage, since the underlying FSM triggers have no
     valid source from 'disabled'."""
+    # Sync on as well: since 2026-09-12 Cut is gated on the feed being on
+    # (the lathe's order is Engage, Sync Enable, Cut), so a rig that wants
+    # the action button allowed needs both.
+    ctrl._board.servo.servoMode = 1
     ctrl.toggle_engage()
     _pump()
 
@@ -314,6 +318,10 @@ def test_disengaging_mid_cycle_disables_action(ctrl, els_forward, stop_z):
     ctrl.commit_standalone_stop_z(stop_z)  # Z=0 on safe side of stop_z
     _engage(ctrl)
     assert ctrl.action_allowed is True
+    # Sync off first: _engage leaves sync on, the mock spindle reads as
+    # running, and toggle_engage rightly refuses to disengage a feeding
+    # machine. The operator's order is sync off, then Disengage.
+    ctrl._board.servo.servoMode = 0
     ctrl.toggle_engage()   # back to disabled
     _pump()
     assert ctrl.engaged is False
@@ -540,6 +548,7 @@ def test_on_action_button_clicked_in_waiting_to_cut_enters_cutting(ctrl, els_for
     z.scaledPosition = 0.0
     ctrl.els_forward = els_forward
     ctrl.commit_standalone_stop_z(stop_z)  # Z=0 on safe side of stop_z
+    ctrl._board.servo.servoMode = 1        # sync on before Cut
     ctrl.toggle_engage()
     _pump()
     assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
@@ -733,7 +742,9 @@ def test_action_button_disabled_when_z_past_stop_in_stop_only_mode(els_forward, 
     _pump()
     # Non-wizard mode auto-advances to in_cycle.waiting_to_cut at startup.
     assert c._ui_fsm.state == "in_cycle.waiting_to_cut"
-    # Engage domain FSM so action button is not blocked by "not engaged"
+    # Engage domain FSM so action button is not blocked by "not engaged",
+    # sync on so it is not blocked by the feed gate either.
+    board.servo.servoMode = 1
     c.toggle_engage()
     _pump()
     # Z past stop_z in the cutting direction → button disabled
@@ -898,6 +909,7 @@ def test_action_button_disabled_when_z_at_stop_in_stop_only_mode(els_forward, sa
     c.els_forward = els_forward
     c.commit_standalone_stop_z(10.0)
     _pump()
+    board.servo.servoMode = 1               # sync on before Cut
     c.toggle_engage()
     _pump()
     # Non-wizard mode auto-advances to in_cycle.waiting_to_cut at startup.
@@ -1158,3 +1170,354 @@ def test_unarmed_stop_message_names_the_actual_cause():
     c.toggle_engage()
     _pump()
     assert "No stop is set" in c.unarmed_stop_message()
+
+
+# ── Sync Enable OFF must clear sync BEFORE dropping the mode ────────────────
+#
+# THE BENCH SYMPTOM, 2026-08-30: pressing Sync Enable mid-cut stopped the
+# leadscrew but left sync active and the advanced bar dead, and a second press
+# was needed to make it stick.
+#
+# THE MECHANISM: servoEnableTask re-asserts servoMode = 1 every 100 ms while
+# ANY scale still has syncEnable set and elsStop.active is 0 -- and during a cut
+# active IS 0. Dropping servoMode alone hands the firmware a window to switch
+# the feed straight back on. ElsStopHal.stop_sync exists precisely to close it,
+# and on_enter_disabled / on_enter_alarm both already use it. This button was
+# the third call site and never did.
+
+def _feed_off_rig():
+    """A connected rig with the feed ON and both calls recorded in order."""
+    board, els = _make_collaborators(connected=True)
+    c = ElsUiController(els=els, board=board)
+    board.servo.servoMode = 1                      # feed running
+
+    order = []
+    board.servo.toggle_enable = lambda: order.append("toggle_enable")
+    c.hal.stop_sync = lambda: order.append("stop_sync")
+    return c, board, order
+
+
+def test_turning_the_feed_off_clears_sync_first():
+    """THE ORDER IS THE FIX. Reversed, the firmware gets its window back."""
+    c, _board, order = _feed_off_rig()
+
+    assert c.request_feed_enable() is True
+
+    assert order == ["stop_sync", "toggle_enable"], (
+        "sync must be cleared BEFORE servoMode is dropped -- got %r" % (order,))
+
+
+def test_turning_the_feed_ON_does_not_clear_sync():
+    """Negative control. stop_sync on the ON path would fight the very feed the
+    operator just asked for."""
+    board, els = _make_collaborators(connected=True)
+    c = ElsUiController(els=els, board=board)
+    board.servo.servoMode = 0                      # feed off, operator turns it on
+
+    order = []
+    board.servo.toggle_enable = lambda: order.append("toggle_enable")
+    c.hal.stop_sync = lambda: order.append("stop_sync")
+
+    c.request_feed_enable(confirmed=True)
+
+    assert "stop_sync" not in order
+
+
+def test_a_confirm_callback_on_an_already_running_feed_still_touches_nothing():
+    """Guards the early return the ordering sits inside: if the feed came on
+    between the dialog opening and the operator confirming, neither call fires."""
+    c, _board, order = _feed_off_rig()
+
+    assert c.request_feed_enable(confirmed=True) is True
+
+    assert order == []
+
+
+# ─── Sync Enable off MID-CUT must also disengage ────────────────────────────
+#
+# Found on the bench 2026-09-01, testing the ordering fix above. That fix
+# worked -- the feed no longer flaps -- but it exposed the state underneath:
+# nothing took the domain FSM out of 'cutting'. Its only exits were stop_active
+# (the carriage physically reaching the shoulder) and fault.
+#
+# So the machine sat ENGAGED with the LED green on "Armed" and the Disengage
+# button greyed out by in_cycle. Evan: "presumably I'd have to move the carriage
+# by hand (including opening the half nut) past the stop point to clear that
+# before I could disable the stop. The servo is de-energized so leadscrew
+# custody is already lost at that point."
+#
+# BOTH FSMs have to move, which is the part that is easy to get half-right:
+# `engaged` follows the DOMAIN fsm, but the button is greyed by in_cycle, which
+# follows the UI fsm. Disable one without cancelling the other and the operator
+# is still stuck -- so there is a test below for each half.
+
+
+def _arm_toggle_enable(ctrl):
+    """board.servo is a SimpleNamespace with no toggle_enable (see
+    _make_collaborators). Give it the real one's semantics -- flip servoMode --
+    rather than a recorder, so these tests exercise the de-energize itself."""
+    servo = ctrl._board.servo
+    servo.toggle_enable = lambda: setattr(
+        servo, "servoMode", 0 if servo.servoMode else 1)
+    return servo
+
+
+def _cutting_rig(ctrl):
+    """A connected rig mid-cut with the feed running."""
+    z = ctrl._els.get_z_axis()
+    z.scaledPosition = 0.0
+    ctrl.els_forward = False
+    ctrl.commit_standalone_stop_z(10.0)      # Z=0 is on the safe side
+    ctrl.toggle_engage()
+    _pump()
+    _arm_toggle_enable(ctrl).servoMode = 1    # sync on FIRST: Cut is gated on it
+    ctrl._apply_policy()
+    ctrl.on_action_button_clicked()
+    _pump()
+    assert ctrl._els_fsm.state == "cutting", "the rig never reached a cut"
+    assert ctrl._ui_fsm.state == "in_cycle.cutting"
+    return ctrl
+
+
+def test_disable_is_a_valid_transition_from_cutting(ctrl):
+    """The transition table itself. Without 'cutting' in the source list every
+    escape below raises MachineError instead of disengaging."""
+    _cutting_rig(ctrl)
+    assert ctrl._els_fsm.may_disable() is True
+
+
+def test_sync_off_mid_cut_disengages_the_stop(ctrl):
+    c = _cutting_rig(ctrl)
+
+    c.request_feed_enable()
+    _pump()
+
+    assert c._els_fsm.state == "disabled"
+    assert c.engaged is False, "the LED would still read Armed"
+
+
+def test_sync_off_mid_cut_frees_the_disengage_button(ctrl):
+    """THE OPERATOR-VISIBLE HALF. in_cycle is what greys the button, and it
+    follows the UI fsm -- so disengaging the domain fsm alone would leave Evan
+    exactly as stuck as before, just with a different LED."""
+    c = _cutting_rig(ctrl)
+
+    c.request_feed_enable()
+    _pump()
+
+    # Was `== "idle"` until 2026-09-12. Idle is where b56d2ac parked the
+    # cycle, and in non-wizard mode it was the next trap -- see the
+    # 2026-09-12 block at the end of this file. What this test is about
+    # is leaving the cutting sub-state.
+    assert c._ui_fsm.state != "in_cycle.cutting"
+    assert c.in_cycle is False, "the Disengage button is still greyed"
+
+
+def test_sync_off_mid_cut_still_clears_sync_before_dropping_the_mode(ctrl):
+    """The ordering fix this was found while testing must survive it: the
+    disengage happens AFTER the de-energize, not instead of it."""
+    c = _cutting_rig(ctrl)
+    order = []
+    c._board.servo.toggle_enable = lambda: order.append("toggle_enable")
+    c.hal.stop_sync = lambda: order.append("stop_sync")
+
+    c.request_feed_enable()
+    _pump()
+
+    assert order[:2] == ["stop_sync", "toggle_enable"], (
+        "the abandon path broke the ordering fix -- got %r" % (order,))
+
+
+def test_sync_off_mid_cut_tells_the_operator(ctrl):
+    """Disengaging is a second consequence of a press that asked for one thing.
+    The LED changing is not an explanation."""
+    c = _cutting_rig(ctrl)
+    seen = []
+    c.notify = lambda msg, sev=None, **kw: seen.append(msg)
+
+    c.request_feed_enable()
+    _pump()
+
+    assert any("disengage" in m.lower() for m in seen), seen
+
+
+# ─── ...but NOT when merely engaged and idle ────────────────────────────────
+
+def test_sync_off_while_stopped_does_NOT_disengage(ctrl):
+    """THE SCOPE BOUND, and it rests on a mechanism rather than on taste.
+
+    elsStop.active is the HOLD. arm_idle_stop sets active=1 BEFORE enable, so
+    an engaged-idle machine is already held: turning sync on cannot move the
+    carriage. That is the property the cutting case exists to restore, and here
+    it was never lost -- on_enter_cutting's set_active(False) is what releases
+    it, and that has not run.
+
+    So disengaging here would be churn, not safety: an operator who turns the
+    feed off to reposition would pay a re-engage every time.
+    """
+    z = ctrl._els.get_z_axis()
+    z.scaledPosition = 0.0
+    ctrl.commit_standalone_stop_z(10.0)
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl._els_fsm.state == "stopped"
+    _arm_toggle_enable(ctrl).servoMode = 1
+
+    ctrl.request_feed_enable()
+    _pump()
+
+    assert ctrl._els_fsm.state == "stopped", "an idle armed stop was thrown away"
+    assert ctrl.engaged is True
+
+
+def test_sync_off_while_disengaged_does_NOT_raise(ctrl):
+    """The feed can run with ELS disengaged (plain power feed). Nothing to
+    abandon, and no transition to attempt."""
+    assert ctrl._els_fsm.state == "disabled"
+    _arm_toggle_enable(ctrl).servoMode = 1
+
+    assert ctrl.request_feed_enable() is True      # must not raise
+    _pump()
+
+    assert ctrl._els_fsm.state == "disabled"
+
+
+# ─── Flight recorder wiring ────────────────────────────────────────────────
+
+def test_flight_recorder_is_bound_to_the_board_tick(ctrl):
+    """A recorder nobody calls is the purest form of a check that cannot fail.
+
+    Two assertions, because either alone is satisfiable by a broken build: the
+    bind PROVES the controller asked to be called, and driving the bound
+    callable proves the call reaches the recorder rather than a method that
+    exists and does nothing.
+    """
+    ctrl._board.bind.assert_any_call(update_tick=ctrl._poll_flight_recorder)
+
+    rec = ctrl._flight_recorder
+    before = rec.ticks_seen
+    ctrl._poll_flight_recorder()
+    assert rec.ticks_seen == before + 1
+
+
+def test_flight_recorder_survives_a_board_with_no_snapshot(ctrl):
+    """The default rig's els_stop_values is an empty dict -- Board's way of
+    saying this tick has no snapshot. The recorder must count the tick, file
+    nothing, and above all not raise into the update loop."""
+    rec = ctrl._flight_recorder
+    for _ in range(5):
+        ctrl._poll_flight_recorder()
+
+    assert rec.ticks_seen >= 5
+    assert rec.recording is False
+    assert rec.disabled is False
+
+
+# ─── Sync Enable off mid-cut: the bar has to come back to life (2026-09-12) ─
+#
+# b56d2ac freed the Disengage button by cancelling the UI cycle to idle. On
+# the bench 2026-09-12 (Job 2: half nut opened mid-pass, then Sync Enable off)
+# that idle was the NEXT trap. Non-wizard mode has no Start button --
+# els_advbar.kv hides it (`hidden: not root.enable_wizard`) -- and the only
+# callers of start() are _sync_ui_state_to_modes (startup, mode changes) and
+# that button. So the action button read "" and stayed dark through
+# disengage / re-engage, sync on / off and pushing the carriage by hand; only a
+# UI restart cleared it. The alarm path (domain 'disabled' with the UI in
+# 'alarm') already re-lands through _sync_ui_state_to_modes; the abort path
+# did not. Z is a static fake here, which is the half-nut-open case: the
+# carriage is not following the leadscrew when sync goes off.
+
+
+def test_sync_off_mid_cut_lands_the_bar_back_in_waiting_to_cut(ctrl):
+    """Non-wizard mode's resting state is in_cycle.waiting_to_cut, never
+    idle: idle has no button that leaves it."""
+    c = _cutting_rig(ctrl)
+
+    c.request_feed_enable()
+    _pump()
+
+    assert c._ui_fsm.state == "in_cycle.waiting_to_cut", c._ui_fsm.state
+
+
+def test_re_engaging_after_a_sync_off_abort_offers_cut_again(ctrl):
+    """THE OPERATOR-VISIBLE PROPERTY: the button on the bar, after the thing
+    Evan did next (re-engage), four times over."""
+    c = _cutting_rig(ctrl)
+
+    c.request_feed_enable()
+    _pump()
+    assert c.engaged is False, "the abort did not disengage"
+
+    c.toggle_engage()
+    _pump()
+
+    assert c.engaged is True, "re-engage refused"
+    assert c.action_button_text == "Cut", (
+        c._ui_fsm.state, c.action_button_text, c.instruction_text)
+    # Sync is off after the abort, so the button is there but not yet
+    # allowed -- Evan, lathe, 2026-09-12: lighting Cut on re-engage,
+    # before sync, "doesn't make sense". It says what to do instead.
+    assert c.action_allowed is False, c.instruction_text
+    assert "sync" in c.instruction_text.lower(), c.instruction_text
+
+    c._board.servo.servoMode = 1
+    c._apply_policy()
+
+    assert c.action_allowed is True, c.instruction_text
+
+
+# ─── Cut only while sync is on (2026-09-12) ─────────────────────────────────
+#
+# on_enter_cutting releases the hold (set_active(False)): that release IS the
+# cut. With sync off, a Cut press leaves the engaged machine held by nothing,
+# and the next Sync Enable press moves the carriage with no Cut between the
+# two -- the hazard b56d2ac's docstring describes. The action button never had
+# a feed gate; the abort fix made it visible: after re-engaging, Cut lit up
+# before sync was back on. Evan, at the lathe: "that doesn't make sense, and
+# it doesn't work nicely." The policy re-runs every board tick
+# (_poll_apply_policy), so flipping servoMode is enough to refresh it.
+
+
+def test_cut_waits_for_sync_on(ctrl):
+    """Engaged, stop set, Z safe, sync OFF: the button reads Cut but is not
+    allowed, and the instruction says what to do. Sync on: allowed."""
+    ctrl._els.get_z_axis().scaledPosition = 0.0
+    ctrl.els_forward = False
+    ctrl.commit_standalone_stop_z(10.0)
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
+    assert ctrl._board.servo.servoMode == 0
+
+    assert ctrl.action_button_text == "Cut"
+    assert ctrl.action_allowed is False, ctrl.instruction_text
+    assert "sync" in ctrl.instruction_text.lower(), ctrl.instruction_text
+
+    ctrl._board.servo.servoMode = 1
+    ctrl._apply_policy()
+
+    assert ctrl.action_allowed is True, ctrl.instruction_text
+
+
+def test_cut_press_with_sync_off_does_not_start_a_cut(ctrl):
+    """The click path honours the gate: no domain cut, hold kept."""
+    ctrl._els.get_z_axis().scaledPosition = 0.0
+    ctrl.els_forward = False
+    ctrl.commit_standalone_stop_z(10.0)
+    ctrl.toggle_engage()
+    _pump()
+
+    ctrl.on_action_button_clicked()
+    _pump()
+
+    assert ctrl._els_fsm.state == "stopped", ctrl._els_fsm.state
+    assert ctrl._ui_fsm.state == "in_cycle.waiting_to_cut"
+
+
+def test_missing_stop_z_still_wins_over_the_sync_message(ctrl):
+    """Ordering of the instruction text: a missing Stop Z is the first thing
+    to say; the sync message only appears once the cut is otherwise ready."""
+    ctrl.toggle_engage()
+    _pump()
+    assert ctrl.action_allowed is False
+    assert "Stop Z" in ctrl.instruction_text, ctrl.instruction_text

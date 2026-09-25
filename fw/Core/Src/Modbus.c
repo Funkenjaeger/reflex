@@ -1411,14 +1411,31 @@ int8_t validateRequest(modbusHandler_t *modH)
       break;
     case MB_FC_WRITE_REGISTER :
       u16AdRegs = word( modH->u8Buffer[ ADD_HI ], modH->u8Buffer[ ADD_LO ]);
-      if (u16AdRegs > modH-> u16regsize) return EXC_ADDR_RANGE;
+      /* Resolved through the window table (modbus_window.h) rather than
+       * compared against u16regsize alone, so the identity window at
+       * ELS_ID_BASE is writable-checked (read-only -> exception 2) and a
+       * write into the gap above the struct is refused instead of landing
+       * past the end of u16regs -- which the old `>` check allowed for the
+       * one address u16AdRegs == u16regsize. */
+      {
+        uint16_t *dst;
+        if (mbResolveRange(modH->u16regs, modH->u16regsize, modH->windows,
+                           modH->windowCount, u16AdRegs, 1u, 1, &dst) != 0u)
+          return EXC_ADDR_RANGE;
+      }
       break;
     case MB_FC_READ_REGISTERS :
     case MB_FC_READ_INPUT_REGISTER :
     case MB_FC_WRITE_MULTIPLE_REGISTERS :
       u16AdRegs = word( modH->u8Buffer[ ADD_HI ], modH->u8Buffer[ ADD_LO ]);
       u16NRegs = word( modH->u8Buffer[ NB_HI ], modH->u8Buffer[ NB_LO ]);
-      if (( u16AdRegs + u16NRegs ) > modH->u16regsize) return EXC_ADDR_RANGE;
+      {
+        uint16_t *dst;
+        int forWrite = (modH->u8Buffer[ FUNC ] == MB_FC_WRITE_MULTIPLE_REGISTERS);
+        if (mbResolveRange(modH->u16regs, modH->u16regsize, modH->windows,
+                           modH->windowCount, u16AdRegs, u16NRegs, forWrite, &dst) != 0u)
+          return EXC_ADDR_RANGE;
+      }
 
       //verify answer frame size in bytes
       u16NRegs = u16NRegs*2 + 5; // adding the header  and CRC
@@ -1737,15 +1754,25 @@ int8_t process_FC3(modbusHandler_t *modH)
   uint8_t u8regsno = word( modH->u8Buffer[ NB_HI ], modH->u8Buffer[ NB_LO ] );
   uint8_t u8CopyBufferSize;
   uint16_t i;
+  /* Backing store for the range: u16regs or an auxiliary window. Already
+   * validated by validateRequest, so this cannot fail; the fallback keeps a
+   * stale handler from indexing memory it does not own. */
+  uint16_t *src = modH->u16regs;
+  (void)mbResolveRange(modH->u16regs, modH->u16regsize, modH->windows,
+                       modH->windowCount, u16StartAdd, u8regsno, 0, &src);
 
   modH->u8Buffer[ 2 ]       = u8regsno * 2;
   modH->u8BufferSize         = 3;
 
-  for (i = u16StartAdd; i < u16StartAdd + u8regsno; i++)
+  /* ONE REGISTER AT A TIME, ASCENDING. The ISR can land between any two
+   * copies, so a lower address is sampled earlier in time than a higher one;
+   * that is the invariant the calSeq / diagSeq / blSeq ordering rule in
+   * Ramps.h and els_identity.h stands on. Keep it a per-register loop. */
+  for (i = 0; i < u8regsno; i++)
   {
-    modH->u8Buffer[ modH->u8BufferSize ] = highByte(modH->u16regs[i]);
+    modH->u8Buffer[ modH->u8BufferSize ] = highByte(src[i]);
     modH->u8BufferSize++;
-    modH->u8Buffer[ modH->u8BufferSize ] = lowByte(modH->u16regs[i]);
+    modH->u8Buffer[ modH->u8BufferSize ] = lowByte(src[i]);
     modH->u8BufferSize++;
   }
   u8CopyBufferSize = modH->u8BufferSize +2;
@@ -1802,8 +1829,12 @@ int8_t process_FC6(modbusHandler_t *modH )
   uint16_t u16add = word( modH->u8Buffer[ ADD_HI ], modH->u8Buffer[ ADD_LO ] );
   uint8_t u8CopyBufferSize;
   uint16_t u16val = word( modH->u8Buffer[ NB_HI ], modH->u8Buffer[ NB_LO ] );
+  uint16_t *dst = (uint16_t *)0;
 
-  modH->u16regs[ u16add ] = u16val;
+  /* Validated (range and read-only) by validateRequest; resolve the store. */
+  if (mbResolveRange(modH->u16regs, modH->u16regsize, modH->windows,
+                     modH->windowCount, u16add, 1u, 1, &dst) == 0u)
+    *dst = u16val;
 
   // keep the same header
   modH->u8BufferSize = RESPONSE_SIZE;
@@ -1886,6 +1917,12 @@ int8_t process_FC16(modbusHandler_t *modH )
   uint8_t u8CopyBufferSize;
   uint16_t i;
   uint16_t temp;
+  uint16_t *dst = (uint16_t *)0;
+
+  /* Validated (range and read-only) by validateRequest; resolve the store. */
+  if (mbResolveRange(modH->u16regs, modH->u16regsize, modH->windows,
+                     modH->windowCount, u16StartAdd, u16regsno, 1, &dst) != 0u)
+    u16regsno = 0;
 
   // build header
   modH->u8Buffer[ NB_HI ]   = 0;
@@ -1899,7 +1936,7 @@ int8_t process_FC16(modbusHandler_t *modH )
             modH->u8Buffer[ (BYTE_CNT + 1) + i * 2 ],
             modH->u8Buffer[ (BYTE_CNT + 2) + i * 2 ]);
 
-    modH->u16regs[ u16StartAdd + i ] = temp;
+    dst[ i ] = temp;
   }
   u8CopyBufferSize = modH->u8BufferSize +2;
   sendTxBuffer(modH);

@@ -1,6 +1,6 @@
 # Lockstep release: ONE version, ONE tag, ONE release carrying BOTH halves.
 #
-# This is the flow docs/decisions/repo-structure-monorepo.md specifies and the
+# This is the flow decisions/repo-structure-monorepo.md specifies and the
 # monorepo has been missing since the 2026-08-17 weld. Its whole point is that
 # `v1.4.0` names a known-good FIRMWARE + UI PAIR, so "which firmware does this
 # UI expect?" is answered by the version number instead of tribal knowledge.
@@ -18,8 +18,9 @@
 # retired with the split repos: its config had accumulated v7 keys that PSR 10
 # silently ignores, so options read like live settings while doing nothing, and
 # nobody could say from the file what a push would do. An explicit input cannot
-# drift like that -- and the release notes are generated from the conventional
-# commits either way, so the log still does the describing.
+# drift like that. The describing is done by hand: release-notes/<V>.md is the
+# release's written description (required, see the step that checks it), with
+# the generated commit list appended beneath it.
 name: release
 
 on:
@@ -50,12 +51,24 @@ jobs:
       # ── Guards, before anything is built ──────────────────────────────────
       # A release is a promise about a branch that has been through the ladder.
       # integration and feature branches have not.
+      #
+      # A DRY RUN promises nothing -- both publishing steps are skipped -- so it
+      # may run from any branch. That is how a change to THIS workflow gets
+      # tested before it is promoted: dispatch the branch with dry_run, and it
+      # builds, stamps and checks exactly what a real run would, without a tag,
+      # a release, or a commit reaching origin. The version/branch pairing
+      # below only binds main and dev, so it does not apply here.
       - name: Check the branch is releasable
         run: |
           case "${{ github.ref_name }}" in
             main) echo "main: full release" ;;
             dev)  echo "dev: pre-release" ;;
-            *)    echo "::error::release can only run from main or dev; got '${{ github.ref_name }}'. Promote through the ladder first." ; exit 1 ;;
+            *)
+              if [ "${{ inputs.dry_run }}" = "true" ]; then
+                echo "::notice::dry run from '${{ github.ref_name }}': builds and checks everything, publishes nothing. A real release still needs main or dev."
+              else
+                echo "::error::release can only run from main or dev; got '${{ github.ref_name }}'. Promote through the ladder first (a dry run may run from any branch)." ; exit 1
+              fi ;;
           esac
 
       - name: Check the version and match it to the branch
@@ -79,6 +92,29 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
 
+      # EVERY RELEASE CARRIES A WRITTEN DESCRIPTION, from release-notes/<V>.md.
+      # Until v1.2.0-rc.4 the only notes were --generate-notes, which for a
+      # direct-push repo with no PRs is a bare "Full Changelog" compare link:
+      # every release through rc.3 went out with nothing on its page saying what
+      # it was for. The file is written for a person deciding whether to
+      # install -- what changed, what to watch out for, what is experimental --
+      # and the generated commit list is still appended beneath it.
+      #
+      # It runs here, before the builds, and on dry runs too, so a missing file
+      # costs seconds and is caught by the dry run rather than by the publish.
+      # The heading must name THIS version, which refuses the easy mistake of
+      # copying the previous release's file and forgetting to rewrite it.
+      - name: Refuse a release without written notes
+        run: |
+          V='${{ steps.v.outputs.version }}'
+          F="release-notes/$V.md"
+          [ -f "$F" ] || { echo "::error::$F does not exist. Write the release description there (see release-notes/ for earlier ones) and commit it before releasing."; exit 1; }
+          HEAD=$(grep -m1 -v '^[[:space:]]*$' "$F")
+          [ "$HEAD" = "## reflex v$V" ] || { echo "::error::$F must open with '## reflex v$V'; it opens with '$HEAD'."; exit 1; }
+          BODY=$(grep -v '^[[:space:]]*$' "$F" | tail -n +2 | wc -l)
+          [ "$BODY" -ge 3 ] || { echo "::error::$F has $BODY non-blank lines under its heading; that is not a description."; exit 1; }
+          echo "ok: $F, $BODY lines under '## reflex v$V'"
+
       # ── Build both halves ─────────────────────────────────────────────────
       # Package list mirrors fw.yml's arm-build; the two must stay in step so
       # the CI guard actually reproduces what ships.
@@ -91,20 +127,157 @@ jobs:
             libstdc++-arm-none-eabi-dev libstdc++-arm-none-eabi-newlib \
             libnewlib-arm-none-eabi
 
-      - name: Stamp the version
+      # uv IS INSTALLED HERE, BEFORE THE STAMP, and that is the only reason this
+      # step exists separately from "Sync the UI" further down. ui/uv.lock has to
+      # be regenerated by the stamp step so it can go INTO the stamp commit, and
+      # uv is the only thing that can write it -- so the installer has to run
+      # first. Nothing else moved: the venv and the sync stay where they were,
+      # after the firmware builds.
+      #
+      # $HOME/.local/bin is already on the runner's PATH, which is why the old
+      # combined step worked at all; exporting it through $GITHUB_PATH says so
+      # out loud and makes uv reachable from every later step rather than by
+      # coincidence.
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/uv" --version
+
+      # THE STAMP IS COMMITTED BEFORE ANYTHING IS BUILT. The firmware's
+      # identity -- the rev and dirty flag in the identity window, and in the
+      # slotted image's RFLX header -- is read from git at BUILD time by
+      # fw/cmake/BuildRev.cmake: `git rev-parse --short=7 HEAD`, plus "does
+      # the tree have uncommitted tracked changes". Until 2026-09-11 this step
+      # only wrote VERSION and ui/pyproject.toml, the build ran, and the commit
+      # came at the very end. So every official image was built from a dirty
+      # tree at the commit BEFORE the version bump, and said so: v1.2.0-rc.1
+      # reports f8dcb82-dirty while its tag points at c387940. -dirty is meant
+      # to be the loud "this came off someone's working tree" signal, and it
+      # was set on 100% of releases.
+      #
+      # Committing here means the build sees a clean tree at the exact commit
+      # the tag will point at. The commit stays LOCAL to this runner until the
+      # publish step pushes it together with the tag, so a failure anywhere in
+      # between is discarded with the runner: nothing reaches origin that no
+      # release goes with. A dry run makes the commit too, so it builds and
+      # checks exactly what a real run would publish.
+      #
+      # ui/uv.lock IS PART OF THE STAMP, added 2026-09-11. The lock records the
+      # root project's own version -- reflex is an editable member of its own
+      # resolution -- so it only tells the truth once uv has re-read a stamped
+      # ui/pyproject.toml. Until now the only uv in the job was the `uv sync`
+      # below, which runs AFTER this commit and rewrote the lock on the runner
+      # where nothing picked it up: no tagged commit has ever carried a lock
+      # matching its own version. Measured on integration 2026-09-11 -- VERSION
+      # 1.1.0, lock 1.1.0rc1 -- and true of every release the monorepo has cut.
+      #
+      # If the tree already says this version there is nothing to commit and
+      # HEAD already IS the stamp, so it is tagged as is rather than failing on
+      # an empty commit. That is the re-run after a publish that pushed the
+      # stamp and tag but failed to create the release: delete the tag,
+      # dispatch the same version again.
+      - name: Stamp the version and commit it, before the build
+        id: stamp
         run: |
           echo "${{ steps.v.outputs.version }}" > VERSION
           # ui is a Python package and carries its own version field; keep it
           # equal to the repo's rather than letting the two drift.
           sed -i -E '0,/^version = ".*"$/s//version = "${{ steps.v.outputs.version }}"/' ui/pyproject.toml
-          grep -m1 '^version = ' ui/pyproject.toml
+          grep -qx 'version = "${{ steps.v.outputs.version }}"' ui/pyproject.toml \
+            || { echo "::error::the version stamp did not land in ui/pyproject.toml"; exit 1; }
+          # `uv lock` and NOT `uv sync`: it rewrites the lockfile and nothing
+          # else, needs no venv, and by default holds every already-locked
+          # dependency at the version it is already pinned to -- so the only
+          # delta here is the root project's own version field, the one field
+          # stamped above. Not --offline: a fresh runner's uv cache is empty, so
+          # an offline resolve would fail rather than reuse anything. The next
+          # step gates on the result actually landing in the commit.
+          (cd ui && uv lock)
+          # NOT the inherited identity. reflex-fw's split-era release workflow
+          # tagged as bartei81@gmail.com, carried over from the upstream fork --
+          # releases signed by someone who has never worked on this project.
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION ui/pyproject.toml ui/uv.lock
+          if git diff --cached --quiet; then
+            echo "VERSION, ui/pyproject.toml and ui/uv.lock already say ${{ steps.v.outputs.version }}; HEAD is the stamp, nothing to commit"
+          else
+            git commit -q -m "chore(release): v${{ steps.v.outputs.version }} [skip ci]"
+          fi
+          # The exact test BuildRev.cmake applies. Anything tracked still
+          # modified here would make every image below say -dirty again.
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "::error::the tree is not clean after the stamp commit; the firmware would be built -dirty."
+            git status --short
+            exit 1
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "stamp commit: $(git log -1 --format='%h %s')"
 
+      # THE GATE ON THE STAMP, and it reads the COMMIT rather than the working
+      # tree. The claim being made is "the commit this release tags carries a
+      # lock that declares its own version", so the thing to open is
+      # `git show <stamp sha>:ui/uv.lock` -- exactly as the identity guard below
+      # reads the bytes that ship instead of the build log. A working-tree check
+      # would pass just as happily on a lock that `git add` never picked up.
+      #
+      # It runs HERE, before the ~10 minutes of firmware builds, because nothing
+      # it reads depends on them; a version mismatch should cost seconds.
+      #
+      # Versions are compared CANONICALLY -- VERSION says 1.1.0-rc.1 where uv
+      # writes 1.1.0rc1 -- which is why this is a script and not a `grep -q`.
+      # The self-test runs first, against fixtures that must pass and fixtures
+      # that must fail (including the exact 1.1.0-vs-1.1.0rc1 shape measured on
+      # integration), so every release re-proves the guard can go red. Two
+      # guards in this file have shipped unable to fail; assume this one is next
+      # unless it demonstrates otherwise on every run.
+      - name: Refuse a stamp commit whose uv.lock is not this version
+        run: |
+          SHA=${{ steps.stamp.outputs.sha }}
+          git show "$SHA:VERSION"           > "$RUNNER_TEMP/VERSION"
+          git show "$SHA:ui/uv.lock"        > "$RUNNER_TEMP/uv.lock"
+          git show "$SHA:ui/pyproject.toml" > "$RUNNER_TEMP/pyproject.toml"
+          python3 ui/scripts/lock_version_parity.py self-test
+          if ! python3 ui/scripts/lock_version_parity.py check "$RUNNER_TEMP/uv.lock" \
+                 --version-file "$RUNNER_TEMP/VERSION" \
+                 --pyproject "$RUNNER_TEMP/pyproject.toml"; then
+            echo "::error::the stamp commit's ui/uv.lock does not declare v${{ steps.v.outputs.version }} -- a checkout of this tag would disagree with itself about its own version."
+            exit 1
+          fi
+
+      # TWO firmware binaries ship and they are NOT interchangeable. Until
+      # 2026-09-07 only the legacy monolith was built, which meant the only
+      # firmware a release published was the one the field updater cannot
+      # flash; that legacy configuration was retired here on 2026-09-13 (see
+      # the RETIRED note further down).
+      #
+      #   build-slot/    the application linked at the bootloader's RUN slot,
+      #                  0x08020000, with the RFLX header at +0x200 patched in
+      #                  post-build by scripts/reflex_image.py. This is the
+      #                  ONLY form fw/scripts/modbus-flash.py -- and so the
+      #                  in-app updater, ui/reflex/utils/updater.py -- will
+      #                  accept; an unslotted binary is refused at its
+      #                  preflight.
+      #   bootloader/    sector 0 itself. A virgin board has no bootloader, so
+      #                  without this asset the over-the-wire path cannot be
+      #                  reached at all.
+      #
+      # Separate build directories per configuration, the way DIAG.md keeps
+      # diagnostic builds apart: one directory reconfigured twice would leave
+      # a stale cache deciding what the second build meant. That still holds
+      # with two configurations -- build-slot/ and bootloader/build/ are
+      # configured differently and neither may inherit the other's cache.
       - name: Cross-build the release firmware
         working-directory: fw
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j
-          test -f build/reflex-fw.bin && test -f build/reflex-fw.elf
+          cmake -S . -B build-slot -DCMAKE_BUILD_TYPE=Release -DREFLEX_APP_BASE=0x08020000
+          cmake --build build-slot -j
+          test -f build-slot/reflex-fw.bin && test -f build-slot/reflex-fw.elf
+
+          cmake -S bootloader -B bootloader/build -DCMAKE_BUILD_TYPE=MinSizeRel
+          cmake --build bootloader/build -j
+          test -f bootloader/build/reflex-bl.bin && test -f bootloader/build/reflex-bl.elf
 
       # A diagnostic probe must never ship. It is compile-time selected, so a
       # release build cannot contain one -- but "cannot" is worth checking on
@@ -121,23 +294,59 @@ jobs:
       #
       # The build CONFIGURATION is where the probe is genuinely selected, and it
       # does distinguish: 1 occurrence for a probe build, 0 for a release build,
-      # both measured.
+      # both measured. Re-measured 2026-09-07 on the slotted configuration --
+      # `cmake -S . -B <dir> -DREFLEX_APP_BASE=0x08020000
+      # -DCMAKE_C_FLAGS=-DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3`, the
+      # flags scripts/build.sh --diag passes -- also lands exactly 1.
+      #
+      # IT MUST COVER EVERY SHIPPED CONFIGURATION, and as of 2026-09-13 there
+      # are two. This step used to inspect build/ alone, which was total
+      # coverage when the legacy build/ was the only thing published; the same
+      # step left unchanged beside two new build directories would have been
+      # the worse thing than no guard -- a green check reading as "no
+      # diagnostic ships" while the probe with a path to the FIELD, the one in
+      # build-slot/ that the in-app updater flashes, went unexamined. That is
+      # also why build/ came OUT of the loop on 2026-09-13 rather than being
+      # left in: "Cross-build the release firmware" no longer configures it,
+      # and the existence assertion below would then fail the release for a
+      # directory nothing ships from. The rule is one cache per shipped
+      # configuration, no more and no fewer.
+      #
+      # And it asserts each cache EXISTS before grepping. `grep -q` over a
+      # missing file exits nonzero exactly like a clean cache does, so a
+      # renamed or unbuilt directory would otherwise turn a loop iteration
+      # into a silent pass -- the same "cannot fail" shape this comment was
+      # written about in the first place.
       - name: Refuse to ship a diagnostic build
         working-directory: fw
         run: |
-          if grep -q 'ELS_DIAG_PROBE' build/CMakeCache.txt; then
-            echo "::error::the shipped firmware was configured with a diagnostic probe."
-            grep 'ELS_DIAG_PROBE' build/CMakeCache.txt
-            exit 1
-          fi
-          echo "build configuration carries no ELS_DIAG_PROBE"
+          fail=0
+          for cache in build-slot/CMakeCache.txt bootloader/build/CMakeCache.txt; do
+            if [ ! -f "$cache" ]; then
+              echo "::error::$cache does not exist -- the diagnostic guard cannot see the configuration behind a binary this release ships."
+              fail=1
+            elif grep -q 'ELS_DIAG_PROBE' "$cache"; then
+              echo "::error::$cache: this firmware was configured with a diagnostic probe."
+              grep 'ELS_DIAG_PROBE' "$cache"
+              fail=1
+            else
+              echo "ok: $cache carries no ELS_DIAG_PROBE"
+            fi
+          done
+          [ "$fail" = 0 ] || exit 1
 
-      - name: Install uv and sync the UI
+      # uv itself was installed before the stamp; this is the venv and the
+      # install. --locked because the lock is now a RELEASE ARTIFACT: it was
+      # regenerated and committed by the stamp step, and `uv sync` silently
+      # rewriting it here is the precise behaviour that hid the defect for every
+      # release before 2026-09-11. --locked turns that rewrite into a job
+      # failure instead, so the tests below run against the resolution the tag
+      # actually carries.
+      - name: Sync the UI
         working-directory: ui
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
           uv venv
-          uv sync
+          uv sync --locked
 
       # The gate. A release that has not run the suites is a guess, and the
       # system suite already ran on this commit's push, so this is the fast
@@ -159,15 +368,135 @@ jobs:
         working-directory: ui
         run: uv build
 
+      # THE NAMES ARE THE CONTRACT. Two firmware binaries ship in the same
+      # release, they are different layouts rather than different builds of
+      # one thing, and only one of them is an application at all -- so the
+      # names have to be un-confusable by a human reading the release page AND
+      # by a glob:
+      #
+      #   reflex-app-<V>.bin  the RUN-slot image with the RFLX header. What
+      #                       modbus-flash.py and the in-app updater take.
+      #   reflex-bl-<V>.bin   the bootloader, sector 0.
+      #
+      # `reflex-app-` and not `reflex-fw-slot-`, which was the obvious name and
+      # was the wrong one: `reflex-fw-*.bin` -- the glob the updater used, the
+      # glob docs/setup/installing.md told operators to use, the glob anyone
+      # writes by hand -- matches it, and back when a legacy `reflex-fw-<V>.bin`
+      # asset still shipped alongside, that glob could silently take the
+      # unflashable one. The asset is gone (see RETIRED below) but the name is
+      # not coming back: releases published before 2026-09-13 still carry it,
+      # and ui/reflex/utils/updater.py's anchored `^reflex-app-` pattern is
+      # what keeps those old releases from being offered as installable.
+      # It is also the vocabulary the system already speaks: the identity
+      # window's two stages are `bootloader` and `application`, so bl/app names
+      # the pair the slotted layout actually has and reads correctly next to
+      # reflex-bl-<V>.bin.
+      #
+      # The bootloader ELF ships beside its .bin because fw/bootloader/README.md
+      # step 4 provisions a virgin board with `program reflex-bl.elf`. The
+      # slotted app ELF deliberately does NOT ship: it still holds the zero
+      # length/CRC placeholders that reflex_image.py patches into the .bin, so
+      # it is not a valid image, and the README says never to program it.
+      #
+      # --------------------------------------------------------------------
+      # RETIRED 2026-09-13: the legacy `reflex-fw-<V>.bin` / `.elf` assets.
+      #
+      # They were the legacy no-bootloader layout at 0x08000000, kept for one
+      # population -- boards still on that layout -- under an explicit end
+      # condition: they ship until no such board remains. The known-legacy
+      # list lived in fw/bootloader/README.md and emptied on 2026-09-12, when
+      # a sector-0 dump over the real ST-Link classified elspi as BOOTLOADER
+      # and it turned out to have been on the bootloader layout all along. The
+      # list was never non-empty in fact, so the condition was met and the
+      # asset stopped shipping.
+      #
+      # fw/scripts/flash.sh STAYS. The old note here paired the asset and the
+      # script as "the same layout wearing two hats" and said to retire them
+      # together; that coupling was false. flash.sh configures and builds
+      # locally and programs `firmware/reflex-fw-<variant>.elf` from that
+      # build -- it never downloaded or consumed a release asset, so removing
+      # the asset takes nothing away from it. It remains the SWD recovery
+      # tool: the only way into a board that will not answer over Modbus, and
+      # the only thing that runs with nothing in sector 0.
+      # --------------------------------------------------------------------
       - name: Collect the artifacts
         run: |
           mkdir -p dist
           V=${{ steps.v.outputs.version }}
-          cp fw/build/reflex-fw.bin "dist/reflex-fw-$V.bin"
-          cp fw/build/reflex-fw.elf "dist/reflex-fw-$V.elf"
+          cp fw/build-slot/reflex-fw.bin "dist/reflex-app-$V.bin"
+          cp fw/bootloader/build/reflex-bl.bin "dist/reflex-bl-$V.bin"
+          cp fw/bootloader/build/reflex-bl.elf "dist/reflex-bl-$V.elf"
           cp ui/dist/* dist/
           (cd dist && sha256sum * > SHA256SUMS)
           ls -la dist
+
+      # Gate on the BYTES THAT SHIP, not on the build log. reflex_image.py runs
+      # as a POST_BUILD command that only the slotted configuration attaches
+      # (fw/CMakeLists.txt, `if (REFLEX_SLOTTED)`). If that wiring ever comes
+      # loose the build still succeeds and still writes a .bin -- an unheadered
+      # one, which fails in the field at a stranger's preflight rather than
+      # here. Reading dist/ rather than fw/build-slot/ is still the right end
+      # of the pipe -- it is the file a stranger downloads -- though with only
+      # one firmware `cp` left there is no longer a second binary for it to be
+      # swapped with, so that particular mistake is now structural rather than
+      # caught here.
+      #
+      # ONE DIRECTION IS ALL THAT IS LEFT, and it is worth being exact about
+      # what it does and does not buy. Until 2026-09-13 this step asserted
+      # both that reflex-app validates AND that the legacy reflex-fw asset
+      # does NOT, because with two similarly-named files a swap could pass
+      # either assertion alone. With the legacy asset retired there is no
+      # second file to cross with, so the pair argument no longer applies.
+      #
+      # What the remaining check proves: the bytes in dist/reflex-app-$V.bin
+      # carry a well-formed RFLX header whose length and CRC32 match their own
+      # contents -- so the POST_BUILD reflex_image.py wiring did run, and the
+      # file a stranger downloads is one modbus-flash.py's preflight will
+      # accept rather than refuse after it has already erased.
+      #
+      # What it CANNOT prove: that the image is linked at 0x08020000, or that
+      # it came from the slotted configuration rather than some other build
+      # that happened to get a header patched in. A valid header is evidence
+      # about the header, not about the link address. The load address is not
+      # in the header, so nothing here reads it; the identity check below is
+      # what ties these bytes to the tagged commit, and only the bootloader
+      # itself refuses a wrongly-linked image, in the field.
+      - name: Check each firmware asset is the layout its name claims
+        run: |
+          V=${{ steps.v.outputs.version }}
+          python3 fw/scripts/reflex_image.py info "dist/reflex-app-$V.bin"
+          echo "ok: reflex-app-$V.bin carries a valid RFLX header (length and CRC32 self-consistent)"
+
+      # EVERY IMAGE MUST NAME THE COMMIT THE TAG POINTS AT, CLEAN -- read from
+      # the bytes that ship. fw/scripts/release_identity.py finds the identity
+      # window each firmware stage compiles into flash (the eight registers
+      # the board answers at address 2048, which modbus-flash.py prints as
+      # rev=<sha>[-dirty]) and, for the slotted image, the RFLX header's
+      # buildRev and dirty flag as well. Both shipped images, for the
+      # same reason the diagnostic guard covers both. Not finding a
+      # window, or finding two, is a failure: a check that cannot see the
+      # identity cannot vouch for it.
+      #
+      # The self-test runs first, against synthetic images: a clean one that
+      # must pass, and dirty / wrong-commit / wrong-stage / missing / doubled
+      # windows that must each fail. A guard that cannot fail is worse than
+      # none -- the diagnostic guard above shipped that way once -- so every
+      # release re-proves this one can. Seen red on REAL images 2026-09-11:
+      # the three configurations built in the old order (stamp, build, then
+      # commit) were all refused, reading <parent>-dirty instead of the stamp
+      # commit; built in this order, all three passed.
+      - name: Refuse to ship an image that is not the tagged commit, clean
+        run: |
+          V=${{ steps.v.outputs.version }}
+          REV=${{ steps.stamp.outputs.sha }}
+          python3 fw/scripts/release_identity.py self-test
+          fail=0
+          python3 fw/scripts/release_identity.py check "dist/reflex-app-$V.bin" --stage app        --rev "$REV" --slotted || fail=1
+          python3 fw/scripts/release_identity.py check "dist/reflex-bl-$V.bin"  --stage bootloader --rev "$REV"           || fail=1
+          if [ "$fail" != 0 ]; then
+            echo "::error::a shipped firmware image does not identify as ${REV:0:7}, clean -- it was not built from the commit this release tags."
+            exit 1
+          fi
 
       # ── Publish ───────────────────────────────────────────────────────────
       - name: Stop here (dry run)
@@ -175,19 +504,22 @@ jobs:
         run: |
           echo "dry run — built and checked v${{ steps.v.outputs.version }}, publishing nothing"
 
-      - name: Commit the version, tag it, push
+      # The stamp commit was made before the build. Tag THAT commit, by sha,
+      # rather than whatever HEAD is by now, and push branch and tag in ONE
+      # atomic push: origin gets both or neither. The old two-push form could
+      # land the stamp commit on the branch and then fail the tag push,
+      # leaving a version bump on dev that no tag or release goes with.
+      #
+      # Still not atomic with the push: `gh release create` below. If it fails,
+      # the tag and stamp are on origin with no release; delete the tag and
+      # dispatch the same version again (the stamp step then finds nothing to
+      # commit and tags HEAD as is).
+      - name: Tag the stamp commit and push both
         if: ${{ !inputs.dry_run }}
         run: |
-          # NOT the inherited identity. reflex-fw's split-era release workflow
-          # tagged as bartei81@gmail.com, carried over from the upstream fork --
-          # releases signed by someone who has never worked on this project.
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add VERSION ui/pyproject.toml
-          git commit -m "chore(release): v${{ steps.v.outputs.version }} [skip ci]"
-          git tag -a "v${{ steps.v.outputs.version }}" -m "reflex v${{ steps.v.outputs.version }}"
-          git push origin HEAD:${{ github.ref_name }}
-          git push origin "v${{ steps.v.outputs.version }}"
+          SHA=${{ steps.stamp.outputs.sha }}
+          git tag -a "v${{ steps.v.outputs.version }}" -m "reflex v${{ steps.v.outputs.version }}" "$SHA"
+          git push --atomic origin "$SHA:refs/heads/${{ github.ref_name }}" "refs/tags/v${{ steps.v.outputs.version }}"
 
       - name: Publish the release
         if: ${{ !inputs.dry_run }}
@@ -195,7 +527,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           V=${{ steps.v.outputs.version }}
-          FLAGS="--generate-notes --target ${{ github.ref_name }}"
+          # --notes-file together with --generate-notes: the written notes come
+          # first and the generated changelog is appended beneath them.
+          FLAGS="--notes-file release-notes/$V.md --generate-notes --target ${{ github.ref_name }}"
           [ "${{ steps.v.outputs.prerelease }}" = "true" ] && FLAGS="$FLAGS --prerelease"
           gh release create "v$V" dist/* --title "reflex v$V" $FLAGS
           echo "published v$V from ${{ github.ref_name }}"

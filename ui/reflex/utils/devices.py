@@ -1,5 +1,9 @@
 from reflex.utils.base_device import BaseDevice, TypeDefinition
 from reflex.utils import communication
+from reflex.utils import els_stop_map
+from reflex.utils import fast_data_map
+from reflex.utils import input_map
+from reflex.utils import servo_map
 SCALES_COUNT = 4
 SERVOS_COUNT = 3
 
@@ -60,51 +64,30 @@ Float = TypeDefinition(
 )
 
 
+# servo_t, input_t and fastData_t are GENERATED, like elsStop_t below. These
+# were hand-maintained strings with hand-placed _pad fields until 2026-09-18;
+# tools/genregs.py now emits them from registers/servo.yaml, input.yaml and
+# fast_data.yaml at offsets the target compiler has agreed to via static_assert
+# in fw/Core/Inc/Ramps_generated.h. Edit the schema, not these.
+
+
 class Servo(BaseDevice):
-    definition = """
-typedef struct {
-  float maxSpeed;
-  float currentSpeed;
-  float jogSpeed;
-  float acceleration;
-  int32_t stepsToGo;
-  uint32_t destinationSteps;
-  uint32_t currentSteps;
-  uint32_t desiredSteps;
-  int16_t servoDir;
-  int16_t _pad;
-} servo_t;
-"""
+    """Mirror of ``servo_t`` (registers/servo.yaml)."""
+
+    definition = servo_map.DEFINITION
 
 
 class Scale(BaseDevice):
-    definition = """
-typedef struct {
-  uint32_t timerHandleSlot;
-  int32_t position;
-  int32_t speed;
-  int32_t syncRatioNum, syncRatioDen;
-  uint16_t syncEnable;
-  int16_t scaleDir;
-} input_t;
-"""
+    """Mirror of ``input_t`` (registers/input.yaml), one per ``scales[i]``."""
+
+    definition = input_map.DEFINITION
 
 
 class FastData(BaseDevice):
-    definition = """
-typedef struct {
-  uint32_t servoCurrent;
-  uint32_t servoDesired;
-  uint32_t stepsToGo;
-  float servoSpeed;
-  int32_t scaleCurrent[4];
-  int32_t scaleSpeed[4];
-  uint32_t cycles;
-  uint32_t executionInterval;
-  uint16_t servoMode;
-  uint16_t _pad0;
-} fastData_t;
-"""
+    """Mirror of ``fastData_t`` (registers/fast_data.yaml)."""
+
+    definition = fast_data_map.DEFINITION
+
 
 class ElsStop(BaseDevice):
     """Mirror of ``elsStop_t`` in reflex-fw ``Core/Inc/Ramps.h``.
@@ -176,66 +159,34 @@ class ElsStop(BaseDevice):
     increment — the absent ack IS the refusal.
     """
 
-    definition = """
-typedef struct {
-  uint16_t enable;
-  uint16_t scaleIndex;
-  int32_t  stopPosition;
-  int16_t  stopDirection;
-  uint16_t active;
-  float    threadPitchSteps;
-  int32_t  hysteresis;
-  float    zCountsPerPitch;
-  uint32_t backlashSteps;
-  int32_t  latchedZ;
-  int32_t  latchedSpindle;
-  uint16_t referenceLatched;
-  uint16_t takeupPending;
-  float    lastIdealAdvance;
-  float    lastActualAdvance;
-  float    lastPhaseError;
-  float    lastCorrection;
-  uint16_t protocolVersion;
-  uint16_t calCommand;
-  uint16_t calSeq;
-  uint16_t calResult;
-  uint16_t takeupResult;
-  uint16_t takeupSeq;
-  int32_t  calMeasured[3];
-  int32_t  calCeilingSteps;
-  int32_t  calMotionThreshCounts;
-  int32_t  lastTakeupZDelta;
-  int32_t  takeupThreshCounts;
-  uint16_t diagSchema;
-  uint16_t diagSeq;
-  uint16_t diagBucketTicks;
-  uint16_t diagBucketCount;
-  int32_t  diagSettleTicks;
-  int32_t  diagNetCounts;
-  int16_t  diagTrace[50];
-  uint16_t diagCaptureTicks;
-  uint16_t diagEndReason;
-  uint16_t diagReserved[4];
-  uint16_t machineMode;
-  uint16_t machineModeReserved;
-  uint16_t latchCommand;
-  uint16_t latchSeq;
-  uint16_t phaseOffsetCommand;
-  uint16_t phaseOffsetSeq;
-  int32_t  phaseOffsetPending;
-  int32_t  phaseOffsetSteps;
-  uint32_t executionCyclesPeak;
-  uint32_t stepPulseMinCycles;
-  uint32_t stepPulseRuntCount;
-} elsStop_t;
-"""
+    # GENERATED. Was a hand-maintained mirror with hand-placed _pad fields;
+    # tools/genregs.py emits it from registers/els_stop.yaml, at offsets the
+    # target compiler has already agreed to via _Static_assert in
+    # fw/Core/Inc/Ramps_generated.h. Edit the schema, not this.
+    definition = els_stop_map.DEFINITION
+
+    def refresh_hot(self):
+        """Read the HOT group as ONE FC3 request and decode it.
+
+        The tick path's read. refresh() still reads the whole block in two
+        requests and is what an on-demand caller wants; this reads only the
+        registers a tick-driven reader can actually touch, which is the entire
+        return on the hot/cold split -- three exchanges per tick become two.
+
+        Both the span and the decoder come from the generated map, so they
+        cannot disagree about where a field is: a field added to the schema
+        moves the offsets, the format string and the field list together, or
+        generation fails.
+        """
+        raw = self.read_span(els_stop_map.HOT_BASE, els_stop_map.HOT_COUNT)
+        return els_stop_map.decode_hot(raw)
 
 
 # --- Frozen protocol constants -------------------------------------------
 # Mirrored from reflex-fw Core/Inc/els_backlash_cal.h. Values are part of the
 # Modbus contract; never renumber, only append.
 
-ELS_PROTOCOL_VERSION = 7        # elsStop.protocolVersion this UI is built against
+ELS_PROTOCOL_VERSION = els_stop_map.PROTOCOL_VERSION        # elsStop.protocolVersion this UI is built against
                                 # 3 (2026-08-22): machineMode promoted to a permanent
                                 # register so the rung-2 census collects in every build.
                                 # 4 (2026-08-22): latchCommand/latchSeq for the manual
@@ -243,6 +194,23 @@ ELS_PROTOCOL_VERSION = 7        # elsStop.protocolVersion this UI is built again
                                 # every offset exercised on the lathe keeps its address.
                                 # 5 (2026-08-22): the thread-phase offset block
                                 # (groove widening), appended the same way.
+                                # 8 (2026-09-06): bootCommand/bootSeq, the software
+                                # path into the Modbus field bootloader, appended the
+                                # same way. The bootloader's identity window at 2048
+                                # is OUTSIDE this struct and does not bump this.
+                                # 9 (2026-09-07): the trigger-instant snapshot
+                                # (stopTriggerSeq / Z / ZSpeed / StepsToGo /
+                                # SpindleSpeed), latched in the ISR when the ELS
+                                # stop fires. The coast it measures lasts ~12 ms
+                                # against a 33 ms poll, so this UI could never
+                                # have taken the reading itself.
+                                # 10 (2026-09-07): the hot/cold remap; every
+                                # offset moved and the map became generated.
+                                # 11 (2026-09-18): stopOffset (host-written
+                                # stop-overshoot correction, fires the stop
+                                # early) and stopTriggerOffset (the clamped
+                                # value each trigger used), both in former
+                                # alignment pads -- nothing else moved.
 
 # Diagnostic scratchpad schema ids (elsStop.diagSchema). 0 means no probe is
 # compiled into the firmware and the block must not be interpreted at all.

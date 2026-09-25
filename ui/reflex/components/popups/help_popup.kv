@@ -11,15 +11,32 @@
       do_scroll_x: False
       do_scroll_y: True
 
-      Label:
-        text: root.help_text
+      # Picture and prose scroll together: on the machine's 600 px screen a
+      # pinned illustration would eat the height the words need.
+      BoxLayout:
+        orientation: "vertical"
         size_hint_y: None
-        height: self.texture_size[1] + 20
-        text_size: self.width, None
-        font_size: 16
-        halign: "left"
-        valign: "top"
-        markup: False
+        height: self.minimum_height
+        spacing: 8
+
+        # help_image is "" for a topic with no drawing and for one whose file
+        # is missing (help_popup.py resolves both to ""). height 0 rather than
+        # size_hint_y 0, which would leave the previous height in place.
+        Image:
+          source: root.help_image
+          size_hint_y: None
+          height: dp(220) if root.help_image else 0
+          fit_mode: "contain"
+
+        Label:
+          text: root.help_text
+          size_hint_y: None
+          height: self.texture_size[1] + 20
+          text_size: self.width, None
+          font_size: 16
+          halign: "left"
+          valign: "top"
+          markup: False
 
     Button:
       size_hint_y: None

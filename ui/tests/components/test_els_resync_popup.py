@@ -42,18 +42,75 @@ import reflex.components.home.els_resync_popup as popup_mod
 from reflex.components.home.els_resync_popup import (
     ALIGN_TEXT, BODY_LINE_BUDGETS, BODY_WRAP_CHARS, DRIFTED_TEXT,
     FALLBACK_SEVERITY, HELP_TEXT, HELP_TITLE, JOG_TEXT, SEVERITY_FAULT,
-    SEVERITY_INFO, STATE_SEVERITY, ThreadResyncPopup,
+    SEVERITY_INFO, SEVERITY_REFUSED, STATE_SEVERITY, ThreadResyncPopup,
 )
+from reflex.fsms.els_resync import ThreadResync
 
 MODULE_DIR = Path(popup_mod.__file__).parent
 RESYNC_KV = MODULE_DIR / "els_resync_popup.kv"
 RESYNC_PY = MODULE_DIR / "els_resync_popup.py"
 
 
+def _open(entry_refusal=None):
+    """Build the wizard as if on a machine whose entry gates give this answer.
+
+    entry_refusal is stubbed rather than satisfied through the HAL mock on
+    purpose: most of this file is about the severity table, and making the
+    shared mock pass four unrelated preconditions would couple every one of
+    those tests to details they do not care about. The gates themselves are
+    tested in tests/fsms/test_els_resync.py; what is tested HERE is only what
+    the popup does with the answer.
+    """
+    with patch.object(ThreadResyncPopup, "apply_class_lang_rules"), \
+            patch.object(ThreadResync, "entry_refusal",
+                         return_value=entry_refusal):
+        return ThreadResyncPopup()
+
+
 @pytest.fixture
 def popup(running_app):
-    with patch.object(ThreadResyncPopup, "apply_class_lang_rules"):
-        return ThreadResyncPopup()
+    return _open()
+
+
+# ── refusing before the operator touches the machine (2026-08-31) ────
+
+def test_the_wizard_opens_refused_when_it_cannot_run(running_app):
+    """Every one of these conditions was already refused -- at Begin. This is
+    about WHEN, and the when is the whole defect."""
+    p = _open("No thread pitch is set — turning has no thread phase to pick up.")
+    assert p.state == "refused"
+    assert "No thread pitch is set" in p.body_text
+    assert p.severity == SEVERITY_REFUSED
+
+
+def test_a_refused_wizard_never_shows_the_jog_instructions(running_app):
+    """THE POINT. JOG_TEXT tells the operator to move the carriage by hand,
+    CLOSE THE HALF NUT and haul it back against the flank. Doing all of that
+    and then being told there is no thread pitch is what Evan hit on the
+    2026-08-30 bench run. It must not be on screen when the answer is no."""
+    p = _open("No threading job is armed.")
+    assert p.body_text != JOG_TEXT
+    assert "HALF NUT" not in p.body_text
+    assert "Close the HALF NUT" not in p.body_text
+
+
+def test_the_refusal_reason_survives_to_the_screen(running_app):
+    """Why this is not a greyed-out settings button: a disabled button cannot
+    say which of the conditions stopped it. The message is the feature."""
+    for reason in ("Not connected to the controller.",
+                   "Controller firmware does not support thread re-sync",
+                   "No thread pitch is set",
+                   "No threading job is armed."):
+        assert reason in _open(reason).body_text
+
+
+def test_a_runnable_machine_still_opens_on_the_jog_step(running_app):
+    """The negative control. A guard that refused everything would pass every
+    assertion above and break the wizard entirely."""
+    p = _open(None)
+    assert p.state == "jog"
+    assert p.body_text == JOG_TEXT
+    assert p.severity == SEVERITY_INFO
 
 
 # ── the severity table itself ────────────────────────────────────────

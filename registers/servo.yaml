@@ -1,0 +1,68 @@
+# =============================================================================
+# reflex register schema -- SINGLE SOURCE OF TRUTH for servo_t
+# =============================================================================
+# Generates, and is never generated from:
+#   fw/Core/Inc/Ramps_generated.h   struct + static_assert per field
+#   ui/reflex/utils/servo_map.py    decoder + the DEFINITION reflex-ui parses
+#   docs/reference/register-map.md  the documented map
+#
+# TRANSCRIBED, NOT REDESIGNED (2026-09-18, Open Loops 6a9f3106). Field list,
+# order, types and padding are exactly the hand-written struct this replaced in
+# fw/Core/Inc/Ramps.h, and the `doc:` strings are its per-field comments
+# verbatim. The cutover was required to leave the firmware image byte-identical;
+# a layout change here is a register-map change and bumps protocolVersion in
+# registers/els_stop.yaml, which is where the version for the whole shared
+# block lives.
+#
+# TRAILING PADDING. servoDir is the last field and a lone int16 after 32 bytes
+# of 4-byte fields, so the struct is 34 bytes of fields in a 4-aligned 36-byte
+# object. The generator computes that 2-byte tail pad itself: IMPLICIT in the C
+# struct (exactly as the hand-written struct had it -- adding a member would
+# change the struct, not just document it), EXPLICIT in reflex-ui's DEFINITION
+# (whose parser has no alignment awareness and used to carry a hand-placed
+# `int16_t _pad` for it), and pinned by static_assert(sizeof(servo_t) == 36).
+# =============================================================================
+
+schema_version: 1
+
+meta:
+  struct: servo_t
+  short_name: servo            # prose name for the struct in generated text
+  macro_prefix: SERVO          # C macros: SERVO_TOTAL_REGS, SERVO_ALL_REG_BASE, ...
+  parent: rampsSharedData_t
+  parent_member: servo
+  parent_count: 1
+  parent_offset_registers: 8   # after executionInterval/Previous/Current/Cycles (4 x uint32)
+  register_width_bits: 16
+  endianness: little
+  py_out: ui/reflex/utils/servo_map.py
+
+layout:
+  - group: all
+    doc: >
+      The whole struct. Servo configuration and live ramp state; the tick-rate
+      mirrors of the live values are in fastData_t.
+    budget_registers: 125
+    fail_over_budget: true
+
+types:
+  uint16: {bytes: 2}
+  int16:  {bytes: 2}
+  uint32: {bytes: 4}
+  int32:  {bytes: 4}
+  float:  {bytes: 4}   # IEEE-754 binary32, little-endian, as the STM32 lays it out
+
+# `id` is a stable logical identifier within this struct, assigned once and
+# never reused. Order is the physical order.
+fields:
+  - {id: 1, name: maxSpeed,         type: float,  access: sw_write,    group: all, doc: "SW write: maximum step rate (steps/s); clamped to 100000 by firmware"}
+  - {id: 2, name: currentSpeed,     type: float,  access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): live ramp speed, managed by ramp algorithm"}
+  - {id: 3, name: jogSpeed,         type: float,  access: sw_write,    group: all, doc: "SW write: jog target speed (steps/s); negative = reverse"}
+  - {id: 4, name: acceleration,     type: float,  access: sw_write,    group: all, doc: "SW write: ramp acceleration (steps/s²)"}
+  # SIGNED, and so is its mirror fastData.stepsToGo since protocolVersion 11
+  # (2026-09-18; until then the mirror was uint32 -- see fast_data.yaml).
+  - {id: 5, name: stepsToGo,        type: int32,  access: sw_write,    group: all, doc: "SW write: remaining steps for indexing move; firmware decrements toward zero"}
+  - {id: 6, name: destinationSteps, type: uint32, access: sw_write,    group: all, doc: "SW write: absolute destination step count for indexing mode"}
+  - {id: 7, name: currentSteps,     type: uint32, access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): step counter incremented/decremented by ISR"}
+  - {id: 8, name: desiredSteps,     type: uint32, access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): accumulated target steps, driven by sync/ramp"}
+  - {id: 9, name: servoDir,         type: int16,  access: sw_write,    group: all, doc: "SW write: ±1, default +1 (no inversion); applied to DIR pin in ISR"}

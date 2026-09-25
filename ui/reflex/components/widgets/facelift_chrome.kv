@@ -1,6 +1,16 @@
+#:import Window kivy.core.window.Window
 # ── Popup chrome ───────────────────────────────────────────────────────────
 # Restyle every stock Kivy Popup into the facelift look: dark-steel frame,
 # cyan Chakra-Petch title, and a crisp cyan separator under it.
+#
+# THE DIMMING BEHIND A POPUP IS DRAWN HERE, and Kivy's own is switched off
+# (overlay_color transparent). Its rule paints that overlay in canvas.before
+# too -- and kivy/uix/modalview.kv is loaded when the first Popup is BUILT,
+# i.e. after this file, so its instruction landed LAST and dimmed the popup
+# as well as the screen behind it. Measured 2026-09-19 in the light theme:
+# the feed picker's body rendered at 30% of `background` (217 -> 66) and its
+# accent_text title read 1.14:1 -- against 5.9:1 on an undimmed face. Ours is
+# the first instruction in this rule, so the frame and face below cover it.
 <Popup>:
     title_color: app.theme.accent_text
     title_font: app.theme.font_bold
@@ -9,7 +19,13 @@
     separator_height: dp(2)
     background: ''
     background_color: 0, 0, 0, 0
+    overlay_color: 0, 0, 0, 0
     canvas.before:
+        Color:
+            rgba: 0, 0, 0, 0.7
+        Rectangle:
+            pos: 0, 0
+            size: Window.size
         Color:
             rgba: app.theme.border
         RoundedRectangle:
@@ -24,6 +40,16 @@
             radius: [dp(8)]
 
 # ── Shared settings-row controls ───────────────────────────────────────────
+# DISABLED COLOURS ARE THEMED HERE TOO, NOT JUST `color`. Kivy draws a disabled
+# Label/Button in `disabled_color` and a disabled TextInput in
+# `disabled_foreground_color`, and their stock values -- white at 30% and BLACK
+# AT 50% -- know nothing about the theme. Black-at-50% on the dark `recess`
+# fill measured 1.02:1, which is why every read-only value on Setup > System
+# was invisible in the dark theme (reported at the lathe 2026-09-19; the stock
+# fallbacks had been live since these controls were introduced in 02def60).
+# Any colour property added to these rules needs its disabled twin as well;
+# tests/test_form_disabled_colors.py holds that, and
+# previews/preview_setup_contrast.py measures the pixels.
 # Subtle info/help button (the "i" icon at the left of each settings row).
 <FormHelpButton@ButtonBehavior+FloatLayout>:
     # Circle-question help affordance (Font Awesome "circle-question", \uf059).
@@ -34,11 +60,20 @@
     # IconButton; a dynamic class based directly on Label/Button loses that race.
     size_hint_x: None
     width: self.height
+    # Enabled icon in `text`: text_dim on the page background is 3.96:1 in
+    # dark but 2.02-2.25:1 in light (2026-09-19), and an enabled help icon
+    # is a control, so it gets the same floor as text.
+    #
+    # A row with NO help topic shows NO icon (Evan, 2026-09-19). Kivy's stock
+    # disabled fade measured 2.63:1 dark and 1.10-1.15:1 light -- a control
+    # that cannot be used, drawn just visibly enough to invite a tap. The row
+    # keeps the icon's width, so captions stay aligned down the column.
+    opacity: 0 if self.disabled else 1
     Label:
         text: "\uf059"
         font_name: app.theme.font_icon
         font_size: dp(19)
-        color: app.theme.text_dim
+        color: app.theme.text
         size_hint: 1, 1
         pos_hint: {'x': 0, 'y': 0}
         halign: 'center'
@@ -48,6 +83,7 @@
 # Row caption: left-aligned, Chakra Petch, light blue-grey.
 <FormLabel@Label>:
     color: app.theme.text
+    disabled_color: app.theme.text_disabled
     font_name: app.theme.font_bold
     font_size: app.formats.font_size
     halign: 'left'
@@ -64,6 +100,7 @@
     font_name: app.theme.font_bold
     font_size: app.formats.font_size
     color: app.theme.accent_text
+    disabled_color: app.theme.text_disabled
     canvas.before:
         Color:
             rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
@@ -78,13 +115,20 @@
             width: 1.0
 
 # ON/OFF toggle: green-cyan accent fill when on, quiet slate when off.
+# OFF is drawn in `text`, not `text_dim`: text_dim on the `surface` pill
+# measured 2.38:1 dark / 2.82:1 light (Setup > Formats/Network/Servo/Update,
+# 2026-09-19) -- the word OFF was the least legible thing on those screens.
+# ON vs OFF stays distinct through the fill (accent_bg vs surface), the
+# border (accent vs border) and the ink (accent_text vs text), not through
+# making OFF hard to read.
 <FormToggle@ToggleButton>:
     background_normal: ''
     background_down: ''
     background_color: 0, 0, 0, 0
     font_name: app.theme.font_bold
     font_size: app.formats.font_size
-    color: app.theme.accent_text if self.state == 'down' else app.theme.text_dim
+    color: app.theme.accent_text if self.state == 'down' else app.theme.text
+    disabled_color: app.theme.text_disabled
     canvas.before:
         Color:
             rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
@@ -98,22 +142,130 @@
             rounded_rectangle: (self.x + dp(4) + 0.5, self.y + dp(5) + 0.5, self.width - dp(8) - 1, self.height - dp(10) - 1, dp(5))
             width: 1.0
 
+# Themed action button: the Setup menu grid, Backup's actions, Update's
+# Install/Exit, the Logs and Inputs/Axes lists. Lived in setup_screen.kv until
+# 2026-09-19; moved here, where it is loaded once for the whole app, so any
+# screen (or Python code, via Factory.SetupButton) can use it without importing
+# setup_screen first.
+# Disabled text is `text_disabled`, NOT the enabled colour at 35% alpha: alpha
+# dimming pulls the ink toward the fill and measured 2.07:1 dark / 1.98:1 light
+# on Backup's disabled gist buttons (2026-09-19). text_disabled is tuned for
+# >= 3:1 on `surface` in every theme (tests/components/test_theme_contrast.py).
+<SetupButton@Button>:
+    font_name: app.theme.font_bold
+    font_size: app.formats.font_size
+    color: app.theme.accent_text if self.state == 'down' else app.theme.text
+    disabled_color: app.theme.text_disabled
+    background_normal: ''
+    background_down: ''
+    background_disabled_normal: ''
+    background_disabled_down: ''
+    background_color: 0, 0, 0, 0
+    on_press: app.beep()
+    canvas.before:
+        Color:
+            rgba: app.theme.accent_bg if self.state == 'down' else app.theme.surface
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(8)]
+        Color:
+            rgba: app.theme.accent if self.state == 'down' else app.theme.border
+        Line:
+            rounded_rectangle: (self.x + 0.5, self.y + 0.5, self.width - 1, self.height - 1, dp(8))
+            width: 1.0
+
 # Themed single-line text entry for string settings.
 <FormTextInput@TextInput>:
     background_normal: ''
     background_active: ''
+    # Without this a disabled field swaps to Kivy's stock textinput_disabled
+    # image (tinted by background_color), a different-looking well.
+    background_disabled_normal: ''
     background_color: app.theme.recess
     foreground_color: app.theme.text
+    disabled_foreground_color: app.theme.text_disabled
     cursor_color: app.theme.accent
     font_name: app.theme.font_bold
     padding: [dp(12), (self.height - self.line_height) / 2 if self.height > self.line_height else dp(6)]
+
+# Read-only, multi-line output box (Network "Status", Update "Update
+# Status"). Themed well, monospace, set through `text`.
+#
+# A SCROLLING LABEL, NOT A TEXTINPUT (2026-09-23). It was a readonly
+# TextInput, and on the lathe a readonly TextInput still takes focus on a
+# touch: the dock keyboard came up over the Update screen mid-flash, and the
+# drag that should have scrolled the box went to the text field instead
+# (Evan, during the rc.5 install). A Label inside a ScrollView cannot take
+# focus, so a touch can only scroll it. It follows the newest line: every
+# change of `text` pins the view to the bottom, which is where a status log
+# grows.
+<FormOutputText@ScrollView>:
+    text: ''
+    do_scroll_x: False
+    do_scroll_y: True
+    scroll_type: ['bars', 'content']
+    bar_width: dp(6)
+    bar_color: app.theme.border
+    bar_inactive_color: app.theme.border_dim
+    on_text: self.scroll_y = 0
+    canvas.before:
+        Color:
+            rgba: app.theme.recess
+        Rectangle:
+            pos: self.pos
+            size: self.size
+    # A column at least as tall as the box, text at its TOP: a Label centres
+    # its texture in whatever height it is given, so the Label itself is only
+    # as tall as its text and a spacer takes the rest.
+    BoxLayout:
+        orientation: 'vertical'
+        size_hint_y: None
+        height: max(out_label.height, root.height)
+        Label:
+            id: out_label
+            text: root.text
+            size_hint_y: None
+            height: self.texture_size[1]
+            text_size: self.width, None
+            padding: [dp(12), dp(8)]
+            halign: 'left'
+            valign: 'top'
+            color: app.theme.text
+            disabled_color: app.theme.text_disabled
+            font_name: app.theme.font_mono
+        Widget:
+
+# Plain themed text for a Setup screen: what a bare `Label:` should have been.
+# A stock Label draws white whatever the theme -- 1.38-1.52:1 on the light
+# page (Formats volume, Logs heading, Profiling stats, 2026-09-19).
+# tests/components/test_setup_screens_themed.py keeps stock Label/Button/
+# TextInput off the Setup screens unless they are given a themed colour.
+<ThemedLabel@Label>:
+    color: app.theme.text
+    disabled_color: app.theme.text_disabled
 
 # ── Feeds selector (TabbedPanel + grid of FeedButton) ──────────────────────
 # Only the feed/thread picker uses TabbedPanel, so theming these globally is
 # safe and keeps the picker consistent with the rest of the facelift.
 <TabbedPanel>:
+    # background_image MUST be cleared, not just tinted: Kivy's default is an
+    # atlas bitmap that is dark whatever background_color says, so in the light
+    # theme the picker's body stayed near-black and its "Select Feed" title --
+    # accent_text, meant for a light panel -- measured 1.14:1 on it.
+    background_image: ''
     background_color: app.theme.background
     border: [0, 0, 0, 0]
+
+<TabbedPanelContent>:
+    # Same story as TabbedPanel above: the content area carries its own stock
+    # dark bitmap, which is what the picker's body actually showed.
+    canvas.before:
+        Color:
+            rgba: app.theme.background
+        Rectangle:
+            pos: self.pos
+            size: self.size
 
 <TabbedPanelStrip>:
     canvas.before:

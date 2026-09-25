@@ -1,31 +1,41 @@
 """Register-map layout contract test (Task 15 of the emulator system-test plan).
 
-Independent, emulator-free check that reflex-ui's hand-maintained register
-definitions (``reflex/utils/devices.py``) still agree, byte-for-byte, with the
-firmware's authoritative struct layout (reflex-fw ``Core/Inc/Ramps.h``).
+Independent, emulator-free check that reflex-ui's register definitions
+(``reflex/utils/devices.py``) agree, byte-for-byte, with the true C layout of
+the firmware's shared Modbus block, ``rampsSharedData_t``.
 
-Why this exists
----------------
-The Modbus register map is duplicated by hand on both sides of the RS-485 link:
-the firmware owns the C structs in ``Ramps.h``; reflex-ui mirrors them as the
-``definition`` strings in ``devices.py``. Nothing else checks the two still
-match. Drift here is silent and nasty -- reads land at the wrong offset and come
-back as plausible-looking garbage (exactly the class of the wrong-base-address
-gotcha the emulator spike hit). The emulator system suite catches gross drift
-only implicitly and slowly; this catches it precisely, instantly, and WITHOUT a
-firmware build, so it runs in the DEFAULT test suite (it is NOT marked
-``system``). It only skips when reflex-fw isn't checked out.
+Where the two sides come from now
+---------------------------------
+Every struct in that block except its four leading ISR counters is GENERATED
+by ``tools/genregs.py`` from one schema per struct in ``registers/*.yaml``:
+elsStop_t since 2026-09-07; servo_t, input_t and fastData_t since 2026-09-18.
+The generator writes the C structs into reflex-fw ``Core/Inc/Ramps_generated.h``
+and the ``DEFINITION`` strings reflex-ui parses into
+``reflex/utils/*_map.py``. ``rampsSharedData_t`` itself is still hand-written,
+in reflex-fw ``Core/Inc/Ramps.h`` and in ``devices.Global``.
 
-The subtlety this test handles
-------------------------------
-reflex-ui's parser (``BaseDevice.parse_addresses_from_definition``) packs fields
-sequentially with NO C-alignment awareness. The firmware's real on-the-wire
-layout is what the C compiler produces, *with* natural alignment and implicit
-trailing padding. reflex-ui bridges the gap by hand-placing explicit ``_pad``
-fields in its definitions. So a correct contract is NOT a field-name diff -- it
-is: does reflex-ui's packed layout (with its manual pads) reproduce the firmware
-struct's true C layout? We compute the true C offsets here as the oracle and
-compare reflex-ui's actual computed offsets against them.
+So a NAME diff between the sides can no longer fail for the generated structs:
+both come from one schema. What this test proves is the part that still can:
+
+* that the generated Python packing reproduces the C layout. reflex-ui's parser
+  (``BaseDevice.parse_addresses_from_definition``) packs fields sequentially
+  with NO C-alignment awareness, while the wire layout is what the C compiler
+  produces, *with* natural alignment and trailing padding. The generator
+  bridges that gap by emitting explicit ``_pad`` fields -- the tail pads of
+  servo_t and fastData_t included, which C leaves implicit. This test computes
+  the true C offsets independently, from the headers, and compares reflex-ui's
+  actual computed offsets against them;
+* that the hand-written parent agrees on both sides (member order, array
+  counts, total size);
+* that the generated structs are defined ONLY in the generated header, so a
+  hand-written copy reappearing in Ramps.h cannot quietly become a second
+  source of truth (``test_generated_structs_have_one_definition``).
+
+It runs WITHOUT a firmware build, in the DEFAULT suite (it is NOT marked
+``system``), and only skips when the firmware tree isn't checked out. The
+compiler's own vote on the same layout is the static_asserts in
+Ramps_generated.h; this is the independent second opinion that needs no
+cross-compiler.
 """
 
 import os
@@ -43,6 +53,22 @@ REFLEX_FW_DIR, _SKIP_REASON = require_or_skip_reason()
 # Placeholders keep module import working when the firmware is absent; the
 # pytestmark below stops anything from actually reading them.
 RAMPS_H = (REFLEX_FW_DIR / "Core" / "Inc" / "Ramps.h") if REFLEX_FW_DIR else Path("/nonexistent")
+# 2026-09-07: elsStop_t moved OUT of Ramps.h and is now generated from
+# registers/els_stop.yaml into Ramps_generated.h; servo_t, input_t and
+# fastData_t followed on 2026-09-18. Both headers are parsed -- the parent
+# rampsSharedData_t is still in Ramps.h -- so the oracle sees every struct
+# in the shared block and this test keeps doing the job it was written for.
+#
+# WHAT THIS TEST NOW PROVES, and it is worth being precise because the
+# generator changed the question. Both sides of the elsStop map now come
+# from one schema, so a NAME diff between them can no longer fail. What
+# can still fail -- and is the thing that actually bites -- is the
+# generator emitting a Python packing that does not reproduce the C
+# layout: the UI parser has no alignment awareness, so every pad has to be
+# explicit and correct. This computes the TRUE C offsets independently and
+# checks the UI mirror against them, which is exactly that check.
+RAMPS_GENERATED_H = ((REFLEX_FW_DIR / "Core" / "Inc" / "Ramps_generated.h")
+                     if REFLEX_FW_DIR else Path("/nonexistent"))
 SCALES_H = (REFLEX_FW_DIR / "Core" / "Inc" / "Scales.h") if REFLEX_FW_DIR else Path("/nonexistent")
 
 pytestmark = pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or "")
@@ -62,20 +88,34 @@ ROOT_STRUCT = "rampsSharedData_t"
 # ever miscomputes padding, these fixed numbers diverge and fail loudly.
 KNOWN_SERVO_DIR_OFFSET = 32      # servo_t.servoDir sits after 8x 4-byte fields
 KNOWN_SERVO_T_SIZE = 36          # 34 bytes of fields + 2 trailing pad -> 4-align
-KNOWN_ROOT_SIZE = 464            # sizeof(rampsSharedData_t); see module test
-                                 # 432 -> 436 (2026-08-22): permanent machineMode
-                                 # + explicit pad; then -> 440 with the manual
-                                 # latch's latchCommand/latchSeq; then -> 452
-                                 # with the thread-phase offset block.
-                                 # 264 -> 304 on 2026-08-08: the closed-loop
-                                 # backlash calibration block appended 40 bytes
-                                 # to elsStop_t (56 -> 96), packed uint16s-first
-                                 # so nothing pads. Bump this ONLY together with
-                                 # devices.py and elsStop.protocolVersion.
-                                 # 304 -> 308 on 2026-08-08: manual latch pair
-                                 # latchCommand/latchSeq appended to elsStop_t
-                                 # (96 -> 100, two uint16s = 4 bytes, no pad);
-                                 # protocolVersion 1 -> 2.
+# sizeof(rampsSharedData_t). 488 -> 492 on 2026-09-07 (protocolVersion 10): the
+# hot/cold split reordered elsStop_t, and the reorder costs two registers of
+# alignment padding (4 bytes) that the previous field order did not need. The
+# CONTENT is unchanged at 140 registers -- nothing was added.
+#
+# This is a fixed known-good number on purpose: it guards the hand-rolled
+# alignment oracle, so it must be re-derived when it moves rather than pointed
+# at whatever the oracle currently computes, which would make it unfalsifiable.
+KNOWN_ROOT_SIZE = 492
+# 468 -> 488 (2026-09-07): the trigger-instant
+# snapshot appended 20 bytes to elsStop_t
+# (stopTriggerSeq + an explicit pad + four
+# int32s); protocolVersion 8 -> 9.
+# 464 -> 468 (2026-09-06): bootCommand/bootSeq
+# for the field bootloader; protocolVersion 7 -> 8.
+# 432 -> 436 (2026-08-22): permanent machineMode
+# + explicit pad; then -> 440 with the manual
+# latch's latchCommand/latchSeq; then -> 452
+# with the thread-phase offset block.
+# 264 -> 304 on 2026-08-08: the closed-loop
+# backlash calibration block appended 40 bytes
+# to elsStop_t (56 -> 96), packed uint16s-first
+# so nothing pads. Bump this ONLY together with
+# devices.py and elsStop.protocolVersion.
+# 304 -> 308 on 2026-08-08: manual latch pair
+# latchCommand/latchSeq appended to elsStop_t
+# (96 -> 100, two uint16s = 4 bytes, no pad);
+# protocolVersion 1 -> 2.
 
 
 # ── firmware C-struct parsing + true-C-layout model ──────────────────────────
@@ -88,7 +128,7 @@ def _strip_comments(text: str) -> str:
 
 def _load_macros() -> dict:
     macros = {}
-    for hdr in (SCALES_H, RAMPS_H):
+    for hdr in (SCALES_H, RAMPS_H, RAMPS_GENERATED_H):
         if hdr.exists():
             for m in re.finditer(r"#define\s+(\w+)\s+(\d+)", hdr.read_text()):
                 macros[m.group(1)] = int(m.group(2))
@@ -202,12 +242,27 @@ def _walk_device(dev, prefix: str, base_bytes: int) -> list:
 @pytest.fixture(scope="module")
 def firmware_structs():
     macros = _load_macros()
-    return _parse_structs(RAMPS_H.read_text(), macros)
+    return _parse_structs(
+        RAMPS_H.read_text() + "\n" + RAMPS_GENERATED_H.read_text(), macros)
 
 
 @pytest.fixture(scope="module")
 def firmware_map(firmware_structs):
-    return {p: (t, o, s) for (p, t, o, s) in _flatten(ROOT_STRUCT, firmware_structs)}
+    # Pads are dropped from BOTH sides now, not just reflex-ui's. Until
+    # 2026-09-07 the firmware named its pads (machineModeReserved,
+    # stopTriggerReserved) and reflex-ui mirrored them, so only the UI had
+    # `_pad` entries to skip. Both sides are generated from the same schema
+    # today and both carry `_padN`; they model alignment rather than data, and
+    # comparing them would only assert that the generator agrees with itself.
+    #
+    # This does NOT weaken the test: the pads still occupy their bytes in the
+    # OFFSET arithmetic below, so a pad the generator got wrong still moves
+    # every field after it and still fails test_field_offsets_and_types_match.
+    return {
+        p: (t, o, s)
+        for (p, t, o, s) in _flatten(ROOT_STRUCT, firmware_structs)
+        if "_pad" not in p.rsplit(".", 1)[-1]
+    }
 
 
 @pytest.fixture(scope="module")
@@ -265,6 +320,30 @@ def test_layout_oracle_selfcheck(firmware_structs):
     assert servo["servoDir"] == KNOWN_SERVO_DIR_OFFSET
     assert _type_size("servo_t", firmware_structs) == KNOWN_SERVO_T_SIZE
     assert _type_size(ROOT_STRUCT, firmware_structs) == KNOWN_ROOT_SIZE
+
+
+GENERATED_STRUCTS = ("servo_t", "input_t", "fastData_t", "elsStop_t")
+
+
+def test_generated_structs_have_one_definition():
+    """Each generated struct is defined in Ramps_generated.h and NOT in Ramps.h.
+
+    The oracle above parses both headers into one dict, so a hand-written copy
+    of a generated struct left (or put back) in Ramps.h would silently win or
+    lose by parse order rather than failing -- and the compiler would reject a
+    duplicate typedef only in the translation units that include both. Pin the
+    single source here, where it is cheap and says what is wrong.
+    """
+    macros = _load_macros()
+    generated = _parse_structs(RAMPS_GENERATED_H.read_text(), macros)
+    hand = _parse_structs(RAMPS_H.read_text(), macros)
+    for name in GENERATED_STRUCTS:
+        assert name in generated, f"{name} is not in {RAMPS_GENERATED_H.name}"
+        assert name not in hand, (
+            f"{name} is defined in {RAMPS_H.name} as well as the generated header. "
+            f"It is generated from registers/*.yaml: edit the schema, do not "
+            f"hand-write the struct.")
+    assert ROOT_STRUCT in hand, f"{ROOT_STRUCT} should still be hand-written in {RAMPS_H.name}"
 
 
 def test_layout_engine_models_padding():
@@ -432,7 +511,26 @@ SEQ_SAFE_BY_LAYOUT = {
                                      "elsStop.diagCaptureTicks",
                                      "elsStop.diagEndReason"],
     "elsStop.phaseOffsetSeq":       ["elsStop.phaseOffsetSteps"],
+    # 2026-09-07 (protocolVersion 10): takeup JOINED this table. Until the
+    # hot/cold remap, takeupResult sat BELOW takeupSeq -- the one pair in the
+    # map with the ordering inverted, and the reason ui_controller carries a
+    # two-poll guard that no other pair needs. Every offset moved in the remap,
+    # so fixing it cost nothing, and the schema's seq_precedes_payload invariant
+    # now refuses to emit a layout that inverts it again.
+    "elsStop.takeupSeq":            ["elsStop.takeupResult",
+                                     "elsStop.lastTakeupZDelta"],
     "elsStop.latchSeq":             [],   # acks a state change, carries no payload
+    # The trigger-instant snapshot (2026-09-07). The seq is the ONLY thing
+    # telling a host that a new capture arrived -- the payload has no other
+    # freshness marker and a repeated pass can legitimately produce identical
+    # values -- so the ordering here is what makes the whole block trustworthy.
+    # stopTriggerOffset joined it in protocolVersion 11 (2026-09-18): the
+    # clamped stop-overshoot correction each trigger used.
+    "elsStop.stopTriggerSeq":       ["elsStop.stopTriggerOffset",
+                                     "elsStop.stopTriggerZ",
+                                     "elsStop.stopTriggerZSpeed",
+                                     "elsStop.stopTriggerStepsToGo",
+                                     "elsStop.stopTriggerSpindleSpeed"],
 }
 
 
@@ -459,17 +557,29 @@ def test_ack_counters_are_ordered_ahead_of_the_payload_they_vouch_for(
 
 
 def test_takeup_is_the_pair_that_genuinely_needs_its_guard(firmware_map):
-    """The inverse, pinned deliberately.
+    """FIXED on 2026-09-07, and this case is the record of it.
 
-    takeupResult sits BEFORE takeupSeq, so a torn frame CAN read (stale result,
-    new seq) -- which is why ui_controller carries a two-poll guard for this
-    pair and no other. If someone ever reorders these two, that guard becomes
-    unnecessary and this test should be the thing that says so.
+    This test used to assert the INVERSE -- that takeupResult sat BEFORE
+    takeupSeq, pinning the one inverted pair in the map as a known hazard. Its
+    own docstring said that if anyone ever reordered the two, "that guard
+    becomes unnecessary and this test should be the thing that says so."
+
+    The hot/cold remap (protocolVersion 10) moved every offset in the block, so
+    fixing the order cost nothing, and it is fixed: a torn frame now reads
+    (stale seq, new result), which edge-detection re-reads harmlessly. The
+    schema's seq_precedes_payload invariant refuses to emit a layout that
+    inverts it again, so this can no longer regress silently.
+
+    THE TWO-POLL GUARD IN ui_controller._poll_takeup_outcome IS STILL THERE and
+    is deliberately left alone here. It is now belt-and-braces rather than
+    load-bearing: correct, harmless, and no longer the only thing standing
+    between a torn frame and a wrong verdict. Removing it is a separate change
+    that should be argued on its own, not smuggled into a relayout.
     """
     result_off = firmware_map["elsStop.takeupResult"][1]
     seq_off = firmware_map["elsStop.takeupSeq"][1]
-    assert result_off < seq_off, (
-        "takeupResult no longer precedes takeupSeq. That REMOVES the torn-read "
-        "hazard the two-poll guard in ui_controller._poll_takeup_outcome exists "
-        "for -- revisit the guard rather than deleting this test."
+    assert seq_off < result_off, (
+        "takeupSeq must precede takeupResult -- the 2026-08-22 torn-read bug "
+        "was exactly this order inverted, and it was fixed in protocolVersion "
+        "10. Restoring the old order reintroduces the hazard."
     )

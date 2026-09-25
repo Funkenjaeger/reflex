@@ -72,9 +72,28 @@ runs at the reference values, not these:
 | Primitive | elspi (real) | Emulator reference |
 |---|---|---|
 | Z encoder scale | 200 counts/mm | 400 counts/mm |
-| X encoder scale | 400 counts/mm | 400 counts/mm (matches) |
+| X encoder scale | **1000 counts/mm** — see below | 400 counts/mm |
 | Spindle encoder | 6144 PPR | 4000 PPR |
 | Leadscrew | 8 TPI (0.125 in pitch), 1600 steps/rev | 8 TPI, 800 steps/rev |
+
+**THE X SCALE IS THE HEAD'S RESOLUTION — and the X DRO still reads DIAMETER.** Those are
+now two separate facts, which is the point. The head is a 1 µm scale and is provisioned as
+one; the doubling lives in the axis's `diameter_mode` (ELS setup → *X DRO reads* →
+`Diameter`), so `Axis-0.yaml` records the convention decision instead of burying it in a
+ratio. Anything consuming the X DRO must still know the readout is a diameter: the virtual
+compound / auto-advance-from-X-depth work is the first such consumer, and its math is wrong
+if its convention and this setting disagree — but it can now *ask*, which it could not
+before.
+
+**History, because both halves of this row have been wrong before.** It read **400
+counts/mm** until 2026-08-31 and was simply wrong: the X DRO had been reporting 2.5× true
+cross-slide travel for months, and a dial-indicator check found it. It then read **500** —
+correct, but only because the diameter doubling was hidden inside the ratio, with nothing
+recording that. Both were entered as settled facts. Do not trust a scale row here without a
+measurement behind it.
+
+Corrected on the machine 2026-09-01: resolution 1 µm *and* `X DRO reads = Diameter`, set
+together in one sitting, because either alone moves the readout by a factor of two.
 
 There is deliberately **no sync ratio recorded here**: the sync ratio is computed
 dynamically per operation from the machine settings above (spindle PPR included) *and* the
@@ -298,7 +317,7 @@ Every UI component follows this structure:
   file, mirrored into `ui/pyproject.toml`'s `version` by the release workflow.
   Both halves carry the same version even when only one changed: `v1.4.0` names
   a known-good FIRMWARE + UI PAIR, which is the point of the monorepo
-  (`docs/decisions/repo-structure-monorepo.md`). Do not bump either by hand.
+  (`decisions/repo-structure-monorepo.md`, at the repo root). Do not bump either by hand.
 
 - **CI/CD — CORRECTED 2026-08-22 for the monorepo. The split-era rule that
   "on any given branch exactly one of the two exists" is no longer true, and
@@ -310,7 +329,10 @@ Every UI component follows this structure:
   - `release.yml` runs **only when dispatched by hand**, and only from `main`
     or `dev`. It refuses a pre-release version on `main` and a final version on
     `dev`, refuses a tag that already exists, and refuses to publish a firmware
-    image carrying diagnostic probe symbols.
+    image carrying diagnostic probe symbols. It also refuses a version with no
+    `release-notes/<version>.md`: every release page opens with a written
+    description (what changed, upgrade notes, what is experimental), and the
+    generated commit list goes beneath it.
 
 - **`[skip ci]` is still not for you.** It suppresses *every* workflow for that
   push, and since the test suites now run on every branch, the marker's only

@@ -1,0 +1,107 @@
+#: import ScreenHeader reflex.components.widgets.screen_header
+#: import QrCode reflex.components.widgets.qr_code.QrCode
+
+<BackupSection@Label>:
+  size_hint_y: None
+  height: dp(30)
+  text_size: self.width, None
+  halign: "left"
+  valign: "middle"
+  font_name: app.theme.font_bold
+  font_size: app.formats.font_size * 0.8
+  color: app.theme.accent
+
+<BackupScreen>:
+  BoxLayout:
+    title: "Backup"
+    orientation: "vertical"
+    padding: 10
+    spacing: 8
+    ScreenHeader:
+      text: "Backup"
+
+    BackupSection:
+      text: "USB stick"
+    BoxLayout:
+      size_hint_y: None
+      height: dp(64)
+      spacing: 20
+      SetupButton:
+        text: "Export to USB"
+        on_release: root.export_to_usb()
+      SetupButton:
+        text: "Import from USB"
+        on_release: root.import_from_usb()
+
+    # Opt-in GitHub gist sync: a second transport for the same bundle. When
+    # this build has no OAuth client id (every build today) the buttons are
+    # disabled and the note line says why, in small type -- the notice used to
+    # be shown at 1.8x in the device-code box and drew over its neighbours.
+    BackupSection:
+      text: "GitHub gist"
+    BoxLayout:
+      size_hint_y: None
+      height: dp(64)
+      spacing: 20
+      SetupButton:
+        id: gist_toggle
+        text: "Gist sync: ON" if root.gist_enabled else "Gist sync: OFF"
+        disabled: not root.gist_configured
+        on_release: root.toggle_gist_sync(not root.gist_enabled)
+      SetupButton:
+        text: "Sync now"
+        disabled: not root.gist_enabled
+        on_release: root.sync_now()
+      SetupButton:
+        text: "Restore from gist"
+        disabled: not root.gist_configured
+        on_release: root.restore_from_gist()
+    Label:
+      id: gist_note_label
+      text: root.gist_note_text
+      size_hint_y: None
+      text_size: self.width, None
+      height: self.texture_size[1]
+      halign: "left"
+      font_name: app.theme.font_bold
+      font_size: app.formats.font_size * 0.7
+      color: app.theme.text
+
+    # The device-flow user code, LARGE, only while a flow is in progress, with
+    # a QR of the verification URL to its left (segno; see qr_code.py). The
+    # row is as tall as the QR needs to scan comfortably from a phone at arm's
+    # length, and collapses to nothing when no code is showing.
+    BoxLayout:
+      id: gist_code_row
+      size_hint_y: None
+      height: (dp(190) if root.gist_qr_data else gist_code_label.texture_size[1]) if root.gist_code_text else 0
+      opacity: 1 if root.gist_code_text else 0
+      spacing: 20
+      QrCode:
+        id: gist_qr
+        data: root.gist_qr_data
+        size_hint_x: None
+        width: self.height if root.gist_qr_data else 0
+      Label:
+        id: gist_code_label
+        text: root.gist_code_text
+        text_size: self.width, None
+        halign: "center"
+        valign: "middle"
+        font_name: app.theme.font_bold
+        font_size: app.formats.font_size * (1.5 if root.gist_qr_data else 1.8)
+        color: app.theme.accent
+
+    # The last action's outcome. Wraps rather than running off the screen.
+    Label:
+      id: status_label
+      text: root.status_text
+      size_hint_y: None
+      text_size: self.width, None
+      height: self.texture_size[1]
+      halign: "left"
+      font_name: app.theme.font_bold
+      font_size: app.formats.font_size
+      color: app.theme.text
+
+    Widget:

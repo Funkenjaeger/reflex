@@ -116,6 +116,7 @@ reflex/
 ├── help/                      # Contextual help documents (markdown)
 ├── fonts/                     # Font files
 ├── pictures/                  # Image assets
+│   └── help/                  # Optional per-help-topic illustrations (see its README)
 ├── sounds/                    # Audio assets (beep, snap, stop)
 ├── components/                # UI layer
 │   ├── manager.py             # ScreenManager (navigation)
@@ -169,7 +170,7 @@ reflex/
 
 * **FSM architecture pattern:** [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md)
 * **ELS shoulder-stop orchestration:** [`ELS_STOP.md`](ELS_STOP.md)
-* **Repo structure ADR:** [`docs/decisions/repo-structure-monorepo.md`](docs/decisions/repo-structure-monorepo.md)
+* **Repo structure ADR:** [`decisions/repo-structure-monorepo.md`](../decisions/repo-structure-monorepo.md)
 
 ---
 

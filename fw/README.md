@@ -3,7 +3,7 @@
 The **real-time half** of [Reflex](../README.md): STM32F411 firmware providing
 encoder capture, step generation, and all motion control the UI must never be
 trusted with — spindle-synchronized feed, the electronic stop, retract, jog
-profiles, and thread-phase re-sync all execute here, in a 100 kHz ISR with
+profiles, and thread-phase re-sync all execute here, in a 50 kHz ISR with
 FreeRTOS tasks alongside. The UI talks to it as a Modbus RTU master over
 RS-485; the register contract is defined in `Core/Inc/Ramps.h` and mirrored by
 `../ui/reflex/utils/devices.py`, guarded by `protocolVersion`.
@@ -39,11 +39,29 @@ the `plugdev` group access, so flashing needs no `sudo`.
 
 ### Build and flash
 
+A **new board** gets provisioned once, over SWD:
+
 ```bash
-./scripts/flash.sh
+./scripts/provision.sh
 ```
 
-That builds, flashes over SWD, and records what it did.
+That builds both stages, programs the field bootloader into sector 0 and the
+slotted application into the RUN slot, erases the journal and the spare slots,
+and records what it did.
+
+After that the ST-Link stays in the drawer — application updates go over the
+RS-485 link the UI already holds:
+
+```bash
+python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
+```
+
+`./scripts/flash.sh` is the **legacy** path: it writes the application at
+`0x08000000` with no bootloader, which is what every board built before
+2026-09-07 has. It reads the board first and writes only over a legacy
+application it positively recognizes, or an erased sector 0; the bootloader,
+or anything it cannot identify, is a refusal (`--force-legacy` overrides, and
+destroys whatever was there). The rules are in `scripts/lib/sector0.py`.
 
 > **Power-cycle the controller after flashing.** A reset alone does not reliably
 > start the new firmware on this board. openocd's `Verified OK` confirms the
@@ -81,9 +99,13 @@ can be compiled in at a time: **[DIAG.md](DIAG.md)**. `./scripts/build.sh --diag
 with no name lists them.
 
 **Every flash is recorded** in `~/firmware/flashed.json` on the probe host: UTC
-timestamp, variant, git revision, whether the tree was dirty, and the ELF's MD5.
-Working out what firmware was on this lathe once took an afternoon of forensics
-across build-artifact timestamps; this makes it a lookup.
+timestamp, variant, git revision, whether the tree was dirty, and an MD5 of what
+was written. `flash.sh`, `provision.sh` and `modbus-flash.py` all append to it —
+the last only once the board reports the new revision running, and the in-app
+updater through it. One JSON object per line. Working out what firmware was on
+this lathe once took an afternoon of forensics across build-artifact
+timestamps; this makes it a lookup, and it is what the estate's ot-state reads
+as "what the lathe runs".
 
 ### Underneath
 
@@ -105,6 +127,19 @@ drive a GPIO-bitbanged probe if the boards are ever respun without a dongle.
 > cannot work there at all. It was never used in practice. `raspberrypi5.cfg`
 > holds an untested `linuxgpiod` equivalent for whenever the boards get respun;
 > read its header before trusting it.
+
+---
+
+## 📡 Field update over Modbus (bootloader) — built, not yet hardware-verified
+
+A resident bootloader in flash sector 0 (`bootloader/`) accepts a new image over
+the same RS-485 link the UI uses, so the ST-Link is needed only for virgin
+boards, option bytes and recovery. Build the app for its slot with
+`-DREFLEX_APP_BASE=0x08020000` and push it with `scripts/modbus-flash.py`;
+`--identity` reads back which stage and which git rev is running. The default
+build and `scripts/flash.sh` above are unchanged. Design, register map, and the
+bring-up procedure: `bootloader/README.md` and
+`../decisions/els-modbus-register-map.md`.
 
 ---
 
@@ -135,6 +170,35 @@ cmake --build build
 * Memory layout defined by `STM32F411CEUX_FLASH.ld` and `STM32F411CEUX_RAM.ld`
 
 Board design and system-level hardware: see the [top-level README](../README.md).
+
+### ⚠️ Recovery is SWD only — the ROM bootloader is not a path on this board
+
+**Use ST-Link/SWD. Do not plan a recovery procedure around BOOT0.**
+
+The STM32 system (mask ROM) bootloader is unreachable on this hardware, and it
+should stay that way until a respin changes the pinout:
+
+* **BOOT0 is not connected.** There is no jumper, pad or test point for it, and
+  the STM32F4 has no internal pull on BOOT0 — AN4488 §5.2 states an external
+  connection is *required*. A floating BOOT0 is not a supported way to select
+  the boot source.
+* **The package is UFQFPN48** — leadless, 0.5 mm pitch, pads tucked under the
+  package edge. There is nothing to clip a wire to.
+* **Even if BOOT0 were driven high, PA9 is the conflict.** The mask ROM puts
+  USART1 on PA9/PA10 and drives PA9 as TX. Here PA9 is `ENC1B`
+  (`reflex.ioc`: `PA9.Signal=S_TIM1_CH2`), fed from the 74VHC9151FT buffer's
+  output. That would put two push-pull outputs on one net.
+
+**Unplugging the encoder does not make that safe** — it only changes what
+reaches the buffer's *input*. The buffer keeps driving PA9 for as long as the
+board is powered. Isolating PA9 means lifting the buffer's output pin or cutting
+the trace, which is not a field procedure. Whether the contention would actually
+damage either driver has not been measured; it is unsupported either way.
+
+**For a respin:** BOOT0 only becomes useful if ENC1 moves off PA9 first — e.g.
+ENC1 onto TIM5 (PA0/PA1), which frees PA9/PA10 for the ROM's USART1 pair. Wiring
+BOOT0 to a jumper *without* that reshuffle builds the conflict above, not a
+recovery path.
 
 ---
 

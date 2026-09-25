@@ -8,6 +8,8 @@ from kivy.properties import StringProperty, NumericProperty, BooleanProperty
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
 from reflex.utils.ctype_calc import uint32_subtract_to_int32
+from reflex.utils.notices import NOTICE_WARNING
+from reflex.utils.operator_notice import notify_operator
 
 log = Logger.getChild(__name__)
 
@@ -229,22 +231,57 @@ class ServoDispatcher(SavingDispatcher):
     # reported as a divergence.
     SERVO_MODE_DIVERGENCE_POLLS = 5
 
+    # The exact words the operator sees. A constant so the test asserts on the
+    # string that ships rather than on a paraphrase of it.
+    DIVERGENCE_NOTICE = ("Controller did not stop when asked — the carriage "
+                         "may still be driven")
+
     def _check_servo_mode_divergence(self, observed):
-        """LOG-ONLY watchdog: did the machine keep feeding after we said stop?
+        """Watchdog: did the machine keep feeding after we said stop?
 
         The invariant: nothing an operator can legitimately do makes the firmware
         disagree with the last servoMode the UI wrote. Any persistent
         disagreement is a defect somewhere -- a dropped write, a firmware task
-        re-asserting on its own (servoEnableTask does exactly this, Ramps.c
-        approx 1105), or a path that cleared elsStop.enable while sync was still
-        live. This does not care which; it reports the disagreement.
+        re-asserting on its own (servoEnableTask does exactly this, Ramps.c:1626
+        -- the assert is unconditional in release builds, because the
+        elsDiagServoGate wrapped around it returns false in every one), or a
+        path that cleared elsStop.enable while sync was still live. This does
+        not care which; it reports the disagreement.
 
-        WHY IT ONLY LOGS, and why that is not timidity. Faulting to alarm would
-        call on_enter_alarm, which calls set_enable(False) -- and clearing enable
-        releases the carriage hold (Ramps.c:815/826). A false positive during a
-        live pass would therefore TRIGGER the very hazard this exists to detect.
-        Escalating to alarm is only safe once the disengage path is provably
-        safe, and it is not yet: see the branch notes and the Open Loops task.
+        THE THREE RUNGS, and which one this is (decided 2026-08-31, Evan):
+
+          log-only    what this did until today. At the lathe there is a
+                      touchscreen and no terminal, so a log line is a message
+                      to whoever reads the file next week -- i.e. to nobody.
+          NOTICE      <- HERE. Posts to the top status bar via els_uic.notify.
+                      Touches no motion path at all, so a false positive costs
+                      the operator one amber line and nothing else.
+          alarm       would call on_enter_alarm, which drops sync and the feed
+                      before clearing enable. A false positive mid-pass both
+                      stops the feed with the tool in the groove and the
+                      spindle turning, AND releases the leadscrew (below).
+                      NOT TAKEN.
+
+        "RELEASES THE CARRIAGE HOLD" -- CORRECTED 2026-08-31, Evan, from the
+        machine. The phrase was right and its citation was wrong, which is why
+        it survived three copies without anyone being able to check it.
+
+        SYNC ENABLE CONTROLS THE SERVO DRIVE. servoEnableTask drives a real
+        enable pin (Ramps.c:1672-1673): servoMode != 0 -> ENA low, drive
+        energised; servoMode == 0 -> ENA high, DRIVE DISABLED AND THE LEADSCREW
+        FREE TO TURN BY HAND. So the hold is released by dropping sync, not by
+        set_enable(False) -- the enable falling edge (Ramps.c:792-832) clears
+        elsStop.active and zeroes commanded motion but never touches ENA.
+
+        The old citation (Ramps.c:815/826) pointed at a DIFFERENT hold:
+        elsStop.active == 1 stops sync-step accumulation, so clearing it 1->0
+        is the "go" for a pass (firmware's own words, Ramps.c:1247). Two holds,
+        one phrase, and the wrong line numbers attached.
+
+        This UPHOLDS keeping the alarm rung closed, for a better reason than
+        the old note gave: on_enter_alarm calls stop_sync() and stop_feed()
+        before set_enable(False), so escalating really would de-energise the
+        drive mid-pass.
 
         Only the dangerous direction is reported. "We said run, it says stopped"
         is a stalled feed -- annoying, visible, and not a runaway.
@@ -272,6 +309,22 @@ class ServoDispatcher(SavingDispatcher):
                 f"The carriage may be driven without the UI asking. See ELS "
                 f"disengage/reconnect notes."
             )
+            # The log line above stays. The notice is an ADDITIONAL channel,
+            # not a replacement: the log is what makes the episode findable
+            # afterwards, and the notice is what reaches the operator while it
+            # is happening. Same "once per episode" rule -- this whole branch
+            # runs on the Nth poll only.
+            self._notify_operator(self.DIVERGENCE_NOTICE, NOTICE_WARNING)
+
+    def _notify_operator(self, message, severity) -> bool:
+        """Thin delegate to the shared operator-notice route.
+
+        Kept as a method rather than calling notify_operator directly at the
+        call site: it is the seam the watchdog tests patch, and patching a
+        method on this class is what lets them assert the watchdog's OWN
+        behaviour without standing up an app.
+        """
+        return notify_operator(message, severity)
 
     def update_scaledPosition(self, instance, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)

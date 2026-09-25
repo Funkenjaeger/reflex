@@ -64,7 +64,7 @@ class BaseDevice:
     # on 2026-08-23, every drop a timeout at the transition into `cutting` and
     # not one a corrupted frame. This trades more bytes for fewer exchanges on
     # purpose.
-    MAX_REGISTERS_PER_READ = 64
+    MAX_REGISTERS_PER_READ = 72  # 2026-09-07: elsStop is 140 regs (protocolVersion 9); two requests need >= 70, the 60%-of-125 rule caps at 75
 
     def __init__(self, connection_manager, base_address=0):
         from reflex.utils.communication import ConnectionManager
@@ -290,6 +290,33 @@ class BaseDevice:
                     self.fast_data[item.name] = values.pop(0)
 
         return self.fast_data
+
+    @ktrace()
+    def read_span(self, first_register, register_count):
+        """Read a contiguous span of this device's registers as ONE FC3 request.
+
+        The counterpart to refresh(), which reads the WHOLE device and splits it
+        into ceil(size / MAX_REGISTERS_PER_READ) requests. A span that is known
+        to fit in one request -- the hot register group -- has no reason to pay
+        for the second, and REQUESTS are the quantity that fails (see the note
+        on MAX_REGISTERS_PER_READ above).
+
+        Refuses rather than silently splitting: a caller asking for a span too
+        large has lost the property it came here for, and quietly issuing two
+        requests would hide that until it showed up as a comms timeout during a
+        cut. The generated group sizes are asserted against the same budget at
+        generation time, so this should be unreachable from generated callers --
+        which is exactly why it must be loud if it ever is not.
+        """
+        if register_count > self.MAX_REGISTERS_PER_READ:
+            raise ValueError(
+                f"span of {register_count} registers exceeds the "
+                f"{self.MAX_REGISTERS_PER_READ}-register single-request budget; "
+                f"a one-request read is the whole point of asking for a span")
+        return self.dm.device.read_registers(
+            registeraddress=self.base_address + first_register,
+            number_of_registers=register_count,
+        )
 
     @ktrace()
     def refresh(self):

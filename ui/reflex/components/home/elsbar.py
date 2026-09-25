@@ -7,6 +7,8 @@ from pydantic import BaseModel
 from reflex import feeds
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
 from reflex.utils.kv_loader import load_kv
+from reflex.utils.notices import NOTICE_WARNING
+from reflex.utils.operator_notice import notify_operator
 
 
 class FeedMode(BaseModel):
@@ -59,6 +61,73 @@ class ElsBar(BoxLayout, SavingDispatcher):
     current_feeds_index = NumericProperty(0)
     els_forward = BooleanProperty(True)
     enable_advanced = BooleanProperty(False)
+
+    # The words the operator sees when ADV refuses. A constant so the test
+    # asserts on the string that ships, not a paraphrase.
+    HIDE_REFUSED_NOTICE = ("ELS stop is engaged — disengage before hiding the "
+                           "advanced bar")
+
+    def toggle_advanced(self) -> bool:
+        """Show or hide the advanced ELS bar; refuse to HIDE while engaged.
+
+        Returns True iff the visibility actually changed.
+
+        WHY REFUSE AT ALL. This bar is the only place armed-ness appears. The
+        plain bar has a Sync Enable LED (elsbar.kv:22) and no armed indicator,
+        and that is deliberate -- Evan ruled the indicator out on 2026-08-20
+        and this notice surface is the agreed fix instead. So hiding this bar
+        with a stop job engaged leaves an armed machine and an idle one
+        looking identical on the visible UI. Refusing SILENTLY would be worse
+        than allowing it, which is why the refusal says why.
+
+        WHY servoMode IS NOT IN THE CONDITION. The task body proposed "stop
+        engaged, and probably servoMode != 0 as well". The second half is
+        wrong, and Evan caught it on 2026-08-31: "sync armed but stop
+        disengaged is a perfectly valid condition when in vanilla ELS mode".
+        It is -- it is the ordinary ELS feed, and elsbar.kv:27 names that case
+        explicitly. Refusing on servoMode would refuse during normal turning,
+        and refuse on behalf of a state that has its own LED two widgets away.
+        Hiding this bar conceals nothing about servoMode.
+
+        WHY `engaged` AND NOT `enable_stop`. enable_stop is a MODE flag on
+        ElsAdvancedBar -- which sub-features the operator has chosen to show,
+        persisted in its YAML. It says nothing about whether a job is live.
+        ElsUiController.engaged is the domain FSM being out of 'disabled',
+        which is the actual armed question.
+
+        SHOWING IS NEVER REFUSED. More information on screen is not the unsafe
+        direction, so the guard is one-way by construction.
+        """
+        if not self.enable_advanced:
+            self.enable_advanced = True
+            return True
+        if self._els_engaged():
+            notify_operator(self.HIDE_REFUSED_NOTICE, NOTICE_WARNING)
+            log.info("ADV hide refused: ELS stop engaged")
+            return False
+        self.enable_advanced = False
+        return True
+
+    @staticmethod
+    def _els_engaged() -> bool:
+        """Is a stop job live? False whenever the question cannot be answered.
+
+        FAILS OPEN, deliberately, and this is the opposite of the usual rule.
+        The consequence of a wrong False is a bar the operator hid while armed
+        -- bad, and exactly the defect being fixed. The consequence of a wrong
+        True is a bar that CANNOT BE HIDDEN AT ALL, on a machine where the app
+        is already in trouble. A control that cannot be dismissed is worse at
+        the lathe than one that can be dismissed when it should not have been,
+        so an unanswerable question yields to the operator.
+        """
+        try:
+            from reflex.app import MainApp
+            app = MainApp.get_running_app()
+            uic = getattr(app, "els_uic", None) if app is not None else None
+            return bool(uic is not None and uic.engaged)
+        except Exception as e:
+            log.error(f"ADV refusal could not read engaged state: {e}")
+            return False
 
     @staticmethod
     def image_for(move_type, background=None):

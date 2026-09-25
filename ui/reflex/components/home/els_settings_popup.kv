@@ -30,6 +30,16 @@
                 value: root.bar.inner_thread
                 on_value: root.bar.inner_thread = self.value
 
+            # Only meaningful in stop + retract: wizard always collects a
+            # diameter, and stop-only has no Retract to gate. Left ON by
+            # default -- the gate it enables is the only thing standing between
+            # Retract and a tool dragged back through the thread.
+            BooleanItem:
+                name: "Safe diameter"
+                help_file: "els_safe_diameter.md"
+                value: root.bar.enable_safe_dia
+                on_value: root.bar.enable_safe_dia = self.value
+
             NumberItem:
                 name: "Backlash takeup (mm)"
                 help_file: "els_backlash_takeup.md"
@@ -74,3 +84,19 @@
                 options: ["silent", "warn", "confirm"]
                 value: app.els.stop_z_reframe_notify
                 on_value: app.els.stop_z_reframe_notify = self.value
+
+            # ── Advanced: stop-overshoot correction (opt-in, default OFF) ──
+            TitleItem:
+                name: "Advanced"
+
+            BooleanItem:
+                name: "Stop overshoot correction"
+                help_file: "els_overshoot_correction.md"
+                value: app.els.els_overshoot_correction
+                on_value: app.els.els_overshoot_correction = self.value
+
+            NumberItem:
+                name: "Overshoot margin (Z counts)"
+                help_file: "els_overshoot_correction.md"
+                value: root.overshoot_margin_counts
+                on_value: root.overshoot_margin_counts = self.value

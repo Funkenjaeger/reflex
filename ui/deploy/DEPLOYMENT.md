@@ -174,6 +174,25 @@ sudo systemctl enable --now rcp.service
   install: stop the service, `cp -a /root/.config/reflex/. /var/lib/reflex-config/`,
   then start — copy rather than move, so the old directory remains a rollback until
   the new location is verified.
+- **The flight recorder writes to `$REFLEX_CONFIG_DIR/flight`** — so
+  `/var/lib/reflex-config/flight` on the Pi, readable by the operator account
+  for the same reason the config directory is. It persists the 30 Hz poll
+  stream while the machine is armed or feeding, in rotating `flight-*.jsonl`
+  segments. **It is bounded**: 4 MB per segment, 512 MB total (measured at
+  ~8.6 MB per *armed* hour, so ~59 armed hours), oldest deleted first, and it
+  stops recording entirely below 128 MB free rather than filling the card. Set
+  `REFLEX_FLIGHT_MAX_MB` in `start.sh` to change the budget, or
+  `REFLEX_FLIGHT_DIR` to move it off the SD card. Nothing needs creating — it
+  makes its own directory at startup.
+- **`flight/flight_status.json` is how you tell "nothing happened" from "not
+  recording".** It is rewritten every few seconds whether or not anything is
+  being recorded. An absent or stale file (`updated_utc` more than a minute
+  old) means the recorder is not running at all; a fresh one with
+  `"state": "idle_disarmed"` means it is alive and the machine was idle. The
+  `blocked_*` and `disabled` states carry a `reason`, and posted an operator
+  notice on the touchscreen once when they began. This is the file for a
+  collector to scrape — see the module docstring in
+  `reflex/fsms/els_flight_recorder.py` for the full table.
 - **Run-user is root**, matching rcp — required for KMS/DRM and `/var/log` writes.
   Don't switch to a non-root user without solving DRM/`video`+`render` group access
   and a writable log dir.

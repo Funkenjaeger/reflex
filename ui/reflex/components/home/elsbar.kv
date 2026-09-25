@@ -103,7 +103,10 @@
     led_on: root.enable_advanced
     led_color: app.formats.color_on if root.enable_advanced else app.formats.color_off
     # beep handled by BeepMixin.on_press
-    on_release: root.enable_advanced = not root.enable_advanced
+    # Routed through the method rather than toggling the property inline: it
+    # refuses to HIDE while a stop job is engaged, because this bar is the only
+    # place armed-ness is visible. See ElsBar.toggle_advanced.
+    on_release: root.toggle_advanced()
 
   # ── Cut type / direction illustration: dark recessed panel (item 5) ──
   Button:
