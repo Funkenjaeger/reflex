@@ -749,6 +749,42 @@ def urllib_fetch_json(url: str):
 # The sequence
 # --------------------------------------------------------------------------
 
+# What the operator reads first when a failed flash leaves the controller in
+# the bootloader or not answering (2026-09-23, the lathe's update to
+# v1.2.0-rc.5: bootloader resident, dead DRO, and the only advice on screen a
+# command line for someone with no terminal). Mirrors modbus-flash.py's
+# POWER_CYCLE_STEP; say the same thing in both. It rests on the bootloader
+# starting a valid run slot by itself at power-on (the stay request is
+# consumed on entry, bl_core.c). Not yet tried after a failed transfer on
+# 2026-09-23; bench-verified on the lathe 2026-09-24, 2 of 2 -- a controller
+# parked in its bootloader, and a bootloader gone silent part-way through a
+# real transfer, both back on their own firmware with the UI reconnected
+# after off / 10 s / on. The text claims those two cases and no more.
+POWER_CYCLE_STEP = (
+    "WHAT TO DO NOW, no terminal needed: turn the machine OFF, wait 10 "
+    "seconds, and turn it back ON. Nothing was applied, so the previous "
+    "firmware is still in the controller, and when its run slot is valid the "
+    "bootloader starts it by itself at power-on. This is the recovery that "
+    "has been tested on the lathe: it brought back a controller left waiting "
+    "in its bootloader, and one whose bootloader had gone silent part-way "
+    "through a firmware transfer. Then check that the controller reads "
+    "normally: the position displays show and follow the machine. If the "
+    "controller does not read normally afterwards, it needs the terminal "
+    "recovery below.")
+
+
+def _flasher_says_nothing_applied(output: str) -> bool:
+    """True only on modbus-flash.py's could-not-return verdict for a failure
+    before anything was applied -- the only case in which "the previous
+    firmware is still in the controller" is true AND a power-cycle is the
+    answer. Not for a failure after APPLY started (the run slot may hold the
+    new image), not for the flasher's refusal to jump (runValid not 1, a copy
+    in flight: a power-cycle does not start those), and not for a flasher
+    that died without a verdict."""
+    return any(f"VERDICT: FAILED {where}, and the board could NOT be returned" in output
+               for where in ("before APPLY", "at APPLY, which blSeq proves never ran"))
+
+
 @dataclass
 class Prepared:
     """Everything preflight established, before anything was changed."""
@@ -812,9 +848,16 @@ class UpdateSession:
         rc, out = self._runner(argv, cwd=cwd, timeout=timeout,
                                emit=None if quiet else self._emit)
         if rc != 0:
-            raise UpdateRefused(
+            refused = UpdateRefused(
                 f"{what or ' '.join(str(a) for a in argv)} failed (exit {rc}).\n"
                 f"{out.strip()[-600:]}")
+            # The WHOLE output, for a caller that must read the tool's own
+            # verdict: the message keeps only the last 600 characters, and
+            # modbus-flash.py's could-not-return verdict is longer than that
+            # since 2026-09-23 -- its first line, which says whether APPLY
+            # ran, is what _settle_failed_flash needs.
+            refused.output = out
+            raise refused
         return out
 
     @property
@@ -1020,15 +1063,25 @@ class UpdateSession:
         _revert_firmware: the identity read decides. The previous rev at the
         previous protocol, in the application, is "nothing changed" -- an
         ordinary refusal. Anything else fired after the board was written to,
-        so it is a :class:`ProtocolMismatch` that names the state."""
+        so it is a :class:`ProtocolMismatch` that names the state.
+
+        Since 2026-09-23 that message LEADS with the power-cycle an operator
+        without a terminal can do (POWER_CYCLE_STEP), when the flasher's own
+        verdict says the failure came before APPLY and the board is not
+        running an application -- in the bootloader, or not answering. That
+        morning the lathe was left in the bootloader and the only advice on
+        screen was a command line."""
+        nothing_applied = _flasher_says_nothing_applied(getattr(failed, "output", "") or "")
         try:
             now = self.read_identity()
         except UpdateRefused as unreadable:
+            first = f"{POWER_CYCLE_STEP}\n\n" if nothing_applied else ""
             raise ProtocolMismatch(
                 f"The firmware update FAILED, and the controller could not be "
                 f"read afterwards, so what it is running is UNKNOWN. The UI was "
-                f"not changed. Check it with fw/scripts/modbus-flash.py "
-                f"--identity before using the machine.\n{failed}\n{unreadable}") from failed
+                f"not changed.\n\n{first}With a terminal: check it with "
+                f"fw/scripts/modbus-flash.py --identity before using the "
+                f"machine.\n{failed}\n{unreadable}") from failed
         self.emit(f"Controller after the failed flash: {now}.")
         if (now.stage == STAGE_APPLICATION and now.build_rev == before.build_rev
                 and now.app_protocol == before.app_protocol):
@@ -1036,12 +1089,17 @@ class UpdateSession:
                 f"The firmware transfer FAILED and nothing changed: the "
                 f"controller is confirmed running its previous firmware "
                 f"({before.build_rev}), and the UI was not changed.\n{failed}") from failed
+        # A power-cycle only helps a board that is NOT running an
+        # application: one that runs a foreign rev would just start it again.
+        first = (f"{POWER_CYCLE_STEP}\n\n"
+                 if nothing_applied and now.stage != STAGE_APPLICATION else "")
         raise ProtocolMismatch(
             f"The firmware update FAILED, and the controller is NOT running its "
             f"previous firmware ({before.build_rev}): it reports {now}. The UI "
-            f"was not changed. Recover the controller with "
-            f"fw/scripts/modbus-flash.py (--identity to look, --boot-app if it "
-            f"is in the bootloader) before using the machine.\n{failed}") from failed
+            f"was not changed.\n\n{first}With a terminal: recover the "
+            f"controller with fw/scripts/modbus-flash.py (--identity to look, "
+            f"--boot-app if it is in the bootloader) before using the "
+            f"machine.\n{failed}") from failed
 
     def _roll_back(self, prepared: Prepared, before: Identity,
                    after: Identity, refused: FirmwareProtocolMismatch):

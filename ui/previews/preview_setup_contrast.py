@@ -146,15 +146,24 @@ def shown(w):
 
 
 def viewport(w):
-    """Window rect the widget can be seen in: its innermost ScrollView, else
-    the whole window."""
+    """Window rect the widget can be seen through: the intersection of EVERY
+    ScrollView around it and the window.
+
+    Until 2026-09-23 this took the innermost ScrollView only. That was right
+    while no scrolling box sat inside a scrolling page; once the output box
+    became a ScrollView (a readonly TextInput popped the keyboard), a label in
+    it counted as "fully visible" whenever it fit the BOX, even on a frame
+    where the whole box was scrolled off the page -- and was measured there,
+    on pixels that were not it (1.00:1, black on black)."""
+    x0, y0, x1, y1 = 0, 0, Window.width, Window.height
     node = w.parent
     while node is not None and node is not node.parent:
         if isinstance(node, ScrollView):
             x, y = node.to_window(node.x, node.y)
-            return x, y, x + node.width, y + node.height
+            x0, y0 = max(x0, x), max(y0, y)
+            x1, y1 = min(x1, x + node.width), min(y1, y + node.height)
         node = node.parent
-    return 0, 0, Window.width, Window.height
+    return x0, y0, x1, y1
 
 
 def text_box(w):

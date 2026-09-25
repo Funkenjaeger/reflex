@@ -56,6 +56,18 @@
  *      gates the jump on its own; the hazard shows as non-convergence -- a
  *      board left resident on a torn RUN with no record to resume from
  *   M11 REVERT not dispatched in blCoreService -> 13 checks in G and H fail
+ *   (seen red 2026-09-23, the blDiag counters, section I:)
+ *   M12 a CRC failure bumped as a bad frame -> I2..I8, 12 checks fail
+ *   M13 wrong slave address returns 0 without counting -> I3..I7, 9 fail
+ *   M14 the blDiag window registered writable -> the I5 write refusals fail
+ *   M15 the control window registered as one writable 124-register window
+ *       (no split) -> I5 and the I6 straddle check fail, 9 in all
+ *   M16 bl_diag.h without the 0xFFFF test -> I7 fails
+ *
+ * I. blDiag, the receiver counters: CRC errors apart from other silent
+ *    rejects, exception replies not counted, host writes refused (exception
+ *    2, nothing below the window touched either), saturation, zeroed only by
+ *    blCoreInit.
  */
 #include <cstdio>
 #include <vector>
@@ -663,6 +675,110 @@ int main() {
         check(nonConverged == 0, "H2 every interruption converges: untouched new image (IDLE) or the old one (REVERTED)");
         check(tornAtInterrupt > 0, "H3 the sweep actually tore RUN (the injector is live)");
         check(endedNew > 0 && endedOld > 0, "H4 both outcomes occur: interrupted before the record, and resumed after it");
+    }
+
+    /* ================= I. blDiag, the receiver counters (2026-09-23) =================
+     * What the Modbus layer counts (CRC errors, other silent rejects), that
+     * the counters saturate, and that the host can read them but never write
+     * them. Frames taken and overflow drops belong to the ring
+     * (bl_rxring_test); the USART error flags and DMA restarts are counted in
+     * src/bl_hw.c on the chip and nothing native can reach them. */
+    {
+        mock::reset();
+        blCore_t c; blCoreInit(&c);
+        (void)blCoreBoot(&c);
+        const uint16_t DIAG = ELS_BL_BASE + ELS_BL_DIAG;
+        uint16_t *dg = &c.regs[ELS_BL_DIAG];
+        auto fc16 = [&](uint16_t addr, uint16_t count, uint16_t fill) {
+            std::vector<uint8_t> body = { 17, 16, (uint8_t)(addr >> 8), (uint8_t)addr,
+                                          (uint8_t)(count >> 8), (uint8_t)count, (uint8_t)(count * 2) };
+            for (uint16_t i = 0; i < count; i++) { body.push_back((uint8_t)(fill >> 8)); body.push_back((uint8_t)fill); }
+            return ask(&c, frame(body));
+        };
+        auto allZero = [&]() { for (unsigned i = 0; i < ELS_BL_DIAG_REGS; i++) if (dg[i]) return false; return true; };
+
+        check(DIAG == 2420u, "I1 blDiag sits at register 2420");
+        { uint8_t exc = 0xFF; auto d = readRegs(&c, DIAG, ELS_BL_DIAG_REGS, &exc);
+          check(exc == 0 && d.size() == ELS_BL_DIAG_REGS && d == std::vector<uint16_t>(ELS_BL_DIAG_REGS, 0),
+                "I1 ...an FC3 of the whole window reads 8 zeros after boot"); }
+        check(allZero(), "I1 ...and a good frame counts nothing in the Modbus layer");
+
+        /* I2. CRC failure: counted apart from every other reject. */
+        { auto r = ask(&c, { 17, 3, 0x09, 0x00, 0, 4, 0x12, 0x34 });
+          check(r.empty() && dg[ELS_BL_DG_CRC_ERRORS] == 1 && dg[ELS_BL_DG_BAD_FRAMES] == 0,
+                "I2 bad CRC -> silence, crcErrors 1, badFrames 0"); }
+
+        /* I3. every other silent drop is a bad frame. */
+        ask(&c, frame({ 18, 3, 0x09, 0x00, 0, 4 }));
+        check(dg[ELS_BL_DG_BAD_FRAMES] == 1, "I3 wrong slave address -> badFrames 1");
+        ask(&c, { 17, 3, 0x09 });
+        check(dg[ELS_BL_DG_BAD_FRAMES] == 2, "I3 3-byte runt -> badFrames 2");
+        ask(&c, frame({ 17, 3, 0x09, 0x00, 0, 4, 0 }));
+        check(dg[ELS_BL_DG_BAD_FRAMES] == 3, "I3 FC3 of 9 bytes, CRC good -> badFrames 3");
+        ask(&c, frame({ 17, 6, 0x09, 0x03, 0, 0, 0 }));
+        check(dg[ELS_BL_DG_BAD_FRAMES] == 4, "I3 FC6 of 9 bytes, CRC good -> badFrames 4");
+        ask(&c, frame({ 17, 16, 0x09, 0x03, 0, 1 }));
+        check(dg[ELS_BL_DG_BAD_FRAMES] == 5, "I3 FC16 of 8 bytes, CRC good -> badFrames 5");
+        { std::vector<uint8_t> big(BL_MODBUS_MAX_FRAME + 1u, 0); big[0] = 17;
+          ask(&c, big);
+          check(dg[ELS_BL_DG_BAD_FRAMES] == 6, "I3 a 257-byte run -> badFrames 6"); }
+        check(dg[ELS_BL_DG_CRC_ERRORS] == 1, "I3 ...and none of those counted as a CRC error");
+
+        /* I4. answered frames are not rejects, exceptions included. */
+        ask(&c, frame({ 17, 4, 0x08, 0x00, 0, 8 }));
+        ask(&c, frame({ 17, 3, 0x08, 0x00, 0, 126 }));
+        ask(&c, frame({ 17, 3, 0x00, 0x00, 0, 1 }));
+        check(dg[ELS_BL_DG_BAD_FRAMES] == 6 && dg[ELS_BL_DG_CRC_ERRORS] == 1,
+              "I4 exception replies (FC4, count 126, register 0) count nothing");
+
+        /* I5. the host cannot write the window, alone or as an FC16 tail. */
+        uint16_t seq0 = c.regs[ELS_BL_SEQ];
+        std::vector<uint16_t> before(dg, dg + ELS_BL_DIAG_REGS);
+        { auto r = ask(&c, frame({ 17, 6, (uint8_t)(DIAG >> 8), (uint8_t)DIAG, 0, 0 }));
+          check(r.size() == 5 && r[1] == 0x86 && r[2] == 2, "I5 FC6 to blDiag+0 -> exception 2"); }
+        { uint16_t last = DIAG + ELS_BL_DIAG_REGS - 1;
+          auto r = ask(&c, frame({ 17, 6, (uint8_t)(last >> 8), (uint8_t)last, 0, 0 }));
+          check(r.size() == 5 && r[1] == 0x86 && r[2] == 2, "I5 FC6 to blDiag+7 -> exception 2"); }
+        { auto r = fc16(DIAG, ELS_BL_DIAG_REGS, 0);
+          check(r.size() == 5 && r[1] == 0x90 && r[2] == 2, "I5 FC16 over exactly blDiag -> exception 2"); }
+        { /* the per-chunk write run one register too far: blCommand .. blDiag+0 */
+          c.regs[ELS_BL_DATA] = 0xABCD;
+          auto r = fc16(ELS_BL_BASE + ELS_BL_COMMAND, 114, ELS_BL_CMD_STAY);
+          check(r.size() == 5 && r[1] == 0x90 && r[2] == 2, "I5 FC16 blCommand..blDiag+0 (114 regs) -> exception 2");
+          check(c.regs[ELS_BL_COMMAND] == 0 && c.regs[ELS_BL_DATA] == 0xABCD && c.regs[ELS_BL_SEQ] == seq0,
+                "I5 ...and nothing below blDiag was written or executed either"); }
+        check(std::vector<uint16_t>(dg, dg + ELS_BL_DIAG_REGS) == before, "I5 ...every counter unchanged");
+        { auto r = fc16(ELS_BL_BASE + ELS_BL_COMMAND, 113, ELS_BL_CMD_STAY);
+          check(r.size() == 8 && r[1] == 16 && c.regs[ELS_BL_SEQ] == (uint16_t)(seq0 + 1),
+                "I5 the real 113-register chunk shape (ending at blData's end) is still served"); }
+
+        /* I6. reads: whole window yes, straddling blData/blDiag no (one window per range). */
+        { uint8_t exc = 0; auto d = readRegs(&c, DIAG, ELS_BL_DIAG_REGS, &exc);
+          check(exc == 0 && d.size() == ELS_BL_DIAG_REGS && d[ELS_BL_DG_CRC_ERRORS] == 1 && d[ELS_BL_DG_BAD_FRAMES] == 6,
+                "I6 FC3 of blDiag reports crcErrors 1, badFrames 6"); }
+        { uint8_t exc = 0; readRegs(&c, DIAG - 1, 2, &exc);
+          check(exc == 2, "I6 FC3 straddling blData's last register and blDiag+0 -> exception 2"); }
+        { uint8_t exc = 0; readRegs(&c, DIAG + ELS_BL_DIAG_REGS, 1, &exc);
+          check(exc == 2, "I6 FC3 one past blDiag -> exception 2"); }
+        { auto d1 = readRegs(&c, DIAG, ELS_BL_DIAG_REGS); auto d2 = readRegs(&c, DIAG, ELS_BL_DIAG_REGS);
+          check(d1 == d2 && d1.size() == ELS_BL_DIAG_REGS, "I6 reading the counters does not reset them"); }
+
+        /* I7. saturation. */
+        dg[ELS_BL_DG_CRC_ERRORS] = 0xFFFE;
+        dg[ELS_BL_DG_BAD_FRAMES] = 0xFFFE;
+        for (int i = 0; i < 3; i++) {
+            ask(&c, { 17, 3, 0x09, 0x00, 0, 4, 0x12, 0x34 });
+            ask(&c, frame({ 18, 3, 0x09, 0x00, 0, 4 }));
+        }
+        check(dg[ELS_BL_DG_CRC_ERRORS] == 0xFFFF, "I7 crcErrors saturates at 0xFFFF, never wraps");
+        check(dg[ELS_BL_DG_BAD_FRAMES] == 0xFFFF, "I7 badFrames saturates at 0xFFFF, never wraps");
+
+        /* I8. only a boot resets them. */
+        blCoreService(&c);
+        blCorePublish(&c);
+        check(dg[ELS_BL_DG_CRC_ERRORS] == 0xFFFF, "I8 service / publish leave the counters alone");
+        blCoreInit(&c);
+        check(allZero(), "I8 blCoreInit (boot) zeroes every counter");
     }
 
     printf("%s\n", failures ? "FAILURES" : "all passed");

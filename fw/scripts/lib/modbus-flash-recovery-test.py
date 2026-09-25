@@ -22,7 +22,11 @@ file still runs in seconds.
 
 The board can be told to DROP a request (it never arrives, nothing runs),
 to MUTE a reply (the command runs, the answer is lost), to answer only every
-other frame, to lose every FC16 frame, or to die outright.
+other frame, to lose every FC16 frame, to go silent for a while after the
+transfer fails (2026-09-23), or to die outright. It can have the bench
+bootloader's diagnostics window at 2420 or, like every field bootloader,
+answer exception 2 there. The bench tools --link-probe and --inject are
+driven against it too, on scripted answer patterns.
 
     python3 scripts/lib/modbus-flash-recovery-test.py [--client PATH] [--only NAME]
 
@@ -141,10 +145,16 @@ class Lathe:
         self.faults = []              # callables(board, Info) -> None | "drop" | "mute"
         self.jump_works = True        # False: JUMP runs, but the board comes back to the bootloader
         self.new_app_dead = False     # True: the NEW image never answers once jumped to
+        # The bench bootloader's link counters at 2420 (framesTaken, crcErrors,
+        # badFrames, ...). None = a field bootloader of 2026-09-23, which has
+        # no such window and answers a read there with exception 2.
+        self.diag = None
 
     # -- wire ------------------------------------------------------------------
     def handle(self, frame: bytes) -> bytes:
         if len(frame) < 4 or struct.unpack("<H", frame[-2:])[0] != crc16(frame[:-2]):
+            if self.diag is not None and self.stage == 1:
+                self.diag[1] += 1
             return b""
         self.frames += 1
         info = self.classify(frame)
@@ -158,6 +168,10 @@ class Lathe:
         self.log.append((self.frames, info.kind, info.chunk, verdict))
         if verdict == "drop":
             return b""
+        if self.diag is not None and self.stage == 1:
+            self.diag[0] = (self.diag[0] + 1) & 0xFFFF
+        if verdict == "exc":
+            return self._exc(info.fc)
         reply = self.process(frame, info)
         return b"" if verdict == "mute" else reply
 
@@ -206,6 +220,8 @@ class Lathe:
             count = struct.unpack(">H", frame[4:6])[0]
             if reg == 2048:
                 vals = self.identity()[:count]
+            elif self.stage == 1 and self.diag is not None and reg == 2420 and count <= len(self.diag):
+                vals = self.diag[:count]
             elif self.stage == 1 and 2304 <= reg and reg + count <= 2304 + 116:
                 self.publish()
                 vals = self.regs[reg - 2304:reg - 2304 + count]
@@ -450,11 +466,13 @@ def board_resets_at(chunk: int):
 class FakeSerial:
     def __init__(self, board, clock):
         self.board, self.clock, self.buf = board, clock, b""
+        self.sent = []                            # every write, as bytes, in order
 
     def reset_input_buffer(self):
         self.buf = b""
 
     def write(self, data):
+        self.sent.append(bytes(data))
         self.clock.t += len(data) * 10 / 115200
         self.buf += self.board.handle(bytes(data))
 
@@ -499,6 +517,12 @@ class Run:
             except SystemExit as e:
                 self.rc = e.code if isinstance(e.code, int) else 1
                 self.exit_msg = str(e.code)
+            except mf.ModbusError as e:
+                # Escaped as a traceback on the real script: never a verdict.
+                # Kept as a result so the scenario's checks go red, not the
+                # whole run (seen-red needs [FAIL] lines to count).
+                self.rc = 99
+                self.exit_msg = f"ESCAPED {type(e).__name__}: {e}"
         self.elapsed = clock.t - t0
         self.out = out.getvalue()
         self.everything = self.out + "\n" + (self.exit_msg or "")
@@ -646,6 +670,26 @@ def s_stuck_dead(mf, image, tmp):
     check("--boot-app" in msg and "SWD" in msg, f"{tag}: gives the manual recovery")
     check("NOTHING CHANGED" not in msg and no_success(r) and r.records == [],
           f"{tag}: claims neither success nor 'nothing changed'")
+    # 2026-09-23: the operator the in-app updater shows this to has no
+    # terminal. The power-cycle comes FIRST and the SSH text stays, after it.
+    # 2026-09-24: bench-verified 2 of 2, so it says it has been tested, no
+    # longer "not proven" -- and still what to check, and what if not.
+    step = msg.find("turn the machine OFF, wait 10 seconds, and turn it back ON")
+    check(0 <= step < msg.find("--boot-app") and step < msg.find("Board state:"),
+          f"{tag}: the power-cycle step leads, before the board state and the SSH recovery")
+    check("tested on the lathe" in msg and "left waiting in its bootloader" in msg
+          and "gone silent part-way through a firmware transfer" in msg,
+          f"{tag}: says the power-cycle recovery is tested, naming the two cases it was tested on")
+    check("not proven" not in msg and "bench-verified" not in msg,
+          f"{tag}: the 'not proven yet' wording is gone")
+    check("reads normally" in msg and "does not read normally afterwards" in msg,
+          f"{tag}: says what to check after the power cycle, and what to do if it fails")
+    check("runValid was 1" in msg, f"{tag}: names the run slot's validity as this run found it")
+    # getattr: --client may be a copy from before RECOVERY_TOTAL_S existed
+    check(r.elapsed < mf.TRANSFER_BUDGET_S + mf.RESYNC_WAIT_S + getattr(mf, "RECOVERY_TOTAL_S", 0) + 90,
+          f"{tag}: patience is still bounded ({r.elapsed:.0f}s of virtual time)")
+    check("recovery: still looking for the board" in r.out,
+          f"{tag}: says it is still looking, for the Update screen's status box")
 
 
 def s_stuck_jump_fails(mf, image, tmp):
@@ -748,7 +792,230 @@ def s_jump_reply_lost(mf, image, tmp):
     check(r.board.commands().count("JUMP") == 1, "jump-reply-lost: one JUMP, not resent")
 
 
+def silent_after_failure(seconds: float):
+    """The 2026-09-23 shape: once the transfer has given up (the first
+    identity read after any WRITE went out), nothing is answered for
+    `seconds`; then the bootloader answers normally again."""
+    s = {"wrote": False, "until": None}
+
+    def f(b, i):
+        if i.kind == "write":
+            s["wrote"] = True
+        if s["wrote"] and s["until"] is None and i.kind == "id":
+            s["until"] = b.clock.t + seconds
+        if s["until"] is not None and b.clock.t < s["until"]:
+            return "drop"
+    return f
+
+
+def s_silent_then_answers(mf, image, tmp):
+    """(6a) 2026-09-23 on the lathe: the transfer failed, the bootloader said
+    nothing to return_to_app's 30 s of identity looks, and the flasher gave
+    up -- a few minutes later it answered and `--boot-app` worked first try.
+    Silent for 60 s after the failure, then answering: patience must get the
+    board back to the old application. RED against the 30 s return_to_app."""
+    def setup(b):
+        b.faults.append(fc16_dead(150))
+        b.faults.append(silent_after_failure(60.0))
+    r = scenario(mf, image, tmp, "silent60", setup)
+    tag = "silent60"
+    msg = r.exit_msg or ""
+    check(r.rc not in (0, None) and "NOTHING CHANGED" in msg and "43ac7c5 is running again" in msg,
+          f"{tag}: back on the old application after 60 s of silence ({msg[:200]})")
+    check(r.board.stage == 2 and r.board.run_rev == OLD_REV,
+          f"{tag}: the board runs the old rev (stage {r.board.stage})")
+    check("APPLY" not in r.board.commands() and r.board.commands().count("JUMP") == 1,
+          f"{tag}: no APPLY; exactly one JUMP, sent after the board answered ({r.board.commands()[-2:]})")
+    check("recovery: still looking for the board" in r.out and "answered again after" in r.out,
+          f"{tag}: says it is still looking, then that the board came back")
+    check(no_success(r) and r.records == [], f"{tag}: no success claimed, nothing recorded")
+
+
+def s_diag_in_failure(mf, image, tmp):
+    """(6c, 5) The diagnostics window in a failure report. A field bootloader
+    answers 2420 with exception 2: that is 'no diagnostics', and the failure
+    report is what it always was. A bench bootloader with the window gets its
+    counters appended to the status line."""
+    def nojump(b):
+        b.faults.append(fc16_dead(150))
+        b.jump_works = False
+    r = scenario(mf, image, tmp, "diag-none", nojump)
+    msg = r.exit_msg or ""
+    check(r.rc not in (0, None) and "could NOT be returned" in msg and "diag" not in msg,
+          f"diag/field bootloader: the exception at 2420 is 'no diagnostics', not a failure of its own "
+          f"({msg[:120]})")
+    check(any(k == "read" for _, k, _, _ in r.board.log), "diag/field bootloader: (sanity) reads were made")
+
+    def nojump_diag(b):
+        nojump(b)
+        b.diag = [0, 7, 3, 0, 0, 1, 0, 2, 1]
+    r = scenario(mf, image, tmp, "diag-bench", nojump_diag)
+    msg = r.exit_msg or ""
+    check("runValid=1; diag framesTaken=" in msg and "crcErrors=7 badFrames=3" in msg
+          and "dmaRestarts=2 clockHse=1" in msg,
+          f"diag/bench bootloader: the counters follow the status line ({msg[msg.find('Board state'):][:220]})")
+    check(r.board.commands().count("JUMP") == mf.JUMP_ATTEMPTS,
+          f"diag/bench bootloader: reading the counters changed nothing about the jumps")
+
+    # read_diag itself, straight: exception -> None, silence -> None, window -> 9 values
+    clock = Clock()
+    mf.time = types.SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep)
+    board = Lathe(clock, stage=1)
+    bus = mf.Rtu("fake", 115200, 17)
+    bus.ser = FakeSerial(board, clock)
+    try:
+        got = mf.read_diag(bus)
+        check(got is None, f"diag/read_diag: exception 2 reads as None ({got})")
+    except Exception as e:  # noqa: BLE001 -- the point is that nothing escapes
+        check(False, f"diag/read_diag: exception 2 escaped as {type(e).__name__}: {e}")
+    check(bus.retries == 0, "diag/read_diag: a missing window adds nothing to the link's retry count")
+    board.stage = 0
+    check(mf.read_diag(bus) is None, "diag/read_diag: silence reads as None")
+    board.stage = 1
+    board.diag = [5, 0, 0, 0, 0, 0, 0, 0]
+    check(mf.read_diag(bus) is None,
+          "diag/read_diag: the 09-23 bench bootloader's 8-register window refuses a 9-register "
+          "read (exception 2), which reads as None")
+    board.diag = [5, 0, 0, 0, 0, 0, 0, 0, 1]
+    got = mf.read_diag(bus)
+    check(got is not None and len(got) == 9 and got[0] == 6 and got[8] == 1,
+          f"diag/read_diag: a bootloader with the window gives its 9 registers, clock flag last ({got})")
+
+
+# --- bench tools: --link-probe and --inject (2026-09-23) ------------------------------
+
+def scripted(pattern: str, kind: str = "read", reg: int = 2304, skip: int = 0):
+    """The probe's reads of (kind, reg), after the first `skip`, follow
+    `pattern`: '.' answered, 'x' dropped, 'E' answered with exception 2."""
+    s = {"n": 0}
+
+    def f(b, i):
+        if i.kind == kind and i.reg == reg and i.fc == 3:
+            k = s["n"] - skip
+            s["n"] += 1
+            if 0 <= k < len(pattern):
+                return {"x": "drop", "E": "exc"}.get(pattern[k])
+    return f
+
+
+class Bench:
+    """One call of a bench function against the fake board, stdout captured."""
+
+    def __init__(self, mf, board, clock, call):
+        self.board, self.clock = board, clock
+        self.bus = mf.Rtu("fake", 115200, 17)
+        self.bus.ser = FakeSerial(board, clock)
+        self.regs_before = list(board.regs)
+        out = io.StringIO()
+        self.msg = None
+        with redirect_stdout(out):
+            try:
+                self.rc = call(self.bus)
+            except SystemExit as e:
+                self.rc = e.code if isinstance(e.code, int) else 1
+                self.msg = str(e.code)
+        self.out = out.getvalue()
+        self.sent = self.bus.ser.sent
+
+
+def bench(mf, call, *, stage=1, diag=None, faults=()):
+    clock = Clock()
+    mf.time = types.SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep)
+    board = Lathe(clock, stage=stage)
+    board.diag = diag
+    board.faults.extend(faults)
+    return Bench(mf, board, clock, call)
+
+
+def is_fc3_request(frame: bytes) -> bool:
+    return (len(frame) == 8 and frame[1] == 3
+            and struct.unpack("<H", frame[-2:])[0] == crc16(frame[:-2]))
+
+
+def s_link_probe(mf, image, tmp):
+    """(6b) --link-probe on a scripted answer pattern with alternating misses:
+    one mark per read, rows of 50, and a summary that names the alternation."""
+    pattern = "." * 10 + "x." * 10 + "xxxx" + "." * 16 + "E" + "x.x"
+    assert len(pattern) == 54
+    b = bench(mf, lambda bus: mf.link_probe(bus, len(pattern), 0.25),
+              diag=[100, 0, 0, 0, 0, 0, 0, 0, 1], faults=[scripted(pattern)])
+    rows = [l[8:] for l in b.out.splitlines() if l.startswith("      0 ") or l.startswith("     50 ")]
+    check(rows == [pattern[:50], pattern[50:]],
+          f"probe: the marks are the pattern, in rows of 50 ({rows})")
+    check("probe: 37/54 answered, 16 missed, 1 exceptions" in b.out, "probe: counts answered/missed/exceptions")
+    check("probe: longest run of misses: 4 (from read 30)" in b.out, "probe: longest run of misses")
+    check("misses ALTERNATE with answers: reads 9-30 (22 reads)" in b.out,
+          "probe: names the alternating stretch")
+    check(b.rc == 1, f"probe: exit 1 when any read went unanswered (rc {b.rc})")
+    # The fake counts every frame that reaches it, the diag reads included:
+    # 100 + the identity read + the diag read itself = 102 before; the 37
+    # answered probe reads plus the E (all 38 arrived) and the diag read after.
+    check("diag before: framesTaken=102 " in b.out and "diag change: framesTaken+39 " in b.out,
+          "probe: the bench bootloader's counters before, and the change after")
+    check(all(is_fc3_request(f) for f in b.sent), "probe: read-only -- every frame sent is an FC3 read")
+    check(b.board.executed == [] and b.board.regs == b.regs_before, "probe: nothing changed on the board")
+    n = len(pattern)
+    check(b.clock.t - 1000.0 >= (n - 1) * 0.25, "probe: the reads are spaced by --probe-interval")
+
+    runs = "....xxxx....xxxx...."
+    b = bench(mf, lambda bus: mf.link_probe(bus, len(runs), 0.25), faults=[scripted(runs)])
+    check("misses do not alternate" in b.out and "longest run of misses: 4 (from read 4)" in b.out,
+          "probe: misses in runs are not called alternating")
+    check("diag: register 2420 not served" in b.out and "diag change" not in b.out,
+          "probe: a field bootloader's exception at 2420 means no counters, and the probe goes on")
+
+    b = bench(mf, lambda bus: mf.link_probe(bus, 20, 0.25), stage=2)
+    check(b.rc == 0 and "probe: 20/20 answered" in b.out and "no misses" in b.out,
+          f"probe/application: probes the identity window, all answered (rc {b.rc})")
+    check(all(is_fc3_request(f) and struct.unpack(">H", f[2:4])[0] == 2048 for f in b.sent),
+          "probe/application: reads only the identity window -- not 2304, not 2420")
+
+
+def s_inject(mf, image, tmp):
+    """(6d) --inject: refused in the application; in the bootloader it sends
+    exactly the documented bytes, once, and nothing it sends is a write."""
+    b = bench(mf, lambda bus: mf.inject(bus, "badcrc", 40, 0.25, None), stage=2)
+    check(b.rc not in (0, None) and "REFUSING --inject" in (b.msg or ""),
+          f"inject/application: refused ({b.msg})")
+    check(all(is_fc3_request(f) and struct.unpack(">H", f[2:4])[0] == 2048 for f in b.sent),
+          f"inject/application: nothing but identity reads went out ({len(b.sent)} frames)")
+
+    read = bytes([17, 3, 0x09, 0x00, 0x00, 0x10])
+    read += struct.pack("<H", crc16(read))
+    expected = {
+        "truncated": read[:3],
+        "badcrc": read[:6] + bytes(x ^ 0xFF for x in read[6:]),
+        "burst": read + read,
+    }
+    check(expected["truncated"].hex() == "110309", "inject: (sanity) truncated is 11 03 09")
+    for kind in ("truncated", "badcrc", "burst", "garbage"):
+        b = bench(mf, lambda bus, k=kind: mf.inject(bus, k, 40, 0.25, 12345),
+                  diag=[0, 0, 0, 0, 0, 0, 0, 0, 1])
+        line = next((l for l in b.out.splitlines() if l.startswith(f"inject {kind}: sending")), "")
+        printed = bytes.fromhex(line.split(":", 2)[2].split("(")[0].strip()) if line else b""
+        odd = [f for f in b.sent if not is_fc3_request(f)]
+        check(odd == [printed], f"inject/{kind}: exactly one non-read frame went out, and it is the one "
+                                f"printed ({[f.hex() for f in odd]} vs {printed.hex()})")
+        if kind in expected:
+            check(printed == expected[kind], f"inject/{kind}: the documented bytes ({printed.hex(' ')})")
+        else:
+            valid = any(struct.unpack("<H", printed[j - 2:j])[0] == crc16(printed[i:j - 2])
+                        for i in range(len(printed)) for j in range(i + 4, len(printed) + 1))
+            check(len(printed) == 20 and not valid,
+                  f"inject/garbage: 20 bytes, no slice of which is a frame with a valid CRC")
+            again = bench(mf, lambda bus: mf.inject(bus, "garbage", 40, 0.25, 12345))
+            check([f for f in again.sent if not is_fc3_request(f)] == [printed],
+                  "inject/garbage: --inject-seed repeats the same bytes")
+        check(b.board.executed == [] and b.board.regs == b.regs_before,
+              f"inject/{kind}: nothing executed, no register written")
+        check("probe: 40/40 answered" in b.out and "diag change:" in b.out,
+              f"inject/{kind}: the short probe and the counters follow it")
+    check(b.board.diag[1] >= 1, f"inject: (sanity) the fake counted the damaged frame ({b.board.diag})")
+
+
 SCENARIOS = {
+    "silent60": s_silent_then_answers, "diag": s_diag_in_failure,
+    "probe": s_link_probe, "inject": s_inject,
     "jumpreply": s_jump_reply_lost,
     "clean": s_clean, "drops": s_drops_resume, "landed": s_landed_unacked, "blackout": s_blackout,
     "alternate": s_alternate, "return": s_dead_fc16_return, "reset": s_reset_to_app,

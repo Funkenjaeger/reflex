@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """modbus-flash-recovery-seen-red.py -- prove modbus-flash-recovery-test.py
-can FAIL, by removing each of the two behaviours it exists to pin and
+can FAIL, by removing each of the behaviours it exists to pin and
 watching the scenario that pins it go red.
 
   M1 "no return to app": flash()'s call to return_to_app() for a failure
@@ -9,6 +9,12 @@ watching the scenario that pins it go red.
   M2 "no resume": stream()'s resync/resume branch becomes a bare re-raise,
      so the first chunk that will not go through ends the transfer. Scenario
      "drops" must go red.
+  M3 "impatient recovery": RECOVERY_TOTAL_S back to the 30 s return_to_app
+     had on 2026-09-23. Scenario "silent60" must go red.
+  M4 "diag exception is fatal": read_diag lets a field bootloader's
+     exception at register 2420 out. Scenario "diag" must go red.
+  M5 "no operator step": the power-cycle step dropped from the could-not-
+     return verdict. Scenario "dead" must go red.
 
 Each mutation is made on a scratch copy of fw/scripts (never on the tree),
 its anchor is asserted present exactly once BEFORE the edit and the edit is
@@ -37,6 +43,20 @@ MUTANTS = [
     ("M2 no resume", "drops",
      "        except (LinkLost, ModbusError) as e:\n            failure = e\n",
      "        except (LinkLost, ModbusError) as e:\n            raise\n"),
+    # 2026-09-23: the 30 s of patience the lathe's return_to_app had that day.
+    ("M3 impatient recovery", "silent60",
+     "RECOVERY_TOTAL_S = 150.0\n",
+     "RECOVERY_TOTAL_S = 30.0\n"),
+    # A field bootloader's exception at the diag window treated as a failure.
+    ("M4 diag exception is fatal", "diag",
+     "        except ExceptionResponse:\n            return None\n        except ModbusError:\n"
+     "            continue\n",
+     "        except ExceptionResponse:\n            raise\n        except ModbusError:\n"
+     "            continue\n"),
+    # The operator's power-cycle step dropped from the verdict.
+    ("M5 no operator step", "dead",
+     '                     f"  {POWER_CYCLE_STEP}\\n"\n',
+     '                     f""\n'),
 ]
 
 

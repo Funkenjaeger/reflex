@@ -10,6 +10,10 @@
 # overwritten sector 0, and until this file existed none of it had ever run
 # outside a session with a probe and a board attached.
 #
+# Since 2026-09-24 it also runs scripts/provision.sh's preflight the same way,
+# for its sector-0 write-protection read (lib/sector0-optcr.cfg -> OPTCR line
+# -> sector0_wrp_reported), locally and over --host.
+#
 # HOW, WITH NO PROBE AND NO BOARD. A fake `openocd`, `ssh` and `scp` are put
 # first on PATH. The fake openocd honours the `dump_image <path> <base> <size>`
 # arguments well enough to write a chosen file, and FAKE_OPENOCD_MODE switches
@@ -104,7 +108,13 @@ log_file="${FAKE_OPENOCD_LOG:-/dev/null}"
 . "${FAKE_FIXTURES:?}"
 
 dump_path=""; dump_base=""; dump_size=""; saw_program=0; resumed=no
+optcr_cfg=""; prev=""
 for a in "$@"; do
+    # provision.sh's preflight: `-f .../sector0-optcr.cfg`.
+    if [ "$prev" = -f ]; then
+        case "$a" in *sector0-optcr.cfg) optcr_cfg="$a" ;; esac
+    fi
+    prev="$a"
     case "$a" in
         *dump_image*)
             rest="${a#*dump_image }"
@@ -118,6 +128,25 @@ for a in "$@"; do
         *"program "*) saw_program=1 ;;
     esac
 done
+
+# The OPTCR read. Real openocd resolves -f against its cwd, so a path that does
+# not exist where openocd runs -- the --host case with the script not copied
+# over -- is an error, as it would be for real. Otherwise print what the cfg's
+# echo would (FAKE_OPTCR: a value, `none` or `unreadable`), to stderr like
+# openocd's log, and record whether the script lets the core run after it.
+if [ -n "$optcr_cfg" ]; then
+    if [ ! -f "$optcr_cfg" ]; then
+        printf 'optcr cfg=missing path=%s\n' "$optcr_cfg" >> "$log_file"
+        echo "fake openocd: Error: cannot open $optcr_cfg" >&2
+        exit 1
+    fi
+    if awk '/read_memory/ { r = 1 } r && /^reset run/ { f = 1 } END { exit !f }' "$optcr_cfg"; then
+        resumed=yes
+    fi
+    printf 'optcr cfg=present resumed=%s value=%s\n' "$resumed" "${FAKE_OPTCR:-none}" >> "$log_file"
+    s0fx_optcr_output "${FAKE_OPTCR:-none}" >&2
+    exit 0
+fi
 
 if [ -n "$dump_path" ]; then
     printf 'dump_image %s %s %s mode=%s resumed=%s\n' \
@@ -468,5 +497,108 @@ run_flash foreign ok --no-build
 check_rc 1 "full run on an unidentified board"
 check_openocd_seq "dump_image" \
           "full run on an unidentified board -- NOTHING was programmed"
+
+# --- provision.sh: the sector-0 write-protection read -----------------------
+#
+# provision.sh's reachability preflight runs lib/sector0-optcr.cfg and decides
+# from the OPTCR line it prints. Until 2026-09-24 it ran `flash info 0`, which
+# the lathe's openocd never prints anything for, so the warning could not fire
+# on any board. These run provision.sh end to end, --dry-run, against the same
+# fakes, feeding each OPTCR answer (FAKE_OPTCR) and asserting what it SAYS.
+
+echo
+echo "== sector-0 write-protection read in scripts/provision.sh =="
+
+PROVISION="$REPO/scripts/provision.sh"
+
+# provision.sh refuses without a built bootloader ELF and a HEADERED slotted
+# image (it runs reflex_image.py info on it). Stand in for both when the tree
+# is not built, and remove them afterwards, like stub_elf above.
+stub_provision_inputs() {
+    local bl="$REPO/bootloader/build/reflex-bl.elf" app="$REPO/build-slot/reflex-fw.bin"
+    if [ ! -f "$bl" ]; then
+        mkdir -p "$(dirname "$bl")"
+        STUB_ELFS+=("$bl")
+        printf 'stub ELF written by scripts/lib/flash-preflight-test.sh\n' > "$bl"
+    fi
+    if [ ! -f "$app" ]; then
+        mkdir -p "$(dirname "$app")"
+        STUB_ELFS+=("$app")
+        python3 - "$app" <<'PY'
+import struct, sys
+img = bytearray(b"\xff" * 0x400)
+# magic "RFLX", header v1, flags 0; length and CRC are patched below
+struct.pack_into("<IHHIII3I", img, 0x200, 0x584C4652, 1, 0, 0, 0, 0, 0, 0, 0)
+open(sys.argv[1], "wb").write(img)
+PY
+        python3 "$REPO/scripts/reflex_image.py" patch "$app" >/dev/null
+    fi
+}
+stub_provision_inputs
+
+run_provision() {  # run_provision <optcr|none|unreadable> [provision.sh args...]
+    local optcr="$1"; shift
+    : > "$OPENOCD_LOG"; : > "$SSH_LOG"; : > "$SCP_LOG"
+    rm -rf "$REMOTE" "$FAKEHOME"; mkdir -p "$REMOTE" "$FAKEHOME"
+    assert_fakes_resolve || return 0
+    OUT="$(cd "$REPO" && env \
+        PATH="$BIN:$PATH" \
+        HOME="$FAKEHOME" \
+        FAKE_FIXTURES="$FIXTURES" \
+        FAKE_OPTCR="$optcr" \
+        FAKE_OPENOCD_LOG="$OPENOCD_LOG" \
+        FAKE_SCP_LOG="$SCP_LOG" \
+        FAKE_SSH_LOG="$SSH_LOG" \
+        FAKE_REMOTE_HOME="$REMOTE" \
+        bash "$PROVISION" "$@" 2>&1)" && RC=0 || RC=$?
+}
+
+SAID_WRP="sector 0 is WRITE-PROTECTED"
+SAID_CLEAR="sector 0 is not write-protected"
+SAID_UNKNOWN="could not read sector 0's write protection"
+
+# 11. Sector 0 protected (the real reading with nWRP0 clear): warn, with the
+#     value as evidence and the clearing command.
+run_provision 0x0ffeaacd --no-build --dry-run
+check_rc 0 "provision, sector 0 protected"
+check_has "$SAID_WRP" "provision, sector 0 protected -- warns before the erase"
+check_has "FLASH_OPTCR=0x0ffeaacd" "provision, sector 0 protected -- prints the register read"
+check_has "flash protect 0 0 0 off" "provision, sector 0 protected -- gives the clearing command"
+check_lacks "$SAID_CLEAR" "provision, sector 0 protected -- does NOT also call it clear"
+check_lacks "$SAID_UNKNOWN" "provision, sector 0 protected -- does NOT call it unknown"
+check_openocd_log_has "optcr cfg=present resumed=yes" \
+          "provision -- reads OPTCR through the cfg, and the core is let run after"
+
+# 12. Nothing protected (the real reading): says so, no warning.
+run_provision 0x0fffaacd --no-build --dry-run
+check_rc 0 "provision, nothing protected"
+check_has "$SAID_CLEAR (FLASH_OPTCR=0x0fffaacd)" "provision, nothing protected -- says sector 0 is clear"
+check_lacks "$SAID_WRP" "provision, nothing protected -- no protection warning"
+check_lacks "$SAID_UNKNOWN" "provision, nothing protected -- not unknown"
+
+# 13. Another sector protected, not sector 0: sector 0 is clear.
+run_provision 0x0ffdaacd --no-build --dry-run
+check_has "$SAID_CLEAR" "provision, sector 1 protected -- sector 0 still clear"
+check_lacks "$SAID_WRP" "provision, sector 1 protected -- no sector-0 warning"
+
+# 14. No OPTCR line -- what every run of the old flash-info probe produced on
+#     the lathe. Must say it could not tell, not stay silent, not claim either.
+run_provision none --no-build --dry-run
+check_rc 0 "provision, no OPTCR line"
+check_has "$SAID_UNKNOWN" "provision, no OPTCR line -- says the state could not be read"
+check_lacks "$SAID_WRP" "provision, no OPTCR line -- does NOT claim protected"
+check_lacks "$SAID_CLEAR" "provision, no OPTCR line -- does NOT claim clear"
+
+# 15. --host: openocd runs on the probe host, so the cfg must be there. The
+#     fake openocd fails on a -f path that does not exist in its cwd.
+run_provision 0x0ffeaacd --no-build --dry-run --host fakehost
+check_rc 0 "provision --host, sector 0 protected"
+check_has "$SAID_WRP" "provision --host -- the protection read works remotely"
+check_openocd_log_has "optcr cfg=present" "provision --host -- the cfg exists where openocd runs"
+if grep -qF "fakehost:firmware/sector0-optcr.cfg" "$SCP_LOG"; then
+    ok "provision --host -- the cfg was copied to the probe host"
+else
+    bad "provision --host -- no scp of the cfg"; sed 's/^/       | /' "$SCP_LOG"
+fi
 
 exit "$fail"

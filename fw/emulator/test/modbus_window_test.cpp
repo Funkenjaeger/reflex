@@ -36,8 +36,12 @@ int main() {
     uint16_t idRegs[ELS_ID_SIZE] = ELS_ID_WINDOW_INIT(ELS_ID_STAGE_APP, ELS_PROTOCOL_VERSION_TEST);
     uint16_t blRegs[ELS_BL_SIZE];
     mbWindow_t appWins[1] = { { ELS_ID_BASE, ELS_ID_SIZE, idRegs, 1 } };
-    mbWindow_t blWins[2]  = { { ELS_ID_BASE, ELS_ID_SIZE, idRegs, 1 },
-                              { ELS_BL_BASE, ELS_BL_SIZE, blRegs, 0 } };
+    /* As bootloader/core/bl_modbus.c registers them since 2026-09-23: the
+     * writable control window stops at blDiag, which is its own read-only
+     * window (els_identity.h). */
+    mbWindow_t blWins[3]  = { { ELS_ID_BASE, ELS_ID_SIZE, idRegs, 1 },
+                              { ELS_BL_BASE, ELS_BL_DIAG, blRegs, 0 },
+                              { ELS_BL_BASE + ELS_BL_DIAG, ELS_BL_DIAG_REGS, &blRegs[ELS_BL_DIAG], 1 } };
     uint16_t *p = nullptr;
     const unsigned mainSize = 232;
 
@@ -74,15 +78,23 @@ int main() {
           "addr + count past 65535 does not wrap into the struct");
 
     /* --- the bootloader's view --- */
-    check(mbResolveRange(nullptr, 0, blWins, 2, 0, 1, 0, &p) == MB_EXC_ILLEGAL_ADDRESS,
+    check(mbResolveRange(nullptr, 0, blWins, 3, 0, 1, 0, &p) == MB_EXC_ILLEGAL_ADDRESS,
           "bootloader: register 0 is exception 2 (no main map)");
-    check(mbResolveRange(nullptr, 0, blWins, 2, ELS_BL_BASE, ELS_BL_SIZE, 1, &p) == 0 && p == &blRegs[0],
-          "bootloader: the whole control window is writable");
-    check(mbResolveRange(nullptr, 0, blWins, 2, ELS_BL_BASE + ELS_BL_COMMAND, 113, 1, &p) == 0 && p == &blRegs[ELS_BL_COMMAND],
+    check(mbResolveRange(nullptr, 0, blWins, 3, ELS_BL_BASE, ELS_BL_DIAG, 1, &p) == 0 && p == &blRegs[0],
+          "bootloader: the whole control window below blDiag is writable");
+    check(mbResolveRange(nullptr, 0, blWins, 3, ELS_BL_BASE + ELS_BL_COMMAND, 113, 1, &p) == 0 && p == &blRegs[ELS_BL_COMMAND],
           "bootloader: one FC16 from blCommand through the end of blData (113 regs) is served");
-    check(mbResolveRange(nullptr, 0, blWins, 2, ELS_BL_BASE + ELS_BL_SIZE, 1, 0, &p) == MB_EXC_ILLEGAL_ADDRESS,
-          "bootloader: one past blData is exception 2");
-    check(mbResolveRange(nullptr, 0, blWins, 2, ELS_ID_BASE, ELS_ID_SIZE, 1, &p) == MB_EXC_ILLEGAL_ADDRESS,
+    check(mbResolveRange(nullptr, 0, blWins, 3, ELS_BL_BASE + ELS_BL_COMMAND, 114, 1, &p) == MB_EXC_ILLEGAL_ADDRESS,
+          "bootloader: the same FC16 one register longer runs into blDiag -> exception 2");
+    check(mbResolveRange(nullptr, 0, blWins, 3, ELS_BL_BASE + ELS_BL_DIAG, ELS_BL_DIAG_REGS, 0, &p) == 0 &&
+          p == &blRegs[ELS_BL_DIAG], "bootloader: blDiag reads");
+    check(mbResolveRange(nullptr, 0, blWins, 3, ELS_BL_BASE + ELS_BL_DIAG, 1, 1, &p) == MB_EXC_ILLEGAL_ADDRESS,
+          "bootloader: blDiag is read-only");
+    check(mbResolveRange(nullptr, 0, blWins, 3, ELS_BL_BASE + ELS_BL_DIAG - 1, 2, 0, &p) == MB_EXC_ILLEGAL_ADDRESS,
+          "bootloader: a read straddling blData and blDiag is exception 2");
+    check(mbResolveRange(nullptr, 0, blWins, 3, ELS_BL_BASE + ELS_BL_SIZE, 1, 0, &p) == MB_EXC_ILLEGAL_ADDRESS,
+          "bootloader: one past blDiag is exception 2");
+    check(mbResolveRange(nullptr, 0, blWins, 3, ELS_ID_BASE, ELS_ID_SIZE, 1, &p) == MB_EXC_ILLEGAL_ADDRESS,
           "bootloader: identity window is read-only here too");
 
     /* --- the layout facts the record states --- */
@@ -91,7 +103,16 @@ int main() {
           "blSeq is below every other outcome register");
     check(ELS_BL_BASE > ELS_ID_BASE + ELS_ID_SIZE, "control window is above the identity window");
     check(ELS_ID_BASE >= 4 * mainSize, "identity base is well clear of the struct (>= 4x today's size)");
-    check(ELS_BL_SIZE == 116 && ELS_BL_DATA == 16, "control window: 16 head registers + 100 data");
+    check(ELS_BL_DATA == 16 && ELS_BL_DATA_REGS == 100, "control window: 16 head registers + 100 data");
+    check(ELS_BL_DIAG == ELS_BL_DATA + ELS_BL_DATA_REGS && ELS_BL_DIAG == 116 && ELS_BL_DIAG_REGS == 9,
+          "blDiag: 9 registers appended directly after blData, at +116");
+    check(ELS_BL_SIZE == 125 && ELS_BL_SIZE == ELS_BL_DIAG + ELS_BL_DIAG_REGS, "control window: 125 registers in all");
+    check(ELS_BL_DG_FRAMES_TAKEN == 0 && ELS_BL_DG_CRC_ERRORS == 1 && ELS_BL_DG_BAD_FRAMES == 2 &&
+          ELS_BL_DG_OVERFLOW_DROPS == 3 && ELS_BL_DG_ERR_ORE == 4 && ELS_BL_DG_ERR_FE == 5 &&
+          ELS_BL_DG_ERR_NE == 6 && ELS_BL_DG_DMA_RESTARTS == 7,
+          "blDiag: counter order pinned");
+    check(ELS_BL_DG_CLOCK_HSE == 8 && ELS_BL_DG_CLOCK_HSE == ELS_BL_DIAG_REGS - 1,
+          "blDiag: the clock flag is the last register, after the counters (modbus-flash.py DIAG_NAMES)");
 
     printf("%s\n", failures ? "FAILURES" : "all passed");
     return failures ? 1 : 0;
