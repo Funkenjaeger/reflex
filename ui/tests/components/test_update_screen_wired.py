@@ -129,14 +129,27 @@ def test_only_verify_firmware_half_builds_a_verdict():
 
 
 def test_no_confirmation_dialog_sits_over_the_protocol_check():
-    """The screen has exactly one Popup, and it is the pre-release warning.
+    """The screen has exactly two Popups: the pre-release warning and the
+    ELS-engaged dialog (2026-09-25). Neither is anywhere near the gate.
 
     An "Install Anyway" on a mismatched pair would defeat the entire feature:
     the reason in-app update was allowed back is that it CANNOT leave the two
     halves disagreeing, and a dialog is a way to make it able to.
+
+    The second dialog is about the MACHINE, not the pair: the controller will
+    not reboot into its bootloader under an engaged ELS job, and the dialog
+    offers to disengage it. It is asserted to live in its own named method,
+    so a third Popup -- or one moved somewhere new -- still fails here and has
+    to be argued for.
     """
     screen = _read("components/screens/update_screen.py")
-    assert screen.count("Popup(") == 1
+    assert screen.count("Popup(") == 2
+    methods = re.split(r"\n    def ", screen)
+    owners = sorted(m.split("(", 1)[0] for m in methods if "Popup(" in m)
+    assert owners == ["_confirm_disengage", "_confirm_prerelease"], owners
+    # The ELS dialog is reached only when the controller says ELS is engaged.
+    assert re.search(r"if uic is None or not uic\.engaged:\s+self\._do_install"
+                     r"\(release\)\s+return\s+self\._confirm_disengage", screen)
 
     # The one dialog is reached only from the pre-release branch, and nothing
     # in the gate's module can build one. Asserted on the code form: the
