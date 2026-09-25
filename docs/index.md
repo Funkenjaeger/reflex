@@ -154,7 +154,7 @@ rows move from planned to released as tags are cut.
 
 | Not yet | Coming in | What you do instead today |
 |---|---|---|
-| **Auto-start** — begin the pass when the half nut closes | 1.2.0 | Close the half nut, then press **Cut**. |
+| **Auto-start** — begin the pass when the half nut closes | 1.3.0 | Close the half nut, then press **Cut**. |
 | **Auto-advance / virtual compound** — next depth of cut by advancing thread phase from X depth | 1.3.0 | Feed in with the compound slide between passes, as on any manual lathe. |
 | **Multi-start threading** | 2.0.0 | Nothing safe. The phase offset is **not** a substitute — see [Widening a groove](guide/widening-a-groove.md#what-it-is-not-for). |
 
