@@ -90,13 +90,13 @@
                 name: "Advanced"
 
             BooleanItem:
-                name: "Stop coast correction"
+                name: "Stop overshoot correction"
                 help_file: "els_overshoot_correction.md"
                 value: app.els.els_overshoot_correction
                 on_value: app.els.els_overshoot_correction = self.value
 
             NumberItem:
-                name: "Coast margin (Z counts)"
+                name: "Overshoot margin (Z counts)"
                 help_file: "els_overshoot_correction.md"
                 value: root.overshoot_margin_counts
                 on_value: root.overshoot_margin_counts = self.value

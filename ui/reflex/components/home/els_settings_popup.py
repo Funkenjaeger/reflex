@@ -100,7 +100,7 @@ class ElsSettingsPopup(Popup):
             return
         if counts != int(self.app.els.els_overshoot_margin_counts):
             self.app.els.els_overshoot_margin_counts = counts
-            log.info(f"Stop coast correction margin: {counts} Z counts")
+            log.info(f"Stop overshoot correction margin: {counts} Z counts")
 
     def _push_cal_limits(self):
         """Send the limits to firmware as soon as they change.
