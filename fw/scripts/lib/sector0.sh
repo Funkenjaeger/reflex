@@ -58,16 +58,45 @@ sector0_classify() {
     python3 "$SECTOR0_PY" classify "$1"
 }
 
-# True if openocd's `flash info 0` output in $1 reports sector 0 protected.
+# The openocd script whose output sector0_wrp_reported reads. provision.sh
+# passes it with -f (and copies it to the probe host first under --host).
+SECTOR0_OPTCR_CFG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sector0-optcr.cfg"
+
+# Is sector 0 write-protected? Decided from the output of an openocd run of
+# lib/sector0-optcr.cfg, in file $1. THREE answers, as the return code:
 #
-# openocd prints each sector as `#  0: 0x00000000 (0x4000 16kB) <state>`, where
-# <state> is "protected", "not protected" or "protection state unknown". A
-# grep for the bare word "protected" matches the SECOND of those, so the
-# warning it guarded fired on every unprotected board -- and a warning that
-# always fires is one nobody reads. This matches sector 0's line only, and only
-# when the state is exactly "protected".
+#   0  sector 0 IS protected
+#   1  sector 0 is not protected (another sector may be)
+#   2  the output carries no readable OPTCR line -- the state is UNKNOWN, and
+#      that must never be reported as either of the other two
+#
+# Sets SECTOR0_OPTCR to the value read ("" when there was none), so the
+# caller can print the evidence.
+#
+# THE REGISTER. sector0-optcr.cfg echoes FLASH_OPTCR (0x40023C14, RM0383) as a
+# line `OPTCR=0x%08x`. nWRP is bits 16..27, one bit per sector, bit 16 =
+# sector 0, and it is ACTIVE LOW: 0 means protected. (RDP is bits 8..15; 0xAA
+# is level 0.) Real readings from the lathe's board, 2026-09-24:
+# 0x0fffaacd unprotected, 0x0ffeaacd sector 0 protected.
+#
+# WHY NOT `flash info 0`. Until 2026-09-24 this grepped openocd's `flash info
+# 0` listing for sector 0's "protected" line. The openocd on the probe host
+# (0.12.0+dev, snapshot 2026-02-16) prints nothing at all for `flash info`,
+# `mdw` or `stm32f2x options_read` given with -c, so the grep had nothing to
+# match and the warning it guarded could never fire. Verified by hand on that
+# machine; a Tcl echo from a -f script is what does print there. The line is
+# anchored at the start so no other openocd message can be mistaken for it.
 sector0_wrp_reported() {
-    grep -Eq '#[[:space:]]*0:[[:space:]].*\)[[:space:]]+protected[[:space:]]*$' "$1"
+    local found
+    SECTOR0_OPTCR=""
+    found="$(sed -n 's/^OPTCR=\(0x[0-9A-Fa-f]\{8\}\)[[:space:]]*$/\1/p' "$1" 2>/dev/null)" || return 2
+    found="${found##*$'\n'}"     # the last one, if openocd somehow printed two
+    [ -n "$found" ] || return 2
+    SECTOR0_OPTCR="$found"
+    if (( (found >> 16) & 1 )); then
+        return 1                 # nWRP0 set: not protected
+    fi
+    return 0                     # nWRP0 clear: protected
 }
 
 # The bootloader refusal, printed by both callers so the wording only exists
