@@ -1,4 +1,5 @@
 #: import LedButton reflex.components.toolbars.led_button
+#: import AutoSizeLabel reflex.components.widgets.auto_size_button
 <StatusBar>:
   size_hint: 1, None
   height: 38
@@ -154,10 +155,12 @@
             circle: (self.x + dp(92) - dp(7) - 0.5, self.y - dp(7) - 0.5, dp(7), 0, 90)
             width: 1.0
 
-        Label:
+        AutoSizeLabel:
           text: app.version
           font_name: app.theme.font_mono
-          font_size: 16
+          # Shrinks to fit rather than wrapping: v1.2.0-rc.7 is ~99 px at 16 in
+          # a 92 dp box (AutoSizeLabel). A final release (v1.2.0) fits at 16.
+          max_font_size: 16
           # `text` (not `text_dim`): the version sits on the recessed dogleg, where
           # text_dim only reaches ~3.8:1 in the light theme. text reads cleanly on
           # both themes.

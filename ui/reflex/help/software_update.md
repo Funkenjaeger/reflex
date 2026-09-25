@@ -36,6 +36,12 @@ Pick the version to install.
 ### Install Selected Release
 Runs the whole update. The service restarts itself at the end.
 
+If an ELS job is engaged, you are asked first: updating reboots the
+controller, which ends the job, so it has to be disengaged. **Disengage and
+Install** does that and starts the update once the controller confirms the
+job is released. If the spindle is turning, or a cycle is running, it says so
+instead — stop it, then tap Install again.
+
 ## What happens when you press Install
 
 1. **Checks it can finish, changing nothing.** Clean checkout, `uv` present,
@@ -46,10 +52,11 @@ Runs the whole update. The service restarts itself at the end.
    flasher needs that port. **Do not power the machine off while it is
    flashing.**
 3. **Asks the new firmware what it speaks.** If its register protocol version
-   is not what the new UI expects, the update **stops there** and the UI half
-   is not installed. There is no way past this: a UI and firmware that
-   disagree about the register layout read every register after the point of
-   divergence as plausible nonsense.
+   is not what the new UI expects, the update **stops there**: the previous
+   firmware is put back and confirmed running, and the UI half is not
+   installed. There is no way past this: a UI and firmware that disagree about
+   the register layout read every register after the point of divergence as
+   plausible nonsense.
 4. **Installs the UI half** and restarts.
 
 ## Notes
@@ -57,7 +64,11 @@ Runs the whole update. The service restarts itself at the end.
 - The controller needs the Modbus field bootloader for step 2. A board flashed
   only over SWD does not have it, and the update will say so and stop.
 - If the update refuses, nothing is left half-done — the status area names what
-  stopped it. The exception is a refusal at step 3, which says so explicitly:
-  the controller has the new firmware and this UI is still the old one.
+  stopped it, and says so when it has put the previous firmware back. Only if
+  that restore itself fails does it say the controller is left on the new
+  firmware under the old UI, and what to do.
+- If the controller cannot be reached after a failed transfer, the status area
+  says to turn the machine off, wait 10 seconds and turn it on — tested on the
+  lathe: the controller comes back on its previous firmware.
 - The status area is the log. It is worth reading before leaving the screen.
 - Updating from the command line is still supported; see the Installing page.

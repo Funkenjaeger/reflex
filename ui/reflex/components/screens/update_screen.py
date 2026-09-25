@@ -21,7 +21,6 @@ off, and disables navigation away and the Install button for the duration.
 """
 
 import asyncio
-import importlib.metadata
 import tempfile
 import threading
 from pathlib import Path
@@ -36,7 +35,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
 
 from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>/<ThemedLabel>
-from reflex.utils import updater
+from reflex.utils import release_version, updater
 from reflex.utils.devices import ELS_PROTOCOL_VERSION
 from reflex.utils.kv_loader import load_kv
 
@@ -55,7 +54,9 @@ ELS_RELEASE_POLL_S = 0.1
 class UpdateScreen(Screen):
     releases = ListProperty([])
     selected_release = StringProperty("")
-    current_release = StringProperty("v" + importlib.metadata.version("reflex"))
+    # The tag spelling (v1.2.0-rc.7), so it reads like the list below it and
+    # compares with it -- see reflex/utils/release_version.py.
+    current_release = StringProperty(release_version.installed_tag())
     enable_update_button = BooleanProperty(False)
     allow_experimental = BooleanProperty(False)
     busy = BooleanProperty(False)
@@ -153,7 +154,11 @@ class UpdateScreen(Screen):
             device.offer_prereleases = value
 
     def on_selected_release(self, instance, value):
-        self.enable_update_button = bool(value) and value != self.current_release
+        # Canonically, not as strings: until 2026-09-25 current_release was the
+        # package spelling (v1.2.0rc7) and never equalled a pre-release tag
+        # (v1.2.0-rc.7), so the installed pre-release was always installable.
+        self.enable_update_button = (bool(value) and
+                                     not release_version.same_release(value, self.current_release))
 
     # ------------------------------------------------------------------
     # install

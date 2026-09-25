@@ -199,6 +199,26 @@ class TestInstallButton:
         screen.selected_release = screen.current_release
         assert not screen.enable_update_button
 
+    def test_the_installed_pre_release_is_recognized(self, screen):
+        """2026-09-25: the package reports 1.2.0rc7, the tag is v1.2.0-rc.7.
+        Compared as strings ("v" + package) they never matched, so the
+        installed pre-release was always offered for install."""
+        screen.current_release = "v1.2.0-rc.1"      # installed_tag() of 1.2.0rc1
+        screen.selected_release = "v1.1.0"
+        assert screen.enable_update_button
+        screen.selected_release = "v1.2.0-rc.1"
+        assert not screen.enable_update_button
+        # And the old spelling of the same release, should one ever arrive.
+        screen.current_release = "v1.2.0rc1"
+        screen.selected_release = "v1.1.0"
+        screen.selected_release = "v1.2.0-rc.1"
+        assert not screen.enable_update_button
+
+    def test_current_release_is_shown_in_tag_spelling(self):
+        with patch("importlib.metadata.version", return_value="1.2.0rc7"):
+            from reflex.utils import release_version
+            assert release_version.installed_tag() == "v1.2.0-rc.7"
+
     def test_enabled_for_a_different_version(self, screen):
         other = _not_the_running_version(screen)
         screen.selected_release = other
