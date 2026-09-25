@@ -86,8 +86,9 @@ open the half nut between passes.
 ## 🗺 Versions
 
 The living record: what shipped and what is planned, in one place so the two
-cannot drift apart. Entries move from **planned** to **released** as tags are
-cut, and the plan is revised as often as reality requires.
+cannot drift apart. Entries move from **planned** through **release candidate**
+to **released** as tags are cut, and the plan is revised as often as reality
+requires.
 
 ### 1.0.0 · released 2026-07-15
 
@@ -116,20 +117,31 @@ The release where the controller stops trusting and starts **verifying**.
 - Improved status indication and operator-facing messages.
 - In-app update screen withdrawn; updating is a `git pull` and, when firmware moves, a flash.
 
-### 1.2.0 · planned — auto-start
+### 1.2.0 · release candidate
 
-Take the last button press out of the cycle.
+The release where the machine **updates itself** from the touchscreen, and its
+calibration survives a dead SD card.
+
+- **In-app update, firmware and UI together** — protocol-checked, put back as it was if a step fails; offers to disengage an engaged ELS job first.
+- **Field bootloader** — firmware goes over the RS-485 link, no ST-Link after the first install; runs on the board's crystal since rc.6.
+- **Backup and restore** — every commissioning change recorded on the card; export to USB or sync to your own GitHub gist, and restore from either.
+- **Commissioning guard** — a card that was never commissioned shows **UNCOMMISSIONED** and saves nothing until a backup is restored or the warning dismissed.
+- **Generated register map** — one schema for both halves, with a protocol fingerprint; the controller is read at ~28 Hz, up from ~16.
+- **Flight recorder** — the UI's poll stream and the stop's trigger instant kept on the card, so a stop can be examined afterwards.
+- **Readability pass** — dimmed text meets 3:1 contrast, in both themes.
+- X DRO reads radius or diameter, scales entered as a resolution, and other operator fixes.
+- **Stop coast correction** (*experimental, off by default*) — fires the stop early by the servo drive's measured coast; calibrated on one lathe only.
+
+### 1.3.0 · planned — auto-start and auto-advance
+
+Take the last button press, and then the depth of cut, out of your hands.
+Auto-start was planned for 1.2.0 and moved here unbuilt.
 
 - **Begin the pass when the half nut closes**, rather than on **Cut**.
 - **Sensorless** — infers engagement from motion already measured for the take-up.
-- Developed desk-first against the firmware emulator, with a machine window to verify.
-
-### 1.3.0 · planned — auto-advance, the virtual compound
-
-Take the depth of cut out of your hands as well.
-
-- **Advance thread phase from X depth** — a flank infeed with no compound set over.
+- **Advance thread phase from X depth** — a flank infeed with no compound set over: the virtual compound.
 - Threading illustrations re-tooled as programmatic SVG, regenerated like the screenshots.
+- Developed desk-first against the firmware emulator, with a machine window to verify.
 
 ### 2.0.0 · planned — the respin
 
