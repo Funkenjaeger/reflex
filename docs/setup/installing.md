@@ -281,8 +281,10 @@ SSH. Do it in the order given there; the reasoning for the order is on that
 page.
 
 Until it is done, the home screen shows an **UNCOMMISSIONED** strip and no
-setting is saved. If you have a backup of this machine's settings, restore
-it instead of commissioning by hand. Both routes are on
+setting is saved. Tap the strip and choose **New machine — set it up** before
+you start: that is what switches saving on, and it opens Setup for you. If you
+have a backup of this machine's settings, choose one of the restore buttons in
+the same dialog instead. See
 [The UNCOMMISSIONED strip](../guide/uncommissioned.md).
 
 ---
@@ -380,7 +382,7 @@ the checkout has local changes, or when an update refused and you want to see
 why.
 
 ```bash
-cd ~/projects/reflex && git fetch --tags && git checkout v1.2.0
+cd ~/projects/reflex && git fetch --tags && git checkout v1.2.1
 cd ui && ~/.local/bin/uv sync
 sudo systemctl restart reflex-ui.service
 ```

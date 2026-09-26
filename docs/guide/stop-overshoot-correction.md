@@ -42,17 +42,23 @@ Tap the **gear** on the advanced ELS bar, under the mode selector, to open
 
 ## Is it the right size for your machine?
 
-The correction is a table measured on the development lathe, in this
-configuration:
+The correction is a table measured on the development lathe, with:
 
-- a Z scale of 5 µm per count;
-- in **Setup → Servo**, **Maximum Speed (Steps/s)** 10000 and
-  **Acceleration (Steps/s^2)** 20000;
-- that lathe's servo drive.
+- a Z scale of 5 µm per count (the table is kept in encoder counts);
+- that lathe's servo drive and the drive's own settings;
+- that lathe's gearing between the motor and the carriage: the gearbox
+  position and the leadscrew.
 
-The overshoot comes from the drive and those settings. If your machine differs
-in any of them, the table does not describe it, and the correction can be too
-small. If you change any of them on a machine where it was working, turn it off
+The overshoot is the drive carrying the carriage on after the stop fires: a
+few milliseconds at full speed, then a slow-down. The slow-down is set by the
+drive and by the gearing, so either one can change the size of the overshoot.
+The **Maximum Speed** and **Acceleration** settings in **Setup → Servo** do not
+enter into it: by the time the overshoot happens, the controller has already
+stopped sending steps.
+
+If your machine differs in any of the three, the table does not describe it,
+and the correction can be too small. If you change the gearbox position, the
+drive's settings or the Z scale on a machine where it was working, turn it off
 until you have checked it again.
 
 ## Checking it on your lathe

@@ -57,6 +57,24 @@ def fake_gist(monkeypatch):
     return fake
 
 
+@pytest.fixture(autouse=True)
+def no_real_restart(monkeypatch):
+    """A successful restore restarts the app after a countdown; in a test the
+    countdown never runs and the restart never reaches ``sudo systemctl``."""
+    monkeypatch.setattr(ss.BackupScreen, "_schedule_countdown",
+                        lambda self, tick: None)
+    monkeypatch.setattr(ss.updater, "restart_ui_service",
+                        MagicMock(name="restart_ui_service"))
+
+
+@pytest.fixture
+def signed_in(fake_gist):
+    """A card that already holds a GitHub token. A restore on a card WITHOUT
+    one signs in first; see the new-card tests below."""
+    fake_gist.load_token.return_value = "gho_token"
+    return fake_gist
+
+
 # ── the not-configured guard ────────────────────────────────────────────────
 
 def test_an_unconfigured_build_says_so_and_starts_nothing(sync_screen, fake_gist):
@@ -254,13 +272,91 @@ def test_a_rejected_sign_in_says_so_and_shows_sync_off(sync_screen, fake_gist):
     assert sync_screen.gist_enabled is False
 
 
-def test_a_rejected_sign_in_during_restore_turns_sync_off(sync_screen, fake_gist):
+def test_a_rejected_sign_in_during_restore_turns_sync_off(sync_screen, fake_gist,
+                                                          signed_in):
     fake_gist.list_machine_gists.side_effect = real_gist_sync.SignInExpired()
 
     sync_screen.restore_from_gist()
 
     fake_gist.sign_in_expired.assert_called_once()
     assert "no longer accepts" in sync_screen.status_text
+
+
+# ── restore on a new card: sign in first, and do NOT turn sync on ───────────
+
+def _grant(fake_gist, code=None):
+    """Make ``authorize`` succeed the way the real one does: show the code,
+    save the token, return it."""
+    code = code or real_gist_sync.DeviceCode(
+        device_code="dc", user_code="WDJB-MJHT",
+        verification_uri="https://github.com/login/device")
+
+    def authorize(*, sleep, on_code=None, **kw):
+        on_code(code)
+        fake_gist.load_token.return_value = "gho_token"
+        return "gho_token"
+
+    fake_gist.authorize.side_effect = authorize
+
+
+def test_a_restore_with_no_sign_in_signs_in_then_lists(sync_screen, fake_gist):
+    """Until 2026-09-26 this said "Not connected to GitHub yet" and stopped,
+    and the guide sent the operator to the sync toggle first."""
+    _grant(fake_gist)
+    fake_gist.list_machine_gists.return_value = []
+
+    sync_screen.restore_from_gist()
+
+    fake_gist.authorize.assert_called_once()
+    fake_gist.list_machine_gists.assert_called_once()
+    assert sync_screen.gist_code_text == "", "the code is cleared once signed in"
+
+
+def test_signing_in_to_restore_does_not_turn_sync_on_or_push(sync_screen, fake_gist):
+    """THE junk-gist bug. The toggle's sign-in ends in a push, and on a new
+    card that uploaded the card's DEFAULTS as a new gist -- which then sorted
+    to the top of the restore list, above the backup the operator came for."""
+    _grant(fake_gist)
+    fake_gist.list_machine_gists.return_value = []
+
+    sync_screen.restore_from_gist()
+
+    fake_gist.set_enabled.assert_not_called()
+    fake_gist.install_ledger_hook.assert_not_called()
+    fake_gist.sync_now.assert_not_called()
+    fake_gist.push_bundle.assert_not_called()
+    assert sync_screen.gist_enabled is False
+
+
+def test_a_failed_sign_in_for_restore_lists_nothing(sync_screen, fake_gist):
+    fake_gist.authorize.side_effect = real_gist_sync.GistSyncError(
+        "Authorization was denied on GitHub. Gist sync stays off.")
+
+    sync_screen.restore_from_gist()
+
+    assert "denied" in sync_screen.status_text
+    fake_gist.list_machine_gists.assert_not_called()
+
+
+def test_a_token_that_did_not_stick_does_not_start_a_second_sign_in(
+        sync_screen, fake_gist):
+    fake_gist.authorize.side_effect = lambda **kw: "gho_token"  # never saved
+
+    sync_screen.restore_from_gist()
+
+    fake_gist.authorize.assert_called_once()
+    fake_gist.list_machine_gists.assert_not_called()
+    assert "could not be saved" in sync_screen.status_text
+
+
+def test_the_toggle_still_turns_sync_on_after_its_sign_in(sync_screen, fake_gist):
+    """The restore's continuation is its own; the toggle's is unchanged."""
+    _grant(fake_gist)
+
+    sync_screen.toggle_gist_sync(True)
+
+    fake_gist.set_enabled.assert_called_once_with(True)
+    fake_gist.list_machine_gists.assert_not_called()
 
 
 # ── restore: the SAME confirm dialog and apply() path as USB ────────────────
@@ -271,7 +367,7 @@ DOC = {"meta": {"schema": 1, "ts": "2026-09-13T19:04:11+00:00",
 
 
 @pytest.fixture
-def one_gist(fake_gist):
+def one_gist(fake_gist, signed_in):
     fake_gist.list_machine_gists.return_value = [
         real_gist_sync.GistRef(id="g-new", description="reflex commissioning "
                                "bundle: 5a2f", machine_id="5a2f",
@@ -316,7 +412,7 @@ def test_restore_hands_the_parsed_document_to_apply(
 
 
 def test_restore_with_several_candidates_offers_a_picker(
-        sync_screen, fake_gist, monkeypatch):
+        sync_screen, fake_gist, signed_in, monkeypatch):
     fake_gist.list_machine_gists.return_value = [
         real_gist_sync.GistRef(id="g-new", description="d", machine_id="5a2f",
                                updated_at="2026-09-01T00:00:00Z"),
@@ -334,7 +430,7 @@ def test_restore_with_several_candidates_offers_a_picker(
     fake_gist.fetch_bundle.assert_not_called()
 
 
-def test_restore_with_no_candidates_says_so(sync_screen, fake_gist):
+def test_restore_with_no_candidates_says_so(sync_screen, fake_gist, signed_in):
     fake_gist.list_machine_gists.return_value = []
 
     sync_screen.restore_from_gist()
@@ -343,7 +439,7 @@ def test_restore_with_no_candidates_says_so(sync_screen, fake_gist):
     assert sync_screen.import_popup is None
 
 
-def test_a_restore_failure_is_reported_not_raised(sync_screen, fake_gist):
+def test_a_restore_failure_is_reported_not_raised(sync_screen, fake_gist, signed_in):
     fake_gist.list_machine_gists.side_effect = OSError("Network is unreachable")
 
     sync_screen.restore_from_gist()  # must not raise

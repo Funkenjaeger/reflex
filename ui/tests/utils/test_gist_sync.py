@@ -363,6 +363,41 @@ def test_the_request_carries_the_token_and_the_body_does_not(token):
     assert token not in yaml.safe_dump(call["data"])
 
 
+@pytest.fixture
+def uncommissioned_card(tmp_path, monkeypatch):
+    """A card latched UNCOMMISSIONED, as MainApp.build leaves a fresh one."""
+    from reflex.utils import commissioning_state
+    card = tmp_path / "card"
+    card.mkdir()
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(card))
+    commissioning_state.clear_latch()
+    assert commissioning_state.latch(card) is False
+    yield card
+    commissioning_state.clear_latch()
+
+
+def test_an_uncommissioned_card_refuses_to_push_before_any_request(
+        uncommissioned_card, token):
+    """A push from here would upload the app's DEFAULTS as a new gist, which
+    then sorts to the top of the restore list above the real backup."""
+    http = FakeHttp((201, {"id": "gist-1"}))
+
+    with pytest.raises(gist_sync.NotCommissioned):
+        gist_sync.push_bundle(DOC, transport=http)
+
+    assert http.calls == []
+    assert not gist_sync.gist_id_path().exists()
+
+
+def test_sync_now_on_an_uncommissioned_card_says_why(uncommissioned_card, token):
+    http = FakeHttp((201, {"id": "gist-1"}))
+
+    assert gist_sync.sync_now(DOC, transport=http) is None
+    assert gist_sync.last_error == gist_sync.NOT_COMMISSIONED_MESSAGE
+    assert "retry" not in gist_sync.last_error
+    assert http.calls == []
+
+
 def test_push_without_a_token_refuses_before_any_request(state_dir):
     http = FakeHttp((201, {"id": "gist-1"}))
 

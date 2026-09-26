@@ -1376,6 +1376,16 @@ def test_the_restart_is_exactly_the_command_sudoers_grants(tmp_path, monkeypatch
     assert kw.get("stdin") is updater.subprocess.DEVNULL
 
 
+def test_the_shared_restart_is_the_same_command(monkeypatch):
+    """The Backup screen's post-import restart calls the module function
+    directly; it must be the same literal command the sudoers rule grants."""
+    seen = []
+    monkeypatch.setattr(updater.subprocess, "Popen",
+                        lambda argv, **kw: seen.append(list(argv)) or _FakeProc(rc=None))
+    updater.restart_ui_service()
+    assert seen == [["sudo", "-n", "/usr/bin/systemctl", "restart", "reflex-ui.service"]]
+
+
 def test_a_refused_restart_is_raised_not_swallowed(tmp_path, monkeypatch):
     """MUTATION EVIDENCE. The pre-2026-09-19 fire-and-forget restart returns
     here as if all were well."""

@@ -191,6 +191,42 @@ class ServiceRestartFailed(Exception):
     """
 
 
+def restart_ui_service(service: str = SERVICE_NAME) -> None:
+    """Restart this app's own unit, or raise :class:`ServiceRestartFailed`.
+
+    Used by the updater after an install and by the Backup screen after an
+    import. Both need the app to come back on what is now on disk, and both
+    must use the one command the image's sudoers rule grants (RESTART_ARGV).
+
+    Detached on purpose: systemd kills this process as part of the restart,
+    so waiting for the command to FINISH would mean waiting to be killed. The
+    unit is KillMode=process, so the detached sudo is not killed with it and
+    sees the restart through.
+
+    What it does wait for is a quick REFUSAL. Until 2026-09-19 this was
+    fire-and-forget, and after the UI stopped running as root every restart
+    was refused by polkit with nobody looking: the screen said "Restarting."
+    and stayed on the old UI. See RESTART_ARGV.
+    """
+    argv = [*RESTART_ARGV, service]
+    try:
+        proc = subprocess.Popen(argv, start_new_session=True,
+                                stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+    except OSError as e:
+        raise ServiceRestartFailed(f"`{' '.join(argv)}` could not run: {e}") from e
+    try:
+        rc = proc.wait(timeout=RESTART_REFUSAL_WINDOW_S)
+    except subprocess.TimeoutExpired:
+        return                                  # granted, under way
+    if rc != 0:
+        out = (proc.stdout.read() or b"").decode(errors="replace").strip()
+        raise ServiceRestartFailed(
+            f"`{' '.join(argv)}` exited {rc}"
+            + (f": {out[-300:]}" if out else ""))
+
+
 class ProtocolMismatch(UpdateRefused):
     """The flashed firmware does not speak the target UI's register layout.
 
@@ -1333,36 +1369,11 @@ class UpdateSession:
         self._restart()
 
     def _systemctl_restart(self):
-        """Detached on purpose: systemd kills this process as part of the
-        restart, so waiting for the command to FINISH would mean waiting to
-        be killed. The unit is KillMode=process, so the detached sudo is not
-        killed with it and sees the restart through.
-
-        What it does wait for is a quick REFUSAL. Until 2026-09-19 this was
-        fire-and-forget, and after the UI stopped running as root every
-        restart was refused by polkit with nobody looking: the screen said
-        "Restarting." and stayed on the old UI. See RESTART_ARGV.
-
-        NOT routed through ``self._runner`` -- and separately injectable so
+        """NOT routed through ``self._runner`` -- and separately injectable so
         that a test of the install sequence cannot restart the developer's
-        machine by getting one argument wrong."""
-        argv = [*RESTART_ARGV, self.service]
-        try:
-            proc = subprocess.Popen(argv, start_new_session=True,
-                                    stdin=subprocess.DEVNULL,
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT)
-        except OSError as e:
-            raise ServiceRestartFailed(f"`{' '.join(argv)}` could not run: {e}") from e
-        try:
-            rc = proc.wait(timeout=RESTART_REFUSAL_WINDOW_S)
-        except subprocess.TimeoutExpired:
-            return                                  # granted, under way
-        if rc != 0:
-            out = (proc.stdout.read() or b"").decode(errors="replace").strip()
-            raise ServiceRestartFailed(
-                f"`{' '.join(argv)}` exited {rc}"
-                + (f": {out[-300:]}" if out else ""))
+        machine by getting one argument wrong. The work is
+        :func:`restart_ui_service`, which the Backup screen's import uses too."""
+        restart_ui_service(self.service)
 
     # -- the whole thing ---------------------------------------------------
 

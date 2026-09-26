@@ -77,13 +77,24 @@ from typing import Callable, Deque, Optional, Sequence, Tuple
 # actually observed. (0, 0) is measured, not assumed: a hand-cranked approach
 # overshoots by exactly zero.
 #
-# BOUND TO THIS MACHINE'S CURRENT CONFIGURATION: elspi's Z scale at 5 um/count
-# (200 counts/mm), and the ServoBar motion settings maxSpeed 10000 /
-# acceleration 20000. The coast is a property of the drive's deceleration and
-# the scale's resolution; change either and this table is wrong in a direction
-# nobody can predict -- RE-MEASURE before relying on the correction again. It
-# lives in code for this release; a per-machine calibration wizard that writes
-# it is separate, later work.
+# BOUND TO THIS MACHINE: elspi's Z scale at 5 um/count (200 counts/mm) -- the
+# table is in counts -- its CL86T drive and the drive's own settings, and the
+# gearing between motor and carriage (the lathe's A/B/C gearbox position and
+# the leadscrew). The overshoot is the drive carrying the carriage on after the
+# trigger: ~v*Td (a delay; the same carriage distance at any gearing if Td is a
+# time) plus a ramp ~v^2/2a whose deceleration is in MOTOR terms, so gearing
+# changes it (about half the total at the top of the table). Change any of
+# those and this table is wrong -- RE-MEASURE before relying on it again.
+#
+# NOT a binding, although an earlier version of this comment (and the docs)
+# said so: the ServoBar maxSpeed / acceleration settings. They shape only steps
+# still queued, and the firmware has none queued at the trigger
+# (stopTriggerStepsToGo was 0 on every recorded stop), so nothing it sends
+# after the stop fires exists for them to shape. Measuring the overshoot in
+# all three gearbox positions is Open Loops 6ab7d08e, which gates 6a92353d
+# item 8 (2026-09-26). Only if the gearing turns out to matter does the table
+# also need the engaged position at runtime: sensorless gearing detection,
+# Open Loops 6ab7c598.
 OVERSHOOT_TABLE: Tuple[Tuple[int, int], ...] = (
     (0, 0),
     (280, 1),       # snapshot 300
