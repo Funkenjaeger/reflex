@@ -1,3 +1,7 @@
 # MkDocs build output. The site is built by .github/workflows/docs.yml and
 # deployed to Pages; nothing here belongs in the repo.
 /site/
+
+# Bytecode from the UI suite importing tools/genregs.py (ui/.gitignore covers
+# only ui/). Left untracked, it reads as uncommitted work to git-monitor.
+__pycache__/
