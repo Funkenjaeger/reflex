@@ -21,6 +21,30 @@ def screen():
         return ss.BackupScreen()
 
 
+@pytest.fixture(autouse=True)
+def no_real_restart(monkeypatch):
+    """A successful import restarts the app. In a test it must never reach
+    ``sudo systemctl``, and the countdown's ticks are driven by hand: each
+    scheduled tick is collected in ``ticks``, and ``restart`` records calls."""
+    ticks = []
+    restart = MagicMock(name="restart_ui_service")
+    monkeypatch.setattr(ss.BackupScreen, "_schedule_countdown",
+                        lambda self, tick: ticks.append(tick))
+    monkeypatch.setattr(ss.updater, "restart_ui_service", restart)
+    return MagicMock(ticks=ticks, restart=restart)
+
+
+def run_countdown(no_real_restart):
+    """Tick until the countdown stops itself; return how many ticks ran."""
+    [tick] = no_real_restart.ticks
+    n = 0
+    while True:
+        n += 1
+        if tick() is False:
+            return n
+        assert n < 100, "the countdown never stopped"
+
+
 @pytest.fixture
 def bundle(monkeypatch):
     fake = MagicMock(name="commissioning_bundle")
@@ -181,6 +205,71 @@ def test_confirming_the_dialog_applies_the_bundle(
     bundle.apply.assert_called_once()
     assert "Imported 1 file(s)" in screen.status_text
     assert screen._pending_doc is None, "pending state must clear either way"
+
+
+def test_the_confirm_dialog_says_the_app_restarts(
+        screen, one_bundle_on_disk, bundle, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(ss, "CustomPopup",
+                        lambda **kw: captured.update(kw) or MagicMock(name="popup"))
+
+    screen.import_from_usb()
+
+    assert "restarts the app" in captured["message"]
+
+
+def test_a_successful_import_counts_down_then_restarts_the_app(
+        screen, one_bundle_on_disk, bundle, monkeypatch, no_real_restart):
+    """The running app still holds the settings it started with, and the next
+    change would write them over the import, so the app restarts itself --
+    after a countdown the operator can read (Evan, 2026-09-26)."""
+    monkeypatch.setattr(ss, "CustomPopup", lambda **kw: MagicMock(name="popup"))
+    bundle.apply.return_value = MagicMock(ok=True, written=["Axis-0"], skipped=[])
+
+    screen.import_from_usb()
+    screen._apply_pending_import()
+
+    assert "Imported 1 file(s)" in screen.status_text
+    assert f"Restarting in {ss.RESTART_COUNTDOWN_S} s" in screen.status_text
+    no_real_restart.restart.assert_not_called()
+
+    [tick] = no_real_restart.ticks
+    tick()
+    assert f"Restarting in {ss.RESTART_COUNTDOWN_S - 1} s" in screen.status_text
+    assert "Imported 1 file(s)" in screen.status_text, "what was imported stays on screen"
+    no_real_restart.restart.assert_not_called()
+
+    assert run_countdown(no_real_restart) == ss.RESTART_COUNTDOWN_S - 1
+    no_real_restart.restart.assert_called_once_with()
+    assert "Restarting now" in screen.status_text
+
+
+def test_a_refused_restart_says_to_restart_the_machine(
+        screen, one_bundle_on_disk, bundle, monkeypatch, no_real_restart):
+    monkeypatch.setattr(ss, "CustomPopup", lambda **kw: MagicMock(name="popup"))
+    bundle.apply.return_value = MagicMock(ok=True, written=["Axis-0"], skipped=[])
+    no_real_restart.restart.side_effect = ss.updater.ServiceRestartFailed(
+        "`sudo -n /usr/bin/systemctl restart reflex-ui.service` exited 1")
+
+    screen.import_from_usb()
+    screen._apply_pending_import()
+    run_countdown(no_real_restart)
+
+    assert "could not restart by itself" in screen.status_text.lower()
+    assert "restart the machine" in screen.status_text.lower()
+    assert "Imported 1 file(s)" in screen.status_text
+
+
+def test_a_refused_import_never_restarts(
+        screen, one_bundle_on_disk, bundle, monkeypatch, no_real_restart):
+    monkeypatch.setattr(ss, "CustomPopup", lambda **kw: MagicMock(name="popup"))
+    bundle.apply.return_value = MagicMock(ok=False, reason="bundle schema 2 is newer")
+
+    screen.import_from_usb()
+    screen._apply_pending_import()
+
+    assert no_real_restart.ticks == []
+    no_real_restart.restart.assert_not_called()
 
 
 def test_a_refused_apply_is_reported_and_writes_nothing(

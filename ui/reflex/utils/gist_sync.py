@@ -59,7 +59,7 @@ from pathlib import Path
 import yaml
 from kivy.logger import Logger
 
-from reflex.utils import commissioning_bundle
+from reflex.utils import commissioning_bundle, commissioning_state
 from reflex.utils.paths import config_dir
 
 log = Logger.getChild(__name__)
@@ -151,6 +151,24 @@ class SignInExpired(GistSyncError):
     the 09-17 token had stopped working, cause unknown)."""
 
     def __init__(self, message: str = SIGN_IN_EXPIRED_MESSAGE):
+        super().__init__(message)
+
+
+#: Shown when a sync is asked for on a card that is still UNCOMMISSIONED.
+NOT_COMMISSIONED_MESSAGE = (
+    "Nothing to back up yet: this machine is not commissioned.")
+
+
+class NotCommissioned(GistSyncError):
+    """The commissioning gate is shut, so the card holds only defaults.
+
+    Its own class so :func:`sync_now` can say why instead of promising a
+    retry. Refused BEFORE any request: a push from a card in this state would
+    upload the app's defaults as a new gist, and on a card being restored that
+    gist sorts to the top of the restore list, above the real backup (the
+    guide warned about exactly that until 2026-09-26)."""
+
+    def __init__(self, message: str = NOT_COMMISSIONED_MESSAGE):
         super().__init__(message)
 
 
@@ -493,6 +511,8 @@ def push_bundle(doc: dict | None = None, *, transport=None) -> str:
     """
     if not is_configured():
         raise NotConfigured()
+    if not commissioning_state.latched():
+        raise NotCommissioned()
     token = load_token()
     if not token:
         raise GistSyncError("Not connected to GitHub yet.")
@@ -540,6 +560,9 @@ def sync_now(doc: dict | None = None, *, transport=None) -> str | None:
         return push_bundle(doc, transport=transport)
     except SignInExpired as e:
         sign_in_expired()
+        last_error = str(e)
+        return None
+    except NotCommissioned as e:
         last_error = str(e)
         return None
     except Exception as e:
