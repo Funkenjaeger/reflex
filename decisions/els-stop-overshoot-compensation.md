@@ -286,3 +286,27 @@ than the table was built on, up to ~1 count of under-correction.
   topic, *Stop Coast Correction*, like every other setting's.
 
 Not yet re-run at the lathe with the fix.
+
+## 2026-09-26: what the table is actually bound to
+
+**Correction to "bound to this machine" above.** That paragraph binds the table to the ServoBar
+`maxSpeed` 10000 / `acceleration` 20000. Those settings shape only steps still queued, and at the
+trigger there are none: `stopTriggerStepsToGo` was 0 on every recorded stop, and in the August
+captures the firmware emitted no steps after the trigger in 12 of 14. So nothing the firmware sends
+after the stop fires exists for them to shape, and they are **not** a binding.
+
+What the table does depend on: the Z scale's resolution (only because the table is in counts; in
+mm it would not), the drive and its own settings, and the **gearing between motor and carriage**.
+The overshoot is ~`v·Td` (a delay, the same carriage distance at any gearing if `Td` is a time) plus
+a ramp ~`v²/2a` whose deceleration is in motor terms, so the lathe's A/B/C gearbox position changes
+it. At the top of the table (3500 counts/s, 17.5 mm/s) the two halves are about 0.09 and 0.10 mm.
+
+**Gated (Evan, 2026-09-26).** Binding the table (checklist item 8 of Open Loops 6a92353d) waits on
+sensorless gearing detection, Open Loops 6ab7c598: the steady-state ratio of commanded steps to Z
+counts is the real gearing. The correction must not be tied to one gearbox position either. The
+plan is to characterise overshoot in all three positions, then either model the gearing effect (if
+it is negligible or scales as predicted) or keep a table per position keyed on the detected gearing.
+
+The feature was renamed *stop overshoot correction* in v1.2.0 (the carriage is driven past the stop
+by the drive's latency; it does not coast). Earlier sections keep the old wording as the record of
+the time.

@@ -23,9 +23,12 @@ use, with the correction on, and check where the carriage actually stops
 against the DRO. It should stop at or a hair short of Stop Z, never past.
 
 The correction is a table measured on **this** machine with its current
-setup: the Z scale's resolution and the servo's maximum speed and
-acceleration. If any of those change, the table no longer describes the
-machine. Turn the correction off until it has been re-measured.
+setup: the Z scale's resolution, the servo drive and its own settings, and
+the gearing between motor and carriage (gearbox position, leadscrew). If any
+of those change, the table no longer describes the machine. Turn the
+correction off until it has been re-measured. (The Setup → Servo speed and
+acceleration settings do not affect it: the controller has stopped sending
+steps before the overshoot happens.)
 
 ## Overshoot margin
 
