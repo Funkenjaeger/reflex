@@ -39,7 +39,8 @@ argue that "a button that dismisses it is a button that makes the warning
 optional, and on a touchscreen that collects accidental taps it is a warning
 that dismisses itself". That is still true of a dismiss button ON THE STRIP,
 and there is still not one. Tapping the strip OPENS A MODAL; dismissal is a
-second, deliberate press against a screen of prose explaining what it costs.
+second, deliberate press on "New machine -- set it up", whose own caption says
+what it costs (``uncommissioned_details``, redesigned 2026-09-26).
 An accidental tap at the top of the home screen gets an explanation, which is
 the correct outcome of an accidental tap on a warning. There is deliberately
 no other route: no swipe, no long-press, no Setup toggle. A warning with
@@ -117,7 +118,7 @@ class UncommissionedBanner(ButtonBehavior, BoxLayout):
     headline = StringProperty(STATE_WORD)
 
     #: What it means for the numbers on screen, and what the app is doing --
-    #: the short form. The long form, and both remedies, are in the modal.
+    #: the short form. The ways out, as buttons, are in the modal.
     detail = StringProperty("defaults, not this machine — settings are not saved")
 
     #: That there is more, and that it is reachable. Without this the strip is

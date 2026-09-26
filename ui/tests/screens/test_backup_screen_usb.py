@@ -183,6 +183,20 @@ def test_confirming_the_dialog_applies_the_bundle(
     assert screen._pending_doc is None, "pending state must clear either way"
 
 
+def test_a_successful_import_says_to_restart(
+        screen, one_bundle_on_disk, bundle, monkeypatch):
+    """The running app still holds the settings it started with; the next
+    change would write them over the import. The guide said restart at once;
+    now the screen does too."""
+    monkeypatch.setattr(ss, "CustomPopup", lambda **kw: MagicMock(name="popup"))
+    bundle.apply.return_value = MagicMock(ok=True, written=["Axis-0"], skipped=[])
+
+    screen.import_from_usb()
+    screen._apply_pending_import()
+
+    assert "restart the machine" in screen.status_text.lower()
+
+
 def test_a_refused_apply_is_reported_and_writes_nothing(
         screen, one_bundle_on_disk, bundle, monkeypatch):
     monkeypatch.setattr(ss, "CustomPopup", lambda **kw: MagicMock(name="popup"))
