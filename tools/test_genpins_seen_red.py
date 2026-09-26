@@ -102,7 +102,12 @@ def make_hw_repo(files: dict) -> tuple[Path, str]:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
     subprocess.run(["git", "-C", str(d), "add", "-A"], check=True)
-    subprocess.run(["git", "-C", str(d), "commit", "-q", "-m", "genpins seen-red fixture"], check=True)
+    # A CI runner has no git identity, and a developer's may sign commits: the
+    # fixture carries its own, and touches no real repo's config.
+    fixture_env = dict(os.environ, GIT_AUTHOR_NAME="genpins seen-red", GIT_AUTHOR_EMAIL="seen-red@invalid",
+                       GIT_COMMITTER_NAME="genpins seen-red", GIT_COMMITTER_EMAIL="seen-red@invalid")
+    subprocess.run(["git", "-C", str(d), "-c", "commit.gpgsign=false", "commit", "-q", "-m",
+                    "genpins seen-red fixture"], check=True, env=fixture_env)
     sha = subprocess.run(["git", "-C", str(d), "rev-parse", "HEAD"],
                          capture_output=True, text=True, check=True).stdout.strip()
     return d, sha
