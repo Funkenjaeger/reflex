@@ -2,7 +2,7 @@
 
 > **SUPERSEDED 2026-08-17 — the monorepo was adopted.** The "STAY SPLIT" status
 > below is historical and is not the current ruling. The current record is
-> [`docs/decisions/repo-structure-monorepo.md`](https://github.com/Funkenjaeger/reflex/blob/main/docs/decisions/repo-structure-monorepo.md).
+> the 2026-08-17 monorepo ADR, repo-structure-monorepo.md, among this repository's decision records.
 > The analysis below is retained deliberately as the reasoning trail — the
 > cost/benefit case, the three questions asked and answered, the options table,
 > and the lockstep-versioning design the monorepo still runs on.
