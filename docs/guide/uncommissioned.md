@@ -60,13 +60,14 @@ Deleting it over SSH brings the warning back and stops the saving.
 1. Tap **Restore from USB stick** or **Restore from GitHub gist**. The Backup
    screen opens and the restore starts. Check the confirmation, then **Apply**.
    See [Backing up your settings](backing-up.md).
-2. **Restart the machine.** The restored settings are found on the next boot,
-   and the strip does not come back.
+2. The status line counts down from 10 and **the app restarts by itself**. It
+   comes back on the restored settings, and the strip does not come back.
 
 With no stick plugged in, the Backup screen says so; plug one in and tap
 **Import from USB** there.
 
-If you tap the strip between the restore and the restart, the dialog says the
+If the app cannot restart by itself, the status line says so: restart the
+machine. If you tap the strip before that restart, the dialog says the
 settings were restored and offers only **OK**. That is deliberate. The app is
 still running on its defaults, and switching saving on at that moment would
 write them over what you just restored. The restart is the fix.

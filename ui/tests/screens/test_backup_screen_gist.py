@@ -57,6 +57,16 @@ def fake_gist(monkeypatch):
     return fake
 
 
+@pytest.fixture(autouse=True)
+def no_real_restart(monkeypatch):
+    """A successful restore restarts the app after a countdown; in a test the
+    countdown never runs and the restart never reaches ``sudo systemctl``."""
+    monkeypatch.setattr(ss.BackupScreen, "_schedule_countdown",
+                        lambda self, tick: None)
+    monkeypatch.setattr(ss.updater, "restart_ui_service",
+                        MagicMock(name="restart_ui_service"))
+
+
 @pytest.fixture
 def signed_in(fake_gist):
     """A card that already holds a GitHub token. A restore on a card WITHOUT

@@ -39,15 +39,17 @@ insert one and try again."*
    **Captured** time and **Firmware**. Check that it is the machine and the
    backup you meant.
 4. **Apply** writes it. **Cancel** leaves everything alone. The status line
-   then reads *"Imported N file(s) from …. Restart the machine now to load
-   it."*
-5. **Restart the machine straight away**, before you change anything.
+   then reads *"Imported N file(s) from …. Restarting in 10 s to load
+   them."* and counts down.
+5. **The app restarts by itself** and comes back on the restored settings.
+   Leave the settings alone during the countdown.
 
-!!! warning "Restart before you touch anything"
-    The running app still holds the settings it started with. Change any
-    setting before the restart, and the whole group that setting belongs to is
-    written back over what you just restored. The restart is what loads the
-    backup.
+!!! warning "If it says it could not restart by itself"
+    The status line then reads *"Could not restart by itself: restart the
+    machine to load them."* Restart the machine straight away, before you
+    change anything. The running app still holds the settings it started
+    with: change any setting first, and the whole group that setting belongs
+    to is written back over what you just restored.
 
 An import from a newer Reflex than the one running is refused, and nothing is
 written. The status line says the bundle schema is newer than this app
@@ -122,7 +124,7 @@ This is how you put a machine's settings onto a new card.
    backup was captured, so you can check before you apply.
 3. The same **Import commissioning bundle** dialog as a USB import: check it,
    then **Apply**.
-4. **Restart the machine** straight away, as for a USB import.
+4. The app restarts by itself after a 10-second countdown, as for a USB import.
 
 On a card showing UNCOMMISSIONED, **Sync now** and turning sync on upload
 nothing. The status line says *"Nothing to back up yet: this machine is not

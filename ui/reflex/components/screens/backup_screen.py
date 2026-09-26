@@ -58,12 +58,17 @@ from kivy.uix.screenmanager import Screen
 from reflex.components.popups.custom_popup import CustomPopup
 from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>, used by backup_screen.kv
 from reflex.components.widgets import qr_code
-from reflex.utils import commissioning_bundle, gist_sync, usb
+from reflex.utils import commissioning_bundle, gist_sync, updater, usb
 from reflex.utils.kv_loader import load_kv
 from reflex.utils.paths import config_dir
 
 log = Logger.getChild(__name__)
 load_kv(__file__)
+
+#: Seconds between a successful import and the app restarting to load it,
+#: counted down on the status line so the operator can read what was imported
+#: before the screen goes away (Evan, 2026-09-26).
+RESTART_COUNTDOWN_S = 10
 
 
 class BackupScreen(Screen):
@@ -182,7 +187,8 @@ class BackupScreen(Screen):
             f"Captured: {_local_time(meta.get('ts'))}\n"
             f"Firmware: {meta.get('fw') or 'not recorded'}\n\n"
             f"Apply this bundle from {path.name}?\n"
-            f"This overwrites the current commissioning configuration."
+            f"This overwrites the current commissioning configuration,\n"
+            f"then restarts the app to load it."
         )
         self.import_popup = CustomPopup(
             title="Import commissioning bundle",
@@ -207,11 +213,50 @@ class BackupScreen(Screen):
         message = f"Imported {len(report.written)} file(s) from {path.name}"
         if report.skipped:
             message += f" ({len(report.skipped)} skipped -- see log)"
-        # The running app still holds the settings it started with, and the
-        # next change would write them back over the import. The guide says to
-        # restart at once; the screen now says it too, at the moment it matters.
-        message += ". Restart the machine now to load it."
-        self._status(message)
+        self._restart_to_load(message)
+
+    # ── after an import: restart to load it ──────────────────────────────
+
+    def _restart_to_load(self, message: str):
+        """Count down on the status line, then restart the app.
+
+        WHY A RESTART, AND WHY NOT LEAVE IT TO THE OPERATOR. The running app
+        still holds the settings it started with; the files on disk are only
+        read at start-up. Until 2026-09-26 the status line said "restart the
+        machine", and every moment between the import and that restart was a
+        moment in which the next setting saved would write the old in-memory
+        group back over what was just imported. Nothing is left to decide
+        once Apply has been pressed, so the app restarts itself, with the same
+        command the updater uses (``updater.restart_ui_service``).
+
+        WHY A COUNTDOWN (Evan, 2026-09-26): so the operator can read what was
+        imported before the screen goes away.
+        """
+        self._import_message = message
+        self._countdown = RESTART_COUNTDOWN_S
+        self._status(f"{message}. Restarting in {self._countdown} s to load them.")
+        self._schedule_countdown(self._countdown_tick)
+
+    def _schedule_countdown(self, tick):
+        """Call ``tick()`` once a second until it returns False. Replaced in
+        tests, which drive the ticks by hand."""
+        Clock.schedule_interval(lambda _dt: tick(), 1.0)
+
+    def _countdown_tick(self):
+        self._countdown -= 1
+        if self._countdown > 0:
+            # Not through _status: a log line per second says nothing.
+            self.status_text = (f"{self._import_message}. "
+                                f"Restarting in {self._countdown} s to load them.")
+            return True
+        self._status(f"{self._import_message}. Restarting now.")
+        try:
+            updater.restart_ui_service()
+        except updater.ServiceRestartFailed as e:
+            log.error(f"backup screen: could not restart after the import ({e})")
+            self._status(f"{self._import_message}. Could not restart by itself: "
+                         f"restart the machine to load them.")
+        return False
 
     # ── gist sync: threading seams ───────────────────────────────────────
 
