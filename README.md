@@ -117,7 +117,7 @@ The release where the controller stops trusting and starts **verifying**.
 - Improved status indication and operator-facing messages.
 - In-app update screen withdrawn; updating is a `git pull` and, when firmware moves, a flash.
 
-### 1.2.0 · released 2026-09-25 — **current**
+### 1.2.0 · released 2026-09-25
 
 The release where the machine **updates itself** from the touchscreen, and its
 calibration survives a dead SD card.
@@ -131,6 +131,12 @@ calibration survives a dead SD card.
 - **Readability pass** — dimmed text meets 3:1 contrast, in both themes.
 - X DRO reads radius or diameter, scales entered as a resolution, and other operator fixes.
 - **Stop overshoot correction** (*experimental, off by default*) — latency in the servo drive carries the carriage past the stop; this fires the stop early by the measured overshoot. Calibrated on one lathe only.
+
+### 1.2.1 · released 2026-09-26 — **current**
+
+A new card's first minutes: the **UNCOMMISSIONED** dialog leads with setting up
+a new machine and restores a USB or gist backup in one tap, and the app
+restarts itself to load it. Firmware unchanged.
 
 ### 1.3.0 · planned — auto-start and auto-advance
 

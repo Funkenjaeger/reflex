@@ -382,7 +382,7 @@ the checkout has local changes, or when an update refused and you want to see
 why.
 
 ```bash
-cd ~/projects/reflex && git fetch --tags && git checkout v1.2.0
+cd ~/projects/reflex && git fetch --tags && git checkout v1.2.1
 cd ui && ~/.local/bin/uv sync
 sudo systemctl restart reflex-ui.service
 ```
