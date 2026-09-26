@@ -58,12 +58,17 @@ from kivy.uix.screenmanager import Screen
 from reflex.components.popups.custom_popup import CustomPopup
 from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>, used by backup_screen.kv
 from reflex.components.widgets import qr_code
-from reflex.utils import commissioning_bundle, gist_sync, usb
+from reflex.utils import commissioning_bundle, gist_sync, updater, usb
 from reflex.utils.kv_loader import load_kv
 from reflex.utils.paths import config_dir
 
 log = Logger.getChild(__name__)
 load_kv(__file__)
+
+#: Seconds between a successful import and the app restarting to load it,
+#: counted down on the status line so the operator can read what was imported
+#: before the screen goes away (Evan, 2026-09-26).
+RESTART_COUNTDOWN_S = 10
 
 
 class BackupScreen(Screen):
@@ -182,7 +187,8 @@ class BackupScreen(Screen):
             f"Captured: {_local_time(meta.get('ts'))}\n"
             f"Firmware: {meta.get('fw') or 'not recorded'}\n\n"
             f"Apply this bundle from {path.name}?\n"
-            f"This overwrites the current commissioning configuration."
+            f"This overwrites the current commissioning configuration,\n"
+            f"then restarts the app to load it."
         )
         self.import_popup = CustomPopup(
             title="Import commissioning bundle",
@@ -207,7 +213,50 @@ class BackupScreen(Screen):
         message = f"Imported {len(report.written)} file(s) from {path.name}"
         if report.skipped:
             message += f" ({len(report.skipped)} skipped -- see log)"
-        self._status(message)
+        self._restart_to_load(message)
+
+    # ── after an import: restart to load it ──────────────────────────────
+
+    def _restart_to_load(self, message: str):
+        """Count down on the status line, then restart the app.
+
+        WHY A RESTART, AND WHY NOT LEAVE IT TO THE OPERATOR. The running app
+        still holds the settings it started with; the files on disk are only
+        read at start-up. Until 2026-09-26 the status line said "restart the
+        machine", and every moment between the import and that restart was a
+        moment in which the next setting saved would write the old in-memory
+        group back over what was just imported. Nothing is left to decide
+        once Apply has been pressed, so the app restarts itself, with the same
+        command the updater uses (``updater.restart_ui_service``).
+
+        WHY A COUNTDOWN (Evan, 2026-09-26): so the operator can read what was
+        imported before the screen goes away.
+        """
+        self._import_message = message
+        self._countdown = RESTART_COUNTDOWN_S
+        self._status(f"{message}. Restarting in {self._countdown} s to load them.")
+        self._schedule_countdown(self._countdown_tick)
+
+    def _schedule_countdown(self, tick):
+        """Call ``tick()`` once a second until it returns False. Replaced in
+        tests, which drive the ticks by hand."""
+        Clock.schedule_interval(lambda _dt: tick(), 1.0)
+
+    def _countdown_tick(self):
+        self._countdown -= 1
+        if self._countdown > 0:
+            # Not through _status: a log line per second says nothing.
+            self.status_text = (f"{self._import_message}. "
+                                f"Restarting in {self._countdown} s to load them.")
+            return True
+        self._status(f"{self._import_message}. Restarting now.")
+        try:
+            updater.restart_ui_service()
+        except updater.ServiceRestartFailed as e:
+            log.error(f"backup screen: could not restart after the import ({e})")
+            self._status(f"{self._import_message}. Could not restart by itself: "
+                         f"restart the machine to load them.")
+        return False
 
     # ── gist sync: threading seams ───────────────────────────────────────
 
@@ -284,12 +333,17 @@ class BackupScreen(Screen):
         self.gist_code_text = ""
         self.sync_now()
 
-    def start_device_flow(self):
+    def start_device_flow(self, then=None):
         """Show a user code, then poll until GitHub says yes, no, or expired.
 
         The whole flow runs on the worker thread; only the two ``_post_*``
         callbacks come back. Guarded by ``_flow_running`` so a double tap on
         the toggle cannot start a second flow whose polls would race the first.
+
+        :param then: what to do on the UI thread once signed in. Default:
+            turn sync on (the toggle). A restore passes its own continuation,
+            because signing in to READ a backup must not turn sync on -- see
+            :meth:`restore_from_gist`.
         """
         if self._flow_running:
             return
@@ -310,7 +364,7 @@ class BackupScreen(Screen):
                 return
             finally:
                 self._flow_running = False
-            self._dispatch_to_ui(self._enable_sync_with_token)
+            self._dispatch_to_ui(then or self._enable_sync_with_token)
 
         self._run_async(work)
 
@@ -378,9 +432,22 @@ class BackupScreen(Screen):
         the dead machine's gist, and the new card's ``/etc/machine-id`` is a
         different string by definition. The description (which carries the old
         machine-id) is shown so they can tell them apart.
+
+        A CARD WITH NO SIGN-IN SIGNS IN FIRST, AND DOES NOT TURN SYNC ON.
+        Until 2026-09-26 this said "Not connected to GitHub yet" and the guide
+        told the operator to turn the sync toggle on first. On a new card that
+        pushed the card's DEFAULTS as a new gist, which then sorted to the top
+        of this very list, above the backup they came for. Now the device flow
+        runs here, and on success it comes straight back to the listing
+        (:meth:`_restore_after_sign_in`), with sync still off. It is also what
+        makes "Restore from GitHub gist" on the uncommissioned dialog one tap.
         """
         if not gist_sync.is_configured():
             self._status(gist_sync.NOT_CONFIGURED_MESSAGE)
+            return
+        if not gist_sync.load_token():
+            self._status("Sign in to GitHub to see your backups.")
+            self.start_device_flow(then=self._restore_after_sign_in)
             return
 
         def work():
@@ -401,6 +468,18 @@ class BackupScreen(Screen):
             self._dispatch_to_ui(lambda: self._offer_restore(refs))
 
         self._run_async(work)
+
+    def _restore_after_sign_in(self):
+        """The device flow's continuation for a restore: clear the code and
+        list the backups. Sync stays exactly as it was (off, on a new card)."""
+        self.gist_code_text = ""
+        self.refresh_gist_state()
+        if not gist_sync.load_token():
+            # Signed in but the token did not stick; a second flow would only
+            # ask the operator for another code and end the same way.
+            self._status("Signed in, but the sign-in could not be saved. See the log.")
+            return
+        self.restore_from_gist()
 
     def _offer_restore(self, refs):
         self.restore_choices = list(refs)

@@ -1,171 +1,246 @@
-"""What the uncommissioned strip says when the operator taps it.
+"""What the uncommissioned strip opens when the operator taps it.
 
-WHY A MODAL AT ALL, GIVEN THE STRIP USED TO SAY EVERYTHING. It said three
-facts and a remedy across two fixed lines, both ``shorten: True`` -- so on the
-lathe's 1024x600 the elaboration and the remedy were each one ellipsis away
-from saying nothing, and the strip cost 52dp of the home screen permanently to
-do it. Moving the prose behind a tap buys room to say it properly (and to say
-the SECOND way out, which never fitted at all) and gives the strip back to the
-DRO. The state itself -- the one word -- never moves off the screen.
+A SHORT STATEMENT AND BUTTONS THAT DO THE THING (redesigned 2026-09-26). The
+first version was three paragraphs of facts and two numbered "ways out" in a
+``CustomPopup`` at 18sp. On the first fresh elspi card (reflex v1.2.0,
+2026-09-26) Evan found it wrong three ways at the lathe's 1024x600:
 
-WHY ``CustomPopup`` AND NOT A NEW POPUP CLASS. This repo already has exactly
-one text-plus-buttons dialog and every call site uses it the same way, inline:
-``els_advbar`` for "Axis Not Configured", ``app`` for its startup notices,
-``backup_screen`` for the import confirm this module's hazard comes from.
-Writing a second one would be inventing a convention next to the existing one.
-What lives here instead is the WORDING and the BRANCH -- the two things that
-are load-bearing and that a test can read without building a canvas.
+1. "the text is overflowing terribly. too many words there."
+2. It never named the likeliest case -- a new machine being set up for the
+   first time -- let alone led with it. "a user who's not new to it won't be
+   confused."
+3. It only described restoring over SSH, and did not offer the in-app USB and
+   gist restores at all, though both already existed under Setup > Backup.
 
-THE TWO EXITS, AND WHY BOTH ARE ALWAYS NAMED. An operator reading this is in
-one of two situations and the modal cannot tell which: they have a capture for
-this machine sitting on another box, or this lathe has never been measured by
-anybody and they are about to do it. Naming only the restore leaves the second
-operator with a warning they cannot act on and an app that will not save --
-which is how a warning gets worked around instead of answered. Naming only the
-dismissal invites the first operator to hand-enter a machine they already have
-measured numbers for.
+So the state is said in two lines, and every way out is a button, in the order
+an operator is most likely to need it:
 
-WHY THE DISMISS BUTTON IS ABSENT AFTER AN IMPORT AND NOT MERELY DISABLED.
+* **New machine -- set it up** (primary). Opens the write gate
+  (``commissioning_state.dismiss``) and goes to Setup. Its caption says what
+  that costs, because the cost is why the gate was shut: from then on, what is
+  typed is recorded as this machine's baseline.
+* **Restore from USB stick** and **Restore from GitHub gist**. Each goes to
+  Setup > Backup and starts that restore there, so the confirm dialog and the
+  result land on the screen that owns them, where a retry is one tap away.
+* **Not now**. Closes the dialog and changes nothing.
+
+Restoring over SSH is not offered here. A technician doing that has a shell
+and does not need a touchscreen button; it is on the guide page
+(``docs/guide/uncommissioned.md``).
+
+WHY THE NEW-MACHINE BUTTON IS ABSENT AFTER AN IMPORT, NOT GREYED.
 ``commissioning_bundle.apply`` writes restored YAML to disk while every
 dispatcher in memory still holds its in-code defaults, so opening the gate then
-lets the next property change overwrite the restore (see
-``commissioning_state.dismissal_available``). The button has to stop working.
-It is removed rather than greyed because a control that is present and does
-nothing is the exact defect this codebase has already been bitten by and wrote
-a test file about: the ELS "Enable Feed" confirm whose callback never fired
-behaved identically to Cancel, and nobody could tell from the machine
-(``tests/components/test_custom_popup.py``). At a lathe with no terminal, an
-inert button is indistinguishable from a broken one. A button that is not there
-and a sentence saying why is diagnosable from across the shop.
+lets the next property change write those defaults over the restore (see
+``commissioning_state.dismissal_available``). The button has to stop working,
+and it is removed rather than greyed because a control that is present and does
+nothing is the defect ``tests/components/test_custom_popup.py`` was written
+about: at a lathe with no terminal an inert button looks exactly like a broken
+one. The restart branch says in words why it is gone.
 
 Defence in depth, not instead of it: ``commissioning_state.dismiss()`` refuses
-on its own account too, so a future caller that builds this dialog wrong still
-cannot open the gate at the wrong moment.
-"""
-from kivy.logger import Logger
+on its own account too, so a dialog left open while an import lands still
+cannot open the gate.
 
-from reflex.components.popups.custom_popup import CustomPopup
-from reflex.utils import commissioning_state
+THE OPTIONS ARE DATA (:func:`options_for`), and the buttons are built from them
+in Python rather than written in the kv. Which buttons exist is the property
+under test, and this repo's mock-GL test backend cannot build a kv tree that
+carries a canvas (see ``uncommissioned_banner.py``), so the decision lives
+where a test can run it and the kv only lays it out.
+"""
+from dataclasses import dataclass
+
+from kivy.app import App
+from kivy.factory import Factory
+from kivy.logger import Logger
+from kivy.properties import StringProperty
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.popup import Popup
+
+from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>
+from reflex.utils import commissioning_state, gist_sync
+from reflex.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
+load_kv(__file__)
 
-#: The dialog's own name. Says the state again rather than saying "Warning":
-#: the operator arrived here by tapping the word UNCOMMISSIONED and the title
-#: should confirm they are in the right place.
+#: The dialog's title bar. Says the state again: the operator got here by
+#: tapping the word UNCOMMISSIONED, and the title confirms they are in the
+#: right place.
 TITLE = "This machine is not commissioned"
 
-#: THE THREE FACTS, in the order the operator needs them. Kept as their own
-#: constant because they are identical in both branches -- the hazard changes
-#: what can be DONE about the state, never what the state is.
-FACTS = (
-    "This card carries no measured configuration. Nothing on it was taken "
-    "from this lathe.\n"
-    "\n"
-    "The values on screen are the app's built-in defaults -- somebody else's "
-    "machine, near enough to look plausible and not near enough to cut with.\n"
-    "\n"
-    "Settings are not being saved. Anything you change now is forgotten when "
-    "the app closes."
-)
+#: The ordinary branch: what the state is, in two lines.
+HEADLINE = "This card has no settings for this lathe yet."
+LINE = "Until it does, the screen shows defaults and nothing is saved."
 
-#: EXIT (a). The restore, and why it is permanent: the capture clears the
-#: restore contract's bar, so the next boot finds a commissioned machine and
-#: the strip does not come back. No marker, no dismissal, nothing to undo.
-EXIT_RESTORE = (
-    "1. RESTORE A CAPTURE (do this if one exists)\n"
-    "   Provision or restore this machine's commissioning capture over SSH, "
-    "then restart. The restored configuration is found on the next boot and "
-    "this warning does not appear again."
-)
+#: The restart branch: settings arrived on disk after the app started (an
+#: in-app restore, or files copied over SSH), and only a restart loads them.
+AFTER_IMPORT_HEADLINE = "Settings were restored to this card."
+AFTER_IMPORT_LINE = "Restart the machine to load them."
+#: Where the new-machine button went. Without this sentence the missing button
+#: is just a bug.
+AFTER_IMPORT_NOTE = (
+    "Until the restart, defaults are shown, nothing is saved, and new-machine "
+    "setup is off so the defaults cannot overwrite what was restored.")
 
-#: EXIT (b). The hand-commissioning path. It says what dismissal COSTS in the
-#: same breath as what it gives, because the cost is the whole reason the gate
-#: was shut: from that moment the app records what is typed as this machine's
-#: baseline, and nothing downstream can tell a measured number from a guess.
-EXIT_DISMISS = (
-    "2. DISMISS AND COMMISSION BY HAND\n"
-    "   If there is no capture, press Dismiss. Saving switches on immediately "
-    "and stays on for this card, through restarts. Work through Setup and "
-    "enter this lathe's real measured values -- everything you save from then "
-    "on is recorded as this machine's baseline, so measure it before you "
-    "type it."
-)
+NEW_MACHINE = "new_machine"
+RESTORE_USB = "restore_usb"
+RESTORE_GIST = "restore_gist"
+NOT_NOW = "not_now"
+RESTART_OK = "restart_ok"
 
-#: The post-import branch. Says what happened, why the button is gone, and the
-#: one thing that fixes it. "Restart" is the remedy and the only remedy.
-AFTER_IMPORT = (
-    "A configuration was written to this card after the app started -- an "
-    "in-app backup import, or a restore over SSH.\n"
-    "\n"
-    "Those files are on disk, but this app is still running on the defaults it "
-    "started with. Switching saving on now would write the defaults back over "
-    "what was just restored, so Dismiss is not offered until the machine has "
-    "been restarted.\n"
-    "\n"
-    "RESTART THE MACHINE. The restored configuration is picked up on the next "
-    "boot and this warning will not appear."
-)
+#: The dialog's share of the window, per branch. The restart branch has one
+#: button and needs far less height.
+#: Sized to the content at 1024x600 (previews/preview_uncommissioned_options.py).
+SIZE_HINT = (0.74, 0.84)
+SIZE_HINT_RESTART = (0.74, 0.5)
 
 
-def details_message(*, can_dismiss: bool) -> str:
-    """The modal's body text.
+@dataclass(frozen=True)
+class Option:
+    """One button in the dialog."""
+    key: str
+    text: str
+    #: A second, smaller line on the button. Only the new-machine button has
+    #: one: pressing it has a lasting consequence, and the place to say so is
+    #: on the thing being pressed.
+    caption: str = ""
+    primary: bool = False
 
-    :param can_dismiss: ``commissioning_state.dismissal_available()``. Taken as
-        an argument rather than read here so the wording is a pure function of
-        the branch and can be read in a test without a latched process.
-    """
-    if can_dismiss:
-        return f"{FACTS}\n\nTwo ways out:\n\n{EXIT_RESTORE}\n\n{EXIT_DISMISS}"
-    return f"{FACTS}\n\n{AFTER_IMPORT}"
 
+def options_for(*, can_dismiss: bool, gist_available: bool) -> tuple[Option, ...]:
+    """The buttons, in order.
 
-def build_details_popup(*, can_dismiss: bool, on_dismissed=None) -> CustomPopup:
-    """The dialog, built but not opened.
-
-    Separate from :func:`open_details` so a test can inspect the buttons that
-    were actually wired -- whether the dismiss affordance EXISTS is the
-    property under test, and a function that opens a window cannot be asked.
-
-    ``cancel_text`` empty is how ``CustomPopup`` renders a single-button
-    dialog, so the no-dismiss branch is one OK button and nothing else: there
-    is no second control for the operator to wonder about.
+    :param can_dismiss: ``commissioning_state.dismissal_available()``. False
+        after an import, when the only honest option is a restart.
+    :param gist_available: ``gist_sync.is_configured()``. A build without a
+        GitHub client id cannot restore from a gist, so that button is left
+        out, by the same absent-not-greyed rule as above.
     """
     if not can_dismiss:
-        return CustomPopup(
+        return (Option(RESTART_OK, "OK"),)
+    options = [
+        Option(NEW_MACHINE, "New machine — set it up",
+               caption="Starts saving. Enter this lathe's measured values in Setup.",
+               primary=True),
+        Option(RESTORE_USB, "Restore from USB stick"),
+    ]
+    if gist_available:
+        options.append(Option(RESTORE_GIST, "Restore from GitHub gist"))
+    options.append(Option(NOT_NOW, "Not now — keep defaults, save nothing"))
+    return tuple(options)
+
+
+def button_text(option: Option) -> str:
+    """What goes on the button: the caption, when there is one, as a smaller
+    second line in Kivy markup."""
+    if not option.caption:
+        return option.text
+    return f"{option.text}\n[size=15sp]{option.caption}[/size]"
+
+
+class UncommissionedOptions(BoxLayout):
+    """The dialog's content. Wrapped in a stock ``Popup``, the way
+    ``CustomPopup`` wraps itself, so it gets the app's popup chrome."""
+
+    headline = StringProperty(HEADLINE)
+    line = StringProperty(LINE)
+    #: A third, smaller paragraph. Empty, and zero height, in the ordinary
+    #: branch.
+    note = StringProperty("")
+
+    def __init__(self, *, can_dismiss: bool, gist_available: bool,
+                 on_dismissed=None, **kwargs):
+        super().__init__(**kwargs)
+        self.on_dismissed_cb = on_dismissed
+        self.options = options_for(can_dismiss=can_dismiss,
+                                   gist_available=gist_available)
+        if not can_dismiss:
+            self.headline = AFTER_IMPORT_HEADLINE
+            self.line = AFTER_IMPORT_LINE
+            self.note = AFTER_IMPORT_NOTE
+        self.buttons = {}
+        column = self.ids.get("options", self)
+        for option in self.options:
+            factory = (Factory.UncommissionedPrimaryButton if option.primary
+                       else Factory.UncommissionedOptionButton)
+            button = factory(text=button_text(option))
+            button.bind(on_release=lambda _b, key=option.key: self.choose(key))
+            self.buttons[option.key] = button
+            column.add_widget(button)
+        self._popup = Popup(
             title=TITLE,
-            message=details_message(can_dismiss=False),
-            button_text="OK",
-            popup_size_hint=[0.85, 0.8],
+            content=self,
+            size_hint=SIZE_HINT if can_dismiss else SIZE_HINT_RESTART,
+            auto_dismiss=False,
         )
-    return CustomPopup(
-        title=TITLE,
-        message=details_message(can_dismiss=True),
-        button_text="Dismiss",
-        cancel_text="Close",
-        confirm_callback=lambda: _confirm_dismissal(on_dismissed),
-        popup_size_hint=[0.85, 0.85],
-    )
+
+    def open(self):
+        self._popup.open()
+
+    def close(self):
+        self._popup.dismiss()
+
+    def choose(self, key: str) -> None:
+        """What each button does. One method, so a test can press any button
+        by name, and an unknown key is a loud error rather than a dead button."""
+        if key in (NOT_NOW, RESTART_OK):
+            self.close()
+        elif key == NEW_MACHINE:
+            self._new_machine()
+        elif key == RESTORE_USB:
+            self.close()
+            backup = _goto_backup()
+            if backup is not None:
+                backup.import_from_usb()
+        elif key == RESTORE_GIST:
+            self.close()
+            backup = _goto_backup()
+            if backup is not None:
+                backup.restore_from_gist()
+        else:
+            raise ValueError(f"uncommissioned options: unknown choice {key!r}")
+
+    def _new_machine(self) -> None:
+        """Open the gate, then go to Setup -- only if it actually opened.
+
+        ``dismiss()`` re-checks availability itself. If an import landed while
+        this dialog sat open it refuses, and the dialog is replaced by the
+        restart branch, which says why, rather than closing on nothing.
+        """
+        self.close()
+        if not commissioning_state.dismiss():
+            log.warning("uncommissioned options: dismissal refused; showing the restart branch")
+            open_details(on_dismissed=self.on_dismissed_cb)
+            return
+        if self.on_dismissed_cb is not None:
+            self.on_dismissed_cb()
+        manager = _manager()
+        if manager is not None:
+            manager.goto("setup")
 
 
-def _confirm_dismissal(on_dismissed) -> None:
-    """Open the gate, and tell the caller only if it actually opened.
-
-    ``dismiss()`` re-checks availability itself, so the window between
-    building this dialog and pressing the button -- long enough for an import
-    to land -- cannot be used to get the gate open.
-    """
-    if not commissioning_state.dismiss():
-        log.warning("uncommissioned details: dismissal refused; banner stays")
-        return
-    if on_dismissed is not None:
-        on_dismissed()
+def _manager():
+    return getattr(App.get_running_app(), "manager", None)
 
 
-def open_details(on_dismissed=None) -> CustomPopup:
+def _goto_backup():
+    """Show Setup > Backup and return it, so the caller can start a restore
+    there. ``None`` off a running app (previews, tools)."""
+    manager = _manager()
+    if manager is None:
+        log.warning("uncommissioned options: no screen manager; cannot open Backup")
+        return None
+    manager.goto("backup")
+    return manager.get_screen("backup")
+
+
+def open_details(on_dismissed=None) -> UncommissionedOptions:
     """Build and open the dialog for whatever state this process is in."""
-    popup = build_details_popup(
+    options = UncommissionedOptions(
         can_dismiss=commissioning_state.dismissal_available(),
+        gist_available=gist_sync.is_configured(),
         on_dismissed=on_dismissed,
     )
-    popup.open()
-    return popup
+    options.open()
+    return options
