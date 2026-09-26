@@ -302,10 +302,14 @@ a ramp ~`v²/2a` whose deceleration is in motor terms, so the lathe's A/B/C gear
 it. At the top of the table (3500 counts/s, 17.5 mm/s) the two halves are about 0.09 and 0.10 mm.
 
 **Gated (Evan, 2026-09-26).** Binding the table (checklist item 8 of Open Loops 6a92353d) waits on
-sensorless gearing detection, Open Loops 6ab7c598: the steady-state ratio of commanded steps to Z
-counts is the real gearing. The correction must not be tied to one gearbox position either. The
-plan is to characterise overshoot in all three positions, then either model the gearing effect (if
-it is negligible or scales as predicted) or keep a table per position keyed on the detected gearing.
+measuring the overshoot in all three gearbox positions, Open Loops 6ab7d08e. The correction must not
+be tied to one gearbox position. That measurement is a hardware characterization (lever and
+`leadScrewPitchSteps` set by hand, correction off) and needs nothing new. If the gearing effect is
+negligible, one table serves all three. If it scales as predicted (one table plus a gear factor) or
+not at all (a table per position), the correction needs to know the engaged position at runtime.
+That is sensorless gearing detection, Open Loops 6ab7c598: the steady-state ratio of commanded steps
+to Z counts is the real gearing. An earlier version of this paragraph gated item 8 on 6ab7c598
+outright; that was corrected the same day.
 
 The feature was renamed *stop overshoot correction* in v1.2.0 (the carriage is driven past the stop
 by the drive's latency; it does not coast). Earlier sections keep the old wording as the record of
