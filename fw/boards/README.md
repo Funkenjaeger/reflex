@@ -24,6 +24,11 @@ picture; this is the short version.
     python tools/genpins.py --check-upstream      # vendored copy vs kicad-reflex
                                                    # (never in CI -- it's private)
 
+`--check-upstream` finds kicad-reflex at `--kicad-repo PATH`, else
+`$KICAD_REFLEX_REPO`, else a sibling checkout at `../kicad/reflex`. Set
+`KICAD_REFLEX_REPO` (a checkout or a bare repo) when that sibling checkout is
+not found; with none reachable it prints `SKIP upstream` and exits 0.
+
 ## What is NOT here yet
 
 **Nothing includes `pins.h`.** Ramps.h, main.h and the CubeMX MSP init in

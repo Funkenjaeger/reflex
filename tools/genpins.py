@@ -39,7 +39,13 @@
                                        updating the lock), then WARN (not fail)
                                        if the design at --head has moved since.
                                        Never run in CI: kicad-reflex is private,
-                                       reflex is public.
+                                       reflex is public. The hardware repo is
+                                       --kicad-repo PATH if given, else
+                                       $KICAD_REFLEX_REPO, else a sibling
+                                       checkout at ../kicad/reflex; set
+                                       KICAD_REFLEX_REPO when that sibling
+                                       checkout is not found. SKIP (exit 0) if
+                                       none is a git repo.
 
 WHY A VENDORED COPY, NOT A LIVE READ. fw/boards/<board>/pins.json is a byte-exact
 copy of kicad-reflex's export, not a reference to it, so this repo's tree is
@@ -138,7 +144,7 @@ def part_to_macro(part):
 
 # ---------------------------------------------------------------------------
 # git helpers -- all `git -C <path>`, which works against a normal checkout
-# and a bare repo (e.g. /mnt/git/kicad-reflex.git) alike.
+# and a bare repo alike.
 # ---------------------------------------------------------------------------
 
 def git_is_repo(path) -> bool:
@@ -561,11 +567,10 @@ def find_hw_repo(root: Path, explicit):
         candidates = [str(explicit)]
     else:
         candidates = []
-        env = os.environ.get("KICAD_REFLEX")
+        env = os.environ.get("KICAD_REFLEX_REPO")
         if env:
             candidates.append(env)
         candidates.append(str(root / ".." / "kicad" / "reflex"))
-        candidates.append("/mnt/git/kicad-reflex.git")
     tried = []
     for c in candidates:
         tried.append(c)
@@ -577,7 +582,9 @@ def find_hw_repo(root: Path, explicit):
 def cmd_check_upstream(root: Path, kicad_reflex, require_upstream: bool, head: str) -> int:
     hw_repo, tried = find_hw_repo(root, kicad_reflex)
     if hw_repo is None:
-        print("SKIP upstream: no hardware repo reachable (tried " + ", ".join(tried) + ")")
+        print("SKIP upstream: no hardware repo reachable (tried " + ", ".join(tried) + "); "
+              "set KICAD_REFLEX_REPO, or pass --kicad-repo, to a kicad-reflex checkout "
+              "or bare repo")
         return 2 if require_upstream else 0
 
     boards_dir = root / "fw" / "boards"
@@ -661,8 +668,9 @@ def main(argv=None) -> int:
                          "re-render fw/boards/*/pins.h from what is already vendored.")
     ap.add_argument("--root", default=str(ROOT), help="repo root (default: this checkout)")
     ap.add_argument("--board", help="board name, e.g. provvedo (vendor)")
-    ap.add_argument("--kicad-reflex", dest="kicad_reflex",
-                    help="path to the kicad-reflex checkout or bare repo")
+    ap.add_argument("--kicad-repo", "--kicad-reflex", dest="kicad_reflex",
+                    help="path to the kicad-reflex checkout or bare repo (default: "
+                         "$KICAD_REFLEX_REPO, then ../kicad/reflex beside this checkout)")
     ap.add_argument("--rev", help="git rev in kicad-reflex to vendor from (vendor)")
     ap.add_argument("--check", action="store_true",
                     help="diff fw/boards/*/pins.h against pins.json+pins.lock; exit 1 on drift")
