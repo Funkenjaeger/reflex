@@ -5,8 +5,8 @@
  * the target device headers (a typo in the export, a stale macro after a
  * board respin) fails to compile here rather than silently linking.
  *
- * Nothing includes pins.h yet -- the per-board firmware build (Open Loops
- * 6aa6c3b5) is what wires Ramps.h to consume it -- so this file, like its
+ * Nothing includes pins.h yet -- the per-board firmware build
+ * is what wires Ramps.h to consume it -- so this file, like its
  * sibling tools/check_generated_layout.c for the register map, is the only
  * place today that proves the header is real against the actual device
  * headers rather than merely self-consistent. tools/test_genpins_seen_red.py

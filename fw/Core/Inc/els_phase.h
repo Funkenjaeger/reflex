@@ -21,8 +21,8 @@
  * PHASE OFFSET (primitive landed 2026-08-21; the register/UI half is in
  * todo.md). offsetSteps is an additive term, in leadscrew steps, for a
  * persistent phase offset applied ON TOP of the latched reference. The
- * operator-entered groove-widening offset (6a77c5b2) and the X-depth-derived
- * compound-infeed offset (6a77c598) are two sources of this ONE term. It is
+ * operator-entered groove-widening offset and the X-depth-derived
+ * compound-infeed offset are two sources of this ONE term. It is
  * summed into phaseError BEFORE the mod-pitch fold and the forward-bias, so
  * it inherits both: |offset| >= pitch aliases to (offset mod pitch), and a
  * NEGATIVE offset is not a small backward jog but (pitch - |offset|) in the

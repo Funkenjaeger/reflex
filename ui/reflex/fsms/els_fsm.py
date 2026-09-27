@@ -811,7 +811,7 @@ class ElsFsm:
     # widening: everything below is "an offset larger than a pitch aliases",
     # "the frame has no thread phase", "the firmware would eat this silently".
     # els_phase.h names a second source that will feed the same term (the
-    # X-depth-derived compound infeed, 6a77c598); it will reuse this path
+    # X-depth-derived compound infeed); it will reuse this path
     # unchanged.
     #
     # ACCUMULATION LIVES HERE, NOT IN FIRMWARE. The firmware holds ONE absolute

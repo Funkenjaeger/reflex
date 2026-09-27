@@ -35,7 +35,7 @@ not found; with none reachable it prints `SKIP upstream` and exits 0.
 tim.c/usart.c still hand-copy provvedo's pins today; `--check-handwritten` is
 the contract test that catches those drifting from the design export in the
 meantime. Wiring Ramps.h to consume `pins.h` directly is a per-board firmware
-build (`-DREFLEX_BOARD=...`), tracked as Open Loops 6aa6c3b5 -- once that
+build (`-DREFLEX_BOARD=...`) -- once that
 lands, `--check-handwritten` retires, since hand-copy drift becomes impossible
 by construction.
 

@@ -13,8 +13,7 @@ with reflex-fw's same-named branch (`latchCommand`/`latchSeq`, protocolVersion
   from ELS settings → "Pick up existing thread"), help doc
   `els_thread_resync.md`, system test `tests/system/test_els_thread_resync.py`.
 - elspi verification: real re-chucked threaded part — jog into the
-  thread, hand-seat, latch, AIR PASS first. Checklist lives in a TickTick
-  task.
+  thread, hand-seat, latch, AIR PASS first.
 - The Z-hold tolerance (`els_resync_z_tol_counts`, default 3) is deliberately
   NOT exposed in the settings popup — it is a commissioning value with a
   "do not widen" rule; revisit only if real elspi scale jitter demands it.

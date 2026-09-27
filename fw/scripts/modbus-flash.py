@@ -49,7 +49,7 @@ THE SEQUENCE (decisions/els-modbus-register-map.md, Implemented):
      where, --no-manifest to skip). It records what the board was SEEN
      running, not merely what was sent.
 
-WHEN IT FAILS (Open Loops 6aae7131 / 6aae7135, after 2026-09-19 07:12 on the
+WHEN IT FAILS (after 2026-09-19 07:12 on the
 lathe: a transfer lost one chunk four times running and the flasher exited 1
 with the board parked in the bootloader and the old application intact):
   * a chunk that will not go through is RESYNCED and RESUMED, not fatal --
@@ -177,7 +177,7 @@ WRITE_ATTEMPTS = 4
 RETRY_PAUSE = 0.05      # a beat for the bootloader's next poll, small enough
                         # that 222 chunks do not notice it
 
-# --- resync and resume (Open Loops 6aae7135) -----------------------------------
+# --- resync and resume -----------------------------------------------------
 # 2026-09-19 07:12, on the lathe: a 226-chunk transfer lost the WRITE at
 # 0x08043840 four times running while every status read in between WAS
 # answered ("blSeq never moved from 73"), and the flasher gave up. The same
@@ -194,7 +194,7 @@ RESYNC_PAUSE_MAX = 2.0
 PAD_READ_TIMEOUT = 0.15     # see Bootloader.pad
 PAD_AFTER_TROUBLED = 3      # consecutive commands that lost a frame before pad mode
 
-# --- getting back after a failure (Open Loops 6aae7131) -------------------------
+# --- getting back after a failure -------------------------------------------
 RECOVERY_WAIT_S = 30.0      # apply_never_ran's look for blSeq after a lost APPLY
 REPORT_WAIT_S = 10.0        # how long to keep asking a flaky link, for the last look before reporting
 JUMP_ATTEMPTS = 3           # each gated on an identity read showing the bootloader
@@ -889,7 +889,7 @@ def record_flash(manifest, image_path: str, data: bytes, hdr, ident,
 
 def stream(bl: Bootloader, image: bytes, hdr) -> None:
     """Send the image to staging, chunk by chunk, RESUMING across a link that
-    drops out (Open Loops 6aae7135).
+    drops out.
 
     HOW PROGRESS IS KNOWN. The bootloader keeps no "bytes received" count;
     what it has is blSeq, bumped exactly once per command it executes
@@ -1111,7 +1111,6 @@ def return_to_app(bus: Rtu, bl: Bootloader, before: Identity | None, start: list
                   reason, where: str):
     """A failure BEFORE APPLY: put the board back in the application it was
     running and PROVE it, then exit non-zero. Always raises SystemExit.
-    (Open Loops 6aae7131.)
 
     Safe because nothing before APPLY writes the run slot: ERASE, WRITE and
     VERIFY all address staging. Still checked, not assumed, before each jump:

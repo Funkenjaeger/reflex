@@ -347,8 +347,8 @@ class FakeRunner:
         self.flash_fail_output = flash_fail_output
         # What `--identity` reports once the image flash has FAILED (a `fail`
         # marker matched it): None = what the board ran before, i.e. the
-        # flasher got back to the old application (2026-09-19, Open Loops
-        # 6aae7131); a string = that identity line verbatim; "unreadable" =
+        # flasher got back to the old application (2026-09-19);
+        # a string = that identity line verbatim; "unreadable" =
         # the identity read itself fails.
         self.board_after_failed_flash = board_after_failed_flash
         self.flash_failed = False
@@ -769,7 +769,7 @@ def test_a_failed_flash_does_not_install_the_ui_half(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# a FAILED flash is settled by a fresh identity read (Open Loops 6aae7131).
+# a FAILED flash is settled by a fresh identity read.
 # 2026-09-19 on the lathe: a transfer glitch made modbus-flash.py exit 1 with
 # the board left in the bootloader. The flasher now jumps back to the old
 # application and proves it; the updater re-reads the board rather than take
@@ -1175,7 +1175,7 @@ def test_last_flashed_rev_is_none_without_a_manifest(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# The venv-writable preflight (Open Loops 6aac9465, 2026-09-17)
+# The venv-writable preflight (2026-09-17)
 # --------------------------------------------------------------------------
 # elspi shipped /opt/reflex-venv root-owned with the UI running as `default`,
 # and install_ui_half's `uv sync` comes AFTER the flash. These pin that an
@@ -1245,7 +1245,7 @@ def test_a_missing_venv_is_judged_by_where_uv_would_create_it(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# A UI half that fails AFTER a verified flash is undone (Open Loops 6aaca75b)
+# A UI half that fails AFTER a verified flash is undone
 # --------------------------------------------------------------------------
 # Until 2026-09-17 run() only re-raised here: new firmware under the old UI,
 # nothing reverted, and the Update screen then refused a retry ("ALREADY

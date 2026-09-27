@@ -11,7 +11,7 @@ shared Modbus block (rampsSharedData_t) and says where it sits in it
 an array member such as `input_t scales[SCALES_COUNT]`). Until 2026-09-18 this
 generator knew only elsStop_t; servo_t, input_t and fastData_t were hand-written
 in Ramps.h and hand-mirrored in reflex-ui with hand-placed _pad fields. They
-were moved onto it byte-identically (Open Loops 6a9f3106).
+were moved onto it byte-identically.
 
 WHY --check EXISTS. This generator emits BOTH sides of the RS-485 link from one
 source, which makes them self-consistent by construction -- and therefore able to
@@ -300,8 +300,8 @@ def check_mirrors(schemas):
     in the parent, e.g. `scales[].position`) turns that prose into a checked
     declaration. Unlike the original gate -- which had to re-parse the
     hand-maintained Ramps.h text, because servo_t and input_t were still
-    hand-written there -- servo_t and input_t are schemas too now (Open Loops
-    6a9f3106), so the source of truth is the sibling Schema this generator
+    hand-written there -- servo_t and input_t are schemas too now, so the
+    source of truth is the sibling Schema this generator
     already loaded: no header text, no re-parsing, one fewer thing that can
     disagree with itself. A mirror_of naming a parent_member or field that does
     not exist refuses exactly like a type or length mismatch does; nothing

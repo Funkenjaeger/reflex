@@ -170,8 +170,8 @@ covered by native tests; the flag and restart counts exist only on the chip.
 **Error-branch fix, same date, UNVERIFIED ON HARDWARE until the bench
 session.** `blHwUartPoll`'s ORE/FE/NE branch used to read `USART1->DR`
 unconditionally to clear the flags, which can steal the byte the DMA was about
-to fetch — the exact trap the IDLE branch already guarded against (Open Loops
-6aae713c, a code-read suspect for the stalls). It now does what the IDLE
+to fetch — the exact trap the IDLE branch already guarded against (a
+code-read suspect for the stalls). It now does what the IDLE
 branch does: re-read SR, and while RXNE is up leave the flags latched and
 return. The one exception is a dead DMA stream (disabled, or an error flag
 set): nothing will ever fetch DR then, so waiting on RXNE would leave the

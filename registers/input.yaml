@@ -11,7 +11,7 @@
 # its own size (`parent_count` below). The generator resolves SCALES_COUNT from
 # fw/Core/Inc/Scales.h and refuses to emit if the two disagree.
 #
-# TRANSCRIBED, NOT REDESIGNED (2026-09-18, Open Loops 6a9f3106). Field list,
+# TRANSCRIBED, NOT REDESIGNED (2026-09-18). Field list,
 # order, types and padding are exactly the hand-written struct this replaced in
 # fw/Core/Inc/Ramps.h, and the `doc:` strings are its per-field comments
 # verbatim. The one cosmetic difference: Ramps.h declared syncRatioNum and

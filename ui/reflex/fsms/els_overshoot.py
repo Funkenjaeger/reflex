@@ -91,10 +91,9 @@ from typing import Callable, Deque, Optional, Sequence, Tuple
 # still queued, and the firmware has none queued at the trigger
 # (stopTriggerStepsToGo was 0 on every recorded stop), so nothing it sends
 # after the stop fires exists for them to shape. Measuring the overshoot in
-# all three gearbox positions is Open Loops 6ab7d08e, which gates 6a92353d
+# all three gearbox positions gates the elspi hardware-verification checklist
 # item 8 (2026-09-26). Only if the gearing turns out to matter does the table
-# also need the engaged position at runtime: sensorless gearing detection,
-# Open Loops 6ab7c598.
+# also need the engaged position at runtime: sensorless gearing detection.
 OVERSHOOT_TABLE: Tuple[Tuple[int, int], ...] = (
     (0, 0),
     (280, 1),       # snapshot 300

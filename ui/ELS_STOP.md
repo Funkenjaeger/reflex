@@ -99,7 +99,7 @@ emulator proof: `tests/system/test_els_thread_resync.py`.
 
 Cutting a thread groove wider than the tool that cuts it: cut the groove, advance the controller's idea of thread phase by a step-over smaller than the cutter, cut again, repeat until the groove is the width you want. The workpiece is never re-indexed and the datum is never re-established. The firmware side is `elsStop.phaseOffsetSteps` (see `fw/ARCHITECTURE.md` → *Thread-phase offset*); Python owns three things it deliberately does not.
 
-The primitive is general — it displaces thread phase by a distance, and says nothing about why. Multi-start threading is a *different* feature that will be built semantically (pitch plus a number of starts) rather than on raw fractions of a pitch, and the operator-entered offset here is only the first of two sources named in `fw/Core/Inc/els_phase.h`; the second is the X-depth-derived compound infeed (6a77c598), which will feed the same `Pending` path.
+The primitive is general — it displaces thread phase by a distance, and says nothing about why. Multi-start threading is a *different* feature that will be built semantically (pitch plus a number of starts) rather than on raw fractions of a pitch, and the operator-entered offset here is only the first of two sources named in `fw/Core/Inc/els_phase.h`; the second is the X-depth-derived compound infeed, which will feed the same `Pending` path.
 
 **Unit conversion.** The operator enters a distance in display units; the register wants leadscrew steps. `ElsFsm._leadscrew_steps_per_display_unit()` composes `servo.ratioNum/Den` (mm per step) with `formats.factor` (display units per mm), both exact `Fraction`s, and rounds **once** at the end.
 

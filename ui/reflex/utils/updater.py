@@ -583,8 +583,8 @@ def unwritable_venv_dirs(venv: Path, limit: int = 5) -> list[Path]:
     one -- a venv whose top is ours but whose site-packages subtree is root's
     passes a top-level check and fails halfway through the sync. That is the
     exact state elspi shipped in: /opt/reflex-venv built as root by
-    stage-elspi/08-venv, the UI running as ``default`` (found 2026-09-17, Open
-    Loops 6aac9465). A venv that does not exist yet is judged by its parent,
+    stage-elspi/08-venv, the UI running as ``default`` (found 2026-09-17).
+    A venv that does not exist yet is judged by its parent,
     which is where ``uv`` would create it.
     """
     venv = Path(venv)
@@ -1105,7 +1105,7 @@ class UpdateSession:
         """The flasher exited non-zero: say what state the controller is in,
         from a FRESH identity read. Always raises.
 
-        Since 2026-09-19 (Open Loops 6aae7131) modbus-flash.py does not leave
+        Since 2026-09-19 modbus-flash.py does not leave
         a board it found running an application parked in the bootloader when
         a transfer fails before APPLY: it jumps back, proves the previous rev
         is running, and exits 1 saying NOTHING CHANGED. That morning a
@@ -1239,7 +1239,7 @@ class UpdateSession:
         Until 2026-09-17 this path only re-raised, which left new firmware
         under the old UI with nothing reverted -- and the Update screen then
         refused a retry ("ALREADY mismatched"), so the touchscreen could
-        neither finish nor undo it (Open Loops 6aaca75b). Ordering, and why:
+        neither finish nor undo it. Ordering, and why:
 
           1. The CHECKOUT first, back to the branch/commit preflight recorded,
              and `uv sync` there, because install_ui_half may have got as far

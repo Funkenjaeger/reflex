@@ -350,7 +350,7 @@ uint32_t blHwUartPoll(uint8_t *frame, uint16_t *diag)
      * fetch, and the ring comes up a byte short -- a corruption no flag
      * reports, landing in whatever frame that byte belonged to, which may be
      * the client's retry of the frame that raised the error. Until 2026-09-23 this
-     * branch read DR unconditionally (Open Loops 6aae713c; a code-read suspect
+     * branch read DR unconditionally (a code-read suspect
      * for the 09-19 and 09-23 mid-transfer stalls, NOT bench-verified).
      *
      * So, as below: re-read SR, and while RXNE is up return with the flags

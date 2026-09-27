@@ -60,15 +60,15 @@ jobs:
         run: pip install pyyaml
       - name: Check the generated map matches the schema
         run: python tools/genregs.py --check
-      # Same shape of gate as genregs.py --check, for the per-board pinout header
-      # (Open Loops 6aa6c3bd): fw/boards/<board>/pins.h must match what
+      # Same shape of gate as genregs.py --check, for the per-board pinout header:
+      # fw/boards/<board>/pins.h must match what
       # pins.json + pins.lock actually say, or a hand-edit becomes a silent
       # third source of truth for the pins the way the register map almost was.
       - name: Check the generated pinout header matches its vendored export
         run: python tools/genpins.py --check
       # Ramps.h, main.h, tim.c and usart.c still hand-copy provvedo's pins today
       # -- nothing consumes fw/boards/provvedo/pins.h yet (that is the per-board
-      # build, Open Loops 6aa6c3b5). Until then this is the contract test that
+      # build). Until then this is the contract test that
       # catches the hand copy drifting from the design export.
       - name: Check hand-written pins against the vendored export
         run: python tools/genpins.py --check-handwritten
@@ -135,8 +135,8 @@ jobs:
         working-directory: fw
         run: python3 scripts/lib/flash-manifest-test.py
 
-      # The flasher's answer to a link that fails mid-transfer (Open Loops
-      # 6aae7131/6aae7135, after 2026-09-19 on the lathe: one chunk lost four
+      # The flasher's answer to a link that fails mid-transfer (after
+      # 2026-09-19 on the lathe: one chunk lost four
       # times, exit 1, board left in the bootloader). The REAL flash() against
       # a fake bootloader that drops frames, answers every other request, or
       # dies, on a virtual clock: resync and resume, return to the old

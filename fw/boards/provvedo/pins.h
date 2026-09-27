@@ -9,8 +9,8 @@
  * Design source: ipc356 reader, third-party/provvedo-v1.2/netlist.ipc, sha256 14b9444c4ef84395...
  * MCU: U6, STM32F411CEUx
  *
- * Nothing includes this header yet. The per-board firmware build (Open
- * Loops 6aa6c3b5) is what wires Ramps.h to consume it; until then this file
+ * Nothing includes this header yet. The per-board firmware build
+ * is what wires Ramps.h to consume it; until then this file
  * exists so tools/genpins.py --check-handwritten can hold the hand-copied
  * pins in fw/Core/Inc/Ramps.h, fw/Core/Inc/main.h, fw/Core/Src/tim.c and
  * fw/Core/Src/usart.c to what the design actually says.

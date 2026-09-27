@@ -261,7 +261,7 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
 target_link_libraries(els_sync_debt_test m pthread)
 add_test(NAME els_sync_debt_test COMMAND els_sync_debt_test)
 
-# ISR-level backlash-CALIBRATION motion attribution (task 6a7c455e). Drives
+# ISR-level backlash-CALIBRATION motion attribution. Drives
 # data->elsCal through the real SynchroRefreshTimerIsr(), same stub strategy
 # as els_takeup_confirm_test. REQUIRES the calibration slip-attribution
 # infrastructure (elsCalCtx_t.slip, els_backlash_cal.h's elsSlipConfirmed()

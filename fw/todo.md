@@ -132,7 +132,7 @@ above as the strongest candidate to defer, and deferring it would be a bug. The
 correction it computes is added to `servo.stepsToGo` and has to be fully executed
 BEFORE the pass starts feeding. Hand it to a task and the pass can begin while the
 correction is still queued — which is exactly the out-of-phase-cut signature currently
-under investigation (Open Loops: thread re-sync lands out of phase). The step pulse is
+under investigation (thread re-sync lands out of phase). The step pulse is
 not the only thing in this ISR that must happen now. It has to be made CHEAPER IN
 PLACE, which is what was done.
 
@@ -250,7 +250,7 @@ it.
   `elsStopCorrectOnConfirm`. The take-up direction in turning comes from the
   SIGN of `zCountsPerPitch`, which reflex-ui now writes signed with pitch = 0
   (`push_turning_geometry`). Pins: `els_takeup_confirm_test` first-pass /
-  turning / polarity scenarios. Decided 2026-08-21 (task 6a81fa2f).
+  turning / polarity scenarios. Decided 2026-08-21.
 - `calCommand`-driven calibration measures the lash directly (three reversals,
   counting servo steps until Z moves). Host judges consistency and writes
   `backlashSteps = measured + max(20%, floor)`.
@@ -444,8 +444,8 @@ Two unit traps, both live (full list in `els_slip.h`):
   for, in metal, before anything looks wrong.
 
 ### Reframed 2026-08-23
-The feature was built and documented as MULTI-START THREADING. That was wrong. Per its
-own task (6a77c5b2) and the design note in `Core/Inc/els_phase.h`, its purpose is
+The feature was built and documented as MULTI-START THREADING. That was wrong. Per the
+design note in `Core/Inc/els_phase.h`, its purpose is
 **widening a thread groove past the width of the cutter**: cut the groove, step the
 phase over by less than the cutter width, cut again, repeat. Multi-start is a separate
 feature to be built semantically (pitch + number of starts), not on hand-entered
@@ -466,7 +466,7 @@ the modal title and the 1/2-1/3-1/4-pitch fill buttons did.
   `els_phase_offset_command_test` case 7 prints the corrections for both polarities to
   compare against.
 - Hardware verification of the whole feature: nothing here has been near a lathe.
-- Second source: 6a77c598 (X-depth compound infeed) feeds the same `Pending` path from
+- Second source: X-depth compound infeed feeds the same `Pending` path from
   `scaledPosition` * tan(theta); do not build a second offset path.
 
 ## Machine mode: the call site nobody can test (2026-08-22)
@@ -499,9 +499,9 @@ firmware logic added later has the same gap.
 
 ### NOT proven on hardware
 - Emulator + host tests only: no servo dynamics, no Modbus timing, no metal.
-- The elspi verification is a real re-chucked threaded part (TickTick task,
-  checklist item 8): jog into the thread, hand-seat, latch, AIR PASS
-  first, then confirm passes chase the existing groove.
+- The elspi verification is a real re-chucked threaded part: jog into the
+  thread, hand-seat, latch, AIR PASS first, then confirm passes chase the
+  existing groove.
 - The 1–3 count Z-hold tolerance and the spindle stillness dwell (~0.7 s,
   ±1 count) have never been exercised against real scale jitter — elspi's Z
   is 200 counts/mm, half the emulator's resolution.
@@ -603,7 +603,7 @@ the operator pushed the carriage with the half-nut open.
 That third state is not a corner case here. Manual carriage movement with the
 nut open is a first-class part of how this machine is used: the whole ELS stop
 resume model is built on the operator hand-cranking between passes, and the
-interactive re-sync feature (task 6a768a98) is entirely about it.
+interactive re-sync feature is entirely about it.
 
 **What it cost:** the take-up confirmation gate tested "did Z move?" when it
 needed to test "did Z move BECAUSE WE DROVE IT?". On hardware, a withheld

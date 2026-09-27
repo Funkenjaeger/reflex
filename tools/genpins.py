@@ -25,7 +25,7 @@
                                        against fw/boards/provvedo/pins.json.
                                        provvedo only. RETIRES once Ramps.h starts
                                        consuming pins.h directly -- the per-board
-                                       build (Open Loops 6aa6c3b5) -- because at
+                                       build -- because at
                                        that point a hand-copy drift is impossible
                                        by construction and this becomes a check
                                        for a thing that can no longer happen.
@@ -54,12 +54,12 @@ build depends on nothing outside itself. pins.lock is what ties the copy back to
 the design commit it came from, and --check-upstream is the (deliberately
 optional, deliberately non-CI) check that the copy has not drifted from it.
 
-WHY THIS EXISTS (Open Loops 6aa6c3bd). Firmware pins were hand-copied into
+WHY THIS EXISTS. Firmware pins were hand-copied into
 Ramps.h, main.h and the CubeMX MSP init in tim.c/usart.c -- the same shape of
 problem genregs.py solved for the register map. The board design is now the one
 source of truth; this generator carries it into firmware; --check-handwritten is
-the contract test that goes red on drift until the per-board build (Open Loops
-6aa6c3b5) makes Ramps.h consume fw/boards/<board>/pins.h directly, at which point
+the contract test that goes red on drift until the per-board build
+makes Ramps.h consume fw/boards/<board>/pins.h directly, at which point
 --check-handwritten retires -- there will be nothing left to hand-copy.
 
 NAMING. The generated macros are BOARD_<NET>_PORT / _PIN / _PIN_NUM, deliberately
@@ -268,8 +268,8 @@ def render_pins_h(obj, lock) -> str:
         f"sha256 {source['sha256'][:16]}...",
         f" * MCU: {mcu['ref']}, {mcu['part']}",
         " *",
-        " * Nothing includes this header yet. The per-board firmware build (Open",
-        " * Loops 6aa6c3b5) is what wires Ramps.h to consume it; until then this file",
+        " * Nothing includes this header yet. The per-board firmware build",
+        " * is what wires Ramps.h to consume it; until then this file",
         " * exists so tools/genpins.py --check-handwritten can hold the hand-copied",
         " * pins in fw/Core/Inc/Ramps.h, fw/Core/Inc/main.h, fw/Core/Src/tim.c and",
         " * fw/Core/Src/usart.c to what the design actually says.",
