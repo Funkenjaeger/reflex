@@ -1,6 +1,6 @@
 # ELS Shoulder Stop — Python orchestration
 
-The position-based shoulder-stop and phase-preserving re-sync logic live in firmware. See [`reflex-fw/ARCHITECTURE.md` → ELS Shoulder Stop](https://github.com/Funkenjaeger/reflex-fw/blob/main/ARCHITECTURE.md) for the conceptual model: the cut/trigger/resume phases, the latched reference pair, and the modular-correction re-sync.
+The position-based shoulder-stop and phase-preserving re-sync logic live in firmware. See [`fw/ARCHITECTURE.md` → ELS Shoulder Stop](../fw/ARCHITECTURE.md#els-shoulder-stop) for the conceptual model: the cut/trigger/resume phases, the latched reference pair, and the modular-correction re-sync.
 
 This document covers the **Python side** — what the GUI does to drive the firmware through a threading job.
 
