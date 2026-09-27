@@ -21,16 +21,20 @@ on:
       - "fw/**"
       - "registers/**"
       - "tools/genregs.py"
+      - "tools/genpins.py"
       - "tools/test_layout_fingerprint_seen_red.py"
       - "tools/test_generated_layout_seen_red.py"
+      - "tools/test_genpins_seen_red.py"
       - ".github/workflows/fw.yml"
   pull_request:
     paths:
       - "fw/**"
       - "registers/**"
       - "tools/genregs.py"
+      - "tools/genpins.py"
       - "tools/test_layout_fingerprint_seen_red.py"
       - "tools/test_generated_layout_seen_red.py"
+      - "tools/test_genpins_seen_red.py"
       - ".github/workflows/fw.yml"
 
 jobs:
@@ -56,11 +60,30 @@ jobs:
         run: pip install pyyaml
       - name: Check the generated map matches the schema
         run: python tools/genregs.py --check
+      # Same shape of gate as genregs.py --check, for the per-board pinout header
+      # (Open Loops 6aa6c3bd): fw/boards/<board>/pins.h must match what
+      # pins.json + pins.lock actually say, or a hand-edit becomes a silent
+      # third source of truth for the pins the way the register map almost was.
+      - name: Check the generated pinout header matches its vendored export
+        run: python tools/genpins.py --check
+      # Ramps.h, main.h, tim.c and usart.c still hand-copy provvedo's pins today
+      # -- nothing consumes fw/boards/provvedo/pins.h yet (that is the per-board
+      # build, Open Loops 6aa6c3b5). Until then this is the contract test that
+      # catches the hand copy drifting from the design export.
+      - name: Check hand-written pins against the vendored export
+        run: python tools/genpins.py --check-handwritten
       # --check also fails a layout that no longer matches the fingerprint
       # pinned for the current protocol_version. This proves that gate can go
       # red (and can be satisfied by a bump + pin) on a scratch copy of the tree.
       - name: Layout-fingerprint gate seen-red
         run: python tools/test_layout_fingerprint_seen_red.py
+      # Seen-red for genpins.py's own gates (--check, --check-handwritten,
+      # --check-upstream) and for the pins.h device-check guard. Needs no cross
+      # compiler -- it falls back to host gcc (preinstalled on ubuntu-latest)
+      # against the real HAL, so it belongs next to the other seen-red step
+      # above rather than in arm-build.
+      - name: Pinout generator seen-red
+        run: python tools/test_genpins_seen_red.py
 
   emulator-tests:
     runs-on: ubuntu-latest
