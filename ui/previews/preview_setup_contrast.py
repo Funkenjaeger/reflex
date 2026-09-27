@@ -329,7 +329,7 @@ def prepare_update(screen):
 
 
 def prepare_network(screen):
-    screen.status_text = "Connected to shop-wifi (192.168.1.40)"
+    screen.status_text = "Connected to shop-wifi (192.0.2.40)"
 
 
 def prepare_profiling(screen):

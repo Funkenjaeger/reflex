@@ -3,8 +3,8 @@
  * the sibling of els_takeup_confirm_test.cpp's take-up coverage, but for
  * data->elsCal instead of the take-up's elsStop/elsSlip path.
  *
- * WHY THIS FILE EXISTS (task 6a7c455e8f08a317e962b42a)
- * -----------------------------------------------------
+ * WHY THIS FILE EXISTS
+ * --------------------
  * Mutation testing on 2026-08-12 established that dropping the take-up-style
  * `armed` gate around the calibration leg's ISR wiring changed nothing across
  * the whole 7-target suite, for a structural reason: NO test target drove

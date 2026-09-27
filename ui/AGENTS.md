@@ -27,9 +27,8 @@ reflex-fw's `Ramps.h` are one contract, and they must land together.
 
 If unsure whether a change qualifies, it does not. Put it on a branch and ask.
 
-**Never push without being asked.** `origin` fans out to BOTH
-`github.com/Funkenjaeger/reflex-ui` and `dserver:/mnt/git/reflex-ui.git`, so any
-push writes two remotes at once.
+**Never push without being asked.** `origin` fans out to BOTH the canonical
+remote and your mirror, so any push writes two remotes at once.
 
 ## Todo Tracking
 

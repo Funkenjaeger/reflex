@@ -2,10 +2,10 @@
  * Phase-offset primitive tests (landed 2026-08-21; designed 2026-08-14, INV7).
  *
  * Pins the behavior of the offsetSteps parameter on
- * elsComputePhaseCorrection() (Core/Inc/els_phase.h), added to support
- * TickTick 6a77c5988f0854e3485e4369 (auto-advance from X depth) and
- * 6a77c5b28f08c5e690294e7e (manual fixed-distance advance). See the PHASE
- * OFFSET note in els_phase.h and the phase-offset section of todo.md.
+ * elsComputePhaseCorrection() (Core/Inc/els_phase.h), added to support two
+ * TickTick tasks: auto-advance from X depth, and manual fixed-distance
+ * advance. See the PHASE OFFSET note in els_phase.h and the phase-offset
+ * section of todo.md.
  *
  * Style matches els_phase_test.cpp: pure host build, no HAL/struct deps,
  * fixed 1:1 geometry (threadPitchSteps == zCountsPerPitch == PITCH) chosen so

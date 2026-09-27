@@ -499,8 +499,8 @@ firmware logic added later has the same gap.
 
 ### NOT proven on hardware
 - Emulator + host tests only: no servo dynamics, no Modbus timing, no metal.
-- The elspi verification is a real re-chucked threaded part (TickTick task
-  6a768a98 checklist item 8): jog into the thread, hand-seat, latch, AIR PASS
+- The elspi verification is a real re-chucked threaded part (TickTick task,
+  checklist item 8): jog into the thread, hand-seat, latch, AIR PASS
   first, then confirm passes chase the existing groove.
 - The 1–3 count Z-hold tolerance and the spindle stillness dwell (~0.7 s,
   ±1 count) have never been exercised against real scale jitter — elspi's Z
