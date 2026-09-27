@@ -289,7 +289,7 @@ int main() {
         check(all, "T3 every correction magnitude converges");
     }
 
-    /* -------- T4: Evan's discriminating experiment ---------------------
+    /* -------- T4: the discriminating experiment ------------------------
      * Latch, hand-rotate the spindle visibly out of sync while still at the
      * shoulder, THEN Cut with the spindle stationary. On the bench this always
      * aligned; it is what rules out a stale-datum theory. */

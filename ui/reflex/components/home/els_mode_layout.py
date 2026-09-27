@@ -155,7 +155,7 @@ class ElsModeLayout(ModeLayout):
         #
         # dp(3) so that 5 + 3 = 8 and the two ends actually match.
         #
-        # THIS RESIZES THE DRO ROWS, DELIBERATELY, ON EVAN'S EXPLICIT CALL
+        # THIS RESIZES THE DRO ROWS, DELIBERATELY, ON THE MAINTAINER'S EXPLICIT CALL
         # (2026-08-29). The spacer is the REMAINDER -- it has size_hint_y 1 --
         # so it cannot be shrunk on its own: with `available` fixed, taking
         # 5 px out of the spacer puts them into the rows, 99 -> 101 px each,

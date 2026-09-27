@@ -86,7 +86,7 @@ def test_the_wizard_opens_refused_when_it_cannot_run(running_app):
 def test_a_refused_wizard_never_shows_the_jog_instructions(running_app):
     """THE POINT. JOG_TEXT tells the operator to move the carriage by hand,
     CLOSE THE HALF NUT and haul it back against the flank. Doing all of that
-    and then being told there is no thread pitch is what Evan hit on the
+    and then being told there is no thread pitch is what happened on the
     2026-08-30 bench run. It must not be on screen when the answer is no."""
     p = _open("No threading job is armed.")
     assert p.body_text != JOG_TEXT

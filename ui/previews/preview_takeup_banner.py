@@ -3,7 +3,7 @@ geometry around it.
 
 WHY THIS EXISTS. The banner has been "fixed" about six times and reported wrong
 from the lathe every time, because the only way anyone ever saw the result was
-Evan walking to the machine. tests/components/test_els_advbar.py patches
+walking to the machine. tests/components/test_els_advbar.py patches
 apply_class_lang_rules out (the mock GL backend segfaults on real textures), so
 no unit test can assert on a rendered layout. This boots the REAL app under
 xvfb at the target 1024x600, in ELS mode with the advanced bar expanded, and

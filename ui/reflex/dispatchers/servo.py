@@ -248,7 +248,7 @@ class ServoDispatcher(SavingDispatcher):
         path that cleared elsStop.enable while sync was still live. This does
         not care which; it reports the disagreement.
 
-        THE THREE RUNGS, and which one this is (decided 2026-08-31, Evan):
+        THE THREE RUNGS, and which one this is (decided 2026-08-31):
 
           log-only    what this did until today. At the lathe there is a
                       touchscreen and no terminal, so a log line is a message
@@ -262,7 +262,7 @@ class ServoDispatcher(SavingDispatcher):
                       spindle turning, AND releases the leadscrew (below).
                       NOT TAKEN.
 
-        "RELEASES THE CARRIAGE HOLD" -- CORRECTED 2026-08-31, Evan, from the
+        "RELEASES THE CARRIAGE HOLD" -- CORRECTED 2026-08-31, from the
         machine. The phrase was right and its citation was wrong, which is why
         it survived three copies without anyone being able to check it.
 

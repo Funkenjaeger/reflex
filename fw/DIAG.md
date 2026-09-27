@@ -344,7 +344,7 @@ side. Separating the two needs the drive's own following-error readout, or the
 companion experiment: **an abrupt jog stop with the ELS out of the picture**,
 which exonerates this code path entirely if the same overshoot appears.
 
-Evan, 2026-08-28: *"It's at least possible that the servo itself is doing
+The maintainer, 2026-08-28: *"It's at least possible that the servo itself is doing
 something wonky, e.g. not honoring position when the steps cut off abruptly. I
 doubt it, but it's not impossible; just wouldn't assume so until proving it
 beyond a reasonable doubt."*

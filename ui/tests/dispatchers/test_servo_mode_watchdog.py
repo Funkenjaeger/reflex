@@ -6,7 +6,7 @@ disagreement is a defect somewhere -- a dropped write, servoEnableTask
 re-asserting on its own, a path that cleared elsStop.enable while sync was live.
 The watchdog does not care which; it reports the disagreement.
 
-IT NOW ALSO TELLS THE OPERATOR (2026-08-31, Evan's call). It logged and nothing
+IT NOW ALSO TELLS THE OPERATOR (2026-08-31). It logged and nothing
 else until today, which at a lathe with a touchscreen and no terminal means it
 told nobody. It posts a transient notice to the top status bar as well. The log
 line stays: the log is what makes an episode findable afterwards, the notice is
@@ -172,7 +172,7 @@ def test_clearing_is_reported_too(servo, caplog):
 
 # ── the operator channel (2026-08-31) ────────────────────────────────
 #
-# The rung Evan chose. These are separated from the log tests above because
+# The rung chosen. These are separated from the log tests above because
 # they are guarding a different property: not "did the watchdog notice" but
 # "did the noticing reach a human at the machine". The log tests passed for
 # the entire time this watchdog was telling nobody.

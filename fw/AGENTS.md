@@ -3,7 +3,7 @@
 ## Branching and Hardware Verification — READ FIRST
 
 **This project drives a real lathe. The only complete test is on hardware, and
-Evan runs that, not on demand.** The emulator and the test suite are good and
+the maintainer runs that, not on demand.** The emulator and the test suite are good and
 getting better, but they have repeatedly looked green while something real was
 wrong — no servo dynamics, no Modbus timing, no metal. Emulator green is
 evidence, never verification.
@@ -13,9 +13,9 @@ and everything on it is supposed to be hardware-verified.
 
 - Work on a **feature branch**, or on **`integration`** when several changes are
   in flight and separate branches would just be overhead.
-- `integration` / feature branch → `dev-staging` is merged **only after Evan has
-  verified on hardware**. He does that merge, or explicitly asks for it.
-- `dev-staging` → `dev` and `dev` → `main` are **Evan's alone**. Never do these.
+- `integration` / feature branch → `dev-staging` is merged **only after the maintainer
+  has verified on hardware**. The maintainer does that merge, or explicitly asks for it.
+- `dev-staging` → `dev` and `dev` → `main` are **the maintainer's alone**. Never do these.
 
 **The one exception**, for changes that cannot affect machine behaviour and so
 need no hardware run: documentation, comments, `todo.md`, tests, and

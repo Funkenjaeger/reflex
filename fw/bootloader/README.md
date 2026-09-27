@@ -177,7 +177,7 @@ return. The one exception is a dead DMA stream (disabled, or an error flag
 set): nothing will ever fetch DR then, so waiting on RXNE would leave the
 bootloader deaf for good; it reads DR and re-arms the stream as before.
 
-## Bring-up procedure (elspi; the parent session runs these over SSH, Evan power-cycles)
+## Bring-up procedure (elspi; the parent session runs these over SSH, the operator power-cycles)
 
 Prerequisites: `openocd`, `gcc-arm-none-eabi`, `cmake`, `python3-serial` on
 elspi; a scratch clone of this branch outside the live checkout
@@ -213,7 +213,7 @@ every step that touches the serial port.
    ```
    Sectors 1-4 are now: journal erased (= IDLE), 2-4 unused; 5 = app; 6, 7
    erased. The bootloader boots, finds RUN valid, counts attempt 1, jumps.
-6. **POWER CYCLE (Evan).** A reset alone has not reliably started new firmware
+6. **POWER CYCLE (operator).** A reset alone has not reliably started new firmware
    on this board (`../README.md`); a power cycle also exercises the real
    VBAT-less path (backup registers zeroed, attempt counter starts fresh).
 7. **Verify the app came up through the bootloader**:
@@ -243,7 +243,7 @@ every step that touches the serial port.
        ```
        The read must print `OPTCR=0x0ffeaacd` (nWRP bit 16 = sector 0 is 0,
        active low; every other nWRP bit 1; RDP still 0xAA). Then **POWER
-       CYCLE (Evan)** so the option bytes reload, and read it again: same
+       CYCLE (operator)** so the option bytes reload, and read it again: same
        value. Done this way on the lathe 2026-09-24. To clear it (needed
        before any SWD reflash of sector 0, including a return to the legacy
        layout via `scripts/flash.sh`): `flash protect 0 0 0 off`, the read

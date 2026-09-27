@@ -40,6 +40,25 @@ them is a memory-mapped register contract guarded by `protocolVersion`.
 
 ---
 
+## 🧭 Project status
+
+Reflex runs one lathe today. It is public because I would like it to be useful
+beyond that one machine: to read, to borrow from, and in time to build. It is
+not there yet, and it is worth being plain about what that means.
+
+* **Tested on one machine.** Every release is proven on a single lathe, servo,
+  drive and controller board. Calibrated values, such as the stop overshoot
+  table, come from that machine and may not suit yours.
+* **Two boards.** Reflex runs on the Provvedo V1.2 controller today, and is
+  moving to a board of its own. Both remain supported build targets.
+* **No upgrade path promised.** A release may change the register contract or
+  the configuration format without a migration. Read the release notes before
+  updating, and keep a backup.
+* **Not a certified safety system.** Its guards have been exercised on one
+  machine only.
+
+---
+
 ## 🎛 Stop modes
 
 The electronic **stop** is what makes this more than a leadscrew — and it is

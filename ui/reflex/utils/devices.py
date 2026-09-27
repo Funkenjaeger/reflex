@@ -270,7 +270,7 @@ ELS_CAL_MESSAGES = {
     ELS_CAL_ERR_ABORTED: "Calibration aborted — conditions changed mid-run.",
 }
 
-# EVERY TAKE-UP MESSAGE LEADS WITH "Cut aborted" (2026-08-29, Evan's call).
+# EVERY TAKE-UP MESSAGE LEADS WITH "Cut aborted" (2026-08-29).
 # The old texts described the FAULT and left the machine's STATE implicit, so
 # an operator who read "Carriage not moving — is the half-nut engaged?" still
 # had to ask "okay, what now?". "Cut aborted" answers that first, and the Cut
@@ -280,8 +280,7 @@ ELS_CAL_MESSAGES = {
 # preference. The notice strip is pinned across the top of the advanced bar,
 # i.e. over the status gutter, and it is translucent -- so a message too wide
 # lands ON TOP of the phase-offset chip's text and both become unreadable.
-# Evan accepts the chips being dimmed by the red tint; he does not accept text
-# on text.
+# Dimming the chips under the red tint is acceptable; text on text is not.
 #
 # THE BUDGET IS NOT THE GAP BETWEEN THE CHIPS, and getting that wrong is how
 # this was first measured. The strip's Label is halign 'center' across the
@@ -363,7 +362,7 @@ typedef struct {
 def takeup_failure_text(result_code, z_delta=None, reference_latched=False):
     """Operator-facing text for a take-up failure.
 
-    THE COUNTS ARE NOT ON THE SCREEN ANY MORE (2026-08-29, Evan's call). This
+    THE COUNTS ARE NOT ON THE SCREEN ANY MORE (2026-08-29). This
     used to append "Moved 5 counts, needed 11", on the argument that the ratio
     distinguishes a partially engaged half-nut from one that never engaged.
     That argument was wrong about its audience: those are raw Z-scale counts,

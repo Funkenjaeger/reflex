@@ -76,7 +76,7 @@ def test_the_refused_log_line_carries_the_counts_the_screen_no_longer_shows(
     The operator-facing warning used to append "Moved 0 counts, needed 2" and
     no longer does: raw Z-scale counts are a unit this UI exposes nowhere else,
     and the width they cost is what keeps the translucent notice strip from
-    landing on top of the status chips. Evan's call, and he called it a
+    landing on top of the status chips. The maintainer called it a
     relocation of audience rather than a loss of information -- which is only
     true while this log line still carries both numbers.
 

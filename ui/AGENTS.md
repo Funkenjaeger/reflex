@@ -3,7 +3,7 @@
 ## Branching and Hardware Verification — READ FIRST
 
 **This UI drives a real lathe through reflex-fw. The only complete test is on
-hardware, and Evan runs that, not on demand.** The emulator-backed system suite
+hardware, and the maintainer runs that, not on demand.** The emulator-backed system suite
 is good and getting better, but it has repeatedly looked green while something
 real was wrong — no servo dynamics, no Modbus timing, no metal. Emulator green
 is evidence, never verification.
@@ -13,9 +13,9 @@ and everything on it is supposed to be hardware-verified.
 
 - Work on a **feature branch**, or on **`integration`** when several changes are
   in flight and separate branches would just be overhead.
-- `integration` / feature branch → `dev-staging` is merged **only after Evan has
-  verified on hardware**. He does that merge, or explicitly asks for it.
-- `dev-staging` → `dev` and `dev` → `main` are **Evan's alone**. Never do these.
+- `integration` / feature branch → `dev-staging` is merged **only after the maintainer
+  has verified on hardware**. The maintainer does that merge, or explicitly asks for it.
+- `dev-staging` → `dev` and `dev` → `main` are **the maintainer's alone**. Never do these.
 
 **The one exception**, for changes that cannot affect machine behaviour and so
 need no hardware run: documentation, help files, `todo.md`, and tests. Anything
@@ -309,7 +309,7 @@ Every UI component follows this structure:
 
 - **Branch strategy:** `main` for releases, `dev` for pre-releases, feature branches
   (or `integration`) for work. See "Branching and Hardware Verification" at the
-  top — `dev-staging` is gated on Evan's hardware verification and agents do not
+  top — `dev-staging` is gated on the maintainer's hardware verification and agents do not
   commit to it except for the clerical exception.
 - **Commit messages:** Follow conventional commits (`fix:`, `feat:`, `chore:`, etc.).
   The release notes are generated from them, so the log is what describes a release.

@@ -95,7 +95,7 @@ and blocks nothing.)
 EMULATOR GREEN IS NOT A HARDWARE RESULT: no servo dynamics beyond the model, no
 metal, and ELS_SLIP_SETTLE_TICKS is UNCOMMISSIONED (reflex-fw todo.md) -- it
 cannot even be measured here, because the emulator's lash model moves the
-carriage instantaneously with the pulse. The elspi verification pass is Evan's.
+carriage instantaneously with the pulse. The elspi verification pass is the operator's.
 """
 
 import time

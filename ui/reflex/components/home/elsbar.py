@@ -74,7 +74,7 @@ class ElsBar(BoxLayout, SavingDispatcher):
 
         WHY REFUSE AT ALL. This bar is the only place armed-ness appears. The
         plain bar has a Sync Enable LED (elsbar.kv:22) and no armed indicator,
-        and that is deliberate -- Evan ruled the indicator out on 2026-08-20
+        and that is deliberate -- the indicator was ruled out on 2026-08-20
         and this notice surface is the agreed fix instead. So hiding this bar
         with a stop job engaged leaves an armed machine and an idle one
         looking identical on the visible UI. Refusing SILENTLY would be worse
@@ -82,7 +82,7 @@ class ElsBar(BoxLayout, SavingDispatcher):
 
         WHY servoMode IS NOT IN THE CONDITION. The task body proposed "stop
         engaged, and probably servoMode != 0 as well". The second half is
-        wrong, and Evan caught it on 2026-08-31: "sync armed but stop
+        wrong, and was caught on 2026-08-31: "sync armed but stop
         disengaged is a perfectly valid condition when in vanilla ELS mode".
         It is -- it is the ordinary ELS feed, and elsbar.kv:27 names that case
         explicitly. Refusing on servoMode would refuse during normal turning,

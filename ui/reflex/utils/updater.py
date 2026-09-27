@@ -118,7 +118,7 @@ GITHUB_RELEASES_URL = "https://api.github.com/repos/Funkenjaeger/reflex/releases
 # Fixing that by giving root the key would only make it work for a machine
 # somebody provisioned with a deploy key. A user of this lathe is not a
 # developer and will never have a GitHub SSH key at all, so an updater that
-# needs one is not an updater for them (Evan, 2026-09-07). The repo is public
+# needs one is not an updater for them (2026-09-07). The repo is public
 # and the firmware asset is already downloaded over plain HTTPS, so the git half
 # now matches: anonymous, credential-free, and independent of how the checkout
 # was cloned.

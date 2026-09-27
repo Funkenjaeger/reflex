@@ -12,7 +12,7 @@ with reflex-fw's same-named branch (`latchCommand`/`latchSeq`, protocolVersion
   `tests/fsms/test_els_resync.py`), `els_resync_popup.py/.kv` (wizard, opened
   from ELS settings → "Pick up existing thread"), help doc
   `els_thread_resync.md`, system test `tests/system/test_els_thread_resync.py`.
-- elspi verification (Evan): real re-chucked threaded part — jog into the
+- elspi verification: real re-chucked threaded part — jog into the
   thread, hand-seat, latch, AIR PASS first. Checklist lives in TickTick task
   6a768a98.
 - The Z-hold tolerance (`els_resync_z_tol_counts`, default 3) is deliberately
@@ -26,7 +26,7 @@ with reflex-fw's same-named branch (`latchCommand`/`latchSeq`, protocolVersion
 
 ## Polish backlog — found during 2026-08-08 hardware testing
 
-**DO NOT ACTION THESE YET.** Evan's explicit call: these are usability gripes
+**DO NOT ACTION THESE YET.** The maintainer's explicit call: these are usability gripes
 found while commissioning the backlash calibration on elspi, and they wait until
 functional testing of the ELS integration branch is complete. Fixing polish
 mid-test churns the thing being tested.
@@ -52,7 +52,7 @@ What it should do instead:
   spindle stopped at minimum.
 - **A cancel that is genuinely safe**, and an explicit warning when
   `referenceLatched` is set, because proceeding costs the phase reference.
-- Improve the refusal text. Evan rated the current messages "roughly 50%
+- Improve the refusal text. The operator rated the current messages "roughly 50%
   helpful": `"Servo is not in sync/index mode."` states a fact without telling
   the operator what to do about it. Source: `ELS_CAL_MESSAGES` in
   `reflex/utils/devices.py`.
@@ -152,7 +152,7 @@ Verified against elspi 2026-08-30. **Still open:** scripting it — see
   cutting side) to be armed before the operator enables power feed. So an operator can start a
   sync feed toward the chuck/headstock with no auto-stop — the only protections are travel limits
   and the operator's own attention. That's normal for a bare power feed, but risky on this machine.
-- **Why a prompt is reasonable (Evan, 2026-07-09):** in **advanced ELS mode**, *every* submode
+- **Why a prompt is reasonable (2026-07-09):** in **advanced ELS mode**, *every* submode
   includes the stop function — so if the operator is in advanced ELS mode, it's reasonable to
   infer they intend to have an ELS stop set. Enabling feed there without an armed stop is likely a
   mistake, not an intentional bare power feed.
@@ -164,7 +164,7 @@ Verified against elspi 2026-08-30. **Still open:** scripting it — see
   is a natural place to add a regression test for whatever guard lands.
 
 ### Audit for unexpected large feed moves from arbitrary control ordering (broader than connect)
-- **Concern (Evan, 2026-07-09):** the connect case is clean, but that's only one entry point. The
+- **Concern (2026-07-09):** the connect case is clean, but that's only one entry point. The
   UI exposes *separate, independently pressable* controls — servo/**Sync Enable**, **advanced ELS
   enable/engage**, ELS submode, DIR, and stop-Z entry — with no enforced ordering. Risk likely
   hides in the state combinations reachable by pressing them in an unexpected order, especially the
@@ -249,7 +249,7 @@ Findings (probes were temporary; regression tests land with each fix):
   engage+cut normally then **disengage ELS** while Sync-Enable stays on → the stop is
   removed but the feed continues (~9,700 counts in 6 s). This is the core of the
   "no-stop-armed feed guard" item — broadened: cover BOTH enable-without-stop AND
-  disarm-while-feeding. **DECISION (Evan): confirm-to-override on enabling feed with no
+  disarm-while-feeding. **DECISION: confirm-to-override on enabling feed with no
   armed stop (advanced ELS mode); disengaging ELS also stops an active sync feed; basic
   bare power feed unaffected.**
 - **CONFIRMED — never-set / stale `stop_z` (H1).** `stop_z_valid` was hard-coded True, so
@@ -282,7 +282,7 @@ Findings (probes were temporary; regression tests land with each fix):
   `may_cut()` / roll back on refusal.
 - **SAFE (guards hold):** H2a (engage→sync doesn't feed — arming gates it); H4
   (mid-engage DIR flip → cut guard blocks).
-- **DEFERRED to hardware verification (Evan's decision) — post-stop overshoot.** The
+- **DEFERRED to hardware verification (maintainer's decision) — post-stop overshoot.** The
   carriage overshoots the stop because a servo step backlog flushes after the stop latches
   (pulse generation isn't gated by `elsStop.active`). Large at the emulator's 10 kHz ISR
   (~4,600 counts past an 8,000 feed); ~10× smaller expected on real 100 kHz hardware. NO
@@ -308,7 +308,7 @@ Fable-reviewed twice — review + verify):**
 - Encoder-anchored ELS targets — `effa7f5`, `7bd9297`, `71a55db` (stop_z/retract_z
   + diameters anchored to the physical encoder; re-reference notify silent/warn/
   confirm; closes the H1 DRO-rezero gap above).
-- Deferred (Evan): post-stop overshoot — hardware-verify first, no firmware change.
+- Deferred: post-stop overshoot — hardware-verify first, no firmware change.
 
 **On-device smoke test (Kivy UI, not headless-testable — logic IS tested):**
 - Sync-guard confirm popup (CustomPopup + cancel button).

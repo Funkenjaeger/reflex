@@ -29,7 +29,7 @@
  * cutting direction (els_phase_offset_test.cpp T3-T5). The latch itself is
  * never touched; only the per-resume correction moves.
  *
- * DECIDED 2026-08-21 (Evan): entry is CUMULATIVE, with the running total
+ * DECIDED 2026-08-21: entry is CUMULATIVE, with the running total
  * shown. Accumulation belongs to the host: the firmware will hold ONE
  * absolute total (an elsStop_t field set through a command/ack pair in the
  * calCommand idiom), and the UI adds each entered distance to the total it
@@ -86,7 +86,7 @@ typedef struct {
  * ------------------------------------------------------------------------
  * An earlier draft of this comment ended "there is no residual care left to
  * take." That was wrong, and the sweep in els_phase_reduce_test.cpp measures
- * exactly how wrong. What follows is the honest version. Evan approved shape
+ * exactly how wrong. What follows is the honest version. The maintainer approved shape
  * (a) on 2026-08-27 ON CONDITION the residual was written down here, so do not
  * quietly re-tighten this wording back into a correctness claim.
  *

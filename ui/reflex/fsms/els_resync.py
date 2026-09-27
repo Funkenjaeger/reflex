@@ -155,7 +155,7 @@ class ThreadResync:
         button — at the far end of the jog step, which instructs the operator
         to move the carriage by hand, CLOSE THE HALF NUT and haul the carriage
         back against the flank. Doing all that and then being told there is no
-        thread pitch is the defect (Evan, bench run 2026-08-30: "it still went
+        thread pitch is the defect (bench run 2026-08-30: "it still went
         to the first prompt and only after hitting the button did it refuse").
 
         The alternative considered and rejected was greying the settings-menu

@@ -1,6 +1,6 @@
 """Headless PNGs + text-contrast assertions for EVERY Setup screen, dark AND light.
 
-WHY THIS EXISTS. Reported by Evan at the lathe on 2026-09-19: "most of the
+WHY THIS EXISTS. Reported at the lathe on 2026-09-19: "most of the
 entries under the main Setup > System menu are invisible, at least in dark
 mode." No unit test could see it -- every widget was there, laid out, with the
 right text; the text was simply drawn in a colour the eye could not find on
@@ -24,8 +24,8 @@ disabled button, the free-space figure) so that state is measured too.
 Everything else -- the kv rules, the theme, the disabled states -- is
 production.
 
-A DISABLED row-help "?" icon is no longer drawn at all: Evan chose, on
-2026-09-19, to hide the icon on rows that have no help topic rather than fade
+A DISABLED row-help "?" icon is no longer drawn at all: it was decided on
+2026-09-19 to hide the icon on rows that have no help topic rather than fade
 it (it was white at 30%, ~1.1:1 in the light theme). Nothing to measure, so
 nothing is excluded here any more. An ENABLED help icon is a control and
 gates like text.
@@ -406,7 +406,7 @@ def measure_home_and_feed_picker(theme):
         changing popup chrome, which is not this branch's job.
       * the SELECTED sidebar option ('INC') is accent_text on accent_bg at
         2.79:1 -- a token pairing question, not a dim-text one.
-    Both are Evan's call; until then these two surfaces report only.
+    Both are the maintainer's call; until then these two surfaces report only.
     """
     app.manager.goto("home")
     settle(30)

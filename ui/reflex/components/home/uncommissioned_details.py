@@ -3,7 +3,7 @@
 A SHORT STATEMENT AND BUTTONS THAT DO THE THING (redesigned 2026-09-26). The
 first version was three paragraphs of facts and two numbered "ways out" in a
 ``CustomPopup`` at 18sp. On the first fresh elspi card (reflex v1.2.0,
-2026-09-26) Evan found it wrong three ways at the lathe's 1024x600:
+2026-09-26) it proved wrong three ways at the lathe's 1024x600:
 
 1. "the text is overflowing terribly. too many words there."
 2. It never named the likeliest case -- a new machine being set up for the

@@ -30,7 +30,7 @@
  *                         against a 200-tick window; 1 assertion still red
  *
  * So the window is not a refactor, it is a decision about what "stopped" means,
- * and it belongs to Evan rather than to whoever is next in this file. T2 below
+ * and it belongs to the maintainer, not to whoever is next in this file. T2 below
  * therefore pins TODAY's behaviour ON PURPOSE, in the same style as
  * els_takeup_settle_gate_test: implementing the window MUST turn T2 red, which
  * is what forces the decision to be made rather than drifted into.

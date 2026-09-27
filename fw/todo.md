@@ -83,7 +83,7 @@ instead of leaving bare `TODO:` comments in code.
   reduce starvation pressure on everything else. Keep only the must-happen-now step
   pulse in the ISR.
 
-**Decision (Evan, 2026-08-23): this, not DMA.** After comms dropped on 6 of 6 cuts.
+**Decision (2026-08-23): this, not DMA.** After comms dropped on 6 of 6 cuts.
 The deciding argument is the SYMPTOM: those failures are timeouts — *no answer* — with
 no kernel UART errors, not the CRC-from-dropped-bytes that RX overrun produces. The
 overrun recovery already shipped and works. A timeout means the Modbus **task** never
@@ -250,7 +250,7 @@ it.
   `elsStopCorrectOnConfirm`. The take-up direction in turning comes from the
   SIGN of `zCountsPerPitch`, which reflex-ui now writes signed with pitch = 0
   (`push_turning_geometry`). Pins: `els_takeup_confirm_test` first-pass /
-  turning / polarity scenarios. Decided by Evan 2026-08-21 (task 6a81fa2f).
+  turning / polarity scenarios. Decided 2026-08-21 (task 6a81fa2f).
 - `calCommand`-driven calibration measures the lash directly (three reversals,
   counting servo steps until Z moves). Host judges consistency and writes
   `backlashSteps = measured + max(20%, floor)`.
@@ -416,7 +416,7 @@ Two unit traps, both live (full list in `els_slip.h`):
   `phaseError` before the mod-pitch fold and the forward-bias; `els_phase_offset_test`
   pins the boundaries (T1 exact regression at 0, T3 one pitch = no-op, T5 negative
   forward-biases to pitch-|offset|). The only call site passes 0.
-- **Decided (Evan, 2026-08-21): cumulative entry, running total shown.**
+- **Decided (2026-08-21): cumulative entry, running total shown.**
 
 ### Landed: the register/command half (2026-08-22)
 - `phaseOffsetCommand` / `phaseOffsetSeq` / `phaseOffsetPending` / `phaseOffsetSteps`
@@ -431,7 +431,7 @@ Two unit traps, both live (full list in `els_slip.h`):
 - Host half in `els_fsm.py`: conversion, accumulation, and all refusals, with
   `tests/fsms/test_els_phase_offset.py` (25 cases, nine mutations killed).
 
-### Decided 2026-08-22 (Evan)
+### Decided 2026-08-22
 - Running total displayed in the **advanced bar** when nonzero, as distance AND
   fraction of pitch.
 - **Advance-only** entry plus a Clear. Confirmed 2026-08-23 as a MATCH TO THE WORK
@@ -443,7 +443,7 @@ Two unit traps, both live (full list in `els_slip.h`):
   ALIASING bound, and a clamp puts the cut somewhere other than where it was asked
   for, in metal, before anything looks wrong.
 
-### Reframed 2026-08-23 (Evan)
+### Reframed 2026-08-23
 The feature was built and documented as MULTI-START THREADING. That was wrong. Per its
 own task (6a77c5b2) and the design note in `Core/Inc/els_phase.h`, its purpose is
 **widening a thread groove past the width of the cutter**: cut the groove, step the
@@ -616,7 +616,7 @@ motion that the servo did not cause.
   `Rig::nudgeCarriage()` injects carriage motion the servo did not cause,
   independently of the serve-mode command channel.
 
-  **DECIDED 2026-08-13 (Evan): keep `Rig::nudgeCarriage()` and `LathePhysics`
+  **DECIDED 2026-08-13: keep `Rig::nudgeCarriage()` and `LathePhysics`
   separate. Do NOT promote it into the shared model.** This item previously
   recorded the *fact* of the split with no rationale, which is why it kept
   reading as unfinished. The rationale:

@@ -25,7 +25,7 @@ is wired to what*.
 |---|---|---|
 | **UI** | `Funkenjaeger/reflex`, `ui/` (public) | Kivy touchscreen app, Modbus **master**, operator workflow, configuration, the in-app updater |
 | **Firmware** | `Funkenjaeger/reflex`, `fw/` (public) | STM32F411 application — 50 kHz motion ISR, FreeRTOS, Modbus RTU **slave** — plus the sector-0 field bootloader and a native emulator |
-| **Hardware** | `kicad-reflex` (private) | Schematic and board. The board in service today is a third-party **Provvedo V1.2** controller, STM32F411CEU6; the respin baselines Evan's own design |
+| **Hardware** | `kicad-reflex` (private) | Schematic and board. The board in service today is a third-party **Provvedo V1.2** controller, STM32F411CEU6; the respin baselines the author's own design |
 | **System image** | `Funkenjaeger/elspi` (going public) | A soft fork of [pi-gen](https://github.com/RPi-Distro/pi-gen) that builds the Raspberry Pi SD-card image the UI boots from, plus the provisioning deltas |
 
 **UI and firmware share one repository on purpose**, and §1 below is the whole
@@ -241,7 +241,7 @@ minimum-image line the updater can refuse on; fix `test-lockfile-drift.sh`"*:
 ## Backward compatibility: which boards stay supported
 
 **Provvedo stays supported, as a build target, for as long as it is the only
-board anyone else can have.** The respin is Evan's own design; nobody else has
+board anyone else can have.** The respin is the author's own design; nobody else has
 it. Dropping Provvedo support would mean nobody but the author can run Reflex,
 which is the opposite of the reason the project is public.
 

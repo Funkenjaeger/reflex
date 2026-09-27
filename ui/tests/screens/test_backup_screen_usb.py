@@ -222,7 +222,7 @@ def test_a_successful_import_counts_down_then_restarts_the_app(
         screen, one_bundle_on_disk, bundle, monkeypatch, no_real_restart):
     """The running app still holds the settings it started with, and the next
     change would write them over the import, so the app restarts itself --
-    after a countdown the operator can read (Evan, 2026-09-26)."""
+    after a countdown the operator can read (2026-09-26)."""
     monkeypatch.setattr(ss, "CustomPopup", lambda **kw: MagicMock(name="popup"))
     bundle.apply.return_value = MagicMock(ok=True, written=["Axis-0"], skipped=[])
 

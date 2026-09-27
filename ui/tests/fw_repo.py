@@ -4,7 +4,7 @@ WHY THIS EXISTS. Two test modules compare this repo against reflex-fw: the
 Modbus register-map contract and the wiring-config permutations. Both used to
 resolve the firmware through a hardcoded default of
 ``/mnt/c/projects/embedded/reflex-fw`` -- a path that exists on exactly one
-machine. Everywhere else, including CI and Evan's laptop, the path missed and
+machine. Everywhere else, including CI and other development machines, the path missed and
 the modules skipped wholesale.
 
 That mattered more than 23 skipped tests. The register-map contract is the guard

@@ -6,7 +6,7 @@ on the argument that a dedicated screen was a nav entry for two buttons. By the
 time the gist sync joined them it was seven controls, a device code and a
 status line, and on the lathe's 1024x600 they overflowed: Import from USB
 spilled out of Setup's three-row grid underneath the gist row, and the export
-status line ran off the screen. Evan's call on seeing it: backup and restore do
+status line ran off the screen. The call on seeing it: backup and restore do
 not belong at the top level of the Setup menu. Setup now carries one Backup
 button, and everything here has room. previews/preview_setup_screen.py renders
 both screens at 1024x600 and asserts nothing overlaps or clips.
@@ -67,7 +67,7 @@ load_kv(__file__)
 
 #: Seconds between a successful import and the app restarting to load it,
 #: counted down on the status line so the operator can read what was imported
-#: before the screen goes away (Evan, 2026-09-26).
+#: before the screen goes away (2026-09-26).
 RESTART_COUNTDOWN_S = 10
 
 
@@ -229,7 +229,7 @@ class BackupScreen(Screen):
         once Apply has been pressed, so the app restarts itself, with the same
         command the updater uses (``updater.restart_ui_service``).
 
-        WHY A COUNTDOWN (Evan, 2026-09-26): so the operator can read what was
+        WHY A COUNTDOWN (2026-09-26): so the operator can read what was
         imported before the screen goes away.
         """
         self._import_message = message

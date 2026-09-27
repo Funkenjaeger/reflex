@@ -42,8 +42,8 @@ class ElsFsm:
         # out of 'cutting' was stop_active (the carriage actually reaching the
         # shoulder) or fault -- so a cut ABANDONED by turning Sync Enable off
         # left the FSM parked in 'cutting' forever: engaged, LED green "Armed",
-        # and the Disengage button greyed by in_cycle. Evan, 2026-09-01, on the
-        # bench: the only escape was to open the half nut and push the carriage
+        # and the Disengage button greyed by in_cycle. On the 2026-09-01
+        # bench run, the only escape was to open the half nut and push the carriage
         # past the stop point by hand to publish stop_active. The drive is
         # de-energized by then and the cut is over; the FSM should say so.
         {'trigger': 'disable',
@@ -966,7 +966,7 @@ class ElsFsm:
     def apply_phase_offset(self, distance_display: float) -> str:
         """SET the offset to a distance. Returns a PHASE_OFFSET_* code.
 
-        SETS, DOES NOT ACCUMULATE (Evan, 2026-08-23). The entered number is the
+        SETS, DOES NOT ACCUMULATE (2026-08-23). The entered number is the
         offset, measured from the latched reference — not a further helping
         added to whatever is already there. Applying 0.010 twice leaves the
         offset at 0.010.

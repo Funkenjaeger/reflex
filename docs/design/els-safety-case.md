@@ -227,7 +227,7 @@ exactly why it is called out here.
     when Sync Enable was pressed mid-cut, toggled again, and the job resumed
     without disengaging.
 
-    Evan, 2026-08-31: *"when sync is disabled the leadscrew can be rotated
+    The maintainer, 2026-08-31: *"when sync is disabled the leadscrew can be rotated
     freely. That's why it's imperative that a latched phase ref must be
     cleared when sync is disabled."* It currently is not.
 

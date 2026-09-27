@@ -185,7 +185,7 @@ def test_an_unconvertible_offset_still_announces_itself(ctrl):
     (1.25, "1.250"),                # past a pitch: the pitch moved underneath
 ])
 def test_the_pitch_share_is_always_a_decimal(fraction, expected):
-    """Evan, 2026-08-29: no named fractions, and never the words "of a".
+    """No named fractions, and never the words "of a".
 
     The cases that used to prove the NAMING branch are kept, inverted, because
     they are the values a reintroduced branch would catch first -- an exact

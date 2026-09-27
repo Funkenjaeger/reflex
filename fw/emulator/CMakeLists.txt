@@ -478,7 +478,7 @@ add_test(NAME els_takeup_quiescence_test COMMAND els_takeup_quiescence_test)
 # branch is gated on carriageStopped. T2 is a CHARACTERISATION of a limitation
 # deliberately left in place -- replacing exact equality with a net-displacement
 # window contradicts the >=200-ticks-since-last-pulse invariant
-# els_takeup_quiescence_test:419 pins, so it is Evan's decision, and T2 must go
+# els_takeup_quiescence_test:419 pins, so it is the maintainer's decision, and T2 must go
 # red the day it is taken. See the file header for the measurements.
 add_executable(els_takeup_quiescence_window_test
     ${CMAKE_SOURCE_DIR}/test/els_takeup_quiescence_window_test.cpp

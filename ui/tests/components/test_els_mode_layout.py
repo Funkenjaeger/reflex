@@ -107,7 +107,7 @@ def test_dro_rows_are_101px_a_deliberate_2026_08_29_exception():
     """The rows grew 99 -> 101 px ON PURPOSE. This records it.
 
     There is a standing rule that the DRO rows do not resize, and this change
-    broke it knowingly, on Evan's explicit call, after the trade was rendered
+    broke it knowingly, on the maintainer's explicit call, after the trade was rendered
     and measured. What it bought: the gap below the DRO stack went 13 px -> 8,
     matching the 8 px above it. What it cost: the digit glyphs went 87 -> 90 px,
     because dro_coordbar.kv derives `max_font_size` from the row height.
@@ -129,7 +129,7 @@ def test_dro_rows_are_101px_a_deliberate_2026_08_29_exception():
     assert obj.spindle_info.height == 101, (
         "DRO row height changed. It is 101 px by a deliberate 2026-08-29 "
         "decision (dro_els_gap dp(8) -> dp(3)); if you are changing it again, "
-        "that is Evan's call to make, not a refactor -- the digit size moves "
+        "that is the maintainer's call to make, not a refactor -- the digit size moves "
         f"with it. Got {obj.spindle_info.height}."
     )
     for bar in obj.axis_bars:
