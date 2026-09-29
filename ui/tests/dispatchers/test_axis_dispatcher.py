@@ -819,8 +819,7 @@ class TestInitConnectionOnDisconnect:
     resulting ``AttributeError`` and return a fallback, so nothing crashed --
     but it logged a bare ``'NoneType' object has no attribute
     'read_register'`` line, observed on elspi 2026-09-07 right next to the
-    update screen's "DO NOT POWER OFF THE MACHINE" warning (task
-    6a9f27b68f08ecb120c218a6).
+    update screen's "DO NOT POWER OFF THE MACHINE" warning.
 
     This test does not need the real communication stack to prove the point:
     it is enough that ``_init_connection`` must not touch ``board.device`` AT
@@ -855,7 +854,7 @@ class TestInitConnectionOnDisconnect:
         assert accesses == [], (
             "_init_connection touched board.device while disconnected -- "
             "this is the 'NoneType' object has no attribute 'read_register' "
-            "regression from task 6a9f27b68f08ecb120c218a6")
+            "regression seen on elspi 2026-09-07")
 
     def test_still_reads_syncenable_on_reconnect(self, axis, board):
         """The guard must only skip the disconnected edge, not break the

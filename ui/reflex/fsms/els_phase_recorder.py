@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS. On 2026-08-24 a re-synced cut came out visibly off the existing
 thread -- sometimes close, at least once a full half-thread out, with no pattern
-Evan could see across repeated trials. The firmware had already computed exactly
+visible across repeated trials. The firmware had already computed exactly
 the four numbers that explain such a miss, in applyPhaseCorrection:
 
     lastIdealAdvance   what pure sync would have done since the latch

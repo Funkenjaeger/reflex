@@ -4,7 +4,7 @@ screen annotations.
 The friction this removes: inputs and axes are configured on separate screens
 and nothing on the input side said what an input was for, so changing a scale
 meant drilling two levels into Axes to learn which input an axis used, backing
-out, and drilling into that input. Evan hit it head-on re-provisioning the X
+out, and drilling into that input. It was hit head-on re-provisioning the X
 scale on 2026-08-31 after the dial check found it wrong.
 
 The interesting case is NOT the happy path. It is that one input can feed more
@@ -122,7 +122,7 @@ def test_the_input_page_header_shows_the_axis():
 
 
 def test_the_join_never_writes_to_an_axis():
-    """The constraint, not a phase. Evan: 'I'm reluctant to create multiple
+    """The constraint, not a phase. The maintainer: 'I'm reluctant to create multiple
     disjoint ways of doing the same thing... just read-only there for now.'
 
     Checked by watching for writes rather than by grepping the source: a

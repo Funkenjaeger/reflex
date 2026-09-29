@@ -313,7 +313,7 @@ def test_sync_armed_and_spindle_turning_offers_no_disengage(rig):
 
 
 def test_the_turning_spindle_is_named_as_the_blocker(rig):
-    """Evan 2026-09-25: refusing while the spindle turns is right, but the
+    """Refusing while the spindle turns is right, but the
     message must name the actual blocker. Sync is on almost whenever advanced
     ELS is engaged, and with the spindle stopped disengage is allowed with
     sync on -- so "Turn Sync Enable off" pointed at the wrong thing."""

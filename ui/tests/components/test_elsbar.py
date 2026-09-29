@@ -124,7 +124,7 @@ def test_the_refusal_is_never_silent(adv):
 
 
 def test_hiding_is_allowed_when_no_job_is_engaged(adv):
-    """The negative control, and the one Evan corrected the spec on: sync
+    """The negative control, and the one the spec was corrected on: sync
     armed with the stop disengaged is ORDINARY vanilla ELS feed. servoMode is
     deliberately not part of the condition -- it has its own LED on this very
     bar, so hiding the advanced one conceals nothing about it."""

@@ -27,7 +27,7 @@ class InputScreen(Screen):
     entry_modes = ENTRY_MODES
 
     #: Which axis this input feeds, for the header. Read-only annotation --
-    #: assignment still lives on the Axes side, deliberately (Evan, 2026-08-31:
+    #: assignment still lives on the Axes side, deliberately (2026-08-31:
     #: no second way to do the same thing). Empty when nothing claims it.
     axis_label = StringProperty("")
 
@@ -48,8 +48,8 @@ class InputScreen(Screen):
         """Honour the operator's stored preference, unless it would lie.
 
         The preference wins in every ordinary case -- it is persisted on the
-        input, so choosing Ratio and walking away keeps Ratio (Evan,
-        2026-09-01: "If a user prefers ratio, honor that and stick to it").
+        input, so choosing Ratio and walking away keeps Ratio (2026-09-01:
+        "If a user prefers ratio, honor that and stick to it").
 
         The ONE override: when the stored value cannot be expressed as a
         resolution, the screen opens on Ratio regardless. Honouring a

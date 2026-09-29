@@ -51,7 +51,7 @@ assertions below leave room for one full lash traversal; signs are
 unaffected (net motion always exceeds the lash).
 
 Run (WSL only — the emulator Modbus link is a PTY):
-  cd /mnt/c/projects/reflex/ui && uv run --frozen pytest -m system \
+  from the repo root: cd ui && uv run --frozen pytest -m system \
       tests/system/test_jog_mode.py -q
 Add -s to see the observation tables from passing runs.
 """

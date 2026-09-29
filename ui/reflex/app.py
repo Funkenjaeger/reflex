@@ -195,8 +195,7 @@ class MainApp(App):
         offset, and before 2026-09-17 only calibration and resync checked.
         Board's check stays non-fatal (the DRO and the Update screen still
         work, which is how the operator gets out of it); this is where it
-        becomes a refusal, because this is where a wrong write moves metal.
-        Open Loops 6aaca75b."""
+        becomes a refusal, because this is where a wrong write moves metal."""
         if self.servo.servoMode == 0 and self.board.protocol_mismatch:
             from reflex.components.popups.custom_popup import CustomPopup
             log.warning(f"Sync Enable refused: {self.board.protocol_message}")

@@ -4,7 +4,7 @@ WHY. An input's scale is stored as ratioNum/ratioDen, which is millimetres per
 count. Entering a linear scale that way means doing arithmetic to express a
 number the scale's own sticker already states -- and nothing on screen said the
 ratio was in millimetres at all, which on a machine otherwise run in inches is
-a trap that produces a wrong number the operator has no reason to doubt. Evan,
+a trap that produces a wrong number the operator has no reason to doubt. Found
 2026-08-31, after re-provisioning X.
 
 MICRONS, NOT THE DISPLAY UNIT. Linear scale stickers are marked in microns
@@ -20,7 +20,7 @@ um -- and MEASURED 2026-09-01 it does not happen: limit_denominator recovers
 that argument is wrong is that a best-rational-approximation search does not
 care whether the decimal terminated.
 
-What is actually true is simpler and was Evan's own instinct: a real drive
+What is actually true is simpler and was the original instinct: a real drive
 ratio (the servo's 127/64000) is NAMED as a ratio by whoever specified the
 hardware, and asking for its micron equivalent is a conversion the operator
 should not have to do or check. That is why both forms exist.

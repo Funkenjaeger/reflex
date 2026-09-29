@@ -3,8 +3,8 @@
  * the sibling of els_takeup_confirm_test.cpp's take-up coverage, but for
  * data->elsCal instead of the take-up's elsStop/elsSlip path.
  *
- * WHY THIS FILE EXISTS (task 6a7c455e8f08a317e962b42a)
- * -----------------------------------------------------
+ * WHY THIS FILE EXISTS
+ * --------------------
  * Mutation testing on 2026-08-12 established that dropping the take-up-style
  * `armed` gate around the calibration leg's ISR wiring changed nothing across
  * the whole 7-target suite, for a structural reason: NO test target drove
@@ -22,7 +22,7 @@
  * take-up file's own diff surface untouched).
  *
  * REQUIRES the 2026-08-10 staged patch
- * (~/ol-work/scratch/2026-08-10/els-calibration-slip-attribution.patch)
+ * (the calibration slip-attribution patch from the bench session)
  * applied on top of feat/els-slip-attribution. Without it, Core/Inc/
  * els_backlash_cal.h has no elsCalCtx_t.slip field and Core/Src/Ramps.c has
  * no attribution-tick block for the calibration leg at all -- this file will

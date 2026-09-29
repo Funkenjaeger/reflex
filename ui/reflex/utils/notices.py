@@ -8,7 +8,7 @@ feature-specific widget, which is how the take-up refusal and the re-reference
 confirm ended up as hand-placed strips in the advanced ELS bar. Neither is
 available to "the operator pressed a button and nothing happened", which is the
 single most common thing worth saying and the thing that has repeatedly reached
-Evan as "it just doesn't do anything".
+the operator as "it just doesn't do anything".
 
 WHY THIS IS A PLAIN PYTHON OBJECT. It owns a queue, a ranking and a clock, and
 none of that needs a Window, a GL context or a Kivy property to be correct. Kept
@@ -18,7 +18,7 @@ alternative is a test suite that sleeps. The Kivy-facing half (properties the kv
 binds to, and the periodic sweep that retires an expired notice) lives in
 ElsUiController, which is where every other republished-into-kv value lives.
 
-THE ONE RULE THIS SURFACE INHERITS. From els_advbar.kv, 2026-08-22, Evan:
+THE ONE RULE THIS SURFACE INHERITS. From els_advbar.kv, 2026-08-22:
 "having things resize around a temporary warning is distracting." A notice may
 COVER, it may never MOVE or RESIZE anything. Nothing in this module can enforce
 that -- it is a property of the kv that renders it (statusbar.kv) -- but it is

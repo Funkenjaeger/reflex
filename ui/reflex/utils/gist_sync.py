@@ -64,7 +64,7 @@ from reflex.utils.paths import config_dir
 
 log = Logger.getChild(__name__)
 
-#: Evan's PUBLIC device-flow OAuth App client id. No client secret exists for
+#: The project's PUBLIC device-flow OAuth App client id. No client secret exists for
 #: it and none is needed -- see the module docstring. Set to ``None`` in a fork
 #: that has not registered its own app: every entry point then reports
 #: :data:`NOT_CONFIGURED_MESSAGE` and makes no request at all.

@@ -259,8 +259,8 @@ def measure_takeup_texts():
     and pinned across the top of the bar -- over the status gutter -- so a
     message wider than the space between chip_reference's right edge and
     chip_phase's left edge draws on top of the phase chip's text and both
-    become unreadable. Evan accepts the chips being dimmed by the red tint; he
-    does not accept text on text.
+    become unreadable. Dimming the chips under the red tint is acceptable;
+    text on text is not.
 
     Measured off a real texture in the same face and size the strip uses
     (theme.font_bold at dp(13)), not estimated from a character count: the
@@ -352,7 +352,7 @@ def set_threading(on):
 def _sizes():
     """Every widget on the ELS screen, by identity, with its size.
 
-    The whole reason the strips are overlays is Evan's 2026-08-22 note that
+    The whole reason the strips are overlays is the 2026-08-22 note that
     "having things resize around a temporary warning is distracting", and a
     persistent strip makes that a permanent distortion rather than a blink. So
     the claim is checked rather than eyeballed: same widget objects, same

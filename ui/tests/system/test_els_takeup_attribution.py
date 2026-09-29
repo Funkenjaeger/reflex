@@ -85,8 +85,7 @@ firmware simply has no gate to answer with. It is a statement about the FIRMWARE
 BEING OLD, not a regression in this repo -- and note it is NOT the
 "A HAND-PUSHED CARRIAGE RELEASED THE TAKE-UP GATE" message, which would mean
 something genuinely alarming. Check the reflex-fw SHA in the pytest header
-before drawing any conclusion. Bumping the pairing is a deliberate act, per the
-rule in AGENTS.md.
+before drawing any conclusion. Bumping the pairing is a deliberate act.
 
 (ci.yml's `system-tests` job is continue-on-error, and the semantic-release
 workflow is a separate file gated on main/dev, so a red here releases nothing
@@ -95,7 +94,7 @@ and blocks nothing.)
 EMULATOR GREEN IS NOT A HARDWARE RESULT: no servo dynamics beyond the model, no
 metal, and ELS_SLIP_SETTLE_TICKS is UNCOMMISSIONED (reflex-fw todo.md) -- it
 cannot even be measured here, because the emulator's lash model moves the
-carriage instantaneously with the pulse. The elspi verification pass is Evan's.
+carriage instantaneously with the pulse. The elspi verification pass is the operator's.
 """
 
 import time

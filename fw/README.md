@@ -10,23 +10,11 @@ RS-485; the register contract is defined in `Core/Inc/Ramps.h` and mirrored by
 
 ---
 
-## ⚙️ Structure
+## Build and flash
 
-* **STM32CubeMX** hardware configuration (`.ioc` included)
-* Modular firmware with FreeRTOS support
-* Programmed over SWD with an ST-Link V2
-* Optimized for high-speed encoder + stepper/servo motor control
-* Native FW+lathe **emulator** for hardware-free testing (below)
-
----
-
-## 🛠️ Build & Flash
-
-Build and flash on **the machine with the ST-Link plugged into it**. For this
-project that is the Pi that also runs the UI, which is perfectly capable of
-compiling the firmware — and doing both in one place means the binary on the
-target cannot be a different revision from the checkout in front of you.
-`git rev-parse HEAD` there *is* what is flashed.
+Build and flash on **the machine with the ST-Link plugged into it**, for this
+project the Pi that also runs the UI. `git rev-parse HEAD` there *is* what is
+flashed.
 
 ### Requirements
 
@@ -37,7 +25,7 @@ sudo apt install gcc-arm-none-eabi cmake build-essential openocd
 Plus an ST-Link v2 on USB. The `openocd` package installs udev rules granting
 the `plugdev` group access, so flashing needs no `sudo`.
 
-### Build and flash
+### Flashing
 
 A **new board** gets provisioned once, over SWD:
 
@@ -45,22 +33,26 @@ A **new board** gets provisioned once, over SWD:
 ./scripts/provision.sh
 ```
 
-That builds both stages, programs the field bootloader into sector 0 and the
-slotted application into the RUN slot, erases the journal and the spare slots,
-and records what it did.
+It builds both stages, programs the bootloader into sector 0 and the
+application into the RUN slot, erases the journal and spare slots, and records
+what it did.
 
-After that the ST-Link stays in the drawer — application updates go over the
-RS-485 link the UI already holds:
+After that the ST-Link is needed only for virgin boards, option bytes and
+recovery. Updates go through the bootloader over the RS-485 link the UI
+already holds:
 
 ```bash
 python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
 ```
 
-`./scripts/flash.sh` is the **legacy** path: it writes the application at
-`0x08000000` with no bootloader, which is what every board built before
-2026-09-07 has. It reads the board first and writes only over a legacy
-application it positively recognizes, or an erased sector 0; the bootloader,
-or anything it cannot identify, is a refusal (`--force-legacy` overrides, and
+The slotted application is built with `-DREFLEX_APP_BASE=0x08020000`;
+`--identity` reads back the running stage and git rev. Design and register map:
+`bootloader/README.md` and `../decisions/els-modbus-register-map.md`.
+
+`./scripts/flash.sh` is the **legacy** path for a board without the
+bootloader: it writes the application at `0x08000000`. It writes only over a
+legacy application it recognizes or an erased sector 0; the bootloader, or
+anything it cannot identify, is a refusal (`--force-legacy` overrides, and
 destroys whatever was there). The rules are in `scripts/lib/sector0.py`.
 
 > **Power-cycle the controller after flashing.** A reset alone does not reliably
@@ -78,34 +70,22 @@ destroys whatever was there). The rules are in `scripts/lib/sector0.py`.
 ./scripts/build.sh --diag        # lists the available probes
 ```
 
-**It rebuilds every time by default.** `--no-build` opts out. A stale binary is
-the easiest mistake to make and the hardest to notice; rebuilding costs seconds.
+It rebuilds every time by default; `--no-build` opts out.
 
-**`--host NAME` builds here and flashes there** over SSH, for the case where the
-probe host genuinely cannot build. It adds a copy and a checksum — a transfer
-that can silently truncate is worth verifying before it is written to the
-controller of a machine with moving parts. Prefer the local path: it makes that
-whole failure mode, and the version ambiguity that comes with it, not exist.
+`--host NAME` builds here and flashes there over SSH, with a copy and a
+checksum, for a probe host that cannot build. Prefer the local path.
 
-**Release and diagnostic builds live in separate directories.** `build/` is the
-release firmware; each `--diag=NAME` build gets its own directory, so the flag
-can never depend on what the last `cmake` invocation happened to say. A
-diagnostic build compiles in **one** measurement probe and must **never** reach
-`dev-staging`, `dev` or `main`. At runtime the `elsStop.diagSchema` register says
-which probe is running (`0` = none), and the UI logs it at connect.
+Release and diagnostic builds live in separate directories: `build/` for
+release, one per `--diag=NAME`. A diagnostic build compiles in **one**
+measurement probe and must **never** reach `dev-staging`, `dev` or `main`; the
+`elsStop.diagSchema` register says which probe is running (`0` = none). The
+probes are documented in **[DIAG.md](DIAG.md)**.
 
-Which probes exist, what they measure, how to add or retire one, and why only one
-can be compiled in at a time: **[DIAG.md](DIAG.md)**. `./scripts/build.sh --diag`
-with no name lists them.
-
-**Every flash is recorded** in `~/firmware/flashed.json` on the probe host: UTC
-timestamp, variant, git revision, whether the tree was dirty, and an MD5 of what
-was written. `flash.sh`, `provision.sh` and `modbus-flash.py` all append to it —
-the last only once the board reports the new revision running, and the in-app
-updater through it. One JSON object per line. Working out what firmware was on
-this lathe once took an afternoon of forensics across build-artifact
-timestamps; this makes it a lookup, and it is what the estate's ot-state reads
-as "what the lathe runs".
+Every flash is recorded in `~/firmware/flashed.json` on the probe host, one
+JSON object per line: UTC timestamp, variant, git revision, whether the tree
+was dirty, and an MD5 of what was written. `flash.sh`, `provision.sh` and
+`modbus-flash.py` append to it, `modbus-flash.py` (and so the in-app updater)
+only once the board reports the new revision running.
 
 ### Underneath
 
@@ -115,44 +95,22 @@ openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
         -c 'transport select swd' -c 'program build/reflex-fw.elf verify reset exit'
 ```
 
-OpenOCD rather than `st-flash`: it takes the ELF directly (load addresses come
-from the headers, so there is no `--format`/base-address to get wrong), it is
-markedly more tolerant of ST-Link **clones**, and it is the same tool that would
-drive a GPIO-bitbanged probe if the boards are ever respun without a dongle.
+OpenOCD rather than `st-flash`: it takes the ELF directly, so there is no base
+address to get wrong, and it is more tolerant of ST-Link **clones**.
 
-> Bitbanging SWD from a Raspberry Pi's GPIO used to be documented here via
-> `raspberry.cfg`. It has been removed: that config uses OpenOCD's
-> `bcm2835gpio` driver, which memory-maps the GPIO block on the SoC — and the
-> Pi 5 moved GPIO onto the RP1 southbridge, so the driver has nothing to map and
-> cannot work there at all. It was never used in practice. `raspberrypi5.cfg`
-> holds an untested `linuxgpiod` equivalent for whenever the boards get respun;
-> read its header before trusting it.
+> `raspberrypi5.cfg` holds an untested `linuxgpiod` config for bitbanging SWD
+> from a Pi 5's GPIO; read its header before trusting it.
 
 ---
 
-## 📡 Field update over Modbus (bootloader) — built, not yet hardware-verified
+## Lathe emulator
 
-A resident bootloader in flash sector 0 (`bootloader/`) accepts a new image over
-the same RS-485 link the UI uses, so the ST-Link is needed only for virgin
-boards, option bytes and recovery. Build the app for its slot with
-`-DREFLEX_APP_BASE=0x08020000` and push it with `scripts/modbus-flash.py`;
-`--identity` reads back which stage and which git rev is running. The default
-build and `scripts/flash.sh` above are unchanged. Design, register map, and the
-bring-up procedure: `bootloader/README.md` and
-`../decisions/els-modbus-register-map.md`.
-
----
-
-## 🖥️ Lathe Emulator
-
-A native Linux emulator is included for hardware-free firmware testing. It compiles the real firmware sources (`Ramps.c`, `Modbus.c`, `Scales.c`, `UARTCallback.c`) against a HAL/FreeRTOS shim layer and simulates lathe physics — spindle with inertia, leadscrew, carriage with half-nut engagement, and cross-slide. The emulator exposes Modbus RTU via PTY pair and TCP socket so the unmodified Python GUI can connect as if talking to real hardware.
-
-A two-pane ANSI terminal dashboard with sparklines provides live visualization, with keyboard controls for spindle RPM, manual axis movement, half-nut engagement, and more. All parameters are configurable via TOML file.
-
-The emulator also hosts the firmware test suite (`emulator/test/`), which drives
-the real ISR directly — run it with `ctest` from `emulator/build`.
-
-### Emulator Build & Run
+A native Linux emulator compiles the real firmware sources against a
+HAL/FreeRTOS shim and simulates the lathe (spindle, leadscrew, carriage with
+half nut, cross-slide). It serves Modbus RTU on a PTY pair and a TCP socket, so
+the unmodified UI connects as if to real hardware. It also hosts the firmware
+test suite (`emulator/test/`), which drives the real ISR; run it with `ctest`
+from `emulator/build`.
 
 ```bash
 cd emulator
@@ -163,15 +121,13 @@ cmake --build build
 
 ---
 
-## 🔧 Hardware Configuration
+## Hardware configuration
 
-* `.ioc` file for use with STM32CubeMX included
-* Pin assignments for encoder, buttons, LEDs, SWD, etc. reviewed and tested
-* Memory layout defined by `STM32F411CEUX_FLASH.ld` and `STM32F411CEUX_RAM.ld`
+`reflex.ioc` is the STM32CubeMX configuration; the memory layout is in
+`STM32F411CEUX_FLASH.ld` and `STM32F411CEUX_RAM.ld`. Board design and
+system-level hardware: see the [top-level README](../README.md).
 
-Board design and system-level hardware: see the [top-level README](../README.md).
-
-### ⚠️ Recovery is SWD only — the ROM bootloader is not a path on this board
+### Recovery is SWD only
 
 **Use ST-Link/SWD. Do not plan a recovery procedure around BOOT0.**
 
@@ -202,6 +158,6 @@ recovery path.
 
 ---
 
-## 📄 License
+## License
 
 MIT — see `LICENSE`.

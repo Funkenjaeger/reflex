@@ -22,7 +22,7 @@ class NumberItem(BoxLayout):
     #:
     #: Wanted because a scale resolution of "2" reads as an integer count of
     #: something rather than as a measurement; "2.000 um/count" is obviously a
-    #: resolution. Evan, 2026-09-01.
+    #: resolution.
     decimals = NumericProperty(-1)
 
     def _get_display(self):

@@ -5,7 +5,7 @@
  * ---- THE OBSERVATION THIS EXISTS TO EXPLAIN --------------------------------
  * 2026-08-28, elspi, air passes: the carriage reliably ends up ~0.0022"
  * (~56 um, ~28 leadscrew steps, ~11 Z counts) past the programmed stop.
- * Evan's two findings, and they are what rule out the easy answers:
+ * Two findings from the lathe, and they are what rule out the easy answers:
  *
  *   1. It is REPEATABLE pass after pass, not scattered.
  *   2. Pushing the carriage back by hand does not recover it -- not even a
@@ -55,7 +55,7 @@
  * of the picture, which would exonerate this code path entirely if the same
  * overshoot appears).
  *
- * Evan, 2026-08-28: "It's at least *possible* that the servo itself is doing
+ * The maintainer, 2026-08-28: "It's at least *possible* that the servo itself is doing
  * something wonky, e.g. not honoring position when the steps cut off abruptly.
  * I doubt it, but it's not impossible; just wouldn't assume so until proving it
  * beyond a reasonable doubt."

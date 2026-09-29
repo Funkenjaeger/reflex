@@ -40,7 +40,7 @@ class InputDispatcher(SavingDispatcher):
     #: Which form the setup screen offers for this input's scale --
     #: "Resolution" (microns per count) or "Ratio" (the stored pair).
     #:
-    #: PERSISTED, on Evan's instruction 2026-09-01: it was per-visit at first
+    #: PERSISTED since 2026-09-01: it was per-visit at first
     #: and reverted every time the screen was left. "If a user prefers ratio,
     #: honor that and stick to it." It is a preference about how to READ the
     #: setting, not part of the machine's geometry -- but a preference that

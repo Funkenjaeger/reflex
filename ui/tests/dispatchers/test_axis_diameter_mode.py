@@ -134,7 +134,7 @@ def test_without_it_the_readout_is_the_travel(axis, inputs):
     assert axis.scaledPosition == pytest.approx(1.0)
 
 
-# ── typing a value means DIAMETER (Evan, 2026-09-01) ────────────────────────
+# ── typing a value means DIAMETER (2026-09-01) ──────────────────────────────
 
 def test_typing_a_value_sets_the_diameter(dia_axis, inputs):
     """"Enter 20.000 and the readout reads 20.000" -- not "call this radius 20"."""

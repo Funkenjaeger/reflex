@@ -238,7 +238,7 @@ class UpdateScreen(Screen):
         (ElsUiController.disengage_refusal); otherwise it says what to do
         instead and offers only OK.
 
-        THE BLOCKER, NAMED FOR THIS SCREEN (Evan, 2026-09-25). The shared
+        THE BLOCKER, NAMED FOR THIS SCREEN (2026-09-25). The shared
         sync refusal reads "Turn Sync Enable off before disengaging" -- right
         for the ADV bar mid-cut, where Sync Enable is the escape hatch, but
         wrong here: sync is on almost whenever advanced ELS is engaged, and

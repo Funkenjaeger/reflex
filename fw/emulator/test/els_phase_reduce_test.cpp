@@ -360,7 +360,7 @@ int main(void)
       failures++;
     }
     /* THE CLAIM SHAPE
-     * (a) WAS APPROVED ON. Not "the residual is zero" -- Evan shipped this
+     * (a) WAS APPROVED ON. Not "the residual is zero" -- it shipped
      * knowing it is not, and a test demanding zero would be a test nobody could
      * keep green honestly. What must hold is that wrong-groove errors drop by a
      * large FACTOR, and that what survives stays under a stated ceiling. Both

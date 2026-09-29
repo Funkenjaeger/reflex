@@ -1,7 +1,7 @@
 /*
  * ISR-level tests: the thread reference dies when the drive de-energises.
  *
- * THE RULE, in Evan's words (2026-08-31): "the instant the drive is
+ * THE RULE (2026-08-31): "the instant the drive is
  * de-energized we've lost custody of the leadscrew position, period. That's
  * when the ref is invalidated."
  *

@@ -70,8 +70,8 @@ def phase_offset_fraction_text(fraction: float) -> str:
 
     ONE FORMAT, NO BRANCH. Until 2026-08-29 an exact-ish 1/N was rendered by
     name ("1/3") and everything else as a decimal, on the theory that a round
-    fraction reads faster against the one-pitch bound. Evan's call, and it is
-    his screen: he reads 0.333 without difficulty, so the naming bought nothing
+    fraction reads faster against the one-pitch bound. In practice 0.333
+    reads without difficulty, so the naming bought nothing
     and cost a second format for the same quantity.
 
     Deleting the branch takes a real hazard with it. Naming was a CLAIM, and it
@@ -1109,7 +1109,7 @@ class ElsUiController(EventDispatcher):
             # the next Sync Enable press moves the carriage with no Cut
             # between the two: the hazard _abandon_cut_on_sync_off describes.
             # The button never had a feed gate; the abort fix made that
-            # visible when Cut lit on re-engage, before sync (Evan, lathe).
+            # visible when Cut lit on re-engage, before sync (at the lathe).
             # Checked last so a missing Stop Z or an unsafe Z is still the
             # first thing said. Refreshes every board tick (_poll_apply_policy).
             sync_off = allowed and not self.is_feeding
@@ -1876,7 +1876,7 @@ class ElsUiController(EventDispatcher):
     def _abandon_cut_on_sync_off(self):
         """Sync Enable off mid-cut ends the cut, so disengage.
 
-        THE TRAP THIS CLEARS (Evan, bench, 2026-09-01). Turning sync off
+        THE TRAP THIS CLEARS (bench, 2026-09-01). Turning sync off
         mid-cut stopped the carriage correctly, but nothing took the domain FSM
         out of 'cutting': the only exits were stop_active (the carriage
         physically reaching the shoulder) and fault. So the machine sat
@@ -1885,7 +1885,7 @@ class ElsUiController(EventDispatcher):
         push the carriage past the stop point by hand to publish stop_active.
 
         WHY IT IS 'cutting' SPECIFICALLY, and this is the load-bearing reason
-        (Evan, 2026-09-01): elsStop.active is the HOLD. arm_idle_stop sets
+        (2026-09-01): elsStop.active is the HOLD. arm_idle_stop sets
         active=1 BEFORE enable, so an engaged-idle machine is held and turning
         sync on cannot move the carriage. on_enter_cutting then does
         set_active(False) -- that release IS the cut. So mid-cut the hold is
@@ -1921,7 +1921,7 @@ class ElsUiController(EventDispatcher):
             # hides that button (els_advbar.kv) and nothing else calls
             # start() until a mode change, so a bar left in idle is an
             # empty, dark action button that no disengage / re-engage, sync
-            # toggle or hand-cranking recovers -- Evan, bench, 2026-09-12,
+            # toggle or hand-cranking recovers -- bench, 2026-09-12,
             # cleared only by a UI restart. The alarm path in
             # _on_state_changed already does exactly this.
             self._sync_ui_state_to_modes()

@@ -5,8 +5,8 @@ WHY THIS EXISTS. SavingDispatcher.id_override defaults to f"{self.uid}" -- a
 Kivy widget uid, which is allocation-order dependent -- and it names the
 per-widget YAML file the dispatcher saves to. So any layout change silently
 orphans the settings file and the widget comes back to defaults. ElsAdvancedBar
-shipped without an id_override for the app's whole life; found via task
-6a935c94 on 2026-08-29 and fixed in 7944c77.
+shipped without an id_override for the app's whole life; found on 2026-08-29
+and fixed in 7944c77.
 
 Pure ast, no kivy import needed: parses production source under reflex/ (not
 tests/ or previews/) and flags any construction of a known subclass that

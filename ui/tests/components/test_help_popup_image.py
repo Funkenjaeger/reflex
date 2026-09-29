@@ -16,7 +16,7 @@ Resolution therefore gates on the file EXISTING, and both the "no drawing"
 and "drawing not made yet" paths must come back as no picture at all.
 
 The PNGs here are 4x4 solid grey, built in the fixture. They are stand-ins for
-a file existing on disk, not artwork -- the drawings are Evan's.
+a file existing on disk, not artwork -- the drawings are the author's.
 """
 from unittest.mock import MagicMock, patch
 

@@ -1,7 +1,7 @@
 """Setup > System: free space on the card, and nothing else.
 
-Read-only by design. The operator UI does no system administration (Evan,
-2026-09-19), so the upstream "Resize Partition" and "Reboot System" buttons
+Read-only by design. The operator UI does no system administration
+(2026-09-19), so the upstream "Resize Partition" and "Reboot System" buttons
 are gone -- both also failed silently once the UI stopped running as root --
 and so is the root-device / disk / partition readout. Free space stays: the
 flight recorder and the commissioning ledger write to this card.

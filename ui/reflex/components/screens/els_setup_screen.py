@@ -13,7 +13,7 @@ NONE_LABEL = "None"
 # between two named conventions rather than as an on/off "X reads diameter",
 # because OFF then has to be read as "reads radius instead" -- an inference
 # only someone already fluent in the setting can make, and the dimmed half of
-# a boolean is exactly where that inference gets skipped (Evan, 2026-09-01).
+# a boolean is exactly where that inference gets skipped (2026-09-01).
 # The stored form stays the boolean `diameter_mode` on the axis; these labels
 # are the UI's vocabulary, not the config's.
 RADIUS_LABEL = "Radius"

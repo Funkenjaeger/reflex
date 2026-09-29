@@ -27,7 +27,7 @@ Regression targets:
     stop, scale index) and reconcile teaches the session-wide ones (sync
     ratios, calibration legs). Tests 2 and 3.
 
-Future extension noted on the Open Loops task: a generic sweep that diffs the
+Future extension: a generic sweep that diffs the
 whole elsStop block after ANY feature runs from virgin boot -- fields still
 at zero that the feature depends on are the finding.
 """
