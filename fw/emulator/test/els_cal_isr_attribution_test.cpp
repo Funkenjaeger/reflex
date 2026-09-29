@@ -22,7 +22,7 @@
  * take-up file's own diff surface untouched).
  *
  * REQUIRES the 2026-08-10 staged patch
- * (~/ol-work/scratch/2026-08-10/els-calibration-slip-attribution.patch)
+ * (the calibration slip-attribution patch from the bench session)
  * applied on top of feat/els-slip-attribution. Without it, Core/Inc/
  * els_backlash_cal.h has no elsCalCtx_t.slip field and Core/Src/Ramps.c has
  * no attribution-tick block for the calibration leg at all -- this file will

@@ -4,44 +4,31 @@
 
 A commissioned Reflex knows things about its lathe that nothing else knows:
 backlash, scale ratios, leadscrew calibration, axis names and roles, direction
-polarity. Those values are the difference between a controller and a box of
-electronics, and they are expensive to recover — some of them take a dial
-indicator and an afternoon.
+polarity. Some of them take a dial indicator and an afternoon to recover.
 
 They live in about nineteen YAML files under `REFLEX_CONFIG_DIR`
 (`/var/lib/reflex-config` on the machine), one per `SavingDispatcher` instance,
 named `<Class>-<id_override>.yaml`. The only writer is `write_settings()` in
 `ui/reflex/dispatchers/saving_dispatcher.py`, which **rewrites the whole file**
-on any bound property change.
-
-So the card holds exactly one state: the current one. There is no history, no
-record of what a value used to be, and nothing that says a value moved at all.
-
-!!! danger "This already happened"
-    On **2026-09-07 at 20:01** the machine's commissioning values moved. Nothing
-    captured them. The only copy that exists was made by hand, six days later,
-    by reading the numbers off the screen. Had the SD card failed in that
-    window, the recalibration would simply have been gone.
+on any bound property change. So the card holds only the current state, with no
+history.
 
 ## The layers
 
-Three layers, built in this order, each useful on its own:
+Three layers, each useful on its own:
 
-| Layer | State | What it protects against |
-|---|---|---|
-| **Ledger + snapshots, on the card** | built | a value moving unnoticed; not knowing what it used to be |
-| **USB export / import** | next | the card itself dying; moving a configuration to a replacement card |
-| **Opt-in cloud sync** | later | the machine and its only backup burning down together |
+| Layer | What it protects against |
+|---|---|
+| **Ledger + snapshots, on the card** | a value moving unnoticed; not knowing what it used to be |
+| **USB export / import** | the card itself dying; moving a configuration to a replacement card |
+| **Opt-in cloud sync** | the machine and its only backup burning down together |
 
-Only the first layer is built. The second and third are named here because the
-document shape below exists to serve all three — a USB export and a cloud sync
-that each invented their own directory walk would be two more places for the
-capture to be subtly wrong.
+All three carry the bundle document below, so there is one directory walk.
 
 ### Ledger
 
 `ui/reflex/utils/commissioning_ledger.py` appends to
-`<config_dir>/ledger/commissioning.jsonl` — one JSON object per line, per
+`<config_dir>/ledger/commissioning.jsonl`, one JSON object per line, per
 changed key:
 
 ```json
@@ -49,39 +36,30 @@ changed key:
  "old": 0.04, "new": 0.062, "trigger": "backlash", "app": "1.2.0rc3"}
 ```
 
-JSON Lines rather than YAML because appending is the whole point: a line is
-complete the moment it is written, an interrupted write costs one line instead
-of the file, and `tail` is a working reader on a machine whose operator has no
-terminal. One line per changed key, not per save, so the file reads as a list
-of what changed rather than a pile of snapshots to diff by eye. A file written
-for the first time contributes one line per commissioning key with `old: null`
-— the first write of a dispatcher's file *is* that dispatcher's commissioning
-event.
+JSON Lines, so an interrupted write costs one line, not the file. One line per
+changed key, not per save. A file's first write contributes one line per
+commissioning key with `old: null`.
 
 `record()` **never raises into its caller.** An unwritable directory or a full
-disk is logged through the Kivy logger and swallowed. The record matters; it
-does not matter more than the lathe, and a config save that fails because a
-record-keeping directory was not writable would be a worse defect than the one
-this closes.
+disk is logged through the Kivy logger and swallowed. A failed record must
+never fail a config save.
 
 ### Snapshots
 
-A ledger says *what moved*. It is not a thing you can restore from. So a
-commissioning change also writes the whole configuration to
+A ledger says *what moved*; it cannot be restored from. So a commissioning
+change also writes the whole configuration to
 `<config_dir>/ledger/snapshots/<ts>-change.yaml`.
 
-The app also calls `snapshot_if_changed("startup")` once, from `App.build()`,
-after every dispatcher has been constructed and has read its file. That is the
-tripwire for **writes the ledger cannot see**: a value edited by hand over SSH,
-a file restored from a backup, a card swap. It compares the current
-configuration against the newest snapshot (both with `meta` removed, since
-`meta.ts` differs on every build) and writes only on a difference.
+Once every dispatcher has read its file, `App.build()` calls
+`snapshot_if_changed("startup")`, the tripwire for **writes the ledger cannot
+see**: a hand edit over SSH, a restored file, a card swap. It writes only when
+the configuration differs from the newest snapshot, `meta` aside.
 
 ## The bundle document
 
 `ui/reflex/utils/commissioning_bundle.py` defines the single-document form of
-the whole machine configuration. Snapshots are this document; USB export and
-cloud sync will carry this document.
+the whole machine configuration. Snapshots, USB export and cloud sync all carry
+this document.
 
 ```yaml
 meta:
@@ -107,54 +85,45 @@ Els-0:
 `meta` is first in the dumped text so a human opening an export sees what
 machine and what moment it came from before anything else.
 
-Bundles exported before 2026-09-16 also carry `config_ini:`, the parsed
-`ui/config.ini`, because the machine's `use_case` and `current_mode` still
-lived there. Those two keys are now the `Device-0` stem
-(`ui/reflex/dispatchers/device.py`; the app migrates them from the ini once, on
-the first start with no `Device-0.yaml`, and never reads the ini for them
-again). `build()` no longer emits `config_ini`. `apply()` still accepts it: it
-logs and ignores the section, except that `config_ini.device.use_case` in a
-bundle with no `Device-0` stem is written to `Device-0`, so an old export still
-restores a lathe. `meta.schema` stays 1: `apply()` refuses only a newer schema,
-and an older app reading a new bundle sees nothing it misreads, just one more
-stem (the reasoning is at `SCHEMA` in the module).
+`use_case` and `current_mode` are the `Device-0` stem
+(`ui/reflex/dispatchers/device.py`). Older bundles carry them in a
+`config_ini:` section, which `apply()` logs and ignores, except that in a
+bundle with no `Device-0` stem `config_ini.device.use_case` is written to
+`Device-0`, so an old export still restores a lathe. `meta.schema` is 1 (the
+reasoning is at `SCHEMA` in the module).
 
 `split(doc)` is the inverse of the per-file half and returns `{stem: mapping}`.
-`apply(doc, config_dir)` is the inverse (order 2026-09-14#4, integration
-`157ead0`): it writes every stem back verbatim, refuses a bundle whose
-`meta.schema` is newer than the app knows, refuses a section only when none of
-its keys is commissioning-tier, and writes each file atomically. It is what the
-Setup screen's USB import calls. On 2026-09-16 the real lathe's 19 stems
-round-tripped byte-identically through build, YAML and apply, off the card.
+`apply(doc, config_dir)` is the inverse: it writes every stem back verbatim,
+refuses a bundle whose `meta.schema` is newer than the app knows, refuses a
+section only when none of its keys is commissioning-tier, and writes each file
+atomically. It is what the Backup screen's USB import calls.
 
 ## The scope contract
 
 Not every persisted key is machine identity. `ui/reflex/utils/commissioning_scope.py`
 is the one place that decides, in three tiers:
 
-**`commissioning`** — machine identity. Backlash, calibration constants, gear
+**`commissioning`**: machine identity. Backlash, calibration constants, gear
 and sync ratios, scale resolutions, polarity flags, axis names and roles, the
 per-axis transform. **This is the default**: any key not named below is
-commissioning, so a new calibration property added to a dispatcher is captured
-the day it is added, with nobody remembering to list it.
+commissioning, so a new calibration property is captured without anyone
+listing it.
 
-**`operational`** — job and operator state. The set is deliberately tiny and
+**`operational`**: job and operator state. The set is deliberately tiny and
 exhaustive:
 
-- `offsets` in **any** file — the hundred work offsets, rewritten every time the
-  operator zeroes the DRO. This is the highest-frequency write on the machine;
-  unfiltered, the ledger would be unreadable.
+- `offsets` in **any** file: the hundred work offsets, rewritten every time the
+  operator zeroes the DRO, the highest-frequency write on the machine.
 - `syncRatioNum` / `syncRatioDen` **only** in a file whose data carries
   `spindleMode: true`. On a spindle axis these two are the
   degrees-per-revolution presentation and the ELS bar rewrites them as the
   operator picks a feed. On a **linear** axis the same two keys are the scale
-  ratio, which is pure calibration. Same key names, opposite tiers.
+  ratio, which is pure calibration.
 
-**`ignored`** — neither. `id_override` (it is the filename, not a value) and
+**`ignored`**: neither. `id_override` (it is the filename, not a value) and
 pure Kivy layout geometry that older save files carry: `size_hint_*`, `spacing`,
-`padding`, `pos`/`size`, `x`/`y`/`width`/`height`, `minimum_*`, and the
-`natural_height` and `opacity` that `ElsAdvancedBar-*.yaml` still holds on the
-machine. A bar that is 158 px tall is not a fact about the lathe.
+`padding`, `pos`/`size`, `x`/`y`/`width`/`height`, `minimum_*`, and
+`natural_height` and `opacity` in `ElsAdvancedBar-*.yaml`.
 
 !!! warning "Spindle-ness is read from the data, never the filename"
     `Axis-0` is the spindle on one lathe and need not be on another — the

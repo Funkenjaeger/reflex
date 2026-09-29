@@ -43,7 +43,7 @@
 # considered act: WRP is what stops a later flash.sh from eating the
 # bootloader, but it also has to be cleared before sector 0 can ever be
 # rewritten, and getting that wrong on a board with no ROM bootloader is the
-# one way to need a new board. fw/bootloader/README.md step 9b, after the
+# one way to need a new board. docs/setup/bootloader-bring-up.md step 9b, after the
 # board is confirmed working.
 # END-HELP
 set -euo pipefail
@@ -265,7 +265,7 @@ Programming the bootloader will fail. Clear it and power-cycle first:
 
   $WRP_CLEAR_CMD
 
-(fw/bootloader/README.md step 9b. RDP stays at level 0 throughout.)
+(docs/setup/bootloader-bring-up.md step 9b. RDP stays at level 0 throughout.)
 EOF
         ;;
     1)
@@ -280,14 +280,14 @@ fails below, protection is the first thing to check; clearing it is:
 
   $WRP_CLEAR_CMD
 
-and then a power cycle (fw/bootloader/README.md step 9b).
+and then a power cycle (docs/setup/bootloader-bring-up.md step 9b).
 EOF
         ;;
 esac
 echo
 
 # ---------------------------------------------------------------------------
-# THE WRITES, in the order fw/bootloader/README.md steps 4 and 5 establish.
+# THE WRITES, in the order docs/setup/bootloader-bring-up.md steps 4 and 5 establish.
 #
 # Erase first, and erase MORE than strictly necessary: the journal (sector 1)
 # and both spare slots (6, 7). An erased journal reads as IDLE, so the
@@ -368,5 +368,5 @@ cat <<'EOF'
     Firmware register protocol version N (expected N)
 
   Write-protecting sector 0 is a separate step, after the board is confirmed
-  working: fw/bootloader/README.md step 9b.
+  working: docs/setup/bootloader-bring-up.md step 9b.
 EOF

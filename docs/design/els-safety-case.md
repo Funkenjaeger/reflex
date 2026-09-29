@@ -1,61 +1,49 @@
 # ELS safety case
 
-What protects the operator, in which machine state, against which failure —
-and, just as importantly, where nothing does.
-
-This page exists because the guards were accreting one incident at a time with
-no stated policy, so safety calls stalled for weeks at a time. It is an
-enumeration with citations plus the decisions that enumeration forces. It is
-**not** a certification, and nothing here has been through fault injection.
+What protects the operator, in which machine state, against which failure,
+and where nothing does: an enumeration with citations, plus the decisions it
+forces. It is **not** a certification, and nothing here has been through fault
+injection.
 
 !!! info "Provenance"
-    Enumerated by reading the source at `bd10c92`, then updated for the four
-    commits of 2026-08-31 (`7f2191d`, `eedc4da`, `a0068d2`, `308b920`). Every
-    row cites a file and line. Where a fact could not be confirmed by reading
-    code it is marked **UNVERIFIED** rather than asserted — see
-    [Open questions](#open-questions), which is the most important section on
-    this page.
+    Citations are file and line as of `bd10c92` plus `7f2191d`, `eedc4da`,
+    `a0068d2` and `308b920`. Where a fact could not be confirmed by reading
+    code it is marked **UNVERIFIED** rather than asserted; see
+    [Open questions](#open-questions).
 
 ---
 
-## The decision this page had to make
+## Divergence watchdog escalation
 
-The task that produced this document set a behavioural acceptance bar: decide
-the servo-mode divergence watchdog's escalation, or admit the page is theatre.
-
-**Decided 2026-08-31 — the watchdog escalates to a NOTICE, not to alarm.**
+**The servo-mode divergence watchdog (`ui/reflex/dispatchers/servo.py:232`)
+escalates to a notice, never to alarm.**
 
 | rung | what it does | motion risk | status |
 |---|---|---|---|
-| log-only | writes a line to the journal | none, and no benefit either — at the lathe there is a touchscreen and no terminal, so this reached nobody | superseded |
-| **notice** | **amber line on the top status bar via `els_uic.notify`** | **none — touches no motion path** | **ADOPTED** |
-| alarm | `on_enter_alarm` → drops sync, then the feed, then `set_enable(False)` | a false positive stops the feed with the tool in the groove **and de-energizes the drive, freeing the leadscrew** | **NOT TAKEN** |
+| log-only | writes a line to the journal | none, and no benefit: at the lathe there is a touchscreen and no terminal, so nobody sees it | superseded |
+| **notice** | **amber line on the top status bar via `els_uic.notify`** | **none; touches no motion path** | **ADOPTED** |
+| alarm | `on_enter_alarm` drops sync, then the feed, then `set_enable(False)` | a false positive stops the feed with the tool in the groove **and de-energizes the drive, freeing the leadscrew** | **NOT TAKEN** |
 
-The reasoning is asymmetric and that asymmetry is the whole argument. A false
-positive on the notice rung costs one amber line. A false positive on the
-alarm rung is itself a hazard event — the detector would cause the class of
-incident it exists to detect. The alarm rung stays closed.
+A false positive on the notice rung costs one amber line. A false positive on
+the alarm rung is itself a hazard: the detector would cause the class of
+incident it exists to detect.
 
 !!! note "Sync enable controls the servo drive"
     `servoEnableTask` drives a real enable pin (`Ramps.c:1672-1673`):
     `servoMode != 0` takes `ENA` low and the drive is energized;
     `servoMode == 0` takes it high, **the drive is disabled, and the leadscrew
-    is free to turn by hand**. That is what "releasing the carriage hold"
-    means, and it is why `on_enter_alarm`'s ordering matters — it drops sync
-    first, so escalating really would release the leadscrew mid-pass.
+    is free to turn by hand**. That is why `on_enter_alarm`'s ordering
+    matters: it drops sync first, so escalating would release the leadscrew
+    mid-pass.
 
-    Note this is a *different* hold from `elsStop.active`, which gates
-    sync-step accumulation; clearing that one is the "go" for a pass
-    (`Ramps.c:1247`). Two holds, and a single phrase that used to be attached
-    to the wrong one.
-
-Landed in `a0068d2`. Watchdog at `ui/reflex/dispatchers/servo.py:232`.
+    This is a different hold from `elsStop.active`, which gates sync-step
+    accumulation; clearing that one is the "go" for a pass (`Ramps.c:1247`).
 
 ---
 
 ## Machine states
 
-From `ui/reflex/fsms/els_fsm.py:20-24` — five, mirrored into the UI FSM as
+From `ui/reflex/fsms/els_fsm.py:20-24`: five, mirrored into the UI FSM as
 `in_cycle.cutting` / `in_cycle.retracting` / `alarm`.
 
 | state | meaning | operator exposure |
@@ -83,62 +71,46 @@ reported, but nothing is gated. **GAP** = nothing found.
 | Firmware re-asserts feed after UI said stop | — | ◐ | ◐ | ◐ | — |
 | Leadscrew turned while the drive is off | GAP | **GAP** | GAP | — | GAP |
 
-That table is mostly GAP, and that is the finding. It is not evidence the
-machine is dangerous — it is evidence that **what protects the operator today
-is the take-up confirmation gate and the operator's own hands**, and that the
-protection is concentrated almost entirely at one moment (the start of a pass)
-in one state (`cutting`).
+What protects the operator is **the take-up confirmation gate and the
+operator's own hands**, concentrated almost entirely at one moment (the start
+of a pass) in one state (`cutting`).
 
-### Required behaviour, per failure class
+### Required behavior per failure class
 
-**Spindle-encoder loss.** Should stop the feed. Today nothing detects it, in
-any state. A dead encoder during `cutting` presents as zero sync deltas, which
-is indistinguishable in the searched code from "the spindle stopped turning" —
-a condition `toggle_engage` deliberately treats as *safe*
-(`ui_controller.py:1181-1214`). Whether that ambiguity is hazardous depends on
-drivetrain behaviour not established here. Grep for
-`encoder.*loss|encoderFault|servoFault` across `fw/Core` and `ui/reflex`
-returns **zero hits**.
+**Spindle-encoder loss.** Should stop the feed; nothing detects it in any
+state. A dead encoder during `cutting` gives zero sync deltas, which the code
+cannot tell from a stopped spindle, a condition `toggle_engage` treats as
+*safe* (`ui_controller.py:1181-1214`).
 
-**Z-scale loss.** Should stop the feed. The take-up gate (`Ramps.c:944-1067`)
-and its confirm-window abort (`:1086-1124`) and 5 s timeout backstop
-(`:1126-1137`) do exactly this — but only at take-up, at the start of a pass.
-There is no continuous Z-liveness check *through* a cut.
+**Z-scale loss.** Should stop the feed. The take-up gate (`Ramps.c:944-1067`),
+its confirm-window abort (`:1086-1124`) and its 5 s timeout backstop
+(`:1126-1137`) do, but only at the start of a pass; nothing checks Z liveness
+*through* a cut.
 
 **Modbus loss.** Should stop the feed. `els_fsm.py:271-276` escalates an
-unacknowledged stop-write to `alarm`, and it is the only mechanism found that
-handles a Modbus-shaped failure. It is scoped to `on_enter_cutting`. A link
-drop while `retracting` — a powered move — is not covered. Note also that a
-protocol-version mismatch at connect (`board.py:249-297`) is deliberately
-**non-fatal**: it warns and permits engage.
+unacknowledged stop-write to `alarm`, but only in `on_enter_cutting`; a link
+drop while `retracting`, a powered move, is not covered. A protocol-version
+mismatch at connect (`board.py:249-297`) only warns and permits engage.
 
-**Drive fault.** Should stop the feed. No register, ISR check or UI path
-referencing a driver fault line was found. **This may not be a software gap at
-all** — the design writes step/dir directly from STM32 pins, so a fault line
-may not exist in the hardware. Confirm before treating this row as work.
+**Drive fault.** Should stop the feed. Nothing references a driver fault line,
+which may not exist in the hardware: step/dir come directly from STM32 pins.
 
-**UI death.** Should stop the feed — a live cut with no supervisor is the
-worst cell in the table. Nothing in firmware times out a feed when the UI
-stops polling. Guard #25 above is UI-*initiated* (it fires on a failed write
-ack) and therefore cannot fire when the UI is the thing that died. The
-firmware's take-up gates run independently of UI liveness, but they only run
-at take-up.
+**UI death.** Should stop the feed; a live cut with no supervisor is the worst
+cell in the table. Firmware does not time out a feed when the UI stops
+polling, and Guard #25 above is UI-*initiated* (it fires on a failed write
+ack), so it cannot fire when the UI has died. The firmware's take-up gates run
+independently of UI liveness, but only at take-up.
 
 **Leadscrew turned while the drive is off.** Should invalidate the thread
-reference. It does not — see the gap called out under
-[Open questions](#open-questions). Dropping sync de-energizes the drive, the
-leadscrew becomes hand-turnable, and nothing clears `referenceLatched` short
-of an engage cycle. This one is a code gap rather than an unwritten feature,
-and it is the only row here where the machine can end up confidently wrong
-rather than merely unprotected.
+reference and does not (see [Open questions](#open-questions)). It is the only
+row where the machine can end up confidently wrong rather than merely
+unprotected.
 
 ---
 
 ## What exists, by layer
 
-**19 mechanisms gate motion in release-shipping code** — 9 firmware, 10 UI.
-The figure this page was commissioned to check was "~7", which appears to have
-been a guess: no commit or document anywhere arrives at 7.
+**19 mechanisms gate motion in release-shipping code**: 9 firmware, 10 UI.
 
 ### Firmware, release builds (`fw/Core/Src/Ramps.c`)
 
@@ -162,9 +134,9 @@ been a guess: no commit or document anywhere arrives at 7.
     today.
 
 Guard 7 is what makes disengage-while-armed physically safe. Two diagnostic
-probes (`els_diag_disengage_latch.h`, `els_diag_mode_watch.h`) provide a
-belt-and-braces net during bring-up and are compiled out of release builds
-entirely — they must never be counted as release protection.
+probes (`els_diag_disengage_latch.h`, `els_diag_mode_watch.h`) add a second
+net during bring-up and are compiled out of release builds entirely; they must
+never be counted as release protection.
 
 ### UI, release builds
 
@@ -172,44 +144,33 @@ Ten refusals: disengage-while-armed (`ui_controller.py:1181-1214`), no-Z-axis
 and summed-Z engage refusals (`:1231-1267`), FSM double-tap guards, the
 calibration CRC/fabricated-read guard (`els_cal.py:258-339`), calibration
 protocol-version and config refusals, and the three thread-resync refusals
-(`els_resync.py`).
-
-!!! note "Changed 2026-08-31"
-    The three thread-resync refusals now fire when the wizard **opens**, not
-    at the Begin button (`eedc4da`). They previously refused only after the
-    operator had followed the jog instructions — moving the carriage by hand,
-    closing the half nut, and hauling it back against the flank. The
-    conditions are unchanged; the timing was the defect.
+(`els_resync.py`), which fire when the wizard opens, before the operator moves
+the carriage or closes the half nut.
 
 ### Reported but not gating
 
-The servo-mode divergence watchdog (now a notice, see above), the take-up
-outcome torn-snapshot guard (`ui_controller.py:546-635`), and two display
-integrity guards that fail in deliberately opposite directions: the phase
-offset **holds** its last value on a read failure (`:677-694`) because 0 would
-read as "no offset being cut", while the thread-ref-latched lamp **hides**
-(`:740-786`) rather than show a stale latch. Neither gates motion; both exist
-so the screen cannot lie.
-
-A new UI-visibility guard landed the same day (`308b920`): the ADV button
-refuses to hide the advanced ELS bar while a stop job is engaged, because that
-bar is the only place armed-ness is visible anywhere in the UI.
+The divergence watchdog, the take-up outcome torn-snapshot guard
+(`ui_controller.py:546-635`), and two display guards that fail in opposite
+directions so the screen cannot lie: the phase offset **holds** its last value
+on a read failure (`:677-694`) because 0 would read as "no offset being cut",
+and the thread-ref-latched lamp **hides** (`:740-786`) rather than show a
+stale latch. The ADV button will not hide the advanced ELS bar while a stop
+job is engaged, because that bar is the only place the UI shows a job is
+armed.
 
 ### Not a guard, despite appearances
 
-`stepPulseRuntCount` (`Ramps.c:769-779`) is a pure counter. Grepped across
-`fw/` and `ui/`: no consumer takes any refuse, alarm or latch action on it. It
-is read only for logging into a capture file. It lives in guard-adjacent ISR
-code and its register comments describe it in guard-like language, which is
-exactly why it is called out here.
+`stepPulseRuntCount` (`Ramps.c:769-779`) is a pure counter, read only for
+logging into a capture file; nothing in `fw/` or `ui/` refuses, alarms or
+latches on it.
 
 ---
 
 ## Open questions
 
 !!! danger "A latched thread reference survives sync being switched off"
-    **This is a gap in the code, not in the enumeration**, and it follows
-    directly from the note above.
+    **This is a defect in the code**, following from the drive-enable note
+    above.
 
     Dropping sync de-energizes the drive, so the leadscrew can be turned by
     hand. There is no leadscrew feedback — the firmware knows only commanded
@@ -223,35 +184,16 @@ exactly why it is called out here.
     and back on **without an engage cycle** carries the old reference across,
     and the UI keeps showing `REF LATCHED`.
 
-    That path is not hypothetical: it is what the 2026-08-30 bench run walked
-    when Sync Enable was pressed mid-cut, toggled again, and the job resumed
-    without disengaging.
+    Pressing Sync Enable mid-cut, pressing it again, and resuming without
+    disengaging takes this path.
 
-    The maintainer, 2026-08-31: *"when sync is disabled the leadscrew can be rotated
-    freely. That's why it's imperative that a latched phase ref must be
-    cleared when sync is disabled."* It currently is not.
+    A latched thread reference must be cleared when sync is disabled. It
+    currently is not.
 
-Two more, both cheap to close and neither closed here:
+Two more, both cheap to close:
 
 - **Does a drive fault line exist in the hardware at all?** If not, that
-  matrix row is not a software gap and should be struck rather than carried.
-- **Is spindle-encoder loss actually distinguishable from a stopped spindle
-  at the drivetrain?** If it is not, no software detector can be written, and
-  the answer belongs in the encoder-integrity work (index channel plus per-rev
-  checksum) rather than here.
-
----
-
-## How to use this page
-
-When a safety call comes up, find the cell. If it is **✓**, the mechanism is
-named and cited — go read it rather than re-deriving it. If it is **GAP**,
-that is not a bug report; it is a statement that the protection was never
-written, and the decision in front of you is whether it should be.
-
-Two standing rules this page asks you to keep:
-
-1. **Never count a diagnostic-build mechanism as release protection.** Two of
-   them exist and both are compiled out.
-2. **Never count guard 8.** It is present in the source and absent from every
-   machine.
+  matrix row is not a software gap and should be struck.
+- **Is spindle-encoder loss distinguishable from a stopped spindle at the
+  drivetrain?** If not, no software detector can be written, and the answer
+  belongs in the encoder-integrity work (index channel plus per-rev checksum).

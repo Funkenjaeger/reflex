@@ -119,7 +119,7 @@ What you almost certainly want instead:
 
 If you really are taking this board BACK to the legacy no-bootloader layout --
 a deliberate act, and the bootloader's write protection has to be cleared for
-it to even succeed (fw/bootloader/README.md step 9b with 'off') -- then say so:
+it to even succeed (docs/setup/bootloader-bring-up.md step 9b with 'off') -- then say so:
 
   ./scripts/flash.sh $1
 EOF

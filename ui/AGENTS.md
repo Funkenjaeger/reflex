@@ -2,28 +2,30 @@
 
 ## Branching and Hardware Verification — READ FIRST
 
-**This UI drives a real lathe through reflex-fw. The only complete test is on
-hardware, and the maintainer runs that, not on demand.** The emulator-backed system suite
-is good and getting better, but it has repeatedly looked green while something
-real was wrong — no servo dynamics, no Modbus timing, no metal. Emulator green
-is evidence, never verification.
+**This UI drives a real lathe through the firmware in `../fw`. The only complete
+test is on hardware, and the maintainer runs that, not on demand.** The
+emulator-backed system suite has no servo dynamics, no Modbus timing and no
+metal, and has looked green while something real was wrong. Emulator green is
+evidence, never verification.
 
 **Do NOT commit directly to `dev-staging`.** It is one step from a dev release
 and everything on it is supposed to be hardware-verified.
 
 - Work on a **feature branch**, or on **`integration`** when several changes are
   in flight and separate branches would just be overhead.
-- `integration` / feature branch → `dev-staging` is merged **only after the maintainer
-  has verified on hardware**. The maintainer does that merge, or explicitly asks for it.
-- `dev-staging` → `dev` and `dev` → `main` are **the maintainer's alone**. Never do these.
+- Merging `integration` or a feature branch into `dev-staging` happens **only after
+  the maintainer has verified on hardware**. The maintainer does that merge, or
+  explicitly asks for it.
+- Merging `dev-staging` into `dev`, and `dev` into `main`, is **the maintainer's
+  alone**. Never do these.
 
-**The one exception**, for changes that cannot affect machine behaviour and so
+**The one exception**, for changes that cannot affect machine behavior and so
 need no hardware run: documentation, help files, `todo.md`, and tests. Anything
-that changes what gets written to a firmware register — HAL, FSM, dispatchers,
-`devices.py` — is NOT clerical, however small it looks.
+that changes what gets written to a firmware register (HAL, FSM, dispatchers,
+`devices.py`) is NOT clerical, however small it looks.
 
-Register-map changes are never clerical on either side: `devices.py` and
-reflex-fw's `Ramps.h` are one contract, and they must land together.
+Register-map changes are never clerical on either side: `devices.py` and the
+firmware's `Ramps.h` are one contract, and they must land together.
 
 If unsure whether a change qualifies, it does not. Put it on a branch and ask.
 
@@ -32,40 +34,38 @@ remote and your mirror, so any push writes two remotes at once.
 
 ## Todo Tracking
 
-When you encounter a task, follow-up item, or piece of work that should be tracked, add it to `todo.md` in the project root. This applies to:
-- Deferred work discovered during development
-- TODO comments that appear in code or documentation
-- Bugs or improvements identified during debugging
-- Deployment or configuration tasks that need documentation
-- Any action item that won't be completed in the current session
+Add anything that should be tracked to `todo.md` in the project root: deferred work,
+TODOs found in code or documentation, bugs or improvements found while debugging,
+deployment or configuration tasks that need documentation, and any action item that
+won't be completed in the current session.
 
-Do NOT leave TODO comments in code, documentation, or bash snippets — always route them to `todo.md` instead.
+Do NOT leave TODO comments in code, documentation, or bash snippets. Route them to `todo.md` instead.
 
-## Project Overview
+## Platform and protocol
 
-Reflex UI is a Kivy-based DRO (Digital Read-Out) and single-axis controller UI for rotary tables.
+Reflex UI is a Kivy-based DRO (Digital Read-Out) and electronic leadscrew (ELS) touchscreen UI for manual lathes.
 It communicates with embedded hardware (STM32) over RS-485/Modbus RTU using `minimalmodbus`.
 Target platforms: Raspberry Pi (primary), Linux, Windows, macOS.
 
 ## The firmware half (`../fw`)
 
-This app is tightly coupled with the STM32 firmware in `../fw` — the same repository since the 2026-08-17 monorepo weld.
+This app is tightly coupled with the STM32 firmware in `../fw`, in the same repository.
 
-- **Interface:** RS-485 Modbus RTU — the UI reads/writes holding registers that map directly to the firmware's shared data struct
-- **Version compatibility:** a single commit now spans both halves, so a checkout is self-consistent by construction; cross-half changes affecting the Modbus register interface are still called out in commit messages. The old cross-repo branch-name pairing resolver is gone — CI and the system tests always build the in-repo firmware. (The DEPLOYED pair on the machine can still lag, which is what the `protocolVersion` check at connect is for.)
+- **Interface:** RS-485 Modbus RTU. The UI reads/writes holding registers that map directly to the firmware's shared data struct
+- **Version compatibility:** one commit spans both halves, so a checkout is self-consistent, and CI and the system tests build the in-repo firmware. Call out changes to the Modbus register interface in commit messages. The deployed pair on the machine can lag; the `protocolVersion` check at connect catches that.
 
 ## Runtime Notes
 
-- You're running in WSL on a Windows PC, NOT the target Raspberry Pi system.
+- You are not on the target Raspberry Pi.
 - To launch the UI: `DISPLAY=:0 SDL_AUDIODRIVER=dummy KIVY_INPUT=mouse uv run python -m reflex.main --size=1024x600`
-  (See `runme.sh` for the full command — adapt it as needed for your context.)
+  (`runme.sh` has the full command; adapt it to your context.)
 
 ## elspi commissioned geometry
 
 `elspi` is the real commissioned lathe this project runs on. Its live settings live under
 `REFLEX_CONFIG_DIR` on the Pi (outside git), so these primitives are recorded here. The
-emulator reference machine (reflex-fw `emulator/config/lathe.toml`, and the defaults of
-`SystemHarness.commission_geometry`) is a **different** machine — most of the system suite
+emulator reference machine (`../fw/emulator/config/lathe.toml`, and the defaults of
+`SystemHarness.commission_geometry`) is a **different** machine; most of the system suite
 runs at the reference values, not these:
 
 | Primitive | elspi (real) | Emulator reference |
@@ -75,48 +75,38 @@ runs at the reference values, not these:
 | Spindle encoder | 6144 PPR | 4000 PPR |
 | Leadscrew | 8 TPI (0.125 in pitch), 1600 steps/rev | 8 TPI, 800 steps/rev |
 
-**THE X SCALE IS THE HEAD'S RESOLUTION — and the X DRO still reads DIAMETER.** Those are
-now two separate facts, which is the point. The head is a 1 µm scale and is provisioned as
-one; the doubling lives in the axis's `diameter_mode` (ELS setup → *X DRO reads* →
-`Diameter`), so `Axis-0.yaml` records the convention decision instead of burying it in a
-ratio. Anything consuming the X DRO must still know the readout is a diameter: the virtual
-compound / auto-advance-from-X-depth work is the first such consumer, and its math is wrong
-if its convention and this setting disagree — but it can now *ask*, which it could not
-before.
+**The X scale is the head's resolution, and the X DRO reads diameter.** The head is a 1 µm
+scale and is provisioned as one; the doubling lives in the axis's `diameter_mode` (ELS
+setup → *X DRO reads* → `Diameter`), recorded in `Axis-0.yaml`. Anything consuming the X
+DRO must know the readout is a diameter: the virtual compound / auto-advance-from-X-depth
+work is the first such consumer, and its math is wrong if its convention and this setting
+disagree.
 
-**History, because both halves of this row have been wrong before.** It read **400
-counts/mm** until 2026-08-31 and was simply wrong: the X DRO had been reporting 2.5× true
-cross-slide travel for months, and a dial-indicator check found it. It then read **500** —
-correct, but only because the diameter doubling was hidden inside the ratio, with nothing
-recording that. Both were entered as settled facts. Do not trust a scale row here without a
-measurement behind it.
-
-Corrected on the machine 2026-09-01: resolution 1 µm *and* `X DRO reads = Diameter`, set
-together in one sitting, because either alone moves the readout by a factor of two.
+Set resolution 1 µm *and* `X DRO reads = Diameter` together: either alone moves the
+readout by a factor of two. Do not trust a scale row here without a measurement behind it.
 
 There is deliberately **no sync ratio recorded here**: the sync ratio is computed
 dynamically per operation from the machine settings above (spindle PPR included) *and* the
-selected feed rate / thread pitch, so it is a property of a job, not of the machine. The
-same goes for servo mm/step values such as 127/64000 — that follows from the leadscrew
-pitch and steps/rev above, it is not an independent setting.
+selected feed rate / thread pitch, so it is a property of a job. Servo mm/step values such
+as 127/64000 likewise follow from the leadscrew pitch and steps/rev above.
 `tests/system/test_els_elspi_geometry.py` exercises a full cut/stop/retract cycle at these
 values (UI commissioning *and* the emulator's own physics patched to match);
 `tests/system/test_els_real_config.py` documents which of them it deliberately does not use.
 
 ## Testing
 
-- The full test suite takes ~5 minutes and WILL time out with the default 120s timeout — use at least 360000ms.
-- Always ask the user before running the full test suite — it's often not worth it for small changes.
+- The full test suite takes ~5 minutes and WILL time out with the default 120s timeout; use at least 360000ms.
+- Always ask the user before running the full test suite.
 - Running targeted subsets (e.g., `pytest tests/fsms/test_els_fsm.py`) is fine to verify specific changes.
-- Tests hang on headless Linux due to Kivy display init — the repo-root `conftest.py` now forces
-  Kivy's mock GL/window backends (`KIVY_GL_BACKEND=mock`, `KIVY_WINDOW=mock`) for the whole suite,
-  so `xvfb-run` is no longer needed and collection is fast (real WSLg GL init took ~135s).
+- `conftest.py` (in `ui/`) forces Kivy's mock GL/window backends (`KIVY_GL_BACKEND=mock`,
+  `KIVY_WINDOW=mock`) for the whole suite, so tests run headless without `xvfb-run`.
+- Test files go in `tests/`, mirroring the `reflex/` structure.
 
 ### System tests (emulator-backed) — opt-in
 
-`tests/system/` drives the REAL reflex-ui FSM/dispatcher stack against the REAL reflex-fw emulator
-(real firmware C, not mocks) over a real PTY Modbus link, to cover actual servo/DRO motion
-direction across ELS mode and machine-wiring polarity.
+`tests/system/` drives the UI's FSM/dispatcher stack against the firmware emulator (the
+firmware's C code, not mocks) over a PTY Modbus link, to cover servo/DRO motion direction
+across ELS mode and machine-wiring polarity.
 
 - **Opt-in and excluded by default.** They carry the `system` marker and `pyproject.toml` sets
   `addopts = "-m 'not system'"`, so a plain `uv run pytest` skips them (and never builds/launches
@@ -128,51 +118,48 @@ direction across ELS mode and machine-wiring polarity.
   it, and the venv is a WSL venv. Run from a WSL shell.
 - **Requires the fw/ emulator.** The in-repo `../fw` is the default; set `REFLEX_FW_DIR` only to point at a different checkout.
   The `emulator_binary` fixture builds it if missing and rebuilds when firmware/emulator sources are
-  newer than the binary; it `pytest.skip`s cleanly if reflex-fw isn't checked out. The reflex-fw git
-  SHA is printed in the pytest header for run provenance.
-- **Also depends on the reflex-fw "Path B" physics change** (physics-level wiring signs) and the
-  `EMU_NO_AUTO_RETRACT` serve-mode flag — without them the polarity matrix / retract tests won't
-  behave. Match reflex-fw to the branch that carries these.
+  newer than the binary; it `pytest.skip`s cleanly if the firmware tree is not found. The firmware's
+  git SHA is printed in the pytest header for run provenance.
+- **Emulator features.** The polarity matrix and retract tests depend on the emulator's
+  physics-level wiring signs and its `EMU_NO_AUTO_RETRACT` serve-mode flag.
 
 ### Register-map contract test (default suite)
 
-`tests/test_register_map_contract.py` checks that reflex-ui's hand-maintained register definitions
-(`reflex/utils/devices.py`) still match the firmware's `Ramps.h` struct layout, byte-for-byte. It is
-NOT `system`-marked (fast, emulator-free) so it gates every default run; it skips if reflex-fw is absent.
+`tests/test_register_map_contract.py` checks that the UI's hand-maintained register definitions
+(`reflex/utils/devices.py`) match the firmware's `Ramps.h` struct layout, byte-for-byte. It is
+NOT `system`-marked (fast, emulator-free) so it gates every default run; it skips if the firmware
+tree is absent.
 
 The same file also checks the **diagnostic schema registry**, which is a second
-cross-repo contract in the same header — see below.
+contract in the same header (see below).
 
 ## Diagnostic probes — the UI half
 
-**reflex-fw's `DIAG.md` is the reference.** It owns the probe registry, the
-one-probe-at-a-time rule, and the procedure for adding or retiring one. That is
-deliberately not duplicated here: a second copy of a registry is a registry that
-drifts. This section covers only what lives in *this* repo.
+**`../fw/DIAG.md` is the reference.** It owns the probe registry, the
+one-probe-at-a-time rule, and the procedure for adding or retiring one. A second
+copy of a registry drifts, so this section covers only the UI side.
 
 A firmware **probe** writes a 64-register scratchpad reserved at the tail of
 `elsStop_t`. `elsStop.diagSchema` names which probe is compiled in; `0` means
 none, which is every release build.
 
 `reflex/fsms/els_diag.py` (`ElsDiagRecorder`) is the reader. Read its module
-docstring before touching it — the three properties it lists are load-bearing,
-particularly that it is **inert against release firmware**: it interrogates
+docstring before touching it: the three properties it lists are load-bearing.
+One is that it is **inert against release firmware**: it interrogates
 `diagSchema` once per connection and, finding `0` or an id it does not know,
 issues no further reads at all.
 
-**Adding a probe means touching three things here, not one.** Mirroring the id
-alone is the mistake, and it fails at the lathe rather than in CI:
+**Adding a probe touches three places here:**
 
 | Where | What |
 |---|---|
 | `reflex/utils/devices.py` | the `ELS_DIAG_SCHEMA_*` constant |
-| `reflex/fsms/els_diag.py` — `KNOWN_SCHEMAS` | **the one that bites.** The recorder refuses any schema outside this set, logs *"which this UI does not recognise"*, and goes dormant. Firmware fine, flash fine, nothing recorded. |
+| `reflex/fsms/els_diag.py` — `KNOWN_SCHEMAS` | The recorder refuses any schema outside this set, logs *"which this UI does not know how to interpret"*, and goes dormant. Firmware fine, flash fine, nothing recorded. |
 | `reflex/fsms/els_diag.py` — `SCHEMAS_WITH_END_REASON` | only if the probe publishes `diagEndReason` |
 
-`test_register_map_contract.py` now enforces the first two: every live firmware
+`test_register_map_contract.py` enforces the first two: every live firmware
 probe must be in `KNOWN_SCHEMAS`, ids must agree by name *and* value, and the UI
-must not recognise a schema the firmware never defined. Until 2026-08-16 nothing
-did, and the two registries could disagree with CI green.
+must not recognize a schema the firmware never defined.
 
 **Retired schemas stay in `KNOWN_SCHEMAS` on purpose.** The firmware refuses to
 *build* a retired probe, but every recorded `.jsonl` line carries its own schema,
@@ -181,12 +168,11 @@ deleted and never reissued.
 
 ## Design Patterns
 
-Follow the architecture guidelines in [kivy-fsm-design-pattern.md](kivy-fsm-design-pattern.md)
-for any work involving state machines, controllers, or UI/HAL boundaries. It defines the
-layered architecture (UI → Controller → FSM → HAL), event bus conventions, the
-declarative state-to-UI policy table, and anti-patterns to avoid. Consult it before
-adding or refactoring `transitions`-based FSMs, dispatchers that mediate between widgets
-and hardware, or multi-step operator flows.
+Read [kivy-fsm-design-pattern.md](kivy-fsm-design-pattern.md) before adding or
+refactoring `transitions`-based FSMs, dispatchers that mediate between widgets and
+hardware, or multi-step operator flows. It defines the layered architecture
+(UI → Controller → FSM → HAL), event bus conventions, the declarative state-to-UI
+policy table, and anti-patterns to avoid.
 
 ## Build and Run
 
@@ -203,6 +189,11 @@ uv run pytest
 # Build package
 uv build
 ```
+
+The screenshots in `README.md` and `docs/` are generated headlessly, at the
+machine's 1024×600, by the real widget tree from the previews under
+`previews/`, with `scripts/capture_readme_screenshots.py`. Regenerate them
+after any change to what they show.
 
 ## Project Structure
 
@@ -239,7 +230,7 @@ reflex/
 
 - **Python version:** 3.10+ (use modern syntax: `list[X]` over `List[X]`, `X | Y` over `Union[X, Y]`)
 - **Naming:** snake_case for functions, methods, and variables. PascalCase for classes.
-  - **Exception:** Properties that mirror embedded C firmware variable names (from the reflex-fw project) must keep their original naming (e.g., `syncRatioNum`, `maxSpeed`, `servoMode`, `scaledPosition`). This ensures naming parity between the Python UI and the STM32 firmware for easier cross-referencing.
+  - **Exception:** Properties that mirror embedded C firmware variable names (from the firmware in `../fw`) must keep their original naming (e.g., `syncRatioNum`, `maxSpeed`, `servoMode`, `scaledPosition`).
   - For properties/variables that are local to the Python project and do not correspond to firmware names, prefer snake_case.
 - **Imports:** Group in order: stdlib, third-party, local. Use absolute imports (`from reflex.utils.communication import ...`)
 - **Type hints:** Use on function signatures. For Kivy properties, the property type is the annotation.
@@ -256,7 +247,7 @@ reflex/
 
 ### Exception Handling
 
-- Catch specific exceptions, not bare `Exception` unless truly unknown
+- Catch specific exceptions, not bare `Exception` unless the type is unknown
 - Never use empty `except: pass` blocks
 - Use `str(e)` instead of `e.__str__()`
 - For unexpected errors, use `log.exception("message")` to preserve the full traceback
@@ -301,30 +292,24 @@ Every UI component follows this structure:
 - `SavingDispatcher` YAML files store per-component settings (formats, scale configs, etc.)
 - Settings path: `~/.config/reflex/`, overridable with `REFLEX_CONFIG_DIR`
   (`reflex/utils/paths.py`). The Pi deployment sets it to `/var/lib/reflex-config`
-  so the commissioned machine config isn't stranded in root's home — see
-  `deploy/start.sh`.
+  so the commissioned machine config isn't stranded in root's home (see
+  `deploy/start.sh`).
 
 ## Git and Releases
 
 - **Branch strategy:** `main` for releases, `dev` for pre-releases, feature branches
-  (or `integration`) for work. See "Branching and Hardware Verification" at the
-  top — `dev-staging` is gated on the maintainer's hardware verification and agents do not
-  commit to it except for the clerical exception.
+  (or `integration`) for work. See the branching rules at the top.
 - **Commit messages:** Follow conventional commits (`fix:`, `feat:`, `chore:`, etc.).
   The release notes are generated from them, so the log is what describes a release.
-- **Versioning:** ONE version for the whole monorepo — the repo-root `VERSION`
+- **Versioning:** ONE version for the whole monorepo: the repo-root `VERSION`
   file, mirrored into `ui/pyproject.toml`'s `version` by the release workflow.
   Both halves carry the same version even when only one changed: `v1.4.0` names
-  a known-good FIRMWARE + UI PAIR, which is the point of the monorepo
-  (`decisions/repo-structure-monorepo.md`, at the repo root). Do not bump either by hand.
+  a known-good firmware + UI pair (`decisions/repo-structure-monorepo.md`, at the
+  repo root). Do not bump either by hand.
 
-- **CI/CD — CORRECTED 2026-08-22 for the monorepo. The split-era rule that
-  "on any given branch exactly one of the two exists" is no longer true, and
-  reasoning from it will mislead you:**
-  - `fw.yml` / `ui.yml` / `system.yml` — the test suites — run on **every**
-    branch, path-filtered by subtree. That is how `dev-staging` and `dev` were
-    verified green before the 2026-08-22 promotions, which the old model could
-    not have done.
+- **CI/CD:**
+  - `fw.yml` / `ui.yml` / `system.yml`, the test suites, run on **every**
+    branch, path-filtered by subtree.
   - `release.yml` runs **only when dispatched by hand**, and only from `main`
     or `dev`. It refuses a pre-release version on `main` and a final version on
     `dev`, refuses a tag that already exists, and refuses to publish a firmware
@@ -333,30 +318,18 @@ Every UI component follows this structure:
     description (what changed, upgrade notes, what is experimental), and the
     generated commit list goes beneath it.
 
-- **`[skip ci]` is still not for you.** It suppresses *every* workflow for that
-  push, and since the test suites now run on every branch, the marker's only
-  effect anywhere is to delete the test run. It no longer buys anything even on
-  `main`/`dev`, because a release is never triggered by a push — it is
-  dispatched. The single legitimate use is the release workflow's own version-bump
-  commit, which it writes itself.
+- **`[skip ci]` is not for you.** It suppresses *every* workflow for that push,
+  and the test suites run on every branch, so its only effect is to delete the
+  test run. A release is dispatched, never triggered by a push. The single
+  legitimate use is the release workflow's own version-bump commit, which it
+  writes itself.
 
-  As of 2026-08-11 seven commits on the `integration` line carried it, including
-  the whole backlash-calibration wizard; none of that work was ever seen by CI.
-
-- **DO NOT QUOTE THE MARKER IN A COMMIT MESSAGE — not even to explain it.**
+- **DO NOT QUOTE THE MARKER IN A COMMIT MESSAGE, not even to explain it.**
   GitHub scans the entire pushed commit message, body included, and any
   occurrence of `[skip ci]` / `[ci skip]` / `[no ci]` suppresses every workflow
   for that push. Discussing the marker in prose is indistinguishable from using
-  it. On 2026-08-22 the commit that RETIRED this habit quoted the marker in its
-  own body while explaining the trap, and so became the one commit in the
-  release-flow work that CI never ran — caught only because someone went
-  looking for a green tick that was never going to appear. Write it as "the CI
-  skip marker" in commit messages; quote it freely in files like this one,
-  which are never scanned.
-
-- **python-semantic-release was retired 2026-08-22.** Its config had accumulated
-  v7 keys that PSR 10 silently ignores, so options read like live settings while
-  doing nothing, and nobody could say from the file what a push would do.
+  it. Write it as "the CI skip marker" in commit messages; quote it freely in
+  files like this one, which are never scanned.
 
 ## Key Dependencies
 
@@ -372,18 +345,6 @@ Every UI component follows this structure:
 | keke | Performance tracing |
 | cachetools | Caching |
 
-## Testing
-
-- Framework: pytest
-- Run: `uv run pytest`
-- Test files go in `tests/` at project root, mirroring the `reflex/` structure
-- Priority areas for test coverage:
-  1. `utils/ctype_calc.py` - pure functions
-  2. `feeds.py` - data correctness
-  3. `utils/base_device.py` - C typedef parsing
-  4. `dispatchers/circle_pattern.py` - math
-  5. `dispatchers/saving_dispatcher.py` - serialization
-
 ## Common Patterns
 
 ### Accessing the running app from a component
@@ -393,7 +354,7 @@ def __init__(self, **kv):
     self.app: MainApp = MainApp.get_running_app()
     super().__init__(**kv)
 ```
-Note: The deferred import is required due to circular dependencies. This is a known issue.
+The deferred import avoids a circular dependency.
 
 ### Binding to fast data updates
 ```python

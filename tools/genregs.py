@@ -830,6 +830,26 @@ def emit_json(schemas):
     }, indent=2) + "\n"
 
 
+# The access column already says who writes a field, so a doc string that opens
+# by restating it loses that prefix in the rendered notes. The C header keeps
+# the full string.
+MD_ACCESS_PREFIX = {
+    "sw_write": "SW write: ",
+    "ro_firmware": "READ-ONLY (firmware-owned): ",
+    "bidirectional": "bidirectional: ",
+    "init_only": "init-only: ",
+}
+
+
+def md_note(i):
+    doc = i.get("doc", "")
+    prefix = MD_ACCESS_PREFIX.get(i.get("access", ""))
+    if prefix and doc.startswith(prefix):
+        doc = doc[len(prefix):]
+    # A bare pipe ends a Markdown table cell.
+    return doc.replace("|", "\\|")
+
+
 def emit_md(schemas):
     parent = schemas[0].meta["parent"]
     first = schemas[0].base
@@ -874,15 +894,16 @@ def emit_md(schemas):
                 arr = f"[{i['count']}]" if i["count"] > 1 else ""
                 flag = ""
                 if i.get("kind") == "command":
-                    flag = f"**command** — cleared on consume, poll `{i['ack']}` "
+                    flag = f"**command**, cleared on consume; poll `{i['ack']}`. "
                 elif i.get("kind") == "seq":
-                    flag = "**seq** — monotonic ack "
+                    flag = "**seq**, monotonic ack: "
                 elif i.get("kind") == "reserved":
-                    flag = "**reserved** "
+                    flag = "**reserved**: "
+                tail = ""
                 if i.get("audit") == "unverified":
-                    flag += "⚠ group assignment UNVERIFIED "
+                    tail = ". Group assignment unverified."
                 L.append(f"| {r} | {s.base + r} | `{i['type']}{arr}` | `{i['name']}` | "
-                         f"{i.get('access','')} | {flag}{i.get('doc','')} |")
+                         f"{i.get('access','')} | {flag}{md_note(i)}{tail} |")
             L.append("")
     return "\n".join(L)
 

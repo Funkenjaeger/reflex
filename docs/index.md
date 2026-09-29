@@ -2,6 +2,8 @@
 
 A **digital read-out and electronic leadscrew for manual lathes**: an STM32
 motion controller and a Kivy touchscreen, talking RS-485 Modbus RTU.
+Threading is the point: holding thread phase across passes is the hard problem,
+and most of this guide is about it.
 
 ![The home screen in ELS mode](screenshots/home_els_dark.png)
 
@@ -15,17 +17,6 @@ The UI owns operator workflow, configuration and display.
 
 ---
 
-## Threading is the point
-
-Reflex will power-feed and stop for plain turning, and all three stop modes do
-that perfectly well. But **threading is where it earns its keep** — holding
-thread phase across passes is the hard problem, and it is why almost everything
-below is written about threading.
-
-If you only ever feed to a shoulder, most of this guide is optional: read
-[The screen](guide/the-screen.md) and
-[Feeding to a shoulder](guide/feeding-to-a-shoulder.md) and you are done.
-
 ## The one idea to read first
 
 **Reflex will not start a pass it cannot verify.**
@@ -34,24 +25,19 @@ Before every pass the controller drives the leadscrew through its backlash and
 watches the Z scale to confirm the carriage actually moved. If it did not — an
 open half nut, a slipping coupling, a dead scale — the pass does not start.
 
-That check is the point of the machine, not an obstacle in front of it. Earlier
-designs had no way to know, so they proceeded and cut the next pass in the wrong
-place.
-
 ---
 
 ## What it does
 
-### Underneath everything: a plain ELS
+### A plain ELS underneath
 
-Spindle-synchronised feed is its own layer, independent of everything that
+Spindle-synchronized feed is its own layer, independent of everything that
 follows.
 Pick a pitch, enable sync, disengage the stop, and Reflex is a traditional
 electronic leadscrew — cut with the half nut and your own eyes. Collapse the
 advanced bar with **ADV** and the screen is a DRO with a leadscrew behind it.
 
-The electronic stop is what the rest of this guide is about. It is the point of
-the project, and it is not mandatory.
+Everything below adds the electronic stop, which is optional.
 
 ### Three stop modes
 
@@ -69,7 +55,7 @@ the advanced bar.
     One field: **Stop Z**. Feed or thread up to a shoulder and stop, hands off.
     Everything else is yours, exactly as on a manual lathe with a carriage stop.
 
-    The least to get wrong, and what the author runs.
+    The least to get wrong.
 
     [Feeding to a shoulder →](guide/feeding-to-a-shoulder.md) ·
     [the modes compared →](guide/operator-modes.md#stop-only)
@@ -100,21 +86,19 @@ the advanced bar.
 
 </div>
 
-!!! tip "Phase re-sync is not one of the modes — it is under all of them"
+!!! tip "Phase re-sync runs under all three modes"
     Stopping **decouples sync**: the firmware pauses it while the stop is
     active, so after every pass the leadscrew is no longer phase-locked to the
     spindle, whether or not you moved the carriage afterwards.
 
     So the controller re-derives thread phase from the **Z scale** after every
-    pass, in every mode. That is what lets you open the half nut. If anything it
-    matters most in **stop-only**, where the carriage comes back entirely by
-    hand.
+    pass, in every mode. That is what lets you open the half nut. It matters
+    most in **stop-only**, where the carriage comes back entirely by hand.
 
 ### Two advanced features
 
 Neither is needed for ordinary threading, and **neither has any meaning outside
-it** — both need a thread pitch, and the controller refuses them in feed mode
-rather than pretending. They exist for jobs the basic cycle cannot express.
+it** — both need a thread pitch, and the controller refuses them in feed mode.
 
 <div class="grid cards" markdown>
 
@@ -148,9 +132,8 @@ rather than pretending. They exist for jobs the basic cycle cannot express.
 
 ## What this version does not do yet
 
-Reflex is under active development and the list below is a plan, not a promise
-of dates. The [version table in the README][versions] is the living record —
-rows move from planned to released as tags are cut.
+The list below is a plan without dates. The [release notes][versions] are
+the current record.
 
 | Not yet | Coming in | What you do instead today |
 |---|---|---|
@@ -158,7 +141,7 @@ rows move from planned to released as tags are cut.
 | **Auto-advance / virtual compound** — next depth of cut by advancing thread phase from X depth | 1.3.0 | Feed in with the compound slide between passes, as on any manual lathe. |
 | **Multi-start threading** | 2.0.0 | Nothing safe. The phase offset is **not** a substitute — see [Widening a groove](guide/widening-a-groove.md#what-it-is-not-for). |
 
-[versions]: https://github.com/Funkenjaeger/reflex#-versions
+[versions]: https://github.com/Funkenjaeger/reflex/tree/dev/release-notes
 
 ---
 
@@ -177,19 +160,3 @@ rows move from planned to released as tags are cut.
 | seeing UNCOMMISSIONED | [The UNCOMMISSIONED strip](guide/uncommissioned.md) |
 | after the meaning of one field | [Reference](reference/index.md) — the in-app help index |
 
----
-
-## About the screenshots
-
-Every image in this guide is **generated**, headlessly, at the machine's real
-1024×600, by the real widget tree — not photographed and not mocked up. Every
-sentence on screen comes out of the same code that draws it on the lathe.
-
-The catalogue of messages is generated too: it is read from the app's own
-message tables, so a reworded refusal fails the docs build rather than quietly
-leaving this guide wrong.
-
-!!! note "They do not regenerate themselves"
-    Nothing in CI rebuilds the images. Run
-    `scripts/capture_readme_screenshots.py` and the harnesses under `previews/`
-    after a change that alters the home screen, and commit what they write.
