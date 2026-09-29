@@ -124,7 +124,7 @@ def test_the_units_are_on_the_labels():
     assert "Ratio denominator (counts)" in kv
 
 
-# ── the choice sticks (Evan, 2026-09-01) ────────────────────────────────────
+# ── the choice sticks (2026-09-01) ──────────────────────────────────────────
 #
 # It was per-visit at first and reverted every time the screen was left.
 # "If a user prefers ratio, honor that and stick to it." A preference that does

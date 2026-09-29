@@ -3,8 +3,8 @@
 Board's protocol check is deliberately non-fatal (the DRO and the Update
 screen keep working, which is how the operator recovers). Before 2026-09-17
 nothing acted on it except calibration and resync, so a feed could be engaged
-with this UI's register map disagreeing with the board's (Open Loops
-6aaca75b). MainApp.on_servo_enable_pressed is the one entry both Sync Enable
+with this UI's register map disagreeing with the board's.
+MainApp.on_servo_enable_pressed is the one entry both Sync Enable
 buttons (elsbar.kv, servobar.kv) call, in every mode.
 """
 from types import SimpleNamespace

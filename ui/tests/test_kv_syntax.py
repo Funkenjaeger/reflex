@@ -200,7 +200,7 @@ def test_advbar_notice_strips_are_measured_in_gutters_not_in_literals():
     so a take-up warning painted 30 px of translucent red over a 25 px band
     and spilled the remainder down over the top of the controls -- measured on
     the flattened render as red reaching image row 373 against a gutter that
-    ends at 369. Evan: it "ought to stay bounded to the gutter".
+    ends at 369. It "ought to stay bounded to the gutter".
 
     THE FIX IS THE DERIVATION, NOT THE NUMBER. Setting the literal to dp(26)
     would have looked identical today and drifted again the next time the

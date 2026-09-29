@@ -95,7 +95,7 @@ def test_the_ui_half_is_installed_from_exactly_one_place():
     change did not add a second path to the git commands that skips it -- and
     that is the shape this whole feature was pulled for once already.
 
-    The undo of a failed UI half (2026-09-17, Open Loops 6aaca75b) needs the
+    The undo of a failed UI half (2026-09-17) needs the
     same two commands to put the PREVIOUS checkout back. It is admitted as the
     one other site on two conditions checked here: it is its own named method,
     and nothing in it names the release -- it may only use the previous_*

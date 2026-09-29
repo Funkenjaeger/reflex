@@ -52,7 +52,7 @@ def test_shipped_table_is_the_decided_envelope():
     """The 2026-09-18 re-derivation, verbatim. A change here is a change to
     where this machine's stop lands, and should cost a deliberate edit.
 
-    Re-keyed 2026-09-19 (Evan) from the trigger-snapshot rate (300, 596, 1187,
+    Re-keyed 2026-09-19 from the trigger-snapshot rate (300, 596, 1187,
     1640, 1692, 2500, 2507, 3567) to the STREAM rate of the same same-speed
     sets, because the live input is now measured that way; the overshoot
     column is unchanged."""

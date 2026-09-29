@@ -6,7 +6,7 @@
 #   ui/reflex/utils/servo_map.py    decoder + the DEFINITION reflex-ui parses
 #   docs/reference/register-map.md  the documented map
 #
-# TRANSCRIBED, NOT REDESIGNED (2026-09-18, Open Loops 6a9f3106). Field list,
+# TRANSCRIBED, NOT REDESIGNED (2026-09-18). Field list,
 # order, types and padding are exactly the hand-written struct this replaced in
 # fw/Core/Inc/Ramps.h, and the `doc:` strings are its per-field comments
 # verbatim. The cutover was required to leave the firmware image byte-identical;

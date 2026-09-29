@@ -120,7 +120,7 @@ class ElsDispatcher(SavingDispatcher):
     # persisted configuration they read.
 
     # ── Stop-overshoot correction (protocolVersion 11) ────────────────
-    # OPT-IN, DEFAULT OFF (Evan, 2026-09-18). When on, the UI writes
+    # OPT-IN, DEFAULT OFF (2026-09-18). When on, the UI writes
     # elsStop.stopOffset live from the approach Z rate so the firmware fires
     # the stop early by the measured coast; stopPosition is never changed. The
     # table is this machine's and lives in reflex/fsms/els_overshoot.py, bound

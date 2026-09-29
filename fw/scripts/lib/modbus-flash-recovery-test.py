@@ -2,7 +2,7 @@
 """modbus-flash-recovery-test.py -- the flasher's resync/resume and its
 return to the old application, driven end to end against a fake board.
 
-WHY (Open Loops 6aae7131, 6aae7135). 2026-09-19 07:12 on the lathe: a
+WHY: 2026-09-19 07:12 on the lathe: a
 45172-byte, 226-chunk transfer lost the WRITE at 0x08043840 four times
 running ("blSeq never moved from 73") while every status read between the
 attempts was answered, and modbus-flash.py exited 1 with the board PARKED IN

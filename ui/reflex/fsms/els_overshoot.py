@@ -22,13 +22,13 @@ els-stop-overshoot-compensation.md, 2026-09-18). Nothing here ever scales the
 prediction below 100%, and test_els_overshoot pins offset > predicted at every
 table point.
 
-SIZING (Evan, 2026-09-18): the per-rate ENVELOPE (worst case seen at each rate)
+SIZING (2026-09-18): the per-rate ENVELOPE (worst case seen at each rate)
 plus a margin of 1 count, rounded UP. Between table points the prediction is a
 straight line; ABOVE the top point it is HELD at the top value and the caller is
 told (`above_range`), because extrapolating a coast curve past the fastest pass
 anyone has measured is a guess about metal.
 
-STEADINESS (Evan, 2026-09-19). The first live version sized every tick from the
+STEADINESS (2026-09-19). The first live version sized every tick from the
 Z scale's single-tick `speed` register. On the bench (three air passes, .040
 in/rev at ~342 rpm) every stop landed 1-2 counts short -- but it wrote stopOffset
 15-21 times per pass, dithering 9 -> 10 -> 11 -> 10 -> 9 every ~270 ms, because
@@ -91,10 +91,9 @@ from typing import Callable, Deque, Optional, Sequence, Tuple
 # still queued, and the firmware has none queued at the trigger
 # (stopTriggerStepsToGo was 0 on every recorded stop), so nothing it sends
 # after the stop fires exists for them to shape. Measuring the overshoot in
-# all three gearbox positions is Open Loops 6ab7d08e, which gates 6a92353d
+# all three gearbox positions gates the elspi hardware-verification checklist
 # item 8 (2026-09-26). Only if the gearing turns out to matter does the table
-# also need the engaged position at runtime: sensorless gearing detection,
-# Open Loops 6ab7c598.
+# also need the engaged position at runtime: sensorless gearing detection.
 OVERSHOOT_TABLE: Tuple[Tuple[int, int], ...] = (
     (0, 0),
     (280, 1),       # snapshot 300
@@ -107,7 +106,7 @@ OVERSHOOT_TABLE: Tuple[Tuple[int, int], ...] = (
     (3529, 43),     # snapshot 3567
 )
 
-#: Counts added on top of the rounded-up envelope. Evan's sizing, 2026-09-18.
+#: Counts added on top of the rounded-up envelope.
 DEFAULT_MARGIN_COUNTS = 1
 
 #: Mirror of the firmware's ELS_STOP_OFFSET_MAX (fw/Core/Inc/Ramps.h). The

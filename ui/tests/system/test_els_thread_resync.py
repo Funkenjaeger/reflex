@@ -51,7 +51,7 @@ SELF-CHECKS THAT KEEP A GREEN RUN HONEST
     the stop trigger (sync gated ⇒ the invariant no longer holds).
 
 EMULATOR GREEN IS NOT A HARDWARE RESULT: no servo dynamics beyond the model,
-no Modbus timing stress, no metal. The elspi verification pass is Evan's.
+no Modbus timing stress, no metal. The elspi verification pass is the operator's.
 """
 import os
 from pathlib import Path

@@ -6,8 +6,8 @@ by hand:
 
 - **Diag schema ids** — ``fw/Core/Inc/Ramps.h`` ``ELS_DIAG_SCHEMA_*`` versus
   ``ui/reflex/utils/devices.py``'s constants and ``els_diag.KNOWN_SCHEMAS``.
-  fw/DIAG.md step 5 admitted "nothing cross-checks these two registries …
-  this step is the check." A probe registered on one side and forgotten on
+  Nothing else cross-checks these two registries; this test is the check. A
+  probe registered on one side and forgotten on
   the other passes CI green and fails silently at the lathe (the recorder
   goes dormant against an id it does not recognise).
 - **Machine-mode wire values** — ``fw/Core/Inc/els_machine_mode.h``

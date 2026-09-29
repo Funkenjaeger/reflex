@@ -8,8 +8,8 @@ settings for this lathe, the screen shows defaults, and nothing is saved. The
 asserts are on keywords, not sentences, so the drafting stays free.
 
 AND WHY ITS LENGTH IS UNDER TEST TOO. The first version said all of that and
-more in three paragraphs, and on the lathe's 1024x600 it overflowed (Evan,
-2026-09-26: "too many words there"). The word budgets below are a cheap guard
+more in three paragraphs, and on the lathe's 1024x600 it overflowed
+(2026-09-26: "too many words there"). The word budgets below are a cheap guard
 against it growing back; ``previews/preview_uncommissioned_options.py`` is the
 real check, rendering the dialog at 1024x600 in the real fonts.
 
@@ -117,7 +117,7 @@ class TestTheStatement:
         assert "nothing is saved" in text or "not saved" in text
 
     def test_the_statement_is_two_short_lines(self):
-        """The overflow Evan found (2026-09-26) was three paragraphs of this."""
+        """The 2026-09-26 overflow was three paragraphs of this."""
         assert words(details.HEADLINE) <= 10
         assert words(details.LINE) <= 12
 
@@ -144,14 +144,14 @@ class TestTheStatement:
 
 class TestTheOptions:
     def test_new_machine_leads_and_is_the_only_primary(self):
-        """Evan, 2026-09-26: lead with the new machine. 'a user who's not new
+        """Lead with the new machine: 'a user who's not new
         to it won't be confused.'"""
         options = details.options_for(can_dismiss=True, gist_available=True)
         assert options[0].key == details.NEW_MACHINE
         assert [o.key for o in options if o.primary] == [details.NEW_MACHINE]
 
     def test_both_restores_are_offered_as_buttons(self):
-        """Evan, 2026-09-26: offer USB and gist 'as direct immediately
+        """Offer USB and gist 'as direct immediately
         actionable options', not only SSH."""
         assert keys(details.options_for(can_dismiss=True, gist_available=True)) == [
             details.NEW_MACHINE, details.RESTORE_USB, details.RESTORE_GIST,

@@ -76,7 +76,7 @@
  * and then backed out. The reasoning and the measurements are at the tracker
  * itself; the short version is that any tolerance above zero contradicts the
  * >=200-ticks-since-the-last-pulse invariant els_takeup_quiescence_test pins,
- * and that is Evan's call to make rather than a refactor. */
+ * and that is the maintainer's call to make rather than a refactor. */
 
 /* Backstop for a backlash takeup that never reaches its commanded target. ISR
  * runs at ~100 kHz (TIM9, 10 us/tick), so this is ~5 s — far longer than any
@@ -169,7 +169,7 @@
  *    so anything tuned by watching wall-clock there is 10x wrong here
  *    (els_slip.h has the full unit-trap list).
  *
- * "SMALLER IS SAFER" WAS WRONG, AND IS WITHDRAWN (2026-08-30, Evan's call).
+ * "SMALLER IS SAFER" WAS WRONG, AND IS WITHDRAWN (2026-08-30).
  * This paragraph used to say tune it DOWN, never up. That reasoning assumed the
  * margin against a hand was the binding constraint. It is not:
  *
@@ -885,7 +885,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
 
   data->elsStopPreviousEnable = shared->elsStop.enable;
 
-  /* CUSTODY OF THE LEADSCREW. Evan, 2026-08-31: "the instant the drive is
+  /* CUSTODY OF THE LEADSCREW (2026-08-31): "the instant the drive is
    * de-energized we've lost custody of the leadscrew position, period. That's
    * when the ref is invalidated."
    *
@@ -909,7 +909,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
    * phaseOffsetSteps dies with it, following the enable-rising-edge precedent
    * above — an offset is meaningless without the datum it offsets.
    *
-   * Why this fires at DISABLE rather than at the next re-enable, also Evan:
+   * Why this fires at DISABLE rather than at the next re-enable:
    * "it's a better cue for the operator to see the status indicate that
    * there's no ref as soon as sync is disabled, rather than continuing to
    * report a ref as latched (which technically it was, but it was unusable
@@ -989,7 +989,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
      * was built to catch. Tolerance 1 preserved the physical property (0.83
      * counts owed) but still broke the timing invariant.
      *
-     * So the choice is Evan's, not a refactor: keeping the invariant means
+     * So the choice is the maintainer's, not a refactor: keeping the invariant means
      * living with the dither blind spot; taking the window means deciding that
      * "N counts of net drift" is the definition of stopped and rewriting that
      * assertion deliberately. Do not quietly widen this while the assertion

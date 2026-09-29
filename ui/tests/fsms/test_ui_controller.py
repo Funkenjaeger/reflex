@@ -1241,7 +1241,7 @@ def test_a_confirm_callback_on_an_already_running_feed_still_touches_nothing():
 # (the carriage physically reaching the shoulder) and fault.
 #
 # So the machine sat ENGAGED with the LED green on "Armed" and the Disengage
-# button greyed out by in_cycle. Evan: "presumably I'd have to move the carriage
+# button greyed out by in_cycle. From the bench: "presumably I'd have to move the carriage
 # by hand (including opening the half nut) past the stop point to clear that
 # before I could disable the stop. The servo is de-energized so leadscrew
 # custody is already lost at that point."
@@ -1298,7 +1298,7 @@ def test_sync_off_mid_cut_disengages_the_stop(ctrl):
 
 def test_sync_off_mid_cut_frees_the_disengage_button(ctrl):
     """THE OPERATOR-VISIBLE HALF. in_cycle is what greys the button, and it
-    follows the UI fsm -- so disengaging the domain fsm alone would leave Evan
+    follows the UI fsm -- so disengaging the domain fsm alone would leave the operator
     exactly as stuck as before, just with a different LED."""
     c = _cutting_rig(ctrl)
 
@@ -1441,7 +1441,7 @@ def test_sync_off_mid_cut_lands_the_bar_back_in_waiting_to_cut(ctrl):
 
 def test_re_engaging_after_a_sync_off_abort_offers_cut_again(ctrl):
     """THE OPERATOR-VISIBLE PROPERTY: the button on the bar, after the thing
-    Evan did next (re-engage), four times over."""
+    the operator did next (re-engage), four times over."""
     c = _cutting_rig(ctrl)
 
     c.request_feed_enable()
@@ -1455,7 +1455,7 @@ def test_re_engaging_after_a_sync_off_abort_offers_cut_again(ctrl):
     assert c.action_button_text == "Cut", (
         c._ui_fsm.state, c.action_button_text, c.instruction_text)
     # Sync is off after the abort, so the button is there but not yet
-    # allowed -- Evan, lathe, 2026-09-12: lighting Cut on re-engage,
+    # allowed -- lathe, 2026-09-12: lighting Cut on re-engage,
     # before sync, "doesn't make sense". It says what to do instead.
     assert c.action_allowed is False, c.instruction_text
     assert "sync" in c.instruction_text.lower(), c.instruction_text
@@ -1473,7 +1473,7 @@ def test_re_engaging_after_a_sync_off_abort_offers_cut_again(ctrl):
 # and the next Sync Enable press moves the carriage with no Cut between the
 # two -- the hazard b56d2ac's docstring describes. The action button never had
 # a feed gate; the abort fix made it visible: after re-engaging, Cut lit up
-# before sync was back on. Evan, at the lathe: "that doesn't make sense, and
+# before sync was back on. At the lathe: "that doesn't make sense, and
 # it doesn't work nicely." The policy re-runs every board tick
 # (_poll_apply_policy), so flipping servoMode is enough to refresh it.
 

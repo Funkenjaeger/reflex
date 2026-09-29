@@ -420,7 +420,7 @@ class AxisDispatcher(SavingDispatcher):
 
         AND BY dia_factor, for the same reason position_to_encoder does. On a
         diameter axis the operator typing 20.000 means "call this diameter 20",
-        not "call this radius 20" (Evan, 2026-09-01) -- so the typed number is
+        not "call this radius 20" (2026-09-01) -- so the typed number is
         halved before it becomes an offset, and offsets stay in radius units
         like every other consumer of them. Zeroing is unaffected either way,
         since 0/2 is 0.

@@ -36,7 +36,7 @@
 #                                   program the legacy layout even though the
 #                                   board is carrying the bootloader. DESTROYS
 #                                   IT. Clear its write protection first
-#                                   (bootloader/README.md step 9b, 'off') or
+#                                   (docs/setup/bootloader-bring-up.md step 9b, 'off') or
 #                                   openocd fails on sector 0 regardless.
 #
 # LOCAL IS THE DEFAULT, and that is the whole point. Run this on the machine

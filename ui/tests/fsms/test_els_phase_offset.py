@@ -120,7 +120,7 @@ def test_apply_converts_distance_to_leadscrew_steps():
 
 
 def test_apply_SETS_the_offset_rather_than_adding_to_it():
-    """Evan, 2026-08-23: the entered number IS the offset, measured from the
+    """The entered number IS the offset, measured from the
     latched reference. It is not another helping added to what is there.
 
     The old behaviour accumulated, which came from the multi-start framing

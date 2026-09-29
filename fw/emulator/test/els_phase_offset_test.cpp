@@ -3,9 +3,9 @@
  *
  * Pins the behavior of the offsetSteps parameter on
  * elsComputePhaseCorrection() (Core/Inc/els_phase.h), added to support
- * TickTick 6a77c5988f0854e3485e4369 (auto-advance from X depth) and
- * 6a77c5b28f08c5e690294e7e (manual fixed-distance advance). See the PHASE
- * OFFSET note in els_phase.h and the phase-offset section of todo.md.
+ * auto-advance from X depth, and manual fixed-distance
+ * advance. See the PHASE OFFSET note in els_phase.h and the phase-offset
+ * section of todo.md.
  *
  * Style matches els_phase_test.cpp: pure host build, no HAL/struct deps,
  * fixed 1:1 geometry (threadPitchSteps == zCountsPerPitch == PITCH) chosen so
@@ -53,7 +53,7 @@ int main() {
   /* T1: offset=0 is an EXACT regression — existing behaviour (no offset
    * field written) must be bit-for-bit unchanged. This is the test that
    * MUST stay green under every mutation below; it is the safety net for
-   * "default off" (6a77c598/6a77c5b2 both require this). */
+   * "default off" (both require this). */
   {
     elsCorrResult_t r = correctionForOffset(0);
     CHECK(r.stepsToAdd == 0, "T1: offsetSteps=0 is a true no-op");
@@ -62,12 +62,12 @@ int main() {
   /* T2: a small offset within the fold's linear region passes through
    * unchanged in magnitude (mirrors the empirical table in the design doc). */
   {
-    elsCorrResult_t r = correctionForOffset(332); /* ~0.33*pitch, the 6a77c598 worst case */
-    CHECK(r.stepsToAdd == 332, "T2: sub-half-pitch offset (0.33*pitch, 6a77c598 worst case) passes through unfolded");
+    elsCorrResult_t r = correctionForOffset(332); /* ~0.33*pitch, the worst case */
+    CHECK(r.stepsToAdd == 332, "T2: sub-half-pitch offset (0.33*pitch, worst case) passes through unfolded");
   }
 
   /* T3: an offset of EXACTLY one pitch folds to a no-op. This is the
-   * open question in 6a77c5b2 ("does a full pitch of offset land in the
+   * open question ("does a full pitch of offset land in the
    * same place") answered by the math, not by taste: YES, by construction
    * of the existing fmodf(...,pitch) fold that already existed before this
    * feature and is untouched by it. */
@@ -95,7 +95,7 @@ int main() {
    * unload the lash the takeup just took up") reinterprets it as
    * (pitch - |offset|) in the CUTTING direction. Verified against the real
    * production fold+bias code, not asserted from reading. This matters for
-   * 6a77c5b2's "cumulative, nudge and un-nudge" workflow: decrementing the
+   * the "cumulative, nudge and un-nudge" workflow: decrementing the
    * running offset does not step the tool back by a little, it jogs forward
    * by almost a whole pitch. Document this for the UI design; do not let the
    * UI imply symmetric +/- nudging without warning. */

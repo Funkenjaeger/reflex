@@ -69,7 +69,7 @@ class FakeIdent:
 
 class FakeBootloader:
     # The link counters and the state flash() reads since the resync/resume
-    # and return-to-app work (2026-09-19, Open Loops 6aae7131/6aae7135):
+    # and return-to-app work (2026-09-19):
     # last_head (the bootloader as the run found it), seq (blSeq after the
     # ERASE, stream()'s base), resyncs/resumed (recorded in the manifest).
     def __init__(self, bus, dry_run):
@@ -146,7 +146,7 @@ class ModbusFlashRecords(unittest.TestCase):
         self.assertEqual(rec["protocol"], 10)
         self.assertEqual(rec["md5"], hashlib.md5(self.image.read_bytes()).hexdigest())
         self.assertEqual(list(rec)[:6], ["utc", "variant", "probe", "rev", "dirty", "md5"])
-        # The link record (Open Loops 6aae7135): new keys, said even when zero.
+        # The link record: new keys, said even when zero.
         self.assertEqual({k: rec[k] for k in rec if k.startswith("link_")},
                          {"link_read_retries": 0, "link_commands_resent": 0,
                           "link_replies_recovered": 0, "link_resyncs": 0,

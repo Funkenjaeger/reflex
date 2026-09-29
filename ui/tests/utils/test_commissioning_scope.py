@@ -49,7 +49,7 @@ def test_sync_ratio_is_commissioning_on_a_linear_axis(key, data):
 def test_spindleness_comes_from_the_data_not_the_filename():
     """The rule that stops a differently-wired machine being mis-tiered.
 
-    `Axis-0` is the spindle on Evan's lathe and need not be on anyone else's;
+    `Axis-0` is the spindle on the reference lathe and need not be on anyone else's;
     the classification must follow the flag in the file, both directions.
     """
     # A file named like the usual spindle, but not flagged: calibration.

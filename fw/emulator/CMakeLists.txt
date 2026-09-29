@@ -261,7 +261,7 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
 target_link_libraries(els_sync_debt_test m pthread)
 add_test(NAME els_sync_debt_test COMMAND els_sync_debt_test)
 
-# ISR-level backlash-CALIBRATION motion attribution (task 6a7c455e). Drives
+# ISR-level backlash-CALIBRATION motion attribution. Drives
 # data->elsCal through the real SynchroRefreshTimerIsr(), same stub strategy
 # as els_takeup_confirm_test. REQUIRES the calibration slip-attribution
 # infrastructure (elsCalCtx_t.slip, els_backlash_cal.h's elsSlipConfirmed()
@@ -478,7 +478,7 @@ add_test(NAME els_takeup_quiescence_test COMMAND els_takeup_quiescence_test)
 # branch is gated on carriageStopped. T2 is a CHARACTERISATION of a limitation
 # deliberately left in place -- replacing exact equality with a net-displacement
 # window contradicts the >=200-ticks-since-last-pulse invariant
-# els_takeup_quiescence_test:419 pins, so it is Evan's decision, and T2 must go
+# els_takeup_quiescence_test:419 pins, so it is the maintainer's decision, and T2 must go
 # red the day it is taken. See the file header for the measurements.
 add_executable(els_takeup_quiescence_window_test
     ${CMAKE_SOURCE_DIR}/test/els_takeup_quiescence_window_test.cpp

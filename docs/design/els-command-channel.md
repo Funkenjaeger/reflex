@@ -1,28 +1,24 @@
-# ELS command channel — rung 4 design
+# ELS command channel
 
-**Status: DESIGN ONLY, 2026-08-17.** No code. Written while rungs 0–2 await
-hardware verification and the rung-2 census has zero data points — see
-"What the census must confirm first" for exactly which of this document's
-assumptions that data can invalidate. Redo is cheap; that is why this is
-paper.
+**Status: design only, no code.** "What the census must confirm first" lists
+the assumptions that the mode census (`ui/reflex/fsms/els_mode_watch.py`) can
+invalidate.
 
-Context: the 2026-08-16 independent architecture review
-(`els-architecture-independent-review-2026-08-16.md`), §5–§6. Rung 4 is
-where transition legality and safety-critical teardown ordering move into
-the firmware, and register edges stop carrying command meaning.
+This design moves transition legality and safety-critical teardown ordering
+into the firmware, and register edges stop carrying command meaning.
 
-## The pattern (already proven in-repo)
+## The pattern
 
 The calibration subsystem is the template: `calCommand` (host writes,
 firmware consumes and clears), `calSeq` (firmware-owned monotonic ack,
-bumped last), `calResult` (firmware-owned outcome, including refusals as
-first-class results). The command channel is that pattern, generalized to
-the registers that move the carriage.
+bumped last), `calResult` (firmware-owned outcome, refusals included). The
+command channel is that pattern, generalized to the registers that move the
+carriage.
 
-## Register additions (protocolVersion 2 → 3)
+## Register additions
 
 Appended to `elsStop_t` ahead of the reserved diag block, all previously
-unused:
+unused, in one `protocolVersion` bump:
 
 | Register | Type | Writer | Meaning |
 |---|---|---|---|
@@ -37,21 +33,20 @@ the `on_enter_cutting` per-write-ACK accumulation: the command's ack is the
 atomicity, and a half-landed parameter set is refused by the firmware
 (`ERR_PARAMS`) instead of guarded by the UI.
 
-Machine mode (`ELS_MMODE_*`) is promoted from the schema-4 scratchpad to a
-real read-only register in the same protocol bump — one paired release
-carries both.
+Machine mode (`ELS_MMODE_*`) is the read-only `machineMode` register,
+published in every build (`registers/els_stop.yaml`).
 
-## Command set, v1: `DISENGAGE` only
+## `DISENGAGE`, the only v1 command
 
-One command ships first, the historically dangerous flow. Semantics,
-executed entirely inside the firmware, atomically with respect to the link:
+One command ships first. Semantics, executed entirely inside the firmware,
+atomically with respect to the link:
 
 1. clear `syncEnable` on every scale (motion source off first — the
    three-site UI ordering discipline becomes this one line);
 2. `servoMode = 0`;
 3. clear `enable` and `active` with the resume/takeup edge machinery
-   suppressed (the F2 hatch semantics — the job's pending motion dies with
-   the job: stepsToGo, ramp speed, sync backlog);
+   suppressed (the job's pending motion dies with the job: stepsToGo, ramp
+   speed, sync backlog);
 4. publish `commandResult = OK`, bump `commandSeq`; mode register reads
    `OFF`.
 
@@ -63,8 +58,7 @@ in which "make the machine inert" can be refused.
 UI side: the disengage flow writes one register and edge-detects
 `commandSeq`; `on_enter_disabled`'s ordered teardown and its pinning tests
 retire for that path. The kv-level `is_feeding` gate stays as affordance
-(the button's behavior is a UX question, not a safety one, once the
-firmware owns teardown).
+(once the firmware owns teardown, the button's behavior is a UX question).
 
 ## Later commands, one per paired release
 
@@ -74,13 +68,13 @@ params or Z past stop — the arm_idle_stop refusals become result codes),
 `FEED_ON`/`FEED_OFF`, `JOG_ON`/`JOG_OFF`. Each migration deletes the
 corresponding boolean-poke path in the same release. `active` stops being
 UI-writable once `ENGAGE`/`CUT` land (its meanings by then live in the
-mode register), which is where the servoEnableTask re-assert is removed —
-rung 5 — and every register becomes single-writer.
+mode register), which is where the servoEnableTask re-assert is removed
+and every register becomes single-writer.
 
 ## What the census must confirm first
 
-- The mode table's priority order matches reality (any census pair that
-  surprises us reorders the table before it becomes a legality input).
+- The mode table's priority order matches reality (a census pair that
+  contradicts it reorders the table before it becomes a legality input).
 - Whether `HELD` must split into armed-idle vs stop-fired **before** `CUT`
   ships (CUT's legality gate reads HELD; if the two halves need different
   answers, the split is a prerequisite, not a follow-up).
@@ -92,7 +86,7 @@ rung 5 — and every register becomes single-writer.
 
 No continuous reconciler (divergence alarms, never auto-correction). No
 UI-side legality authority (affordance gating derives from the mirrored
-mode). No batching/queueing of commands — one in flight, seq-acked, ever.
+mode). No batching/queuing of commands — one in flight, seq-acked, ever.
 
 ## Verification plan
 
