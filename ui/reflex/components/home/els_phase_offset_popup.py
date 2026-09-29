@@ -438,7 +438,7 @@ class PhaseOffsetPopup(Popup):
 
         The fraction is NAMED through the same helper the advanced-bar status
         strip uses -- always three decimals, "0.333", never "1/3". (The helper
-        did pick fractions where they were exact until 2026-08-29; Evan's call
+        did pick fractions where they were exact until 2026-08-29; the call
         was one consistent format, and this docstring described the old rule
         for a day after it was gone.) Sharing the helper is the point: two
         naming rules for one number on one screen is how the modal and the bar

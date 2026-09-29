@@ -19,7 +19,7 @@ targeted no longer exists in this shape:
 
 * d7de6de's check_mirrors() re-parsed fw/Core/Inc/Ramps.h as TEXT, because
   servo_t and input_t were still hand-maintained there. Since 2026-09-18
-  (Open Loops 6a9f3106, integration 11ebe41) servo_t and input_t are schemas
+  (integration 11ebe41) servo_t and input_t are schemas
   too -- registers/servo.yaml, registers/input.yaml -- so this port resolves a
   mirror against the sibling Schema object genregs already loaded, not against
   header text. There is no `meta.mirror_source` any more and no C-struct

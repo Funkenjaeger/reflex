@@ -2,7 +2,7 @@
 
 WHY. The gist sync's device flow shows a short code and the URL
 ``github.com/login/device``; on the shop floor the operator types that URL on
-a phone. A QR code of it makes that one scan (Evan, 2026-09-17: "typing a URL
+a phone. A QR code of it makes that one scan (2026-09-17: "typing a URL
 is a pain"). GitHub's device flow returns no ``verification_uri_complete``, so
 the QR can carry the URL but not the code -- the eight characters are still
 typed, and still shown large beside it.

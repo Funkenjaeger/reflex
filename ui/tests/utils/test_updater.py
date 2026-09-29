@@ -347,8 +347,8 @@ class FakeRunner:
         self.flash_fail_output = flash_fail_output
         # What `--identity` reports once the image flash has FAILED (a `fail`
         # marker matched it): None = what the board ran before, i.e. the
-        # flasher got back to the old application (2026-09-19, Open Loops
-        # 6aae7131); a string = that identity line verbatim; "unreadable" =
+        # flasher got back to the old application (2026-09-19);
+        # a string = that identity line verbatim; "unreadable" =
         # the identity read itself fails.
         self.board_after_failed_flash = board_after_failed_flash
         self.flash_failed = False
@@ -447,7 +447,7 @@ def _session(runner, tmp_path, **kw):
     kw.setdefault("checkout", tmp_path / "checkout")
     if "elspi_release_path" not in kw:
         # Every pre-existing session test predates the image-release gate
-        # (order 2026-09-14#6) and has no opinion about it, so give it a
+        # and has no opinion about it, so give it a
         # file that declares exactly MINIMUM_IMAGE_RELEASE -- allowed, by
         # the gate's own arithmetic (release < minimum refuses; equal does
         # not). Tests that DO want to exercise the gate pass their own
@@ -769,7 +769,7 @@ def test_a_failed_flash_does_not_install_the_ui_half(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# a FAILED flash is settled by a fresh identity read (Open Loops 6aae7131).
+# a FAILED flash is settled by a fresh identity read.
 # 2026-09-19 on the lathe: a transfer glitch made modbus-flash.py exit 1 with
 # the board left in the bootloader. The flasher now jumps back to the old
 # application and proves it; the updater re-reads the board rather than take
@@ -996,7 +996,7 @@ def test_list_releases_goes_through_the_same_filter(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# the image-release gate (order 2026-09-14#6) -- /etc/elspi-release and
+# the image-release gate -- /etc/elspi-release and
 # MINIMUM_IMAGE_RELEASE. See the module docstring for why absent/unparseable
 # is release 0 rather than an immediate refusal.
 # ---------------------------------------------------------------------------
@@ -1026,7 +1026,7 @@ def test_read_image_release_declared(tmp_path):
 
 
 def test_read_image_release_missing_file_is_undeclared_release_zero(tmp_path):
-    """Case (3)/(4) from the order: a MISSING file, never a crash."""
+    """Cases (3) and (4): a MISSING file, never a crash."""
     got = read_image_release(tmp_path / "does-not-exist")
     assert got == ImageRelease(release=0, declared=False)
 
@@ -1038,7 +1038,7 @@ def test_read_image_release_missing_file_is_undeclared_release_zero(tmp_path):
     "",
 ])
 def test_read_image_release_garbage_is_undeclared_never_a_crash(tmp_path, garbage):
-    """Case (5) from the order: a garbage file is treated as absent, and
+    """Case (5): a garbage file is treated as absent, and
     reading it must never raise."""
     f = tmp_path / "elspi-release"
     f.write_text(garbage)
@@ -1125,8 +1125,8 @@ def test_preflight_allows_a_missing_release_file_when_minimum_is_zero(tmp_path,
                                                                        monkeypatch):
     """This is what makes today's v2026.09.13 (no /etc/elspi-release at all)
     still updatable if MINIMUM_IMAGE_RELEASE were ever shipped as 0 -- the
-    fork the module docstring and CLARIFICATION describe. With the order's
-    own MINIMUM_IMAGE_RELEASE = 1 this same machine is REFUSED (proven by
+    fork the module docstring and CLARIFICATION describe. With the shipped
+    MINIMUM_IMAGE_RELEASE = 1 this same machine is REFUSED (proven by
     test_preflight_refuses_an_image_too_old_before_touching_anything above,
     where an explicit release=0 file stands in for "undeclared"); this test
     pins the minimum=0 branch of the arithmetic in isolation by patching the
@@ -1175,7 +1175,7 @@ def test_last_flashed_rev_is_none_without_a_manifest(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# The venv-writable preflight (Open Loops 6aac9465, 2026-09-17)
+# The venv-writable preflight (2026-09-17)
 # --------------------------------------------------------------------------
 # elspi shipped /opt/reflex-venv root-owned with the UI running as `default`,
 # and install_ui_half's `uv sync` comes AFTER the flash. These pin that an
@@ -1245,7 +1245,7 @@ def test_a_missing_venv_is_judged_by_where_uv_would_create_it(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# A UI half that fails AFTER a verified flash is undone (Open Loops 6aaca75b)
+# A UI half that fails AFTER a verified flash is undone
 # --------------------------------------------------------------------------
 # Until 2026-09-17 run() only re-raised here: new firmware under the old UI,
 # nothing reverted, and the Update screen then refused a retry ("ALREADY

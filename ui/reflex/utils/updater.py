@@ -59,17 +59,17 @@ whole sequence, gate included, is exercised in tests without a board, a
 network, or a git checkout. The defaults in :mod:`reflex.utils.updater` bind
 those to subprocess and urllib.
 
-THE IMAGE-RELEASE GATE (``check_image_release``, order 2026-09-14#6) is a
+THE IMAGE-RELEASE GATE (``check_image_release``) is a
 second, unrelated refusal that lives in this module for the same reason the
 protocol gate does: it decides whether the update should touch the board at
 all, and it runs at PREFLIGHT, before the protocol gate, before anything
 irreversible. ``reflex.utils.image_requirement.MINIMUM_IMAGE_RELEASE`` is
 this release's own declared floor; ``/etc/elspi-release`` is what the
-machine's OS image says about itself (order 2026-09-14#5).
+machine's OS image says about itself.
 
 MISSING OR UNPARSEABLE IS NOT THE SAME AS TOO OLD, and this is deliberate,
-not sloppy defaulting. ``/etc/elspi-release`` did not exist before order
-2026-09-14#5's image; today's shipped image, v2026.09.13, PREDATES it
+not sloppy defaulting. ``/etc/elspi-release`` did not exist before the
+image build that added it; today's shipped image, v2026.09.13, PREDATES it
 entirely. Refusing on a missing file would brick every card running today
 the moment this code shipped, on a machine whose operator has no terminal to
 recover it with. So an absent or unparseable file is read as release 0 (see
@@ -80,7 +80,7 @@ passes; it is bumped to 1 only once an image carrying ``/etc/elspi-release``
 is on the machine, and from then on an undeclared image is refused by the
 same arithmetic. A future session must NOT "fix" this into an unconditional
 refusal on missing-file, and must not bump the minimum before that image is
-deployed: either would refuse every card shipped before 2026-09-14#5's image,
+deployed: either would refuse every card shipped before that image,
 on a machine whose operator has no terminal to recover it with.
 """
 
@@ -118,7 +118,7 @@ GITHUB_RELEASES_URL = "https://api.github.com/repos/Funkenjaeger/reflex/releases
 # Fixing that by giving root the key would only make it work for a machine
 # somebody provisioned with a deploy key. A user of this lathe is not a
 # developer and will never have a GitHub SSH key at all, so an updater that
-# needs one is not an updater for them (Evan, 2026-09-07). The repo is public
+# needs one is not an updater for them (2026-09-07). The repo is public
 # and the firmware asset is already downloaded over plain HTTPS, so the git half
 # now matches: anonymous, credential-free, and independent of how the checkout
 # was cloned.
@@ -443,10 +443,10 @@ def parse_protocol_version(map_source: str) -> int:
 
 
 # --------------------------------------------------------------------------
-# The image-release gate (order 2026-09-14#6) -- see the module docstring
+# The image-release gate -- see the module docstring
 # --------------------------------------------------------------------------
 
-# The flat KEY=VALUE rendering of /etc/elspi-image.json (order 2026-09-14#5),
+# The flat KEY=VALUE rendering of /etc/elspi-image.json,
 # written at image build time. Injectable so tests never touch the real path,
 # and so this refuses to know anything about the machine it is not told.
 ELSPI_RELEASE_PATH = Path("/etc/elspi-release")
@@ -471,7 +471,7 @@ def parse_elspi_release(text: str) -> dict[str, str]:
     Tolerant on purpose: a blank line, a ``#`` comment, or a line with no
     ``=`` is skipped rather than raised on -- this file is read at update
     time on a machine nobody is going to SSH into to fix a stray line. The
-    keys agreed with order 2026-09-14#5: ``ELSPI_IMAGE_RELEASE``,
+    keys agreed with the image build: ``ELSPI_IMAGE_RELEASE``,
     ``ELSPI_IMAGE_BUILD``, ``ELSPI_IMAGE_DATE``, ``ELSPI_REFLEX_COMMIT``,
     ``ELSPI_PYTHON``, ``ELSPI_KIVY``, ``ELSPI_UV``. Only
     ``ELSPI_IMAGE_RELEASE`` is consumed by this module; the rest round-trip
@@ -583,8 +583,8 @@ def unwritable_venv_dirs(venv: Path, limit: int = 5) -> list[Path]:
     one -- a venv whose top is ours but whose site-packages subtree is root's
     passes a top-level check and fails halfway through the sync. That is the
     exact state elspi shipped in: /opt/reflex-venv built as root by
-    stage-elspi/08-venv, the UI running as ``default`` (found 2026-09-17, Open
-    Loops 6aac9465). A venv that does not exist yet is judged by its parent,
+    stage-elspi/08-venv, the UI running as ``default`` (found 2026-09-17).
+    A venv that does not exist yet is judged by its parent,
     which is where ``uv`` would create it.
     """
     venv = Path(venv)
@@ -1105,7 +1105,7 @@ class UpdateSession:
         """The flasher exited non-zero: say what state the controller is in,
         from a FRESH identity read. Always raises.
 
-        Since 2026-09-19 (Open Loops 6aae7131) modbus-flash.py does not leave
+        Since 2026-09-19 modbus-flash.py does not leave
         a board it found running an application parked in the bootloader when
         a transfer fails before APPLY: it jumps back, proves the previous rev
         is running, and exits 1 saying NOTHING CHANGED. That morning a
@@ -1239,7 +1239,7 @@ class UpdateSession:
         Until 2026-09-17 this path only re-raised, which left new firmware
         under the old UI with nothing reverted -- and the Update screen then
         refused a retry ("ALREADY mismatched"), so the touchscreen could
-        neither finish nor undo it (Open Loops 6aaca75b). Ordering, and why:
+        neither finish nor undo it. Ordering, and why:
 
           1. The CHECKOUT first, back to the branch/commit preflight recorded,
              and `uv sync` there, because install_ui_half may have got as far

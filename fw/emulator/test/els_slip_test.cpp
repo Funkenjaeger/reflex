@@ -222,7 +222,7 @@ int main() {
     printf("\n-- the accumulator survives a cumulative consumer --\n");
     {
         /* The take-up gate's own worst case fits in 32 bits. ELS auto-start
-         * (6a63f3e3) does not: it accumulates cumulatively with no window to
+         * does not: it accumulates cumulatively with no window to
          * bound it. A wrap would not fail loudly — it would produce a confident
          * confirmation with the wrong sign.
          *

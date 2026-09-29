@@ -160,7 +160,7 @@ def test_els_cycle_at_elspi_geometry(harness):
         leadscrew_steps=_ELSPI_LEADSCREW_STEPS,
     )
     h.set_feed(_THREAD_IN_20.ratio)
-    h.els.els_backlash_steps = 403   # real-machine value (Evan's measured compensation)
+    h.els.els_backlash_steps = 403   # real-machine value (measured compensation)
     h.pump()
 
     assert h.controller.is_threading is True

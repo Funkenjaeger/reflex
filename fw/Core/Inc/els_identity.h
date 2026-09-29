@@ -4,9 +4,9 @@
  * Everything in this header is a wire contract or a flash-geometry contract
  * between three parties that are built and flashed at different times: the
  * write-protected bootloader in sector 0, the application in the RUN slot, and
- * the host client (scripts/modbus-flash.py). It is the C rendering of
- * docs/decisions/els-modbus-register-map.md; that record's "Implemented"
- * section is written FROM this file, so change them together.
+ * the host client (scripts/modbus-flash.py). It is the C rendering of the
+ * register layout summarized in docs/decisions/els-modbus-register-map.md;
+ * keep them in sync.
  *
  * Both stages include this header and nothing else of each other's. The
  * bootloader never sees Ramps.h; the app never sees the bootloader's sources.
@@ -73,9 +73,8 @@ enum {
  * ORDERING: blSeq sits at a LOWER address than blResult, the outcome it
  * counts, per the calSeq invariant in Ramps.h (FC3 copies registers in
  * ascending address order, so a torn read comes out as (stale seq, new
- * payload), which edge detection harmlessly re-reads). The decision record's
- * draft table had result at +1 and seq at +2, the inverted order; it is
- * corrected here and in the record's Implemented section.
+ * payload), which edge detection harmlessly re-reads). This header is
+ * authoritative for the register order.
  * ---------------------------------------------------------------------- */
 #define ELS_BL_BASE       2304u
 #define ELS_BL_DATA_REGS  100u

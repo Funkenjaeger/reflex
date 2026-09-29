@@ -8,7 +8,7 @@ is worth, and a generated-or-hand-written bare literal is stable by
 construction for a scan in a way an expression or an alias is not.
 
 KEPT IN ITS OWN TINY MODULE rather than beside ``ELS_PROTOCOL_VERSION`` in
-``devices.py``, for two reasons: order 2026-09-14#6 is not permitted to touch
+``devices.py``, for two reasons: the image-release gate was scoped not to touch
 ``devices.py`` (bound to ``updater.py``, one new small module, the update
 dialog, and its own test file), and ``devices.py`` already pulls in
 ``els_stop_map`` (a generated file) and sits in the Kivy-adjacent import
@@ -21,8 +21,8 @@ read this file the same way.)
 Bump this by hand when a release starts depending on something only a newer
 elspi image provides (a newer kivy build, an apt package, a changed
 provisioning primitive) -- the UI-side counterpart to IMAGE_RELEASE's own
-bump rule in elspi's docs/provisioning.md (order 2026-09-14#5).
+bump rule in elspi's docs/provisioning.md.
 """
 
-# Bump to 1 once an image carrying /etc/elspi-release (elspi order 2026-09-14#5) is on the machine; decided by Evan 2026-09-16.
+# Bump to 1 once an image carrying /etc/elspi-release is on the machine; decided 2026-09-16.
 MINIMUM_IMAGE_RELEASE = 0

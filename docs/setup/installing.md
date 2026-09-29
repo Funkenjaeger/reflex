@@ -3,12 +3,8 @@
 Getting Reflex onto the Raspberry Pi at the machine, from a blank SD card to a
 UI that boots on its own.
 
-!!! warning "This is the manual path, and it is deliberately explicit"
-    There is no installer yet. Every step below is a command you run, and the
-    page exists so that you do not have to work any of it out for yourself. A
-    scripted, idempotent provisioning path is planned; until it lands, this is
-    the procedure — it is the same one the developer's own machine was built
-    with, not an idealized version of it.
+!!! warning "Manual install"
+    There is no installer yet. Every step below is a command you run.
 
 Budget an hour or so, most of which is the Pi compiling dependencies.
 
@@ -54,17 +50,12 @@ What you should find on a freshly written image:
 | **Serial** | `enable_uart=1`, no serial console in `cmdline.txt`, and `/dev/serial0` symlinked to the hardware UART. |
 
 !!! note "Check rather than trust"
-    These were read off a running machine on 2026-08-30. That machine began as
-    an OSPI image and has been modified since, and the image itself moves.
-    Treat the table as what to expect and verify, not a guarantee:
+    The image changes between builds. Check the table against your own Pi:
 
     ```bash
     cat /etc/os-release; dpkg --print-architecture; python3 --version
     systemctl is-enabled rcp.service; ls -l /dev/serial0
     ```
-
-**RCP is left on disk.** Nothing below deletes it, and the last section of this
-page puts it back in one command if you want to return to it.
 
 ---
 
@@ -73,13 +64,13 @@ page puts it back in one command if you want to return to it.
 Everything from here on is run **on the Pi**, over SSH. You need three things
 first, and none of them are Reflex-specific:
 
-- **The Pi on your network.** Ethernet needs nothing. For WiFi, the easiest
+- The Pi on your network. Ethernet needs nothing. For WiFi, the easiest
   route is to set it when you write the card — Raspberry Pi Imager's advanced
   options will preseed the network, the hostname and SSH into the image.
-- **SSH enabled.** If it is not, an empty file named `ssh` in the boot
+- SSH enabled. If it is not, an empty file named `ssh` in the boot
   partition turns it on at the next boot; you can create that from the machine
   you wrote the card with.
-- **The login.** The account is `default`. The **password is the OSPI image's,
+- The login. The account is `default`. The **password is the OSPI image's,
   not something Reflex sets** — check the [OSPI
   project](https://github.com/bartei/ospi) for the image you wrote, and change
   it with `passwd` once you are in.
@@ -110,7 +101,7 @@ Cloning gives you the default branch, which is the current tested state. To pin
 a specific release instead:
 
 ```bash
-# monorepo releases; ui-* and fw-* tags are pre-weld archives
+# releases; ui-* and fw-* tags predate the monorepo
 git tag -l 'v*'
 git checkout v1.1.0
 ```
@@ -142,8 +133,7 @@ image.
 
 ## Step 5 — Make Reflex the boot application
 
-The repo ships both pieces — a launch wrapper and a systemd unit — so this is
-installation, not authoring.
+The repo ships the launch wrapper and the systemd unit.
 
 ```bash
 chmod +x ~/projects/reflex/ui/deploy/start.sh
@@ -165,16 +155,14 @@ journalctl -u reflex-ui.service -b --no-pager | tail -50
     RCP and Reflex both drive the display and both claim the serial port.
     Disable one before enabling the other, exactly as above.
 
-??? info "What the unit and wrapper actually do, if you need to change them"
+??? info "What the unit and wrapper do"
     `deploy/start.sh` exports the `KCFG_*` variables that configure Kivy
     (1024×600, fullscreen, log directory), activates the venv, and runs
-    `python -m reflex.main`. It works out its own location, so a checkout
-    elsewhere still launches — but the unit's `ExecStart` still has to point
-    at it.
+    `python -m reflex.main`.
 
     `deploy/reflex-ui.service` runs as **root** (required for KMS/DRM and for
     writing logs to `/var/log`) and restarts on exit, with a burst limit so a
-    genuinely broken build stops instead of looping forever.
+    broken build stops instead of looping forever.
 
     The wrapper also sets `REFLEX_CONFIG_DIR=/var/lib/reflex-config`, which is
     why your machine settings do not end up in `/root` where you could not read
@@ -214,7 +202,7 @@ so the flash itself needs no `sudo`.
 things on the board: the field bootloader in sector 0, and the application in
 the RUN slot behind it. Once the bootloader is there, every later firmware
 update goes over the RS-485 link the UI already uses — no programmer, no
-power cycle, nothing to unplug at the machine:
+power cycle:
 
 ```bash
 sudo systemctl stop reflex-ui.service        # it holds the serial port
@@ -226,16 +214,17 @@ In practice that is the touchscreen's *Setup → Update* — see
 [Updating later](#updating-later).
 
 The layout, the anti-brick behavior and the optional step that write-protects
-the bootloader once the board is confirmed working are all in
-`fw/bootloader/README.md`.
+the bootloader once the board is confirmed working are in
+`fw/bootloader/README.md` and the [bring-up procedure](bootloader-bring-up.md).
 
 !!! warning "`flash.sh` is not this step"
     The repo also has `scripts/flash.sh`. It writes the **legacy** layout —
-    the application at `0x08000000`, with no bootloader at all — and it exists
-    only for boards that are still on that layout. Run against a board
-    provisioned as above it would overwrite the bootloader, so it reads the
-    board first and writes only over a legacy application it recognizes or an
-    erased sector 0 — anything else, the bootloader included, is a refusal.
+    the application at `0x08000000`, with no bootloader at all — over SWD, and
+    it is the recovery tool for a board that will not answer over Modbus. Run
+    against a board provisioned as above it would overwrite the bootloader, so
+    it reads the board first and writes only over a legacy application it
+    recognizes or an erased sector 0 — anything else, the bootloader included,
+    is a refusal.
     Use `provision.sh` for a new board and `modbus-flash.py` thereafter.
 
 !!! danger "Power-cycle the controller afterwards"
@@ -334,8 +323,7 @@ do not need SSH, and you do not need to work out whether the firmware half
 changed.
 
 The operator's walk-through, including the ELS dialog and what to do when an
-update fails, is [Updating Reflex](../guide/updating.md). What follows is
-what happens underneath.
+update fails, is [Updating Reflex](../guide/updating.md).
 
 A release is one version covering both halves, so the two are only ever
 installed together:
@@ -351,27 +339,20 @@ installed together:
    version it reports is not the one the new UI expects, the update **stops
    there** and the UI half is not installed. There is no way to click past
    that — a UI and a firmware that disagree about the register layout read
-   every register after the point of divergence as plausible nonsense, and
-   preventing exactly that is what a paired release is for.
+   every register after the point of divergence as plausible nonsense.
 4. **The UI half is checked out**, the environment synced, and the service
    restarted.
 
-!!! note "Pre-releases"
-    *Offer pre-releases (experimental)* adds release candidates to the list.
-    They are built by the same workflow and carry both halves, so they install
-    the same way; they are simply less tested, and the screen asks before
-    installing one.
-
-!!! warning "Two things it needs, and a fresh install has neither by default"
+!!! warning "Two things it needs"
     **A git checkout.** The UI half is installed by checking out a tag in
     `/home/default/projects/reflex`, so this works only where Reflex was
     installed from a clone, as in step 3. It refuses, and says so, otherwise.
 
     **The Modbus bootloader on the controller.** Step 6 installs it. A board
-    set up before 2026-09-08, when step 6 still ran `flash.sh`, carries the
-    legacy layout — one image at `0x08000000`, no bootloader — so there is
-    nothing on it for a Modbus flash to talk to. Converting it is a one-time
-    run of `scripts/provision.sh` with the ST-Link, exactly as step 6; until
+    flashed with `scripts/flash.sh` carries the legacy layout — one image at
+    `0x08000000`, no bootloader — so there is nothing on it for a Modbus flash
+    to talk to. Converting it is a one-time run of `scripts/provision.sh` with
+    the ST-Link, exactly as step 6; until
     that is done, the Update screen will read the controller, find no identity
     window, and refuse. Nothing is harmed by trying.
 
@@ -407,8 +388,8 @@ cmake --build build-slot
 python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/serial0
 ```
 
-No programmer and no power cycle: the bootloader stages the image, verifies it,
-keeps the previous one as a backup and jumps.
+The bootloader stages the image, verifies it, keeps the previous one as a
+backup and jumps.
 
 !!! warning "`reflex-app-*.bin`, not `reflex-fw-*.bin`"
     A release publishes two firmware assets.
@@ -418,25 +399,9 @@ keeps the previous one as a backup and jumps.
     `reflex-bl-<version>.bin` / `.elf` is the bootloader itself, which
     `provision.sh` in step 6 installs.
 
-    **`reflex-fw-<version>.bin` was retired on 2026-09-13 and is no longer
-    published.** It was the legacy no-bootloader image at `0x08000000`, kept
-    only for boards still on that layout; the known-legacy list in
-    `fw/bootloader/README.md` emptied on 2026-09-12, when elspi turned out to
-    have been on the bootloader layout all along, so the asset's end
-    condition was met. Releases tagged before 2026-09-13 still carry it, and
-    the name is still worth knowing for one reason: it is the glob anyone
-    writes by hand, it matches nothing you can flash over the wire, and
-    `modbus-flash.py` refuses it before erasing anything — reach for **app**,
-    not **fw**.
-
-    Retiring the asset did not retire `scripts/flash.sh`. That script builds
-    the legacy image locally and programs it over SWD; it never downloaded a
-    release asset, and it is still the recovery tool for a board that will
-    not answer over Modbus.
+    Older releases also carry **`reflex-fw-<version>.bin`**, the legacy
+    no-bootloader image at `0x08000000`. It cannot be flashed over the wire,
+    and `modbus-flash.py` refuses it before erasing anything.
 
 The ST-Link in step 6 is still the answer for a virgin board, for option bytes,
 and for recovering a controller that will not answer over Modbus at all.
-
-Either way, the protocol version check is what tells you the two halves agree
-— it is worth reading the log after every update rather than only when
-something looks wrong.

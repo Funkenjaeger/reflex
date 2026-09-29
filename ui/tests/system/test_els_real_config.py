@@ -1,4 +1,4 @@
-"""The first system test that drives Evan's REAL commissioned lathe
+"""The first system test that drives the REAL commissioned lathe
 configuration through the real UI FSM: threading mode, the wizard, host-driven
 retract, and imperial display -- together, end to end. No prior system test
 has cut a thread, driven the wizard, or run imperial.
@@ -54,7 +54,7 @@ in-repo source of truth for the real machine's numbers.
    at elspi's real Z scale, spindle PPR and leadscrew step count.
 
 4. Backlash-compensation magnitude vs. the emulator's simulated nut play.
-   els_backlash_steps=403 is a REQUIRED real-machine value (Evan's measured
+   els_backlash_steps=403 is a REQUIRED real-machine value (measured
    compensation) and is set as-is. At the emulator-coherent ratio above, 403
    steps is a commanded ~1.60 mm of compensation motion on the first retract
    after a cut (403 * 127/32000 mm). The emulator's own leadscrew-nut backlash
@@ -63,7 +63,7 @@ in-repo source of truth for the real machine's numbers.
    EMU_SCENARIO is set (which conftest.py always sets, to "serve"), regardless
    of EMU_LASH_MM being unset. Since our compensation (~1.60 mm) exceeds the
    emulator's actual simulated window (0.6 mm) by design (403 was tuned to
-   Evan's real machine, not this emulator), the first retract is expected to
+   the real machine, not this emulator), the first retract is expected to
    overshoot the naive target by roughly that ~1.0 mm difference. Rather than
    pin a tight bound (which would either mask a real bug or be tuned to this
    incidental mismatch), the retract assertions use a generous, justified

@@ -473,7 +473,7 @@ def test_takeup_text_keeps_the_counts_OFF_the_screen():
     argument that the ratio distinguishes a partially engaged half-nut from one
     that never engaged. Its PREMISE was wrong about the audience: those are raw
     Z-scale counts, a unit this UI exposes nowhere else, so the operator at the
-    machine has nothing to judge 5-against-11 by. Evan's call.
+    machine has nothing to judge 5-against-11 by.
 
     It is inverted rather than deleted because the numbers coming back is now a
     LAYOUT defect, not just noise: the notice strip overlays the status gutter,

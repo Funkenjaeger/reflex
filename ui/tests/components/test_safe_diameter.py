@@ -6,7 +6,7 @@ and a tool still in the groove is dragged along the thread. Wizard mode
 already gates that button on ``_x_clear_of_start_dia()`` -- but that predicate
 returns True whenever no diameter is committed, and until now ONLY the wizard
 could commit one. So in stop + retract the gate was vacuously satisfied and
-caught nothing. Evan: "that's the main reason I don't often use the mode."
+caught nothing, which kept the mode out of use.
 
 NO NEW MECHANISM WAS ADDED. The predicate, the refusal message and the disable
 path all already existed and are already exercised in wizard mode; the gate at
@@ -19,7 +19,7 @@ WHAT IS DELIBERATELY NOT TESTED HERE: that an uncommitted diameter leaves
 Retract ungated. That is pre-existing behaviour of _x_clear_of_start_dia and
 its own docstring records why (an earlier attempt at making the gate live
 without a committed value blocked EVERY threading retract on a machine whose X
-DRO sits below its power-on zero). Evan re-confirmed keeping it 2026-08-31.
+DRO sits below its power-on zero). Keeping it was re-confirmed 2026-08-31.
 Asserting it here would be claiming credit for a guard this change left alone.
 """
 import pytest
@@ -31,7 +31,7 @@ import pytest
 #   wizard              -> always. It is the MAJOR diameter there, collected as
 #                          wizard step 3.
 #   stop + retract, on  -> the point of the feature.
-#   stop + retract, off -> optional, and Evan chose "hidden" over "greyed".
+#   stop + retract, off -> optional, and "hidden" was chosen over "greyed".
 #   stop-only           -> never. No Retract in that mode, so no hazard to gate
 #                          and nothing for the value to do.
 
@@ -52,7 +52,7 @@ def test_when_the_diameter_field_is_shown(advbar_factory, running_app,
 
 
 def test_it_is_on_by_default(advbar_factory, running_app):
-    """Evan's call: optional, but enabled by default. The gate it turns on is
+    """Optional, but enabled by default. The gate it turns on is
     the only thing between Retract and a tool dragged back through the thread,
     so the default is the protective one."""
     bar = advbar_factory(els_bar=None)
@@ -134,7 +134,7 @@ def test_the_kv_uses_the_derived_properties(advbar_factory, running_app):
         "the raw flag is back in the diameter button -- that is the drift"
 
 
-# ── an uncommitted field must not display a value (Evan, 2026-09-01) ────────
+# ── an uncommitted field must not display a value (2026-09-01) ──────────────
 
 def test_the_diameter_buttons_show_dashes_until_committed():
     """0.000 IS A REAL DIAMETER depending on how X was referenced, so it is not

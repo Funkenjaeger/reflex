@@ -1,7 +1,6 @@
 """Physical-wiring permutation configs + a section-aware TOML config patcher.
 
-See .hermes/plans/2026-07-09_emulator-backed-system-tests.md, Task 4, for the
-full design context. Summary: the emulator now models four independent
+Summary of the design: the emulator now models four independent
 PHYSICAL wiring axes via config knobs (all +-1, default +1), which the
 firmware physics consumes directly (Path B):
 

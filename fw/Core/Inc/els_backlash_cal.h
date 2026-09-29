@@ -12,8 +12,8 @@
  * coupling slipped, currentSteps crosses the target on schedule and the
  * firmware reports a completed take-up into thin air. applyPhaseCorrection then
  * snapshots a Z from a drivetrain that was never coupled and the pass indexes
- * into the wrong groove. ARCHITECTURE.md "Limits" names this hole and says
- * there is no sensor to warn against it. The Z scale IS that sensor.
+ * into the wrong groove. ARCHITECTURE.md "Limits" names this hole; the Z
+ * scale is the sensor that catches it.
  *
  * THE PART THAT IS EASY TO GET WRONG
  * ----------------------------------

@@ -41,7 +41,7 @@
  *   horizon is one count per stranded capture, against a take-up confirmation
  *   threshold that is ~15 Z counts on the commissioned machine.
  *
- * ---- AND WHY IT IS 20 ms, NOT 7 (2026-08-30, Evan's call) ------------------
+ * ---- AND WHY IT IS 20 ms, NOT 7 (2026-08-30) -------------------------------
  * Because the cost side is measured and the safety side is not binding. At
  * 7 ms, SEVEN of the sixteen observed tails (43.8%) fell outside the horizon
  * and were discarded. Against that, the margin only ever guarded a hand that

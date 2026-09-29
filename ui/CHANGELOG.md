@@ -7,7 +7,7 @@
 ### Bug Fixes
 
 - **els**: Invert retract servo direction to account for DRO/servo polarity
-  ([`c69b02a`](https://github.com/Funkenjaeger/reflex-ui/commit/c69b02a77ecdc46fc6d6f07cba70c43d0caf3ef1))
+  (`c69b02a`, in the pre-monorepo reflex-ui history)
 
 
 ## v1.0.0-rc.1 (2026-06-25)

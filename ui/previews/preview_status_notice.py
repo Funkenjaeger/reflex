@@ -7,7 +7,7 @@ apply_class_lang_rules out because the mock GL backend segfaults on real
 textures). The one honest test of an overlay is a picture at the target
 1024x600, plus the numbers behind it.
 
-AND THE ONE RULE IT HAS TO PROVE. From els_advbar.kv, Evan 2026-08-22: "having
+AND THE ONE RULE IT HAS TO PROVE. From els_advbar.kv, 2026-08-22: "having
 things resize around a temporary warning is distracting." A transient message
 may COVER; it may not move or resize anything. That claim is checked here the
 way preview_phase_offset.py checks it -- same widget objects, same rectangles,

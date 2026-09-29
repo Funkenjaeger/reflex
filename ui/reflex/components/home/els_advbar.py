@@ -28,7 +28,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     enable_wizard = BooleanProperty(True)
 
     # A committed diameter in stop + retract mode, so the X-clear gate is not
-    # vacuous there. OPTIONAL AND ON BY DEFAULT (Evan, 2026-08-31); when off the
+    # vacuous there. OPTIONAL AND ON BY DEFAULT (2026-08-31); when off the
     # field is hidden outright rather than greyed.
     #
     # WHY IT EXISTS. Pressing Retract feeds the carriage back to Start Z under
@@ -38,7 +38,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     # button on _x_clear_of_start_dia(). But that predicate returns True
     # whenever no diameter is committed, and until now ONLY the wizard could
     # commit one -- so in stop + retract the gate was vacuously satisfied and
-    # caught nothing. Evan: "that's the main reason I don't often use the mode."
+    # caught nothing, which kept the mode out of use.
     #
     # NO NEW MECHANISM. The predicate, the refusal message and the disable path
     # all already exist and are already exercised in wizard mode. All that was
@@ -140,7 +140,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
 
         "Safe ø" in stop + retract: nothing is being threaded to a major
         diameter, and calling a clearance gate after thread geometry is
-        actively misleading. Evan's naming call, 2026-08-31.
+        actively misleading.
 
         Same underlying value (controller.start_dia) either way -- the name
         changes with the job, not the storage.

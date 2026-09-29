@@ -10,7 +10,7 @@ machine comes back on the default. The register map has the same hazard and
 the same answer (test_register_map_contract.py): one pinned source of truth
 and a test that goes red.
 
-THE DISCIPLINE THIS ENFORCES (Open Loops 6aa7318d, guardrail 1, 2026-09-13).
+THE DISCIPLINE THIS ENFORCES (guardrail 1, 2026-09-13).
 When this test fails because a key was renamed, repurposed or dropped, the fix
 is TWO things in the SAME commit:
   1. regenerate ``persisted_keys.json`` (run this module as a script, below),

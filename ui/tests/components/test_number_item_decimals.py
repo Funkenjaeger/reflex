@@ -1,7 +1,7 @@
 """NumberItem's optional fixed-decimal display.
 
 Added for the scale-resolution field: a bare "2" reads as a count of
-something, "2.000" reads as a measurement (Evan, 2026-09-01).
+something, "2.000" reads as a measurement (2026-09-01).
 
 THE RISK IS THE SHARED WIDGET, not the formatting. NumberItem renders every
 numeric setting in the app, so the default must be byte-identical to the

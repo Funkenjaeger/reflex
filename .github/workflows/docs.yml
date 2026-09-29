@@ -9,7 +9,7 @@ name: docs
 # with the code they are generated from. Regenerating in CI instead would let a
 # reworded refusal reach the site without anyone reading the new wording.
 
-# PUBLISHES FROM `integration`, ON PURPOSE (2026-08-30, Evan's call).
+# PUBLISHES FROM `integration`, ON PURPOSE (2026-08-30).
 #
 # Not a stopgap. These docs are new and half of them are machine-generated, and
 # their first contact with the internet should not be a real release -- not on

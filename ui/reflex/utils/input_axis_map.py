@@ -3,11 +3,11 @@
 WHY THIS EXISTS. Inputs and axes are configured on separate screens, and
 nothing on the input side said what an input was FOR. To change a scale you
 had to drill two levels into Axes to learn which input an axis used, back out,
-then drill into that input -- every time. Evan, 2026-08-31, after the X scale
+then drill into that input -- every time. Found 2026-08-31, after the X scale
 turned out to be misprovisioned: working out which config file was even the X
 axis was a non-trivial step of that job.
 
-READ-ONLY, DELIBERATELY. Evan: "I'm reluctant to create multiple disjoint ways
+READ-ONLY, DELIBERATELY. The maintainer: "I'm reluctant to create multiple disjoint ways
 of doing the same thing, so I'm not saying that the axis assignments per scale
 need to be settable from within the inputs menu, just read-only there for now."
 This module answers "what is this input for"; it never changes anything.

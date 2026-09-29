@@ -17,7 +17,7 @@ What the round-trip guard actually catches is a denominator past MAX_DEN, which
 limits to ZERO -- a dead scale. That case is real, silent, and was found by
 testing the wrong premise.
 
-Ratio entry survives for the reason Evan gave in the first place: a drive ratio
+Ratio entry survives for the original reason: a drive ratio
 like the servo's 127/64000 is NAMED as a ratio by whoever specified it.
 """
 from fractions import Fraction
@@ -34,7 +34,7 @@ from reflex.utils.scale_resolution import (
 #
 # Every one of these is a value that has actually been on elspi. The 2.5 um row
 # is the misprovisioning the 2026-08-31 dial check caught; 2 um is the
-# deliberate diameter doubling Evan set the same day; 1 um is the true head.
+# deliberate diameter doubling set the same day; 1 um is the true head.
 
 @pytest.mark.parametrize("num,den,um", [
     (1, 1000, 1.0),     # a 1 um head, provisioned faithfully

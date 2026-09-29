@@ -16,7 +16,7 @@ would have to be suppressed on every subsequent screen anyway, which is the
 banner with extra steps.
 
 WHY IT MAY TAKE SPACE WHEN THE NOTICE STRIP MAY NOT. ``notices.py`` and
-``statusbar.kv`` carry a standing rule from Evan (2026-08-22): "having things
+``statusbar.kv`` carry a standing rule (2026-08-22): "having things
 resize around a temporary warning is distracting", so a transient notice
 covers and never resizes. This is not a transient notice. It is decided ONCE,
 in ``MainApp.build``, before a single widget exists. Nothing resizes around it
