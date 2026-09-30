@@ -154,7 +154,7 @@ The register list is `registers/els_stop.yaml` at the repository root. Command r
 
 ```bash
 # ST-Link v2, over SWD
-st-flash --format ihex write reflex.hex
+st-flash --format ihex write reflex-fw.hex
 ```
 
 `raspberry.cfg` bitbangs SWD from a Raspberry Pi's GPIO through OpenOCD's `bcm2835gpio` driver, which cannot work on a Pi 5; `raspberrypi5.cfg` is an untested replacement. See the README.

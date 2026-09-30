@@ -165,7 +165,8 @@
  * sync with no way out but the enable escape hatch, so the wait is bounded:
  * once elsStopSettleCount passes this the dwell expires whatever the probe is
  * doing. 4x the window leaves room for the ramp tail to restart the capture a
- * few times (see elsDiagTick) and still complete one clean run. ~78 ms. */
+ * few times (see elsDiagTick) and still complete one clean run. 80 ms, exact
+ * at both 50 and 100 kHz. */
 #define ELS_DIAG_SETTLE_HOLD_CEILING_TICKS (ELS_DIAG_SETTLE_WINDOW_TICKS * 4)
 
 /* Hold the take-up gate's dwell open while a capture is armed or running, and
