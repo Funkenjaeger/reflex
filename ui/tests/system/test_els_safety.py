@@ -1,6 +1,6 @@
-"""Emulator-backed regressions for the ELS safety guards (see todo.md 'Safety
-audit results'). Each test drives the REAL controller + FSM stack against the
-emulator and pins a guard that the audit showed was missing.
+"""Emulator-backed regressions for the ELS safety guards. Each test drives the
+REAL controller + FSM stack against the emulator and pins a guard that the
+adversarial control-ordering audit showed was missing.
 """
 import time
 from fractions import Fraction

@@ -7,7 +7,7 @@
  * direct mode was selected, that the USART IDLE flag is cleared by the
  * SR-then-DR read, or that a byte arriving during a flash erase lands in
  * SRAM. Those are register behaviors of a real STM32F411 and they are
- * settled on the chip, not here (fw/todo.md, "NOT proven on hardware").
+ * settled on the chip, not here, and are not proven by a green run of this.
  *
  * What IS testable natively is the part that turns "the remaining-count
  * register moved" into "here is a frame of N bytes" -- modular arithmetic

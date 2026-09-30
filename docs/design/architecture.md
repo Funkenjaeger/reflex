@@ -118,7 +118,7 @@ Properties of the board, which belong in its board file:
 
 | Caveat | State |
 |---|---|
-| **The step output is driven from a spare pin** as well as the nominal one, working around a step-output defect. | Documented in `fw/todo.md` ("Hardware workarounds"). `fw/ARCHITECTURE.md` and `fw/Core/Inc/Ramps.h` still name the nominal pin; to be reconciled against the Provvedo schematic. |
+| **The step output is driven from a spare pin** as well as the nominal one, working around a step-output defect. | The firmware mirrors every STEP pulse onto the spare pin in `fw/Core/Src/Ramps.c`, and the mirroring comes out once a board revision drives STEP correctly. `fw/ARCHITECTURE.md` and `fw/Core/Inc/Ramps.h` still name the nominal pin; to be reconciled against the Provvedo schematic. |
 | **BOOT0 is not connected**, so every reset samples a floating pin and boot mode is nondeterministic. The board has booted the factory ROM bootloader unaided, and 3 of 7 reset-into-bootloader cycles have landed in ROM. | Mitigated in software. Bootloader entry is a **jump**, not a reset, and both jumps reset the ART instruction/data caches before handing over (`fw/Core/Src/els_boot.c`, `fw/bootloader/src/bl_hw.c`). A jump leaves the caches' lines valid, and a stale line of the outgoing image executing inside the incoming one costs a full watchdog period. **Power-on and a watchdog-strike reset still sample BOOT0.** |
 | **`MTR_ENA` has no pull-down**, so with the MCU not driving, the drive's enable line floats. | Unmitigated in hardware; a pull-down on this net and on the step net is respin scope. A floating enable on a lathe is not acceptable, which is why the respin makes "MCU not running" mean "drive disabled" with a resistor. |
 

@@ -534,7 +534,8 @@ target_link_libraries(els_resync_powered_test m pthread)
 # touches the chip only through bl_port.h, so these targets run it natively
 # over a mock flash with a power-loss injector (test/bl_mock_port.h). The
 # hardware port (bootloader/src/bl_hw.c), the UART timing and the jump are
-# NOT covered here and are listed as unverified in fw/todo.md.
+# NOT covered here; they are settled on the chip, and bootloader/README.md
+# carries the bench procedure that settles them.
 # ---------------------------------------------------------------------------
 set(BL_CORE_DIR ${FW_DIR}/bootloader/core)
 set(BL_CORE_SOURCES

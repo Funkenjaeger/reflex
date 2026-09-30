@@ -78,7 +78,9 @@
  * has never demonstrated a nonzero, so "still" and "not looking" are
  * indistinguishable in its own data (v1's nonzero traversal data exercises
  * the same dZ read path, which vouches for the plumbing but not the window).
- * ELS_SLIP_SETTLE_TICKS therefore remains UNMEASURED (fw/todo.md). This probe
+ * ELS_SLIP_SETTLE_TICKS was therefore left unmeasured by that era's captures;
+ * it was commissioned later, and els_slip_horizon_commission_test.cpp carries
+ * the observations the current value rests on. This probe
  * is retained as the worked example for writing the next one. Schema ids live
  * in Ramps.h -- they are part of the register contract reflex-ui mirrors, not
  * a detail of this file. */

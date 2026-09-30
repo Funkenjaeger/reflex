@@ -7,7 +7,7 @@
  * Until 2026-08-22 onStepPulse() moved carriage_mm the instant the backlash nut
  * hit a wall. The last commanded step pulse and the last Z count arrived on the
  * same tick, so the simulated carriage had no settle behaviour of any kind.
- * fw/todo.md records the two things that blocked on that:
+ * Two things were blocked on that:
  *
  *  - ELS_SLIP_SETTLE_TICKS (the horizon over which post-pulse Z motion is still
  *    credited to the servo) could not be exercised here, because every horizon

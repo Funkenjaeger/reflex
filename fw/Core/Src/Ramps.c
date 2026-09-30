@@ -63,8 +63,8 @@
  * ELS_QUIESCENT_TICKS is sized against the EMULATOR, not that field data --
  * those single counts arrive scattered across the whole window and may be drift
  * rather than settle. Treat it as provisional and commission it with the
- * inter-pulse-gap measurement (todo.md), the same way ELS_SLIP_SETTLE_TICKS
- * must be. The confirm window still bounds the wait, so a machine that never
+ * inter-pulse-gap measurement, on the machine, the same way
+ * ELS_SLIP_SETTLE_TICKS was. The confirm window still bounds the wait, so a machine that never
  * goes quiet aborts rather than hangs. */
 #ifndef ELS_REQUIRE_QUIESCENCE
 #define ELS_REQUIRE_QUIESCENCE 0
@@ -108,7 +108,7 @@
  * (sub-millimetre moves, heavy carriage, high friction) and well below the time
  * it takes a person to reach a handwheel. It bounds the exposure; it does not
  * eliminate it — only correlating Z motion against commanded steps does that,
- * and that is the real fix (see todo.md).
+ * and that is the real fix.
  *
  * THAT FIX NOW EXISTS (els_slip.h), and it changed what this constant is FOR.
  * The window no longer carries the safety property — attribution does. What is
