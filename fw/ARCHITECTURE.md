@@ -54,7 +54,8 @@ STM32CubeMX-generated peripheral initialization code.
 | PA0 | STEP pulse output |
 | PB14 | DIR output |
 | PB15 | ENA output (active low) |
-| PA3, PA4 | Spare debug/scope outputs |
+| PA3 (SPARE_2) | Mirrors every STEP pulse in every build: set in `Core/Src/Ramps.c` on each step, cleared at the start of the next timer entry in the same file |
+| PA4 (SPARE_3) | The only free spare pin; debug/scope output |
 | PB12 | User LED |
 
 **Clock:** HSE → PLL → 100 MHz SYSCLK, hardware FPU enabled.
