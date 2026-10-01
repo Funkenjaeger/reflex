@@ -154,8 +154,8 @@
  * pins both the refusal and the partial-engagement outcomes under the hold.
  *
  * That divergence is itself the finding this probe exists to settle: the gate
- * releases the cut 50 ticks after the last pulse while the attribution horizon
- * in the same path claims 1000, a 20x disagreement that no measurement has
+ * releases the cut 25 ticks after the last pulse while the attribution horizon
+ * in the same path claims 1000, a 40x disagreement that no measurement has
  * ever adjudicated. */
 #define ELS_DIAG_SETTLE_WINDOW_TICKS \
   ((int32_t)ELS_DIAG_TRACE_BUCKETS * (int32_t)ELS_DIAG_BUCKET_TICKS)
