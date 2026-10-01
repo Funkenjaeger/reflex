@@ -1,8 +1,8 @@
 # System architecture
 
 Reflex is four parts in three repositories, joined by three contracts. The
-reasoning, with the rejected alternatives, is in the ADRs under
-[`decisions/`](https://github.com/Funkenjaeger/reflex/tree/integration/decisions).
+reasoning, with the rejected alternatives, is in
+[Design decisions](decisions.md).
 
 ## The four parts
 
@@ -15,7 +15,7 @@ reasoning, with the rejected alternatives, is in the ADRs under
 
 UI and firmware share one repository because of the register map between them,
 and release together under one version number
-([ADR](https://github.com/Funkenjaeger/reflex/blob/integration/decisions/repo-structure-monorepo.md)).
+([decision](decisions.md#one-repository-for-firmware-and-ui)).
 The hardware is separate because the board is not ours yet; the firmware's pin
 map is hand-written into `fw/Core/Inc/Ramps.h`.
 
@@ -76,7 +76,7 @@ application's `idAppProtocolVersion` equals the `ELS_PROTOCOL_VERSION` in the
 target tag (`git show <tag>:ui/reflex/utils/els_stop_map.py`), not in the
 running UI. On a refusal the firmware is rolled back (`blCommand` 7 REVERT,
 BACKUP copied into RUN). See `ui/reflex/utils/updater.py` and the
-[register-map ADR](https://github.com/Funkenjaeger/reflex/blob/integration/decisions/els-modbus-register-map.md).
+[register-map decision](decisions.md#one-register-map-for-bootloader-and-application).
 
 **A contract test on every run** compares `ui/reflex/utils/devices.py` against
 the firmware header.
@@ -247,7 +247,7 @@ or a controller that will not answer over Modbus.
 | `reflex` | `ui/` | Kivy app, Modbus master, updater | Operator workflow, configuration, display |
 | `reflex` | `registers/*.yaml` | One schema per generated struct | Those structs, on both sides |
 | `reflex` | `tools/genregs.py` | The generator and its `--check` guard | — |
-| `reflex` | `decisions/` | ADRs with rejected alternatives | The reasoning behind each contract |
+| `reflex` | `docs/design/decisions.md` | Decisions with rejected alternatives | The reasoning behind each contract |
 | `reflex` | `.github/workflows/release.yml` | The lockstep release | Version pairs and asset names |
 | `reflex` | `fw/bootloader/README.md` | Flash geometry, anti-brick behavior; bring-up is `docs/setup/bootloader-bring-up.md` | The bootloader |
 | `reflex` | `fw/Core/Inc/Ramps.h` | Pin map, peripherals | The board, **hand-copied** |

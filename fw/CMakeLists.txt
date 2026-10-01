@@ -61,7 +61,7 @@ file(GLOB_RECURSE SOURCES "Core/*.*" "Middlewares/*.*" "Drivers/*.*")
 # bootloader's RUN slot: sector 5 at 0x08020000, image header at +0x200, VTOR
 # set, and reflex-fw.bin patched post-build with its length and CRC32
 # (scripts/reflex_image.py). See Core/Inc/els_identity.h and
-# docs/decisions/els-modbus-register-map.md. Configure a SEPARATE build
+# docs/design/decisions.md. Configure a SEPARATE build
 # directory per value, the way diagnostic builds are kept apart.
 set(REFLEX_APP_BASE "0x08000000" CACHE STRING
     "Flash address the app is linked at: 0x08000000 (legacy, no bootloader) or 0x08020000 (bootloader RUN slot)")

@@ -307,8 +307,7 @@ Every UI component follows this structure:
 - **Versioning:** ONE version for the whole monorepo: the repo-root `VERSION`
   file, mirrored into `ui/pyproject.toml`'s `version` by the release workflow.
   Both halves carry the same version even when only one changed: `v1.4.0` names
-  a known-good firmware + UI pair (`decisions/repo-structure-monorepo.md`, at the
-  repo root). Do not bump either by hand.
+  a known-good firmware + UI pair (`docs/design/decisions.md`). Do not bump either by hand.
 
 - **CI/CD:**
   - `fw.yml` / `ui.yml` / `system.yml`, the test suites, run on **every**
