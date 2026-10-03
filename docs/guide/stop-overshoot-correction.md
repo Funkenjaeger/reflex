@@ -46,8 +46,8 @@ The correction is a table measured on the development lathe, with:
 
 - a Z scale of 5 µm per count (the table is kept in encoder counts);
 - that lathe's servo drive and the drive's own settings;
-- that lathe's gearing between the motor and the carriage: the gearbox
-  position and the leadscrew.
+- that lathe's leadscrew. (Its gearbox position does not matter: the
+  overshoot was measured in all three positions and one table covers them.)
 
 The overshoot is the drive carrying the carriage on after the stop fires: a
 few milliseconds at full speed, then a slow-down. The slow-down is set by the
@@ -57,9 +57,10 @@ enter into it: by the time the overshoot happens, the controller has already
 stopped sending steps.
 
 If your machine differs in any of the three, the table does not describe it,
-and the correction can be too small. If you change the gearbox position, the
-drive's settings or the Z scale on a machine where it was working, turn it off
-until you have checked it again.
+and the correction can be too small. If you change the drive's settings or the
+Z scale on a machine where it was working, turn it off until you have checked
+it again. On a machine other than the development lathe, check it again after
+a gearbox change too.
 
 ## Checking it on your lathe
 

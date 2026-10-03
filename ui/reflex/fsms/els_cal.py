@@ -38,6 +38,13 @@ from reflex.utils.devices import (
 log = Logger.getChild(__name__)
 
 
+def gearbox_refusal_text(gear: str) -> str:
+    """Why a calibration will not run with `gear` set (docs/guide/
+    when-it-refuses.md is generated from this)."""
+    return (f"Calibration runs in gearbox position {REFERENCE_GEAR}; "
+            f"this is set for {gear}.")
+
+
 # ── Pure policy ──────────────────────────────────────────────────────
 # Module-level rather than methods on ElsDispatcher: that class cannot be
 # constructed without a running MainApp, so logic living on it can only be
@@ -176,11 +183,7 @@ class BacklashCalibration:
         # would be off by the gear's factor, so refuse rather than convert.
         gear = self._gear()
         if gear != REFERENCE_GEAR:
-            self._fail(
-                ELS_CAL_ERR_CONFIG,
-                f"Backlash calibration runs in gearbox position "
-                f"{REFERENCE_GEAR}; the controller is set for {gear}.",
-            )
+            self._fail(ELS_CAL_ERR_CONFIG, gearbox_refusal_text(gear))
             return False
 
         ceiling = int(self._els.els_cal_ceiling_steps)

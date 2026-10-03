@@ -69,6 +69,30 @@ The calibration drove its full ceiling and the carriage never moved. Same physic
 
 Conditions changed while the calibration was running — the ELS stop was engaged, or the servo mode changed. Re-run it undisturbed.
 
+> Calibration runs in gearbox position A; this is set for B.
+
+Calibration results are stored as measured in gearbox position A, so it only runs there. Move the lever to A, set **Gearbox position** to A in ELS settings, and calibrate.
+
+## Coupling check
+
+Shown across the status gutter when the coupling check stops a pass partway, and only when **Coupling check acts** is on in ELS settings (it is off by default, which only logs). The check compares how far the Z scale moved with how far the servo was told to move it. Red strips change nothing; the yellow ones name a gearbox position the next Cut or Retract adopts.
+
+> Cut aborted — carriage stopped moving. Is the half-nut open?
+
+The servo kept turning the leadscrew and the Z scale stopped moving partway through the pass. **Close the half nut and press Cut again.** If it was closed, look for a slipping coupling or a Z scale that stopped reading.
+
+> Cut aborted — gearbox looks like B (fast). Cut again to use B.
+
+The carriage moved twice as far per step as expected: the gearbox lever is in **B**. Nothing is wrong. **Press Cut (or Retract)** and the controller switches to B, with feeds and pitches right for it. If the lever was meant to be in A, move it back first; the next pass will notice and switch back.
+
+> Cut aborted — gearbox looks like C (slow). Cut again to use C.
+
+The carriage moved half as far per step as expected: the gearbox lever is in **C**. As for B: **press Cut (or Retract)** to switch to C, or move the lever back first.
+
+> Cut aborted — carriage rate fits no gear. Check the drivetrain.
+
+The carriage moved at a rate that matches no gearbox position, so something in the drivetrain is not doing what it is told. Nothing is changed, and **pressing Cut again will fail the same way** until the cause is found: a slipping coupling, a half nut riding and skipping, a lever between positions, or wrong servo settings.
+
 ## Thread phase offset refusals
 
 Shown in the phase-offset dialog. Nothing is applied when one of these appears — the total on screen is still whatever the controller held before you pressed Apply.

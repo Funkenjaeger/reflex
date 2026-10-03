@@ -98,11 +98,69 @@ Fire the stop early by the overshoot predicted for the current feed rate.
 ### Consequences and future work
 
 - The table describes one machine: its drive and drive settings, its scale
-  resolution, and its motor-to-carriage gearing. Whether gearbox position
-  matters has not been measured yet.
+  resolution, and its leadscrew. Its gearbox position does not matter: the
+  overshoot was measured in all three positions at matched carriage speed
+  and one table covers them, so the correction needs no knowledge of the
+  gearing.
 - There is no calibration procedure an ordinary user can run. The table was
   built by hand from recorded passes. Generalizing it is future work: a way for
   anyone to characterize their own machine, and to decide whether it needs the
   correction at all, from the controller alone.
 - Until then, leave it off on any other machine, or check it as described in
   [the guide](../guide/stop-overshoot-correction.md).
+
+## Coupling-ratio check and gearbox position
+
+### Context
+
+The servo is open loop: the controller knows what it told the leadscrew to do,
+and only the Z scale knows what the carriage did. Two faults make those
+disagree, and nothing caught either one. The half nut can open mid-cut, after
+which the controller goes on reporting a cut while the carriage stands still.
+And the development lathe has a three-position gearbox between servo and
+leadscrew (B twice as fast as A, C half as fast) that the controller could not
+see, so a moved lever silently doubled or halved every feed and thread pitch.
+
+### Decision
+
+- One measurement for both: the ratio of Z travel to commanded steps over a
+  pass, which is 1 when coupled as expected, 0 with the half nut open, and 2 or
+  0.5 with the lever moved.
+- Every mismatch aborts the pass. A ratio that settles on another known gear
+  position gives a yellow notice, and the next Cut or Retract adopts that
+  position. A ratio that matches no position gives a red notice, adopts
+  nothing, and fails again on every retry.
+- The gear can be read about half a second after the take-up: a coarse check
+  that the ratio is within 15 % of some position, then a tight check that it
+  settles within 5 %.
+- Step-valued settings stay stored in the reference position, A. The engaged
+  position scales the servo's distance per step, so feed, pitch, retract and
+  backlash follow it.
+- The minimum distance from the stop at which Cut is allowed is sized for the
+  fastest position, whatever position is set.
+- The check ships logging only, behind a setting that is off by default.
+
+### Why
+
+- **A legitimate lever move is far more likely than an invalid ratio,** and the
+  positions are a factor of two apart, so a short, coarse reading is enough to
+  name the position. Only "slightly wrong" needs more of the pass.
+- **Abort, then adopt on the next press,** so the operator always sees the
+  change and agrees to it, and a pass is never finished at a ratio nobody chose.
+- **The start distance covers the fastest position** because the take-up and,
+  when threading, the phase correction run before the check has a reading, and
+  the stop cannot cancel motion already committed. The same review found the
+  distance sized for a correction of one leadscrew pitch, when the correction
+  can be one thread pitch; it now uses the larger.
+
+### Consequences and future work
+
+- The gear positions and their factors are hard-coded for one lathe. Making
+  them configurable is future work.
+- The thresholds come from replaying recorded passes in air, in all three
+  positions, plus two real half-nut openings. No recording has a cutting load
+  or a retract under the check, which is why it ships logging only.
+- Backlash calibration only runs in the reference position.
+- In thread mode the phase correction runs before the check can read, so the
+  first pass after a lever move cuts briefly at the wrong pitch before the
+  check stops it.

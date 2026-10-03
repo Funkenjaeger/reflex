@@ -32,6 +32,8 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "ui"))
 
 from reflex.components.home.els_phase_offset_popup import REFUSAL_TEXT  # noqa: E402
+from reflex.fsms import els_ratio  # noqa: E402
+from reflex.fsms.els_cal import gearbox_refusal_text  # noqa: E402
 from reflex.fsms.els_fsm import ElsFsm  # noqa: E402
 from reflex.utils.devices import (  # noqa: E402
     ELS_CAL_ERR_ABORTED,
@@ -102,6 +104,31 @@ ADVICE = {
         "The calibration drove its full ceiling and the carriage never moved. "
         "Same physical fault as a refused take-up, and the same first check: "
         "**is the half nut engaged?**"),
+    "cal.gearbox": (
+        "Calibration results are stored as measured in gearbox position A, "
+        "so it only runs there. Move the lever to A, set **Gearbox "
+        "position** to A in ELS settings, and calibrate."),
+    "ratio.decoupled": (
+        "The servo kept turning the leadscrew and the Z scale stopped "
+        "moving partway through the pass. **Close the half nut and press "
+        "Cut again.** If it was closed, look for a slipping coupling or a "
+        "Z scale that stopped reading."),
+    "ratio.gear_b": (
+        "The carriage moved twice as far per step as expected: the gearbox "
+        "lever is in **B**. Nothing is wrong. **Press Cut (or Retract)** "
+        "and the controller switches to B, with feeds and pitches right "
+        "for it. If the lever was meant to be in A, move it back first; "
+        "the next pass will notice and switch back."),
+    "ratio.gear_c": (
+        "The carriage moved half as far per step as expected: the gearbox "
+        "lever is in **C**. As for B: **press Cut (or Retract)** to switch "
+        "to C, or move the lever back first."),
+    "ratio.wrong": (
+        "The carriage moved at a rate that matches no gearbox position, so "
+        "something in the drivetrain is not doing what it is told. Nothing "
+        "is changed, and **pressing Cut again will fail the same way** "
+        "until the cause is found: a slipping coupling, a half nut riding "
+        "and skipping, a lever between positions, or wrong servo settings."),
     "cal.aborted": (
         "Conditions changed while the calibration was running — the ELS stop "
         "was engaged, or the servo mode changed. Re-run it undisturbed."),
@@ -149,7 +176,19 @@ SECTIONS = [
       ("cal.servomode", ELS_CAL_MESSAGES[ELS_CAL_ERR_SERVOMODE]),
       ("cal.config", ELS_CAL_MESSAGES[ELS_CAL_ERR_CONFIG]),
       ("cal.no_motion", ELS_CAL_MESSAGES[ELS_CAL_ERR_NO_MOTION]),
-      ("cal.aborted", ELS_CAL_MESSAGES[ELS_CAL_ERR_ABORTED])]),
+      ("cal.aborted", ELS_CAL_MESSAGES[ELS_CAL_ERR_ABORTED]),
+      ("cal.gearbox", gearbox_refusal_text("B"))]),
+    ("Coupling check",
+     "Shown across the status gutter when the coupling check stops a pass "
+     "partway, and only when **Coupling check acts** is on in ELS settings "
+     "(it is off by default, which only logs). The check compares how far "
+     "the Z scale moved with how far the servo was told to move it. Red "
+     "strips change nothing; the yellow ones name a gearbox position the "
+     "next Cut or Retract adopts.",
+     [("ratio.decoupled", els_ratio.abort_text(els_ratio.DECOUPLED)),
+      ("ratio.gear_b", els_ratio.gear_change_text("B")),
+      ("ratio.gear_c", els_ratio.gear_change_text("C")),
+      ("ratio.wrong", els_ratio.abort_text(els_ratio.RATIO_WRONG))]),
     ("Thread phase offset refusals",
      "Shown in the phase-offset dialog. Nothing is applied when one of these "
      "appears — the total on screen is still whatever the controller held "
