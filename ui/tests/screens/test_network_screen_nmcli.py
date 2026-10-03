@@ -24,6 +24,7 @@ backend cannot service the real child widgets' graphics instructions). The stub
 populates the one id ``__init__`` reaches for. The headless Window and the
 mock backends come from the repo-root ``ui/conftest.py``.
 """
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -248,3 +249,50 @@ def test_the_async_paths_refuse_to_run_when_nmcli_is_unusable(nmcli):
     for coro in (screen.refresh(), screen.status_update(), screen.connect()):
         with pytest.raises(StopIteration):
             coro.send(None)
+
+
+# ── (e) the State row shows the state word, not nmcli's raw string ─────
+
+@pytest.mark.parametrize("raw, word", [
+    ("100 (connected)", "connected"),
+    ("30 (disconnected)", "disconnected"),
+    ("20 (unavailable)", "unavailable"),
+    ("10 (unmanaged)", "unmanaged"),
+    ("0 (unknown)", "unknown"),
+    ("110 (deactivating)", "deactivating"),
+    ("120 (connection failed)", "connection failed"),
+    ("40 (connecting (prepare))", "connecting"),
+    ("70 (connecting (getting IP configuration))", "connecting"),
+    ("90 (connecting (starting secondary connections))", "connecting"),
+    ("100 (connected (externally))", "connected"),
+    ("connected", "connected"),   # no code: passed through
+    (None, ""),
+    ("", ""),
+])
+def test_state_word_drops_the_code_and_the_detail(raw, word):
+    """The raw string overflowed the fixed-width State field and showed only
+    its tail ("cted)"). Each word here was measured at 196 px or less in the
+    field's font at size 24, against 226 px of text width in the field."""
+    assert ns.state_word(raw) == word
+
+
+def test_status_update_compares_state_words(nmcli, monkeypatch):
+    """``status_update`` compares the polled state with the displayed one. Both
+    sides must be words, or every 1 Hz poll would see a change and refresh."""
+    screen = ns.NetworkScreen()
+    screen.device = "wlan0"
+    screen.state = "connected"
+    nmcli.device.show.return_value = {"GENERAL.STATE": "100 (connected)"}
+    refreshes = []
+
+    async def fake_refresh():
+        refreshes.append(True)
+
+    monkeypatch.setattr(screen, "refresh", fake_refresh)
+
+    asyncio.run(screen.status_update())
+    assert refreshes == [], "an unchanged state must not trigger a refresh"
+
+    nmcli.device.show.return_value = {"GENERAL.STATE": "30 (disconnected)"}
+    asyncio.run(screen.status_update())
+    assert refreshes == [True]

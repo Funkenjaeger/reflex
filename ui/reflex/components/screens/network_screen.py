@@ -24,6 +24,7 @@ Two things follow, and both are load-bearing:
   into the "Status" box at the bottom of ``network_screen.kv``.
 """
 import asyncio
+import re
 import shutil
 
 import nmcli
@@ -45,6 +46,26 @@ if NMCLI_AVAILABLE:
     except Exception as e:  # pragma: no cover - a raise here would kill import
         log.warning(f"nmcli setup failed — network management unavailable: {e}")
         NMCLI_AVAILABLE = False
+
+# nmcli reports GENERAL.STATE as "<code> (<word>)", and the transitional
+# states nest a detail: "70 (connecting (getting IP configuration))".
+_NMCLI_STATE = re.compile(r"^\s*\d+\s*\((.*)\)\s*$")
+
+
+def state_word(raw) -> str:
+    """The word from nmcli's GENERAL.STATE: "100 (connected)" -> "connected".
+
+    The State field is a fixed-width single-line text input, and the full
+    nmcli string overflows it: the field then shows only the tail of the text
+    (on the lathe it read "cted)"), which cannot tell connected from
+    disconnected. Every device state's word fits the field; the numeric code
+    and any nested detail are dropped.
+    """
+    if not raw:
+        return ""
+    match = _NMCLI_STATE.match(raw)
+    inner = match.group(1) if match else raw
+    return inner.split(" (", 1)[0].strip()
 
 load_kv(__file__)
 
@@ -147,7 +168,7 @@ class NetworkScreen(Screen):
         except Exception as e:
             self._nmcli_failed("device status query", e)
             return
-        new_state = data.get("GENERAL.STATE")
+        new_state = state_word(data.get("GENERAL.STATE"))
         if self.state != new_state:
             self.log("State Changed, refreshing properties")
             await self.refresh()
@@ -174,7 +195,7 @@ class NetworkScreen(Screen):
 
                 self.device = data.get("GENERAL.DEVICE") or self.device
                 self.hwaddr = data.get("GENERAL.HWADDR") or self.hwaddr
-                self.state = data.get("GENERAL.STATE") or self.state
+                self.state = state_word(data.get("GENERAL.STATE")) or self.state
                 self.address = data.get("IP4.ADDRESS[1]") or ""
                 self.gateway = data.get("IP4.GATEWAY") or ""
                 self.dns = data.get("IP4.DNS[1]") or ""
