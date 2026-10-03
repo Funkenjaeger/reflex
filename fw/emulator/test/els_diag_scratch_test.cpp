@@ -1,7 +1,7 @@
 /*
  * Diagnostic scratchpad: the probe must not leak into an unflagged build.
  *
- * THE RULE THIS ENFORCES. No build that reaches dev-staging, dev or main may
+ * THE RULE THIS ENFORCES. No build that reaches dev or main may
  * define ELS_DIAG_SCRATCH. That rule is meant to be structural rather than
  * documentary -- release builds omit the flag, so the writes do not exist and
  * diagSchema reads 0 -- and this test is what makes the claim checkable instead

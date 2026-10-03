@@ -3,7 +3,7 @@
 #
 #   (default)      RELEASE     -- what belongs on the machine
 #   --diag=PROBE   DIAGNOSTIC  -- compiles in ONE diagnostic probe.
-#                                 NEVER on dev-staging/dev/main.
+#                                 NEVER on dev/main.
 #
 # --diag REQUIRES a probe name; bare --diag lists what is available and stops.
 # That is deliberate. The probes share one 64-register scratchpad, so only one
@@ -96,7 +96,7 @@ echo "  bin    ${BUILD_DIR}/reflex-fw.bin  ($(stat -c %s "$BUILD_DIR/reflex-fw.b
 if [ "$VARIANT" = diagnostic ]; then
     echo
     echo "  NOTE: diagnostic build. Carries the '${PROBE}' probe (${MACRO}) and"
-    echo "        must not reach dev-staging, dev or main. The UI will log 'ELS"
+    echo "        must not reach dev or main. The UI will log 'ELS"
     echo "        diagnostic recorder active' with this schema when it is running."
     echo "        Probe details: DIAG.md"
 fi

@@ -31,7 +31,7 @@ python3 scripts/modbus-flash.py build-slot-diag-takeup-settle-v3/reflex-fw.bin \
 release. The manifest records `variant: diagnostic, probe: unknown`, since
 `modbus-flash.py` cannot see which probe an image carries.
 
-Probes never go on `dev-staging`, `dev` or `main`.
+Probes never go on `dev` or `main`.
 
 ## One probe at a time
 
