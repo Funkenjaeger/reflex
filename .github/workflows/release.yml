@@ -1,37 +1,44 @@
 # Lockstep release: ONE version, ONE tag, ONE release carrying BOTH halves.
 #
-# This is the flow docs/design/decisions.md specifies and the
-# monorepo has been missing since the 2026-08-17 weld. Its whole point is that
+# This is the flow docs/design/decisions.md specifies. Its whole point is that
 # `v1.4.0` names a known-good FIRMWARE + UI PAIR, so "which firmware does this
 # UI expect?" is answered by the version number instead of tribal knowledge.
 # Both halves therefore carry the same version even when only one changed; a
 # byte-identical binary simply does not get re-deployed.
 #
-# DELIBERATE, NOT AUTOMATIC, and that is a change from the split era. The old
-# reflex-fw/reflex-ui release workflows fired on every push to main/dev, which
-# is where the habit of writing `[skip ci]` came from -- a marker that on every
-# other branch silently deleted the test run instead (see ui/AGENTS.md). Here a
-# release happens when someone asks for one, so no push needs a marker to
-# suppress it and the test workflows are never in the firing line.
+# THE TAG IS MADE BEFORE IT ARRIVES HERE. The maintainer's release tooling
+# builds and tests the release, commits the version stamp (VERSION,
+# ui/pyproject.toml and ui/uv.lock, one commit) on the head of dev or main,
+# creates the annotated tag on that commit, and pushes branch and tag to this
+# repository together. Pushing the tag starts this workflow, which checks the
+# stamp, builds and tests both halves again FROM the tag, checks that every
+# shipped image identifies as the tagged commit, and publishes the release. It
+# never commits and never tags, so the history here and the maintainer's copy
+# cannot diverge over a stamp this workflow made on its own.
 #
-# The version is passed in rather than derived. python-semantic-release was
-# retired with the split repos: its config had accumulated v7 keys that PSR 10
-# silently ignores, so options read like live settings while doing nothing, and
-# nobody could say from the file what a push would do. An explicit input cannot
-# drift like that. The describing is done by hand: release-notes/<V>.md is the
-# release's written description (required, see the step that checks it), with
+# A RELEASE IS STILL DELIBERATE: it happens when a tag is pushed, and only tags
+# shaped like a release start it (vX.Y.Z and vX.Y.Z-rc.N). A failed run is
+# re-run by dispatch with the same tag; a dispatch with dry_run builds and checks
+# a tag without publishing.
+#
+# The describing is done by hand: release-notes/<V>.md at the tagged commit is
+# the release's written description (required, see the step that checks it), with
 # the generated commit list appended beneath it.
 name: release
 
 on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version WITHOUT the leading v (e.g. 1.1.0 or 1.1.0-rc.1). A hyphen makes it a pre-release.'
+      tag:
+        description: 'An existing release tag, with its v (e.g. v1.1.0 or v1.1.0-rc.1).'
         required: true
         type: string
       dry_run:
-        description: 'Build and check everything, then stop before tagging or publishing.'
+        description: 'Build and check everything, then stop before publishing.'
         required: false
         default: false
         type: boolean
@@ -43,72 +50,60 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0        # release notes need the history since the last tag
+          ref: refs/tags/${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          fetch-depth: 0        # the branch check and the release notes need the history
 
       # ── Guards, before anything is built ──────────────────────────────────
-      # A release is a promise about a branch that has been through the ladder.
-      # integration and feature branches have not.
-      #
-      # A DRY RUN promises nothing -- both publishing steps are skipped -- so it
-      # may run from any branch. That is how a change to THIS workflow gets
-      # tested before it is promoted: dispatch the branch with dry_run, and it
-      # builds, stamps and checks exactly what a real run would, without a tag,
-      # a release, or a commit reaching origin. The version/branch pairing
-      # below only binds main and dev, so it does not apply here.
-      - name: Check the branch is releasable
-        run: |
-          case "${{ github.ref_name }}" in
-            main) echo "main: full release" ;;
-            dev)  echo "dev: pre-release" ;;
-            *)
-              if [ "${{ inputs.dry_run }}" = "true" ]; then
-                echo "::notice::dry run from '${{ github.ref_name }}': builds and checks everything, publishes nothing. A real release still needs main or dev."
-              else
-                echo "::error::release can only run from main or dev; got '${{ github.ref_name }}'. Promote through the ladder first (a dry run may run from any branch)." ; exit 1
-              fi ;;
-          esac
-
-      - name: Check the version and match it to the branch
+      # The tag is the release, so everything about it is checked first, from
+      # the commit it points at:
+      #   * its name is a release version, X.Y.Z or X.Y.Z-rc.N;
+      #   * it is ANNOTATED (a lightweight tag carries no record of being made
+      #     on purpose);
+      #   * the commit's VERSION says that version;
+      #   * a pre-release is on dev and a final on main. A release is a promise
+      #     about a branch that has been through the ladder; integration and
+      #     feature branches have not;
+      #   * no release exists for it yet, unless this is a dry run.
+      - name: Check the tag
         id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          V='${{ inputs.version }}'
-          echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' \
-            || { echo "::error::'$V' is not a semver version (no leading v)."; exit 1; }
-          if echo "$V" | grep -q -- '-'; then PRE=true; else PRE=false; fi
-          # dev ships pre-releases, main ships finals. Crossing them is how a
-          # release-candidate ends up looking like a release.
-          if [ "${{ github.ref_name }}" = "main" ] && [ "$PRE" = "true" ]; then
-            echo "::error::main takes a final version; '$V' is a pre-release."; exit 1
-          fi
-          if [ "${{ github.ref_name }}" = "dev" ] && [ "$PRE" = "false" ]; then
-            echo "::error::dev takes a pre-release (e.g. $V-rc.1); '$V' is final."; exit 1
-          fi
-          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
-            echo "::error::tag v$V already exists."; exit 1
+          git fetch -q --force origin "+refs/tags/$TAG:refs/tags/$TAG"   # the tag object itself, as pushed
+          echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' \
+            || { echo "::error::'$TAG' is not a release tag (vX.Y.Z or vX.Y.Z-rc.N)."; exit 1; }
+          V=${TAG#v}
+          [ "$(git cat-file -t "refs/tags/$TAG")" = tag ] \
+            || { echo "::error::$TAG is not an annotated tag."; exit 1; }
+          SHA=$(git rev-parse "refs/tags/$TAG^{commit}")
+          [ "$(git show "$SHA:VERSION")" = "$V" ] \
+            || { echo "::error::VERSION at $TAG says '$(git show "$SHA:VERSION")', not $V."; exit 1; }
+          if echo "$V" | grep -q -- '-'; then PRE=true; BRANCH=dev; else PRE=false; BRANCH=main; fi
+          git merge-base --is-ancestor "$SHA" "origin/$BRANCH" \
+            || { echo "::error::$TAG is a $([ $PRE = true ] && echo pre-release || echo final) and must be on $BRANCH; ${SHA:0:7} is not."; exit 1; }
+          if [ "${{ inputs.dry_run }}" != "true" ] && gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::a release for $TAG already exists."; exit 1
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "ok: $TAG, annotated, VERSION $V, on $BRANCH at ${SHA:0:7}"
 
-      # EVERY RELEASE CARRIES A WRITTEN DESCRIPTION, from release-notes/<V>.md.
-      # Until v1.2.0-rc.4 the only notes were --generate-notes, which for a
-      # direct-push repo with no PRs is a bare "Full Changelog" compare link:
-      # every release through rc.3 went out with nothing on its page saying what
-      # it was for. The file is written for a person deciding whether to
-      # install -- what changed, what to watch out for, what is experimental --
-      # and the generated commit list is still appended beneath it.
-      #
-      # It runs here, before the builds, and on dry runs too, so a missing file
-      # costs seconds and is caught by the dry run rather than by the publish.
-      # The heading must name THIS version, which refuses the easy mistake of
-      # copying the previous release's file and forgetting to rewrite it.
+      # EVERY RELEASE CARRIES A WRITTEN DESCRIPTION, from release-notes/<V>.md
+      # at the tagged commit, written for a person deciding whether to install:
+      # what changed, what to watch out for, what is experimental. The generated
+      # commit list is appended beneath it. The heading must name THIS version,
+      # which refuses the easy mistake of copying the previous release's file.
       - name: Refuse a release without written notes
         run: |
           V='${{ steps.v.outputs.version }}'
           F="release-notes/$V.md"
-          [ -f "$F" ] || { echo "::error::$F does not exist. Write the release description there (see release-notes/ for earlier ones) and commit it before releasing."; exit 1; }
+          [ -f "$F" ] || { echo "::error::$F does not exist at $TAG. Write the release description there and commit it before tagging."; exit 1; }
           HEAD=$(grep -m1 -v '^[[:space:]]*$' "$F")
           [ "$HEAD" = "## reflex v$V" ] || { echo "::error::$F must open with '## reflex v$V'; it opens with '$HEAD'."; exit 1; }
           BODY=$(grep -v '^[[:space:]]*$' "$F" | tail -n +2 | wc -l)
@@ -127,93 +122,14 @@ jobs:
             libstdc++-arm-none-eabi-dev libstdc++-arm-none-eabi-newlib \
             libnewlib-arm-none-eabi
 
-      # uv IS INSTALLED HERE, BEFORE THE STAMP, and that is the only reason this
-      # step exists separately from "Sync the UI" further down. ui/uv.lock has to
-      # be regenerated by the stamp step so it can go INTO the stamp commit, and
-      # uv is the only thing that can write it -- so the installer has to run
-      # first. Nothing else moved: the venv and the sync stay where they were,
-      # after the firmware builds.
-      #
-      # $HOME/.local/bin is already on the runner's PATH, which is why the old
-      # combined step worked at all; exporting it through $GITHUB_PATH says so
-      # out loud and makes uv reachable from every later step rather than by
-      # coincidence.
+      # uv, for the version-parity gate's lock, the UI sync and the tests.
+      # $HOME/.local/bin is already on the runner's PATH; exporting it through
+      # $GITHUB_PATH says so out loud rather than relying on it.
       - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/uv" --version
-
-      # THE STAMP IS COMMITTED BEFORE ANYTHING IS BUILT. The firmware's
-      # identity -- the rev and dirty flag in the identity window, and in the
-      # slotted image's RFLX header -- is read from git at BUILD time by
-      # fw/cmake/BuildRev.cmake: `git rev-parse --short=7 HEAD`, plus "does
-      # the tree have uncommitted tracked changes". Until 2026-09-11 this step
-      # only wrote VERSION and ui/pyproject.toml, the build ran, and the commit
-      # came at the very end. So every official image was built from a dirty
-      # tree at the commit BEFORE the version bump, and said so: v1.2.0-rc.1
-      # reports f8dcb82-dirty while its tag points at c387940. -dirty is meant
-      # to be the loud "this came off someone's working tree" signal, and it
-      # was set on 100% of releases.
-      #
-      # Committing here means the build sees a clean tree at the exact commit
-      # the tag will point at. The commit stays LOCAL to this runner until the
-      # publish step pushes it together with the tag, so a failure anywhere in
-      # between is discarded with the runner: nothing reaches origin that no
-      # release goes with. A dry run makes the commit too, so it builds and
-      # checks exactly what a real run would publish.
-      #
-      # ui/uv.lock IS PART OF THE STAMP, added 2026-09-11. The lock records the
-      # root project's own version -- reflex is an editable member of its own
-      # resolution -- so it only tells the truth once uv has re-read a stamped
-      # ui/pyproject.toml. Until now the only uv in the job was the `uv sync`
-      # below, which runs AFTER this commit and rewrote the lock on the runner
-      # where nothing picked it up: no tagged commit has ever carried a lock
-      # matching its own version. Measured on integration 2026-09-11 -- VERSION
-      # 1.1.0, lock 1.1.0rc1 -- and true of every release the monorepo has cut.
-      #
-      # If the tree already says this version there is nothing to commit and
-      # HEAD already IS the stamp, so it is tagged as is rather than failing on
-      # an empty commit. That is the re-run after a publish that pushed the
-      # stamp and tag but failed to create the release: delete the tag,
-      # dispatch the same version again.
-      - name: Stamp the version and commit it, before the build
-        id: stamp
-        run: |
-          echo "${{ steps.v.outputs.version }}" > VERSION
-          # ui is a Python package and carries its own version field; keep it
-          # equal to the repo's rather than letting the two drift.
-          sed -i -E '0,/^version = ".*"$/s//version = "${{ steps.v.outputs.version }}"/' ui/pyproject.toml
-          grep -qx 'version = "${{ steps.v.outputs.version }}"' ui/pyproject.toml \
-            || { echo "::error::the version stamp did not land in ui/pyproject.toml"; exit 1; }
-          # `uv lock` and NOT `uv sync`: it rewrites the lockfile and nothing
-          # else, needs no venv, and by default holds every already-locked
-          # dependency at the version it is already pinned to -- so the only
-          # delta here is the root project's own version field, the one field
-          # stamped above. Not --offline: a fresh runner's uv cache is empty, so
-          # an offline resolve would fail rather than reuse anything. The next
-          # step gates on the result actually landing in the commit.
-          (cd ui && uv lock)
-          # NOT the inherited identity. reflex-fw's split-era release workflow
-          # tagged as bartei81@gmail.com, carried over from the upstream fork --
-          # releases signed by someone who has never worked on this project.
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add VERSION ui/pyproject.toml ui/uv.lock
-          if git diff --cached --quiet; then
-            echo "VERSION, ui/pyproject.toml and ui/uv.lock already say ${{ steps.v.outputs.version }}; HEAD is the stamp, nothing to commit"
-          else
-            git commit -q -m "chore(release): v${{ steps.v.outputs.version }} [skip ci]"
-          fi
-          # The exact test BuildRev.cmake applies. Anything tracked still
-          # modified here would make every image below say -dirty again.
-          if ! git diff --quiet || ! git diff --cached --quiet; then
-            echo "::error::the tree is not clean after the stamp commit; the firmware would be built -dirty."
-            git status --short
-            exit 1
-          fi
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "stamp commit: $(git log -1 --format='%h %s')"
 
       # THE GATE ON THE STAMP, and it reads the COMMIT rather than the working
       # tree. The claim being made is "the commit this release tags carries a
@@ -232,9 +148,9 @@ jobs:
       # integration), so every release re-proves the guard can go red. Two
       # guards in this file have shipped unable to fail; assume this one is next
       # unless it demonstrates otherwise on every run.
-      - name: Refuse a stamp commit whose uv.lock is not this version
+      - name: Refuse a tagged commit whose uv.lock is not this version
         run: |
-          SHA=${{ steps.stamp.outputs.sha }}
+          SHA=${{ steps.v.outputs.sha }}
           git show "$SHA:VERSION"           > "$RUNNER_TEMP/VERSION"
           git show "$SHA:ui/uv.lock"        > "$RUNNER_TEMP/uv.lock"
           git show "$SHA:ui/pyproject.toml" > "$RUNNER_TEMP/pyproject.toml"
@@ -242,7 +158,7 @@ jobs:
           if ! python3 ui/scripts/lock_version_parity.py check "$RUNNER_TEMP/uv.lock" \
                  --version-file "$RUNNER_TEMP/VERSION" \
                  --pyproject "$RUNNER_TEMP/pyproject.toml"; then
-            echo "::error::the stamp commit's ui/uv.lock does not declare v${{ steps.v.outputs.version }} -- a checkout of this tag would disagree with itself about its own version."
+            echo "::error::the tagged commit's ui/uv.lock does not declare v${{ steps.v.outputs.version }} -- a checkout of this tag would disagree with itself about its own version."
             exit 1
           fi
 
@@ -488,7 +404,7 @@ jobs:
       - name: Refuse to ship an image that is not the tagged commit, clean
         run: |
           V=${{ steps.v.outputs.version }}
-          REV=${{ steps.stamp.outputs.sha }}
+          REV=${{ steps.v.outputs.sha }}
           python3 fw/scripts/release_identity.py self-test
           fail=0
           python3 fw/scripts/release_identity.py check "dist/reflex-app-$V.bin" --stage app        --rev "$REV" --slotted || fail=1
@@ -502,25 +418,11 @@ jobs:
       - name: Stop here (dry run)
         if: ${{ inputs.dry_run }}
         run: |
-          echo "dry run — built and checked v${{ steps.v.outputs.version }}, publishing nothing"
+          echo "dry run: built and checked $TAG, publishing nothing"
 
-      # The stamp commit was made before the build. Tag THAT commit, by sha,
-      # rather than whatever HEAD is by now, and push branch and tag in ONE
-      # atomic push: origin gets both or neither. The old two-push form could
-      # land the stamp commit on the branch and then fail the tag push,
-      # leaving a version bump on dev that no tag or release goes with.
-      #
-      # Still not atomic with the push: `gh release create` below. If it fails,
-      # the tag and stamp are on origin with no release; delete the tag and
-      # dispatch the same version again (the stamp step then finds nothing to
-      # commit and tags HEAD as is).
-      - name: Tag the stamp commit and push both
-        if: ${{ !inputs.dry_run }}
-        run: |
-          SHA=${{ steps.stamp.outputs.sha }}
-          git tag -a "v${{ steps.v.outputs.version }}" -m "reflex v${{ steps.v.outputs.version }}" "$SHA"
-          git push --atomic origin "$SHA:refs/heads/${{ github.ref_name }}" "refs/tags/v${{ steps.v.outputs.version }}"
-
+      # The tag is already here, pushed together with its branch; this only
+      # creates the release for it. --verify-tag refuses rather than letting the
+      # CLI create a tag of its own if the tag were somehow missing.
       - name: Publish the release
         if: ${{ !inputs.dry_run }}
         env:
@@ -529,7 +431,7 @@ jobs:
           V=${{ steps.v.outputs.version }}
           # --notes-file together with --generate-notes: the written notes come
           # first and the generated changelog is appended beneath them.
-          FLAGS="--notes-file release-notes/$V.md --generate-notes --target ${{ github.ref_name }}"
+          FLAGS="--verify-tag --notes-file release-notes/$V.md --generate-notes"
           [ "${{ steps.v.outputs.prerelease }}" = "true" ] && FLAGS="$FLAGS --prerelease"
-          gh release create "v$V" dist/* --title "reflex v$V" $FLAGS
-          echo "published v$V from ${{ github.ref_name }}"
+          gh release create "$TAG" dist/* --title "reflex $TAG" $FLAGS
+          echo "published $TAG"
