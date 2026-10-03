@@ -569,7 +569,7 @@ static inline void updateJogPosition(rampsHandler_t *data) {
  *
  * THE KEY IS CARRIED WITH THE VALUE, and applyPhaseCorrection re-checks it
  * rather than trusting the refresh to have happened. A cache whose producer
- * runs on a 50 ms task and whose consumer runs at 100 kHz has a staleness
+ * runs on a 50 ms task and whose consumer runs at 50 kHz has a staleness
  * window by construction; the key check closes it. On a mismatch the ISR
  * passes 0, which means "do not reduce" -- the pre-04dd1f9 path -- so a stale
  * cache degrades gracefully instead of reducing by a period from the previous
@@ -998,7 +998,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
      * TODAY's behaviour and must go red the day this changes.
      *
      * COMPILED OUT ENTIRELY when the flag is off, not merely ignored. The
-     * comparison is cheap, but this is the ~100 kHz ISR whose execution time is
+     * comparison is cheap, but this is the ~50 kHz ISR whose execution time is
      * itself a published register, and a release build should carry no cost at
      * all for a feature it does not use. Leaving it in cost 64 bytes of flash
      * and made the claim "a release build is bit-for-bit the old gate" false,
@@ -1446,7 +1446,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
      *   mode 2 (JOG): unrescuable. The one thing that would fix it is the one
      *     thing that refuses to. Fail fast, here.
      *   mode 0: transient and legitimate. The task runs at ~100 ms while this
-     *     ISR runs at ~100 kHz, so a resume can genuinely land on a tick where
+     *     ISR runs at ~50 kHz, so a resume can genuinely land on a tick where
      *     the mode has not been promoted YET. Refusing here would break normal
      *     cuts to guard a case that fixes itself within one task tick; the
      *     ~5 s ELS_TAKEUP_TIMEOUT_TICKS backstop covers the residue where it

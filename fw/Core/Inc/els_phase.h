@@ -207,7 +207,7 @@ typedef struct {
  * WHICH WAY IT FAILS, DELIBERATELY. A refused pair returns deltaSpindle
  * UNREDUCED -- exactly the pre-04dd1f9 behaviour, which shipped for months and
  * degrades gracefully -- rather than asserting or clamping. This runs on the
- * resume edge off the 100 kHz ISR's path; there is nothing useful to trap to,
+ * resume edge off the 50 kHz ISR's path; there is nothing useful to trap to,
  * and reducing by a wrong period is strictly worse than not reducing. So a
  * tolerance that is slightly too TIGHT costs the fix's benefit on a machine
  * that deserved it, while one slightly too LOOSE costs a scrapped thread. The
@@ -333,7 +333,7 @@ static inline int32_t elsReduceDeltaSpindleBy(int32_t deltaSpindle,
   return r;
 }
 
-/* ---- the 100 kHz ISR's path carries no library calls ------------------
+/* ---- the 50 kHz ISR's path carries no library calls ------------------
  *
  * elsComputePhaseCorrection runs from applyPhaseCorrection, on the resume edge
  * -- which is cut-start, which is when the Modbus link died on 2026-08-23.
