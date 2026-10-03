@@ -121,7 +121,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     		{
     			/* Interrupt (non-DMA) RX recovery.
     			 * A USART overrun (ORE) occurs when the lowest-priority USART1 RX
-    			 * interrupt is starved by the 100 kHz step-generation timer ISR
+    			 * interrupt is starved by the 50 kHz step-generation timer ISR
     			 * (TIM9 -> SynchroRefreshTimerIsr, NVIC prio 5). The HAL treats ORE
     			 * as a blocking error: it ends the RX transfer and never re-arms it,
     			 * so Modbus RX stays dead until the master gives up and reconnects.

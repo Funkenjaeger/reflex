@@ -17,8 +17,8 @@ THE SIGN, WHICH IS THE WHOLE POINT. The carriage settles at
 so it lands SHORT of the target only if offset > overshoot. An offset scaled
 BELOW the prediction lands PAST the target, into the shoulder. An earlier draft
 of the decision record proposed applying "~90%" of the prediction; that lands
-10% of the coast past the target and is superseded (decisions/
-els-stop-overshoot-compensation.md, 2026-09-18). Nothing here ever scales the
+10% of the coast past the target and is superseded (docs/design/
+decisions.md). Nothing here ever scales the
 prediction below 100%, and test_els_overshoot pins offset > predicted at every
 table point.
 

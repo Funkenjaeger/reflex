@@ -155,9 +155,10 @@ def test_no_confirmation_dialog_sits_over_the_protocol_check():
     # in the gate's module can build one. Asserted on the code form: the
     # screen's docstrings talk about the protocol check at length, so a search
     # for the word would fire on the sentence explaining that there is no
-    # dialog for it.
-    assert re.search(r"if release\.prerelease:\s+self\._confirm_prerelease",
-                     screen)
+    # dialog for it. The branch also takes an integration build (a home-source
+    # release), so one published without the pre-release flag still asks.
+    assert re.search(r'if release\.prerelease or release\.source == "home":\s+'
+                     r"self\._confirm_prerelease", screen)
     assert "Popup(" not in _updater_src()
     # The CALL form. The screen's docstring cross-references the gate by name,
     # which is the reference a reader wants and not a call site.

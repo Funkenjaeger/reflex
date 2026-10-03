@@ -231,3 +231,77 @@ class TestInstallButton:
         screen._do_install(screen._catalogue[other])
         assert screen.busy
         assert not screen.enable_update_button
+
+
+# ---------------------------------------------------------------------------
+# "Offer integration builds": the optional home source's alphas
+# ---------------------------------------------------------------------------
+
+def _alpha(tag):
+    return Release(tag=tag, prerelease=True, firmware_url=f"https://forge.example/{tag}.bin",
+                   firmware_name=f"reflex-app-{tag.lstrip('v')}.bin", source="home")
+
+
+class _IntegrationDevice(_Device):
+    def __init__(self, offer_prereleases=False, offer_integration_builds=False):
+        super().__init__(offer_prereleases)
+        self.offer_integration_builds = offer_integration_builds
+
+
+@pytest.fixture
+def home_screen(screen):
+    screen._catalogue = {"v1.3.0-alpha.2": _alpha("v1.3.0-alpha.2"), **screen._catalogue}
+    return screen
+
+
+class TestIntegrationBuilds:
+    def test_without_a_home_source_the_row_is_hidden_and_offers_nothing(self, home_screen):
+        """MUTATION EVIDENCE: dropping the home_available condition from
+        _offered turns this red."""
+        with patch("reflex.utils.release_source.load_home_source", return_value=None), \
+             patch.object(UpdateScreen, "_device",
+                          return_value=_IntegrationDevice(offer_integration_builds=True)), \
+             patch.object(home_screen, "schedule_refresh_releases"):
+            home_screen.on_pre_enter()
+        assert home_screen.home_available is False
+        assert home_screen.allow_integration is False
+        home_screen.allow_integration = True       # even forced on
+        assert "v1.3.0-alpha.2" not in home_screen.releases
+
+    def test_alphas_follow_their_own_toggle_not_the_prerelease_one(self, home_screen):
+        home_screen.home_available = True
+        home_screen.allow_experimental = True
+        assert "v1.3.0-alpha.2" not in home_screen.releases
+        home_screen.allow_integration = True
+        assert home_screen.releases[0] == "v1.3.0-alpha.2"
+        home_screen.allow_experimental = False
+        assert home_screen.releases == ["v1.3.0-alpha.2", "v1.1.0", "v1.0.1"]
+
+    def test_the_toggle_is_restored_and_saved_when_a_source_exists(self, home_screen):
+        dev = _IntegrationDevice(offer_integration_builds=True)
+        with patch("reflex.utils.release_source.load_home_source", return_value=object()), \
+             patch.object(UpdateScreen, "_device", return_value=dev), \
+             patch.object(home_screen, "schedule_refresh_releases"):
+            home_screen.on_pre_enter()
+            assert home_screen.home_available and home_screen.allow_integration
+            assert "v1.3.0-alpha.2" in home_screen.releases
+            home_screen.allow_integration = False
+            assert dev.offer_integration_builds is False
+
+    def test_the_session_gets_the_home_source(self, home_screen):
+        marker = object()
+        home_screen._home_source = marker
+        with patch("reflex.components.screens.update_screen.updater.resolve_checkout",
+                   return_value="/tmp/checkout"):
+            s = home_screen._session()
+        assert s.home_source is marker
+
+    def test_installing_an_alpha_asks_first(self, home_screen):
+        home_screen.home_available = True
+        home_screen.allow_integration = True
+        home_screen.selected_release = "v1.3.0-alpha.2"
+        with patch.object(home_screen, "_confirm_prerelease") as ask, \
+             patch.object(home_screen, "_install_unless_engaged") as go:
+            home_screen.install_release()
+        ask.assert_called_once()
+        go.assert_not_called()

@@ -27,12 +27,13 @@
  * target step count, the step/dir servo may still be closing following error /
  * settling. Snapshotting the Z DRO then yields a takeup-speed-dependent (hence
  * backlash-dependent) phase error. Hold position for this many ISR ticks before
- * sampling Z in applyPhaseCorrection. ISR runs at ~100 kHz (TIM9, 10 us/tick),
- * so 100000 ticks ~= 1 s. The settling hypothesis was REFUTED on hardware (the
- * 1 s dwell changed nothing) and in the emulator (the carriage genuinely doesn't
- * move during a lash-absorbed takeup, so there is nothing to settle), so this is
- * now a short, behaviour-neutral guard rather than a real settle window. Keep it
- * small so the emulator's bounded-guard scenario loop doesn't time out. */
+ * sampling Z in applyPhaseCorrection. ISR ran at ~100 kHz (TIM9, 10 us/tick)
+ * when this was tried, so 100000 ticks was ~1 s. The settling hypothesis was
+ * REFUTED on hardware (the 1 s dwell changed nothing) and in the emulator (the
+ * carriage genuinely doesn't move during a lash-absorbed takeup, so there is
+ * nothing to settle), so this is now a short, behaviour-neutral guard rather
+ * than a real settle window. Keep it small so the emulator's bounded-guard
+ * scenario loop doesn't time out. */
 #define ELS_SETTLE_TICKS            ELS_US_TO_TICKS(500)     /* 0.5 ms */
 
 /* ---- QUIESCENCE: has the carriage actually STOPPED? --------------------
@@ -63,8 +64,8 @@
  * ELS_QUIESCENT_TICKS is sized against the EMULATOR, not that field data --
  * those single counts arrive scattered across the whole window and may be drift
  * rather than settle. Treat it as provisional and commission it with the
- * inter-pulse-gap measurement (todo.md), the same way ELS_SLIP_SETTLE_TICKS
- * must be. The confirm window still bounds the wait, so a machine that never
+ * inter-pulse-gap measurement, on the machine, the same way
+ * ELS_SLIP_SETTLE_TICKS was. The confirm window still bounds the wait, so a machine that never
  * goes quiet aborts rather than hangs. */
 #ifndef ELS_REQUIRE_QUIESCENCE
 #define ELS_REQUIRE_QUIESCENCE 0
@@ -79,7 +80,7 @@
  * and that is the maintainer's call to make rather than a refactor. */
 
 /* Backstop for a backlash takeup that never reaches its commanded target. ISR
- * runs at ~100 kHz (TIM9, 10 us/tick), so this is ~5 s — far longer than any
+ * runs at ~50 kHz (TIM9, 20 us/tick), so this is ~5 s — far longer than any
  * legitimate takeup (tens to low hundreds of steps) even at a slow maxSpeed, and
  * deliberately generous because tripping it early would be worse than not having
  * it. It is a DIAGNOSTIC, not a control: it does not release the sync gate (see
@@ -88,7 +89,7 @@
 #define ELS_TAKEUP_TIMEOUT_TICKS    ELS_MS_TO_TICKS(5000)    /* 5 s */
 
 /* How long the Z confirmation gate keeps LOOKING after the commanded take-up
- * motion has finished, before latching its verdict. ISR is ~100 kHz, so this is
+ * motion has finished, before latching its verdict. ISR is ~50 kHz, so this is
  * ~250 ms.
  *
  * Neither extreme is safe. Re-evaluating FOREVER (the original behaviour) means
@@ -108,7 +109,7 @@
  * (sub-millimetre moves, heavy carriage, high friction) and well below the time
  * it takes a person to reach a handwheel. It bounds the exposure; it does not
  * eliminate it — only correlating Z motion against commanded steps does that,
- * and that is the real fix (see todo.md).
+ * and that is the real fix.
  *
  * THAT FIX NOW EXISTS (els_slip.h), and it changed what this constant is FOR.
  * The window no longer carries the safety property — attribution does. What is
@@ -155,9 +156,9 @@
  * which is what the hold exists to make possible.
  *
  * Constraints any replacement value must satisfy:
- *  - MUST exceed ELS_SETTLE_TICKS (50). The gate's first evaluation happens that
- *    many ticks after the last pulse; a shorter horizon rejects the inertial
- *    settle this whole mechanism exists to accept.
+ *  - MUST exceed ELS_SETTLE_TICKS (25 at 50 kHz). The gate's first evaluation
+ *    happens that many ticks after the last pulse; a shorter horizon rejects
+ *    the inertial settle this whole mechanism exists to accept.
  *  - MUST exceed the live pulse pacing period (servoCycles), or genuine coupled
  *    motion mid-burst is discarded and a HEALTHY machine refuses to start. Not
  *    left to this constant — elsSlipSettleTicks() floors it at runtime — but a
@@ -568,7 +569,7 @@ static inline void updateJogPosition(rampsHandler_t *data) {
  *
  * THE KEY IS CARRIED WITH THE VALUE, and applyPhaseCorrection re-checks it
  * rather than trusting the refresh to have happened. A cache whose producer
- * runs on a 50 ms task and whose consumer runs at 100 kHz has a staleness
+ * runs on a 50 ms task and whose consumer runs at 50 kHz has a staleness
  * window by construction; the key check closes it. On a mismatch the ISR
  * passes 0, which means "do not reduce" -- the pre-04dd1f9 path -- so a stale
  * cache degrades gracefully instead of reducing by a period from the previous
@@ -997,7 +998,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
      * TODAY's behaviour and must go red the day this changes.
      *
      * COMPILED OUT ENTIRELY when the flag is off, not merely ignored. The
-     * comparison is cheap, but this is the ~100 kHz ISR whose execution time is
+     * comparison is cheap, but this is the ~50 kHz ISR whose execution time is
      * itself a published register, and a release build should carry no cost at
      * all for a feature it does not use. Leaving it in cost 64 bytes of flash
      * and made the claim "a release build is bit-for-bit the old gate" false,
@@ -1030,11 +1031,12 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
       /* elsDiagExtraDwell() is ZERO in every release build and in every probe
        * but takeup-settle-v3, so this comparison is bit-for-bit the old one
        * unless that probe is compiled in. It exists because the settle this
-       * dwell precedes cannot be MEASURED in 50 ticks: the gate confirms, the
-       * phase-correction jog drives, and any capture ends. Holding the dwell
-       * open is the only way to watch the carriage stop. See
-       * els_diag_takeup_settle.h. The same term is added to the abort
-       * threshold below so the confirm window keeps its full length. */
+       * dwell precedes cannot be MEASURED in 25 ticks (ELS_SETTLE_TICKS at
+       * 50 kHz): the gate confirms, the phase-correction jog drives, and any
+       * capture ends. Holding the dwell open is the only way to watch the
+       * carriage stop. See els_diag_takeup_settle.h. The same term is added
+       * to the abort threshold below so the confirm window keeps its full
+       * length. */
       if (data->elsStopSettleCount
           < ELS_SETTLE_TICKS + elsDiagExtraDwell(&data->diag)) {
         data->elsStopSettleCount++;        // dwell after commanded-complete
@@ -1444,7 +1446,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
      *   mode 2 (JOG): unrescuable. The one thing that would fix it is the one
      *     thing that refuses to. Fail fast, here.
      *   mode 0: transient and legitimate. The task runs at ~100 ms while this
-     *     ISR runs at ~100 kHz, so a resume can genuinely land on a tick where
+     *     ISR runs at ~50 kHz, so a resume can genuinely land on a tick where
      *     the mode has not been promoted YET. Refusing here would break normal
      *     cuts to guard a case that fixes itself within one task tick; the
      *     ~5 s ELS_TAKEUP_TIMEOUT_TICKS backstop covers the residue where it
@@ -1649,11 +1651,11 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
 
   /* Divide-by-zero guard. The zero window is REACHABLE, not theoretical:
    * servoCycles is 0 from reset (Ramps.c:64) and its only writer is
-   * updateSpeedTask (Ramps.c:613), but RampsStart() enables the 100 kHz TIM9
+   * updateSpeedTask (Ramps.c:613), but RampsStart() enables the 50 kHz TIM9
    * interrupt as its last act (HAL_TIM_Base_Start_IT, Ramps.c:165) and main.c
    * only reaches osKernelStart() afterwards, so this ISR runs before the
    * scheduler exists at all, and updateSpeedTask then sleeps osDelay(50) before
-   * its first assignment. That is >5000 ISR ticks at 10 us with servoCycles == 0.
+   * its first assignment. That is >2500 ISR ticks at 20 us with servoCycles == 0.
    * It goes unnoticed on hardware because Cortex-M4 UDIV-by-zero yields 0 with
    * DIV_0_TRP clear (never set here) and servoMode is still 0 so no pulses are
    * emitted; it is still C undefined behavior, and the emulator's x86 build

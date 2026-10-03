@@ -4,8 +4,7 @@
  * Pins the behavior of the offsetSteps parameter on
  * elsComputePhaseCorrection() (Core/Inc/els_phase.h), added to support
  * auto-advance from X depth, and manual fixed-distance
- * advance. See the PHASE OFFSET note in els_phase.h and the phase-offset
- * section of todo.md.
+ * advance. See the PHASE OFFSET note in els_phase.h.
  *
  * Style matches els_phase_test.cpp: pure host build, no HAL/struct deps,
  * fixed 1:1 geometry (threadPitchSteps == zCountsPerPitch == PITCH) chosen so

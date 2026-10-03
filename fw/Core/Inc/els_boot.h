@@ -1,8 +1,8 @@
 /*
  * els_boot.h -- the APPLICATION's side of the bootloader hand-off.
  *
- * Three things the app owes the bootloader (see docs/decisions/
- * els-modbus-register-map.md):
+ * Three things the app owes the bootloader (see
+ * docs/design/decisions.md):
  *
  *   1. elsBootAttemptsClear()  -- once Modbus is live, write the boot-attempt
  *      counter to (TAG, 0). The bootloader increments it before every jump;

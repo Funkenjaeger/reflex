@@ -8,6 +8,10 @@ spelling plus an editable-install mark -- 90 px of text in a 92 dp box at
 tests check the fit arithmetic against a model of the font; this checks the
 font itself, which only renders with a window.
 
+Alpha tags (integration builds, v1.3.0-alpha.12) would shrink to 10 px
+in full, so the status bar shows them as -a.N (release_version.status_label).
+Each alpha here must render at least as large as the rc of the same numbers.
+
 Run (WSL):
     cd ui && xvfb-run -a -s "-screen 0 1024x600x24" \\
         ./.venv/bin/python previews/preview_version_fit.py
@@ -36,20 +40,24 @@ from kivy.uix.label import Label  # noqa: E402
 from reflex.app import MainApp  # noqa: E402
 from reflex.components.widgets.auto_size_button import (AutoSizeLabel,  # noqa: E402
                                                         measure_text_width)
+from reflex.utils import release_version  # noqa: E402
 
-VERSIONS = ["v1.2.0", "v1.2.0-rc.7", "v1.2.0-rc.12", "v1.2.10-rc.12"]
+VERSIONS = ["v1.2.0", "v1.2.0-rc.7", "v1.2.0-rc.12", "v1.2.10-rc.12",
+            "v1.2.0-alpha.7", "v1.2.0-alpha.12", "v1.2.10-alpha.12"]
 FAILED = []
 app = MainApp()
 
 
 def _find_version_label():
+    shown = release_version.status_label(app.version)
     for w in app.root.walk(restrict=False):
-        if isinstance(w, AutoSizeLabel) and w.text == app.version:
+        if isinstance(w, AutoSizeLabel) and w.text == shown:
             return w
-    raise AssertionError(f"no AutoSizeLabel showing app.version ({app.version!r})")
+    raise AssertionError(f"no AutoSizeLabel showing {shown!r} (app.version {app.version!r})")
 
 
 def _check(_dt):
+    fonts = {}
     try:
         for v in VERSIONS:
             app.version = v
@@ -64,12 +72,17 @@ def _check(_dt):
                               text_size=(lab.width, None))
                 probe.texture_update()
                 return probe.texture_size[1]
-            one_line = height(v) <= height("0")
-            natural = measure_text_width(v, lab.font_name, lab.font_size)
+            one_line = height(lab.text) <= height("0")
+            natural = measure_text_width(lab.text, lab.font_name, lab.font_size)
             fits = natural <= lab.width
-            print(f"{v:14s} font {lab.font_size:5.2f}  text {natural:3d} px  box {lab.width:.0f}  "
-                  f"{'ONE LINE' if one_line else 'WRAPPED'}  {'fits' if fits else 'OVERFLOWS'}")
-            if not (one_line and fits):
+            fonts[v] = lab.font_size
+            rc = fonts.get(v.replace("-alpha.", "-rc.")) if "-alpha." in v else None
+            as_large = rc is None or lab.font_size >= rc - 0.01
+            print(f"{v:16s} shown {lab.text:13s} font {lab.font_size:5.2f}  text {natural:3d} px  "
+                  f"box {lab.width:.0f}  {'ONE LINE' if one_line else 'WRAPPED'}  "
+                  f"{'fits' if fits else 'OVERFLOWS'}"
+                  + ("" if rc is None else f"  {'>=' if as_large else 'SMALLER THAN'} its rc ({rc:.2f})"))
+            if not (one_line and fits and as_large):
                 FAILED.append(v)
             # Crop: the status bar's left end, where the dogleg and version sit.
             out = os.path.join(os.path.dirname(__file__),

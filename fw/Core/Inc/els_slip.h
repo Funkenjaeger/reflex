@@ -70,10 +70,10 @@
  * UNITS AND HOSTS -- THREE WAYS TO TUNE THIS WRONG
  * -----------------------------------------------
  * 1. settleTicks is a count of ISR TICKS, not milliseconds. Firmware constants
- *    assume the ~100 kHz TIM9 rate (Ramps.c). The emulator's real-time physics
+ *    assume the ~50 kHz TIM9 rate (Ramps.c). The emulator's real-time physics
  *    server drives the same ISR at its own isr_rate_hz (emulator/src/main.cpp
- *    documents 10 kHz, i.e. 10x slower), so a horizon chosen by watching
- *    wall-clock behaviour in serve mode is 10x wrong on hardware. Tick COUNTS
+ *    documents 10 kHz, i.e. 5x slower), so a horizon chosen by watching
+ *    wall-clock behaviour in serve mode is 5x wrong on hardware. Tick COUNTS
  *    are portable; seconds are not. (The fixture tests call the ISR in a tight
  *    loop with no pacing at all, so wall-clock time is meaningless there.)
  * 2. Z resolution is machine config, not a constant: elspi is 200 counts/mm,

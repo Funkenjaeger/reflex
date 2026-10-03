@@ -98,6 +98,7 @@ from pathlib import Path
 
 from kivy.logger import Logger
 
+from reflex.utils import release_version
 from reflex.utils.image_requirement import MINIMUM_IMAGE_RELEASE
 
 log = Logger.getChild(__name__)
@@ -279,6 +280,10 @@ class Release:
     prerelease: bool
     firmware_url: str
     firmware_name: str
+    #: Where the release was listed: "public" (GitHub) or "home" (the optional
+    #: private source, :mod:`reflex.utils.release_source`). Decides where the
+    #: tag is fetched from and whether the download carries credentials.
+    source: str = "public"
 
     @property
     def version(self) -> str:
@@ -287,8 +292,14 @@ class Release:
 
 
 def select_releases(payload, *, allow_prerelease: bool,
-                    limit: int = RELEASE_LIST_LIMIT) -> list[Release]:
+                    limit: int = RELEASE_LIST_LIMIT,
+                    source: str = "public") -> list[Release]:
     """Installable releases from the GitHub API payload, newest first.
+
+    The home source's API (a Forgejo/Gitea forge) answers in the same shape --
+    ``tag_name``, ``draft``, ``prerelease``, ``assets[].name`` and
+    ``assets[].browser_download_url`` -- so the same filters apply to it, and
+    ``source`` records where each release came from.
 
     THREE FILTERS, and each one drops something that would otherwise be
     offered and could not be installed:
@@ -323,6 +334,7 @@ def select_releases(payload, *, allow_prerelease: bool,
             prerelease=bool(item.get("prerelease")),
             firmware_url=asset["browser_download_url"],
             firmware_name=asset["name"],
+            source=source,
         ))
         if len(out) >= limit:
             break
@@ -749,16 +761,21 @@ def verify_firmware_half(identity: Identity, target_protocol: int,
 # Default I/O bindings
 # --------------------------------------------------------------------------
 
-def subprocess_runner(argv, cwd=None, timeout=None, emit=None):
+def subprocess_runner(argv, cwd=None, timeout=None, emit=None, env=None):
     """Run a command, streaming its output to ``emit``. Returns (rc, output).
 
     Combined stdout+stderr, because everything run here is a tool whose
     progress narration and its errors are equally worth showing the operator
     on a machine with no terminal.
+
+    ``env`` is ADDED to this process's environment, never a replacement: the
+    home source's fetch passes its credential this way (``GIT_CONFIG_*``) so
+    that it is never part of the command line.
     """
     p = subprocess.Popen([str(a) for a in argv], cwd=str(cwd) if cwd else None,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         text=True, bufsize=1)
+                         text=True, bufsize=1,
+                         env={**os.environ, **env} if env else None)
     lines = []
     assert p.stdout is not None
     for line in p.stdout:
@@ -770,14 +787,34 @@ def subprocess_runner(argv, cwd=None, timeout=None, emit=None):
     return p.returncode, "\n".join(lines)
 
 
-def urllib_download(url: str, dest: Path) -> Path:
-    with urllib.request.urlopen(url, timeout=60) as r, open(dest, "wb") as f:
+def _request(url: str, headers: dict | None):
+    """A request whose headers are NOT replayed on a redirect. urllib copies
+    ordinary headers onto the redirected request whatever its host, which
+    would hand the home source's credential to wherever a redirect points; an
+    unredirected header stays with the URL it was meant for, and a redirect
+    then fails loudly instead."""
+    req = urllib.request.Request(url)
+    for key, value in (headers or {}).items():
+        req.add_unredirected_header(key, value)
+    return req
+
+
+def _snapshot_settings(reason: str) -> Path:
+    """The default pre-update snapshot: the commissioning bundle, written to
+    the ledger's snapshots directory. Imported here, not at module level, so
+    the updater stays importable (and testable) without the app's config."""
+    from reflex.utils import commissioning_bundle
+    return commissioning_bundle.snapshot(reason)
+
+
+def urllib_download(url: str, dest: Path, headers: dict | None = None) -> Path:
+    with urllib.request.urlopen(_request(url, headers), timeout=60) as r, open(dest, "wb") as f:
         shutil.copyfileobj(r, f)
     return dest
 
 
-def urllib_fetch_json(url: str):
-    with urllib.request.urlopen(url, timeout=30) as r:
+def urllib_fetch_json(url: str, headers: dict | None = None):
+    with urllib.request.urlopen(_request(url, headers), timeout=30) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
@@ -866,8 +903,14 @@ class UpdateSession:
                  emit=None, uv_finder=find_uv, service: str = SERVICE_NAME,
                  python: str | None = None, restart=None,
                  manifest: Path | None = None,
-                 elspi_release_path: Path | None = None):
+                 elspi_release_path: Path | None = None,
+                 home_source=None, snapshot=None):
         self.checkout = Path(checkout)
+        #: The optional private release source (release_source.HomeSource),
+        #: or None, in which case nothing below differs from a machine that
+        #: has never heard of one.
+        self.home_source = home_source
+        self._snapshot = snapshot or _snapshot_settings
         self._manifest = manifest
         self._elspi_release_path = elspi_release_path or ELSPI_RELEASE_PATH
         #: The controller's identity just before the flash, kept so a failed
@@ -891,15 +934,19 @@ class UpdateSession:
         self._emit(line)
         log.info(f"update: {line}")
 
-    def _run(self, argv, cwd=None, timeout=None, what="", quiet=False):
+    def _run(self, argv, cwd=None, timeout=None, what="", quiet=False, env=None):
         """``quiet`` suppresses the live echo, not the capture.
 
         For commands whose OUTPUT is data rather than progress -- ``git show``
         of a source file being the one that matters, since streaming it would
         dump the whole of els_stop_map.py into the operator's status box.
+
+        ``env`` is passed to the runner only when given, so a runner that
+        predates it still serves every public-source command.
         """
+        extra = {"env": env} if env else {}
         rc, out = self._runner(argv, cwd=cwd, timeout=timeout,
-                               emit=None if quiet else self._emit)
+                               emit=None if quiet else self._emit, **extra)
         if rc != 0:
             refused = UpdateRefused(
                 f"{what or ' '.join(str(a) for a in argv)} failed (exit {rc}).\n"
@@ -946,7 +993,50 @@ class UpdateSession:
         seen = {r.tag for r in out}
         out += [r for r in select_releases(payload, allow_prerelease=False)
                 if r.tag not in seen]
-        return out
+        if self.home_source is None:
+            return out
+        return self._with_home_releases(out)
+
+    def _with_home_releases(self, public: list[Release]) -> list[Release]:
+        """The public catalogue plus the home source's releases, newest first
+        by version. The home source failing (no route, refused token) costs
+        only its own entries: the public list is still returned, and the
+        status box says why the home entries are missing. A tag listed by
+        both keeps its PUBLIC entry, which needs no credential."""
+        home = self.home_source
+        try:
+            payload = self._fetch_json(home.releases_url,
+                                       headers=home.auth_headers_for(home.releases_url))
+            found = select_releases(payload, allow_prerelease=True, source="home")
+        except Exception as e:      # noqa: BLE001 - any failure: public only
+            self.emit(f"Integration builds could not be listed ({e}); "
+                      f"showing public releases only.")
+            return public
+        seen = {r.tag for r in public}
+        merged = public + [r for r in found if r.tag not in seen]
+        return sorted(merged, key=lambda r: release_version.precedence_key(r.tag),
+                      reverse=True)
+
+    def _home(self):
+        if self.home_source is None:
+            raise UpdateRefused(
+                "This is an integration build, but no integration build source "
+                "is configured on this machine. Nothing has been changed.")
+        return self.home_source
+
+    def _fetch_home_tag(self, release: Release):
+        """Fetch exactly the one tag being installed from the home source.
+
+        Only that tag: the home repository carries every branch and work in
+        progress, none of which belongs in the machine's checkout. The
+        credential travels in the environment (HomeSource.git_env), so the
+        command line names only the URL and the refspec."""
+        home = self._home()
+        ref = f"refs/tags/{release.tag}"
+        self.emit(f"Fetching {release.tag} from the integration build source.")
+        self._run(["git", "fetch", "--no-tags", home.git_url, f"+{ref}:{ref}"],
+                  cwd=self.checkout, timeout=300, what="git fetch (integration build)",
+                  env=home.git_env())
 
     # -- 1. preflight ------------------------------------------------------
 
@@ -996,9 +1086,12 @@ class UpdateSession:
                 f"{release.tag} could fail halfway or discard work. Nothing "
                 f"has been changed.\n{dirty[:400]}")
 
-        self.emit(f"Fetching tags from {GITHUB_FETCH_URL}.")
-        self._run(["git", "fetch", "--tags", "--force", GITHUB_FETCH_URL],
-                  cwd=self.checkout, timeout=300, what="git fetch")
+        if release.source == "home":
+            self._fetch_home_tag(release)
+        else:
+            self.emit(f"Fetching tags from {GITHUB_FETCH_URL}.")
+            self._run(["git", "fetch", "--tags", "--force", GITHUB_FETCH_URL],
+                      cwd=self.checkout, timeout=300, what="git fetch")
         self._run(["git", "rev-parse", "--verify", f"{release.tag}^{{commit}}"],
                   cwd=self.checkout, what=f"resolving tag {release.tag}")
 
@@ -1016,7 +1109,11 @@ class UpdateSession:
         self.workdir.mkdir(parents=True, exist_ok=True)
         image_path = self.workdir / release.firmware_name
         self.emit(f"Downloading {release.firmware_name}.")
-        self._download(release.firmware_url, image_path)
+        if release.source == "home":
+            self._download(release.firmware_url, image_path,
+                           headers=self._home().auth_headers_for(release.firmware_url))
+        else:
+            self._download(release.firmware_url, image_path)
 
         # The authoritative validator, not a reimplementation: reflex_image.py
         # mirrors blImageValidate() in the bootloader, so an image this rejects
@@ -1377,6 +1474,26 @@ class UpdateSession:
 
     # -- the whole thing ---------------------------------------------------
 
+    def _snapshot_before(self, release: Release):
+        """A copy of the settings as they are before anything changes.
+
+        WHY: an OLDER release rewrites each settings file from the properties
+        IT knows, so settings a newer release added are dropped the first time
+        it saves them (SavingDispatcher.save_settings). Going back is rare and
+        that loss is accepted; this copy is what restores a setting by hand if
+        it mattered. It is the commissioning bundle the Backup screen exports,
+        written beside the startup and change snapshots.
+
+        A failed snapshot does not stop the update: it is a convenience for a
+        rare case, and the operator is told it is missing."""
+        try:
+            path = self._snapshot(f"pre-update-{release.tag}")
+        except Exception as e:      # noqa: BLE001 - never blocks the update
+            self.emit(f"Settings snapshot before the update could not be written ({e}); "
+                      f"continuing without it.")
+            return
+        self.emit(f"Settings saved before the update: {path}")
+
     def run(self, release: Release, *, pause_link=None, resume_link=None):
         """Preflight, flash, gate, install. Raises :class:`UpdateRefused`.
 
@@ -1403,6 +1520,7 @@ class UpdateSession:
         feed against a mismatched protocol (app.on_servo_enable_pressed).
         """
         prepared = self.preflight(release)
+        self._snapshot_before(release)
         if pause_link:
             pause_link()
         try:

@@ -215,7 +215,7 @@ struct Rig {
 
     /* Move the carriage WITHOUT the servo driving it — an operator pushing it
      * with the half-nut open. This is the degree of freedom the production
-     * emulator still lacks (see reflex-fw todo.md), and its absence is why the
+     * emulator still lacks, and its absence is why the
      * hardware defect below was unreachable by test: the model could express
      * "coupled" and "never moves", but not "moving for a reason that isn't us". */
     void nudgeCarriage(int32_t zCounts) {

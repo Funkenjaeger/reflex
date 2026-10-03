@@ -27,8 +27,8 @@
  * it does: the durations below are DUPLICATED from Ramps.c, because those
  * constants are #defined in a .c and no test can see them. If someone changes
  * ELS_SLIP_SETTLE_TICKS to ELS_MS_TO_TICKS(9) in Ramps.c, this file keeps
- * asserting 7 ms and stays green. Removing that gap means moving the constants
- * into a header, which is a separate change. Until then the duplication is
+ * asserting the old duration and stays green. Removing that gap means moving
+ * the constants into a header, which is a separate change. Until then the duplication is
  * named rather than hidden.
  */
 #include "els_isr_rate.h"
@@ -49,13 +49,19 @@ static void check(bool cond, const char *what)
 struct Timing {
     const char *name;
     int32_t     us;         /* intended duration */
-    int32_t     at100k;     /* the literal this replaced, before 2026-08-28 */
+    int32_t     at100k;     /* ticks at 100 kHz: the pre-2026-08-28 literal, re-commissioned for the slip horizon */
 };
+
+/* The slip-settle horizon, the one duration here that has been re-commissioned
+ * since the tick constants became durations: 7 ms (700 ticks at 100 kHz) until
+ * the 2026-08-27 capture set showed settle tails up to 17.86 ms, now 20 ms
+ * (ELS_MS_TO_TICKS(20) in Ramps.c). One literal, used by every check below. */
+static const int32_t SLIP_SETTLE_US = 20000;
 
 static const Timing TIMINGS[] = {
     { "ELS_SETTLE_TICKS",                 500,        50 },
     { "ELS_QUIESCENT_TICKS",             2000,       200 },
-    { "ELS_SLIP_SETTLE_TICKS",           7000,       700 },
+    { "ELS_SLIP_SETTLE_TICKS",           SLIP_SETTLE_US, 2000 },
     { "ELS_TAKEUP_CONFIRM_WINDOW_TICKS", 250000,   25000 },
     { "ELS_TAKEUP_TIMEOUT_TICKS",       5000000,  500000 },
     { "ELS_DIAG_BUCKET_TICKS",            400,        40 },
@@ -109,7 +115,7 @@ int main()
     printf("\n-- 2. the ordering invariants, at the compiled rate --\n");
     {
         const int32_t settle_gate = ticks_at(500,     ELS_ISR_TICK_HZ);
-        const int32_t slip        = ticks_at(7000,    ELS_ISR_TICK_HZ);
+        const int32_t slip        = ticks_at(SLIP_SETTLE_US, ELS_ISR_TICK_HZ);
         const int32_t confirm     = ticks_at(250000,  ELS_ISR_TICK_HZ);
         const int32_t timeout     = ticks_at(5000000, ELS_ISR_TICK_HZ);
         const int32_t bucket      = ticks_at(400,     ELS_ISR_TICK_HZ);
@@ -164,7 +170,7 @@ int main()
         for (int r = 0; r < 3; r++) {
             int32_t hz = RATES[r];
             int32_t settle_gate = ticks_at(500,     hz);
-            int32_t slip        = ticks_at(7000,    hz);
+            int32_t slip        = ticks_at(SLIP_SETTLE_US, hz);
             int32_t confirm     = ticks_at(250000,  hz);
             int32_t timeout     = ticks_at(5000000, hz);
             bool ok = settle_gate > 0 && slip > settle_gate * 4

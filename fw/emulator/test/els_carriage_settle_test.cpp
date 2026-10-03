@@ -7,7 +7,7 @@
  * Until 2026-08-22 onStepPulse() moved carriage_mm the instant the backlash nut
  * hit a wall. The last commanded step pulse and the last Z count arrived on the
  * same tick, so the simulated carriage had no settle behaviour of any kind.
- * fw/todo.md records the two things that blocked on that:
+ * Two things were blocked on that:
  *
  *  - ELS_SLIP_SETTLE_TICKS (the horizon over which post-pulse Z motion is still
  *    credited to the servo) could not be exercised here, because every horizon
@@ -85,7 +85,7 @@ static const double DT          = 1e-4;         /* 10 kHz ISR tick, the emulator
  * file rather than as a test that quietly re-derives whatever Ramps.c now says.
  * If Ramps.c changes these, S4 is where you find out. */
 static const int FW_ELS_SETTLE_TICKS      = 50;    /* gate dwell before its first verdict */
-static const int FW_ELS_SLIP_SETTLE_TICKS = 700;   /* motion-attribution horizon, commissioned 2026-08-27 */
+static const int FW_ELS_SLIP_SETTLE_TICKS = 2000;  /* motion-attribution horizon: ELS_MS_TO_TICKS(20) = 2000 ticks at the emulator's pinned 100 kHz */
 
 /* Zeroed firmware shared state for tick(). Nothing in the settle path reads it;
  * the parameter is kept for signature compatibility with the production caller. */

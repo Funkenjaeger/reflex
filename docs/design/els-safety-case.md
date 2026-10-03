@@ -8,8 +8,8 @@ injection.
 !!! info "Provenance"
     Citations are file and line as of `bd10c92` plus `7f2191d`, `eedc4da`,
     `a0068d2` and `308b920`. Where a fact could not be confirmed by reading
-    code it is marked **UNVERIFIED** rather than asserted; see
-    [Open questions](#open-questions).
+    code, it is called out under [Open questions](#open-questions) instead of
+    being asserted.
 
 ---
 
@@ -97,9 +97,10 @@ which may not exist in the hardware: step/dir come directly from STM32 pins.
 
 **UI death.** Should stop the feed; a live cut with no supervisor is the worst
 cell in the table. Firmware does not time out a feed when the UI stops
-polling, and Guard #25 above is UI-*initiated* (it fires on a failed write
-ack), so it cannot fire when the UI has died. The firmware's take-up gates run
-independently of UI liveness, but only at take-up.
+polling, and the modbus-loss escalation above (`els_fsm.py:271-276`) is
+UI-*initiated* (it fires on a failed write ack), so it cannot fire when the UI
+has died. The firmware's take-up gates run independently of UI liveness, but
+only at take-up.
 
 **Leadscrew turned while the drive is off.** Should invalidate the thread
 reference and does not (see [Open questions](#open-questions)). It is the only

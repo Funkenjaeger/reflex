@@ -301,7 +301,7 @@ static void runElsScenario(LathePhysics *physics, rampsHandler_t *rampsData,
  *
  * Its absence is why the 2026-08-08 take-up gate defect shipped with passing
  * tests. A fixture that cannot express a failure produces tests that agree with
- * the code and are wrong together. See reflex-fw/todo.md.
+ * the code and are wrong together.
  *
  * The z branch adds NO new coupling logic: LathePhysics::moveCarriageTo() /
  * jogCarriage() already refuse to move the carriage while the half-nut is

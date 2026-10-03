@@ -29,7 +29,7 @@ NO UNIT CONVERSION HAPPENS HERE. Bucket width is recorded in ISR ticks, and the
 ISR's measured interval in CPU cycles is recorded alongside it, so ticks can be
 converted to seconds from the capture itself. reflex-fw's own documentation
 disagreed with itself about the ISR rate by 10x when this was written -- AGENTS.md
-and ARCHITECTURE.md said ~100 us, todo.md and els_slip.h said 100 kHz, and
+and ARCHITECTURE.md said ~100 us, els_slip.h said 100 kHz, and
 reflex.ioc described a third rate it had not matched since 2024. Those were
 reconciled to 100 kHz on 2026-08-16, so the contradiction is gone.
 

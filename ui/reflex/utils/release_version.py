@@ -14,8 +14,9 @@ different one. The release workflow already compares canonically for the same
 reason (release.yml, "Versions are compared CANONICALLY").
 
 This module is the one place that knows the mapping: :func:`tag_for` turns a
-package version into the tag spelling for display, and :func:`same_release`
-compares any two spellings canonically.
+package version into the tag spelling for display, :func:`same_release`
+compares any two spellings canonically, and :func:`status_label` shortens
+alpha and beta tags for the status bar's narrow box.
 """
 from __future__ import annotations
 
@@ -41,6 +42,24 @@ def tag_for(version: str) -> str:
     tag = "v" + m["base"]
     if m["pre"]:
         tag += f"-{_TAG_PRE[m['pre']]}.{m['n']}"
+    return tag
+
+
+# The status bar's short pre-release words. Its version box is 92 dp and
+# shrinks the font to fit: v1.2.0-rc.7 renders at 14 px, and v1.3.0-alpha.12
+# would drop to 10 px, so alpha and beta are shown by their letter there.
+_STATUS_PRE = (("-alpha.", "-a."), ("-beta.", "-b."))
+
+
+def status_label(tag: str) -> str:
+    """The status bar's spelling of a tag: ``v1.3.0-alpha.12`` ->
+    ``v1.3.0-a.12``, ``v1.3.0-beta.2`` -> ``v1.3.0-b.2``. Finals and rcs are
+    unchanged. Never longer than the rc of the same numbers, so an alpha
+    never renders smaller than an rc does. Display only: everything that
+    compares releases keeps the full tag."""
+    for long, short in _STATUS_PRE:
+        if long in tag:
+            return tag.replace(long, short, 1)
     return tag
 
 
@@ -70,3 +89,21 @@ def same_release(a: str, b: str) -> bool:
     """True when two spellings name the same release: ``v1.2.0-rc.7``,
     ``1.2.0rc7`` and ``v1.2.0rc7`` are all one release."""
     return bool(a) and bool(b) and _canonical(a) == _canonical(b)
+
+
+_PRE_RANK = {"a": 0, "b": 1, "rc": 2}
+_CANONICAL = re.compile(r"^(?P<base>\d+(?:\.\d+)*)(?:(?P<pre>a|b|rc)(?P<n>\d+))?$")
+
+
+def precedence_key(spelling: str) -> tuple:
+    """Sort key in release order: ``1.3.0-alpha.4`` < ``1.3.0-beta.1`` <
+    ``1.3.0-rc.1`` < ``1.3.0`` < ``1.3.1-alpha.1``. Used to merge the home
+    source's integration builds into the public list. A spelling that is not
+    a release shape sorts below every release, so it lands at the bottom of a
+    newest-first list rather than on top."""
+    m = _CANONICAL.match(_canonical(spelling))
+    if not m:
+        return (0,)
+    base = tuple(int(p) for p in m["base"].split("."))
+    pre = (_PRE_RANK[m["pre"]], int(m["n"])) if m["pre"] else (3, 0)
+    return (1, base, pre)

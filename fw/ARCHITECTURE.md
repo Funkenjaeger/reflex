@@ -54,7 +54,8 @@ STM32CubeMX-generated peripheral initialization code.
 | PA0 | STEP pulse output |
 | PB14 | DIR output |
 | PB15 | ENA output (active low) |
-| PA3, PA4 | Spare debug/scope outputs |
+| PA3 (SPARE_2) | Mirrors every STEP pulse in every build: set in `Core/Src/Ramps.c` on each step, cleared at the start of the next timer entry in the same file |
+| PA4 (SPARE_3) | The only free spare pin; debug/scope output |
 | PB12 | User LED |
 
 **Clock:** HSE → PLL → 100 MHz SYSCLK, hardware FPU enabled.
@@ -154,7 +155,7 @@ The register list is `registers/els_stop.yaml` at the repository root. Command r
 
 ```bash
 # ST-Link v2, over SWD
-st-flash --format ihex write reflex.hex
+st-flash --format ihex write reflex-fw.hex
 ```
 
 `raspberry.cfg` bitbangs SWD from a Raspberry Pi's GPIO through OpenOCD's `bcm2835gpio` driver, which cannot work on a Pi 5; `raspberrypi5.cfg` is an untested replacement. See the README.

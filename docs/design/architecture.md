@@ -1,8 +1,8 @@
 # System architecture
 
 Reflex is four parts in three repositories, joined by three contracts. The
-reasoning, with the rejected alternatives, is in the ADRs under
-[`decisions/`](https://github.com/Funkenjaeger/reflex/tree/integration/decisions).
+reasoning, with the rejected alternatives, is in
+[Design decisions](decisions.md).
 
 ## The four parts
 
@@ -15,7 +15,7 @@ reasoning, with the rejected alternatives, is in the ADRs under
 
 UI and firmware share one repository because of the register map between them,
 and release together under one version number
-([ADR](https://github.com/Funkenjaeger/reflex/blob/integration/decisions/repo-structure-monorepo.md)).
+([decision](decisions.md#one-repository-for-firmware-and-ui)).
 The hardware is separate because the board is not ours yet; the firmware's pin
 map is hand-written into `fw/Core/Inc/Ramps.h`.
 
@@ -76,7 +76,7 @@ application's `idAppProtocolVersion` equals the `ELS_PROTOCOL_VERSION` in the
 target tag (`git show <tag>:ui/reflex/utils/els_stop_map.py`), not in the
 running UI. On a refusal the firmware is rolled back (`blCommand` 7 REVERT,
 BACKUP copied into RUN). See `ui/reflex/utils/updater.py` and the
-[register-map ADR](https://github.com/Funkenjaeger/reflex/blob/integration/decisions/els-modbus-register-map.md).
+[register-map decision](decisions.md#one-register-map-for-bootloader-and-application).
 
 **A contract test on every run** compares `ui/reflex/utils/devices.py` against
 the firmware header.
@@ -118,7 +118,7 @@ Properties of the board, which belong in its board file:
 
 | Caveat | State |
 |---|---|
-| **The step output is driven from a spare pin** as well as the nominal one, working around a step-output defect. | Documented in `fw/todo.md` ("Hardware workarounds"). `fw/ARCHITECTURE.md` and `fw/Core/Inc/Ramps.h` still name the nominal pin; to be reconciled against the Provvedo schematic. |
+| **The step output is driven from a spare pin** as well as the nominal one, working around a step-output defect. | The firmware mirrors every STEP pulse onto the spare pin in `fw/Core/Src/Ramps.c`, and the mirroring comes out once a board revision drives STEP correctly. `fw/ARCHITECTURE.md` and `fw/Core/Inc/Ramps.h` still name the nominal pin; to be reconciled against the Provvedo schematic. |
 | **BOOT0 is not connected**, so every reset samples a floating pin and boot mode is nondeterministic. The board has booted the factory ROM bootloader unaided, and 3 of 7 reset-into-bootloader cycles have landed in ROM. | Mitigated in software. Bootloader entry is a **jump**, not a reset, and both jumps reset the ART instruction/data caches before handing over (`fw/Core/Src/els_boot.c`, `fw/bootloader/src/bl_hw.c`). A jump leaves the caches' lines valid, and a stale line of the outgoing image executing inside the incoming one costs a full watchdog period. **Power-on and a watchdog-strike reset still sample BOOT0.** |
 | **`MTR_ENA` has no pull-down**, so with the MCU not driving, the drive's enable line floats. | Unmitigated in hardware; a pull-down on this net and on the step net is respin scope. A floating enable on a lathe is not acceptable, which is why the respin makes "MCU not running" mean "drive disabled" with a resistor. |
 
@@ -247,7 +247,7 @@ or a controller that will not answer over Modbus.
 | `reflex` | `ui/` | Kivy app, Modbus master, updater | Operator workflow, configuration, display |
 | `reflex` | `registers/*.yaml` | One schema per generated struct | Those structs, on both sides |
 | `reflex` | `tools/genregs.py` | The generator and its `--check` guard | — |
-| `reflex` | `decisions/` | ADRs with rejected alternatives | The reasoning behind each contract |
+| `reflex` | `docs/design/decisions.md` | Decisions with rejected alternatives | The reasoning behind each contract |
 | `reflex` | `.github/workflows/release.yml` | The lockstep release | Version pairs and asset names |
 | `reflex` | `fw/bootloader/README.md` | Flash geometry, anti-brick behavior; bring-up is `docs/setup/bootloader-bring-up.md` | The bootloader |
 | `reflex` | `fw/Core/Inc/Ramps.h` | Pin map, peripherals | The board, **hand-copied** |

@@ -109,8 +109,10 @@ the servo's next pulse (`ELS_DIAG_END_PULSE`) or when the buckets run out
 
 v2 could not measure a confirmed take-up: the phase-correction jog that follows
 confirmation, `ELS_SETTLE_TICKS` (0.5 ms) after the last pulse, ends the capture
-at 51 ticks, and with the gate held open the decel ramp's residual steps end it
-at 134 ticks. Its zeros say nothing about take-up confirmation.
+at 26 ticks at the current 50 kHz rate (51 was the 100 kHz-era value, measured
+before the rate split), and with the gate held open the decel ramp's
+residual steps end it at 134 ticks -- an empirical 100 kHz-era figure awaiting a
+50 kHz re-capture. Its zeros say nothing about take-up confirmation.
 
 ### `disengage-latch` (schema 3, intervening)
 

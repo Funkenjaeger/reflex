@@ -5,7 +5,7 @@
  * between three parties that are built and flashed at different times: the
  * write-protected bootloader in sector 0, the application in the RUN slot, and
  * the host client (scripts/modbus-flash.py). It is the C rendering of the
- * register layout summarized in docs/decisions/els-modbus-register-map.md;
+ * register layout summarized in docs/design/decisions.md;
  * keep them in sync.
  *
  * Both stages include this header and nothing else of each other's. The

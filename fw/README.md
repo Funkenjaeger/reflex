@@ -47,7 +47,7 @@ python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
 
 The slotted application is built with `-DREFLEX_APP_BASE=0x08020000`;
 `--identity` reads back the running stage and git rev. Design and register map:
-`bootloader/README.md` and `../decisions/els-modbus-register-map.md`.
+`bootloader/README.md` and `../docs/design/decisions.md`.
 
 `./scripts/flash.sh` is the **legacy** path for a board without the
 bootloader: it writes the application at `0x08000000`. It writes only over a

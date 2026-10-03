@@ -29,10 +29,13 @@ What happens underneath, and the command-line route, are in
 3. **Pick a version** from **Available releases**. The list holds final
    releases only, unless **Offer pre-releases (experimental)** is on. The
    screen remembers that choice. **Refresh available releases** fetches the
-   list again.
+   list again. A machine set up with an integration build source also shows
+   **Offer integration builds (bench only)**, which adds `-alpha.N` builds;
+   other machines do not show that row.
 
 4. **Tap Install Selected Release.** A release candidate asks first, in a
-   **Pre-release** dialog: **Install Anyway** or **Cancel**. If an ELS job is
+   **Pre-release** dialog (an integration build in an **Integration build**
+   dialog): **Install Anyway** or **Cancel**. If an ELS job is
    engaged you are asked about that next. See [ELS job engaged](#els-job-engaged).
 
 5. **Leave it alone until it finishes.** The button reads **Updating...**, a

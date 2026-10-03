@@ -33,7 +33,7 @@ BENCH DIAGNOSTICS (read-only, or one deliberately damaged READ; never a write):
         burst (that READ twice back to back, no inter-frame gap). Nothing it
         sends can reach a write or a command register.
 
-THE SEQUENCE (see decisions/els-modbus-register-map.md):
+THE SEQUENCE (see docs/design/decisions.md):
   1. read the identity window at 2048 FIRST, ALWAYS; refuse on any idMagic
      mismatch -- nothing else is known to be safe to read;
   2. if idStage == 2 (application): write bootCommand = 1 and wait for

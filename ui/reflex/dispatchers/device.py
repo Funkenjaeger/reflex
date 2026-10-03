@@ -91,13 +91,17 @@ class DeviceDispatcher(SavingDispatcher):
     bindings and mirrors them into this object, which only persists them.
     ``offer_prereleases`` is the Software Update screen's "Offer pre-releases"
     toggle, read and written by that screen directly (added 2026-09-19: until
-    then it reset to off on every visit).
+    then it reset to off on every visit). ``offer_integration_builds`` is its
+    "Offer integration builds" toggle, operational the same way; the screen
+    shows it only on a machine with an integration build source configured
+    (reflex/utils/release_source.py).
     """
     _save_class_name = "Device"
 
     use_case = StringProperty(DEFAULT_USE_CASE)
     current_mode = NumericProperty(DEFAULT_MODE)
     offer_prereleases = BooleanProperty(False)
+    offer_integration_builds = BooleanProperty(False)
 
     def read_settings(self):
         # Before the base class looks at the file: when the stem is missing it
