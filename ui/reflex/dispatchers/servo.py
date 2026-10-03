@@ -7,6 +7,7 @@ from kivy.logger import Logger
 from kivy.properties import StringProperty, NumericProperty, BooleanProperty
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
+from reflex.fsms.els_gear import gear_factor
 from reflex.utils.ctype_calc import uint32_subtract_to_int32
 from reflex.utils.notices import NOTICE_WARNING
 from reflex.utils.operator_notice import notify_operator
@@ -41,6 +42,11 @@ class ServoDispatcher(SavingDispatcher):
     leadScrewPitch = NumericProperty(0.25)
     leadScrewPitchIn = BooleanProperty(True)
     leadScrewPitchSteps = BooleanProperty(800)
+    #: The lathe gearbox lever position between servo and leadscrew (A/B/C,
+    #: reflex/fsms/els_gear.py). Lead Screw Pitch Steps is the REFERENCE
+    #: gear's; this scales the derived mm-per-step. Persisted, because the
+    #: lever stays where it was across a restart.
+    gearbox_position = StringProperty("A")
     reverse = BooleanProperty(False)
 
     position = NumericProperty(0)
@@ -92,6 +98,7 @@ class ServoDispatcher(SavingDispatcher):
         self.bind(leadScrewPitch=self.configure_lead_screw_ratio)
         self.bind(leadScrewPitchIn=self.configure_lead_screw_ratio)
         self.bind(leadScrewPitchSteps=self.configure_lead_screw_ratio)
+        self.bind(gearbox_position=self.configure_lead_screw_ratio)
         self.bind(reverse=self._on_reverse_changed)
 
         # Private variables that don't need dispatchers etc
@@ -119,7 +126,12 @@ class ServoDispatcher(SavingDispatcher):
             if self.leadScrewPitchIn is True:
                 leadScrewPitch = leadScrewPitch * Fraction(254, 10)
 
-            leadScrewRatio = leadScrewPitch * Fraction(1, self.leadScrewPitchSteps)
+            # mm of carriage per motor step in the ENGAGED gear: the reference
+            # gear's pitch/steps times the lever's factor. Every consumer of
+            # ratioNum/Den (sync ratio, thread geometry, retract, cut margin)
+            # then sees the real travel per step without knowing about gears.
+            leadScrewRatio = (leadScrewPitch * Fraction(1, self.leadScrewPitchSteps)
+                              * gear_factor(self.gearbox_position))
             self.ratioNum = leadScrewRatio.numerator
             self.ratioDen = leadScrewRatio.denominator
 

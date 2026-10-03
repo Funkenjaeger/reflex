@@ -3,6 +3,9 @@ from transitions import Machine
 
 from reflex.dispatchers import els, board
 from reflex.fsms import els_adopt
+from reflex.fsms.els_gear import (
+    REFERENCE_GEAR, gear_factor, steps_in_gear, worst_case_travel_factor,
+)
 from reflex.fsms.els_mode_watch import mode_name
 from reflex.fsms.els_stop_hal import ElsStopHal
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
@@ -130,7 +133,7 @@ class ElsFsm:
         # stays True until the next cut (or disable) resets it.
         backlash_added = 0
         if step_delta != 0 and not self._retract_backlash_applied:
-            backlash_steps = int(self.els.els_backlash_steps or 0)
+            backlash_steps = self.engaged_backlash_steps()
             if backlash_steps:
                 sign = 1 if step_delta > 0 else -1
                 backlash_added = sign * backlash_steps
@@ -185,7 +188,7 @@ class ElsFsm:
             self.push_turning_geometry()
         # Mode-independent since 2026-08-21. Until then turning wrote 0 here
         # "so firmware skips takeup", which left every turning pass ungated.
-        self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
+        self.hal.set_backlash_steps(self.engaged_backlash_steps())
         # Arm `enable` here (not just post-release) and verify it — this is the
         # first arming on the engage-past-stop path, and the one thing that
         # actually stops the feed. (stopDirection/hysteresis are re-asserted
@@ -220,7 +223,8 @@ class ElsFsm:
             self.hal.set_hysteresis_loose()
         log.info(
             f"on_enter_cutting: els_forward={self.controller.els_forward} "
-            f"backlash_steps={int(self.els.els_backlash_steps)}"
+            f"backlash_steps={self.engaged_backlash_steps()} "
+            f"gear={self.engaged_gear()}"
         )
         self.board.bind(update_tick=self._on_board_update)
 
@@ -547,7 +551,10 @@ class ElsFsm:
         # refuses LOUDLY and the fix (recalibrate) is in the message.
         legs = [int(v) for v in self.els.els_cal_measured_legs]
         if len(legs) == 3 and all(v > 0 for v in legs):
-            self.hal.set_cal_measured(legs)
+            # Stored in the reference gear, like the take-up they are
+            # compared against (els_gear.py).
+            self.hal.set_cal_measured(
+                [steps_in_gear(v, self.engaged_gear()) for v in legs])
 
         # Sync ratios, every axis: the firmware registers are written only by
         # a property-CHANGE binding, so an unchanged UI setting is never
@@ -743,7 +750,7 @@ class ElsFsm:
             self.push_thread_geometry()
         else:
             self.push_turning_geometry()
-        self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
+        self.hal.set_backlash_steps(self.engaged_backlash_steps())
 
     def _spindle_pitch_mm(self) -> Fraction:
         # spindle.syncRatioNum/Den is mm-per-rev (= mm-per-thread-pitch when
@@ -1051,14 +1058,18 @@ class ElsFsm:
     def _safety_margin_display(self) -> float:
         """Minimum distance (in display units) Z must be from stop_z before cutting is allowed.
 
-        Leadscrew pitch + backlash distance × 1.1 ensures that even a worst-case
-        backlash takeup followed by thread re-sync cannot push the carriage
-        past the workpiece before ELS can fire. Result is converted to
+        (correction + backlash distance) × fastest-gear factor × 1.1. The
+        stop cannot cancel motion the firmware has already committed: the
+        backlash take-up and, when threading, the phase correction keep going
+        after it fires. So this must cover both, in the worst gear the lever
+        could be in. The correction term is the larger of one motor revolution
+        of travel and, when threading, one THREAD pitch, because the firmware
+        folds the correction to within a thread pitch. Result is converted to
         display units (mm or inches) so it matches scaledPosition/stop_z.
 
-        Uses the servo leadscrew pitch, not the thread pitch being cut — the
-        safety margin is about how far the servo can move before ELS fires,
-        independent of what thread is being cut.
+        Until 2026-10-03 this used the leadscrew pitch alone, in the gear the
+        settings assume, which under-budgets a thread coarser than the
+        leadscrew and a lever left in the fast position.
 
         INVARIANT THIS DEPENDS ON (closed-loop backlash calibration, 2026-08-08).
         ``els_backlash_steps`` must hold the COMMANDED take-up (measured lash +
@@ -1081,31 +1092,113 @@ class ElsFsm:
         firmware refuses it unless ``elsStop.enable == 0``, and the operator
         modal owns "tool clear of the work".
         """
-        # Leadscrew pitch in mm (not thread pitch)
         try:
-            pitch_mm = float(Fraction(self.servo.leadScrewPitch))
+            # One motor revolution's worth of carriage travel in the ENGAGED
+            # gear: the historical stand-in for "a correction move", kept as
+            # the floor.
+            leadscrew_mm = float(Fraction(self.servo.leadScrewPitch)
+                                 * gear_factor(self.engaged_gear()))
             if self.servo.leadScrewPitchIn:
-                pitch_mm *= 25.4  # convert inches to mm
-        except (ValueError, ZeroDivisionError):
-            return 0.0
-
-        try:
+                leadscrew_mm *= 25.4  # convert inches to mm
+            # mm of carriage per motor step in the ENGAGED gear (the servo
+            # dispatcher folds the gearbox factor into ratioNum/Den).
             servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
         except (ValueError, ZeroDivisionError):
             return 0.0
 
-        backlash_steps = int(self.els.els_backlash_steps or 0)
-        backlash_mm = float(backlash_steps * float(servo_ratio))
+        # THE THREAD PITCH, NOT ONLY THE LEADSCREW PITCH (2026-10-03). The
+        # firmware folds the phase correction to within one THREAD pitch and
+        # biases it forward (els_phase.h, elsComputePhaseCorrection), so a
+        # thread coarser than the leadscrew can move the carriage further than
+        # one leadscrew pitch before ELS can stop it -- up to 6.35 mm at 4 TPI
+        # on an 8 TPI leadscrew, against the 4.55 mm this used to allow.
+        correction_mm = leadscrew_mm
+        if self.controller.is_threading:
+            try:
+                correction_mm = max(correction_mm, float(self._spindle_pitch_mm()))
+            except (ValueError, ZeroDivisionError, TypeError, AttributeError):
+                pass
 
-        margin_mm = (pitch_mm + backlash_mm) * 1.1
+        backlash_steps = self.engaged_backlash_steps()
+        backlash_mm = float(backlash_steps * servo_ratio)
+
+        # SIZED FOR THE FASTEST GEAR (2026-10-03). The lever may sit in a
+        # faster position than the controller believes, and the take-up and
+        # the correction run before the coupling check has a reading. Motion
+        # already committed keeps going after the stop fires, so it is
+        # budgeted as if every step moved the carriage the furthest any
+        # position can: 2x in A, 4x in C, 1x in B.
+        travel_factor = float(worst_case_travel_factor(self.engaged_gear()))
+        margin_mm = (correction_mm + backlash_mm) * travel_factor * 1.1
         # Convert mm to display units so comparison with scaledPosition is valid
         factor = self.board.formats.factor
         margin_display = margin_mm * float(factor)
         log.debug(
-            f"_safety_margin: pitch={pitch_mm:.4f}mm backlash={backlash_mm:.4f}mm "
+            f"_safety_margin: correction={correction_mm:.4f}mm backlash={backlash_mm:.4f}mm "
+            f"gear={self.engaged_gear()} x{travel_factor:g} "
             f"margin={margin_mm:.4f}mm → {margin_display:.6f} display units (factor={float(factor):.6f})"
         )
         return margin_display
+
+    def engaged_gear(self) -> str:
+        """The gearbox position the controller currently believes is engaged.
+
+        Read through getattr because a servo with no gearbox notion (a rotary
+        configuration, or a test double) is by definition in the reference gear.
+        """
+        return getattr(self.servo, "gearbox_position", REFERENCE_GEAR)
+
+    def z_mm_per_count(self):
+        """Z scale resolution in mm per count, or None if unknown."""
+        saddle = self._saddle_input
+        if saddle is None or not saddle.ratioDen or not saddle.ratioNum:
+            return None
+        return float(Fraction(abs(saddle.ratioNum), abs(saddle.ratioDen)))
+
+    def steps_per_z_count(self):
+        """Commanded steps per Z count in the ENGAGED gear, or None.
+
+        A coupled pass moves the scale one count per this many steps; the
+        coupling-ratio check (els_ratio.py) measures against it.
+        """
+        mm_per_count = self.z_mm_per_count()
+        try:
+            servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
+        except (ValueError, ZeroDivisionError, TypeError):
+            return None
+        if not mm_per_count or servo_ratio == 0:
+            return None
+        return mm_per_count / float(servo_ratio)
+
+    def adopt_gear(self, gear: str) -> None:
+        """Make `gear` the engaged gearbox position, and re-teach the firmware
+        every number that depends on it.
+
+        Setting the servo's gearbox_position recomputes its mm-per-step (and
+        persists, so a restart stays in the adopted gear). The sync ratios are
+        firmware RAM written only on a property CHANGE, so they are pushed here
+        explicitly, as reconcile does; the backlash and thread geometry follow
+        when the caller next pushes the stop. The calibration legs are re-sent
+        in the new gear's steps, as on connect.
+        """
+        previous = self.engaged_gear()
+        self.servo.gearbox_position = gear
+        for axis in self.board.axes:
+            axis.push_sync_ratio()
+        legs = [int(v) for v in self.els.els_cal_measured_legs]
+        if len(legs) == 3 and all(v > 0 for v in legs):
+            self.hal.set_cal_measured([steps_in_gear(v, gear) for v in legs])
+        log.warning(f"gearbox position adopted: {previous} -> {gear}")
+
+    def engaged_backlash_steps(self) -> int:
+        """The commanded take-up in the ENGAGED gear's motor steps.
+
+        els_backlash_steps is stored in the reference gear; the play is on the
+        leadscrew side of the lever, so B needs half the steps and C twice as
+        many (els_gear.py). Every write of backlashSteps goes through here.
+        """
+        return steps_in_gear(int(self.els.els_backlash_steps or 0),
+                             self.engaged_gear())
 
     # ——— Helpers ———
     def _scale_counts_to_steps(self, scale_counts : int) -> int:

@@ -27,6 +27,7 @@ depends on that distinction.
 """
 from kivy.logger import Logger
 
+from reflex.fsms.els_gear import REFERENCE_GEAR
 from reflex.utils.devices import (
     ELS_CAL_ERR_CONFIG,
     ELS_CAL_MESSAGES,
@@ -128,9 +129,11 @@ class BacklashCalibration:
     CAL_MAX_SPEED = 800.0
     CAL_ACCEL = 4000.0
 
-    def __init__(self, hal, els):
+    def __init__(self, hal, els, gear=lambda: REFERENCE_GEAR):
         self._hal = hal
         self._els = els
+        # Callable: the gearbox position the controller believes is engaged.
+        self._gear = gear
         self.state = CalState.IDLE
         self.measured = [0, 0, 0]
         self.result_code = ELS_CAL_OK
@@ -163,6 +166,20 @@ class BacklashCalibration:
                 f"Controller firmware does not support backlash calibration "
                 f"(reports register version {version}, this UI needs "
                 f"{ELS_PROTOCOL_VERSION}). Flash the firmware to match this UI.",
+            )
+            return False
+
+        # IN THE REFERENCE GEAR ONLY (2026-10-03). Every step-valued result
+        # this writes -- the commanded take-up, the measured legs, the last
+        # measurement -- is stored as the reference gear's (els_gear.py), and
+        # the ceiling it drives against is too. Measured in another gear they
+        # would be off by the gear's factor, so refuse rather than convert.
+        gear = self._gear()
+        if gear != REFERENCE_GEAR:
+            self._fail(
+                ELS_CAL_ERR_CONFIG,
+                f"Backlash calibration runs in gearbox position "
+                f"{REFERENCE_GEAR}; the controller is set for {gear}.",
             )
             return False
 

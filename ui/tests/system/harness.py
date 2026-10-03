@@ -362,9 +362,10 @@ class SystemHarness:
         ratios are exact int properties.
 
         Real-units consequences tests must respect:
-          * The reference machine starts at Z=0 mm with min_position_mm=-5, and
-            an els_forward=True cut feeds physically -Z — so cut spans must
-            clear the ~3.49 mm safety margin yet stay well inside 5 mm.
+          * The reference machine starts at Z=0 mm with min_position_mm=-20,
+            and an els_forward=True cut feeds physically -Z — so cut spans
+            must clear the ~7 mm safety margin (sized for the fastest
+            gearbox position) yet stay well inside 20 mm.
           * Feed selection is separate (a per-job operator choice, not machine
             geometry): call set_feed() after this, or the spindle axis's
             default syncRatio (360/100, a rotary-axis default) is what feeds.

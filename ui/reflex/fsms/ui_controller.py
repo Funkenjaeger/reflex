@@ -1020,7 +1020,7 @@ class ElsUiController(EventDispatcher):
         # its confirmation run in turning too (els_fsm.push_turning_geometry).
         if not self.is_threading:
             self._els_fsm.push_turning_geometry()
-            self._hal.set_backlash_steps(int(self._els.els_backlash_steps))
+            self._hal.set_backlash_steps(self._els_fsm.engaged_backlash_steps())
         self._hal.set_stop_direction(self._els.stop_direction_value(self.els_forward))
         if self.retract_enabled or self.wizard_enabled:
             self._hal.set_hysteresis_tight()

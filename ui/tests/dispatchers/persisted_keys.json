@@ -143,6 +143,7 @@
     "acceleration",
     "divisions",
     "elsMode",
+    "gearbox_position",
     "id_override",
     "jogSpeed",
     "leadScrewPitch",

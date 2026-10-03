@@ -55,7 +55,9 @@ class BacklashCalPopup(Popup):
         super().__init__(**kv)
         from reflex.app import MainApp
         self.app = MainApp.get_running_app()
-        self._cal = BacklashCalibration(self.app.els_uic.hal, self.app.els)
+        self._cal = BacklashCalibration(
+            self.app.els_uic.hal, self.app.els,
+            gear=lambda: getattr(self.app.servo, "gearbox_position", "A"))
         self._poll_ev = None
         self._refresh()
 

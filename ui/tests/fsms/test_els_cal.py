@@ -813,3 +813,15 @@ def test_a_fabricated_mode_read_is_not_restored_over_the_real_mode():
         "a fabricated mode read was restored, disabling the servo after a "
         "calibration that succeeded")
     assert hal.read_failures >= 1
+
+
+def test_refused_outside_the_reference_gear():
+    """Every step-valued result is stored in gearbox position A (els_gear.py);
+    measured in B or C it would be off by the gear's factor, so the run is
+    refused before anything reaches the firmware."""
+    hal = FakeHal()
+    cal = BacklashCalibration(hal, _els(), gear=lambda: "B")
+    assert cal.start() is False
+    assert cal.state == CalState.REFUSED
+    assert "gearbox position A" in cal.message
+    assert hal.cal_command == 0
