@@ -89,3 +89,21 @@ def same_release(a: str, b: str) -> bool:
     """True when two spellings name the same release: ``v1.2.0-rc.7``,
     ``1.2.0rc7`` and ``v1.2.0rc7`` are all one release."""
     return bool(a) and bool(b) and _canonical(a) == _canonical(b)
+
+
+_PRE_RANK = {"a": 0, "b": 1, "rc": 2}
+_CANONICAL = re.compile(r"^(?P<base>\d+(?:\.\d+)*)(?:(?P<pre>a|b|rc)(?P<n>\d+))?$")
+
+
+def precedence_key(spelling: str) -> tuple:
+    """Sort key in release order: ``1.3.0-alpha.4`` < ``1.3.0-beta.1`` <
+    ``1.3.0-rc.1`` < ``1.3.0`` < ``1.3.1-alpha.1``. Used to merge the home
+    source's integration builds into the public list. A spelling that is not
+    a release shape sorts below every release, so it lands at the bottom of a
+    newest-first list rather than on top."""
+    m = _CANONICAL.match(_canonical(spelling))
+    if not m:
+        return (0,)
+    base = tuple(int(p) for p in m["base"].split("."))
+    pre = (_PRE_RANK[m["pre"]], int(m["n"])) if m["pre"] else (3, 0)
+    return (1, base, pre)

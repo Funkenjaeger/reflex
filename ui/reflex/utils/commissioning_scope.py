@@ -36,6 +36,9 @@ THE THREE TIERS
       "Offer pre-releases" toggle (``Device-0.yaml``). An operator preference
       about which releases to be shown, not a fact about the machine. Added
       2026-09-19 with the key itself.
+    * ``offer_integration_builds`` in ANY file -- the same screen's "Offer
+      integration builds" toggle (``Device-0.yaml``), operational for the
+      same reason. Added with the key itself.
     * ``feed_name`` / ``current_feeds_index`` in ANY file -- the feed picked
       on the ELS bar (``ElsBar-0.yaml``). Re-tiered 2026-09-19: as the
       commissioning default, every feed pick was ledgered as a machine change
@@ -82,6 +85,7 @@ IGNORED: Tier = "ignored"
 
 #: Operational in every file, no matter what the file is.
 OPERATIONAL_KEYS = frozenset({"offsets", "current_mode", "offer_prereleases",
+                              "offer_integration_builds",
                               "feed_name", "current_feeds_index"})
 
 #: Operational only when the file's own data says the axis is the spindle.

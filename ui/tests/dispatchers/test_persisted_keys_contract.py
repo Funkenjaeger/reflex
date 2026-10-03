@@ -21,6 +21,12 @@ A pure ADDITION needs only (1): an old file simply lacks the new key and the
 dispatcher's default applies. The test cannot see (2); the failure message says
 so, and review is where it is caught.
 
+A KEY NEVER CHANGES MEANING UNDER THE SAME NAME. A setting whose meaning or
+units change gets a NEW key (with the migration in (2)); the old name is never
+repurposed. The updater can install an OLDER release, and that release reads
+the file by name: a repurposed key would be read with its old meaning, silently.
+A renamed key is merely unknown to it, and its own default applies.
+
 WHAT IS PINNED. Exactly what ``SavingDispatcher.save_settings`` writes: the
 names ``get_our_properties`` returns (Numeric/String/Boolean properties on the
 class, minus ``_skip_save``, plus ``_force_save``), keyed by the file stem
