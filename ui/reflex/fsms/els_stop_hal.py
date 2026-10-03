@@ -57,6 +57,12 @@ class TickReads:
     def takeup_seq(self) -> int:
         return int(self._get('takeupSeq', 0))
 
+    # Set while the firmware is taking up backlash at the start of a pass, and
+    # sync is gated off. The coupling-ratio check (els_ratio.py) does not
+    # listen until it clears.
+    def takeup_pending(self) -> bool:
+        return bool(self._get('takeupPending', 0))
+
     def takeup_result(self) -> int:
         return int(self._get('takeupResult', 0))
 

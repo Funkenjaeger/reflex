@@ -100,3 +100,18 @@
                 help_file: "els_overshoot_correction.md"
                 value: root.overshoot_margin_counts
                 on_value: root.overshoot_margin_counts = self.value
+
+            # ── Gearbox lever and the coupling check (default: log only) ──
+            DropDownItem:
+                height: 60
+                name: "Gearbox position"
+                help_file: "els_gearbox.md"
+                options: ["A", "B", "C"]
+                value: app.servo.gearbox_position
+                on_value: app.els_uic.select_gear(self.value) or setattr(self, "value", app.servo.gearbox_position)
+
+            BooleanItem:
+                name: "Coupling check acts (off = log only)"
+                help_file: "els_gearbox.md"
+                value: app.els.els_ratio_check
+                on_value: app.els.els_ratio_check = self.value

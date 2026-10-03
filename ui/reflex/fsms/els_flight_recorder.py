@@ -411,6 +411,13 @@ CONTEXT_FIELDS = (
 #: HOST's record, and stopTriggerOffset is the firmware's.
 STOP_OFFSET_KEY = "stopOffsetWritten"
 
+#: Context keys for the coupling-ratio check (els_ratio.py): the current
+#: pass's verdict, and the gearbox position the controller expects. Host
+#: state, like STOP_OFFSET_KEY; filed on change, so a verdict lands in the
+#: recording at the tick it was reached.
+RATIO_VERDICT_KEY = "ratioVerdict"
+GEARBOX_KEY = "gearbox"
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -547,6 +554,7 @@ class FlightRecorder:
     """
 
     def __init__(self, board, fsm_state=None, fsm_states=None, stop_offset=None,
+                 ratio_check=None,
                  directory=None,
                  now=time.monotonic, free_bytes=None,
                  segment_max_bytes=SEGMENT_MAX_BYTES,
@@ -566,6 +574,9 @@ class FlightRecorder:
         # and never polled, so it is deliberately not in CONTEXT_FIELDS (the
         # tick-reader audit would -- rightly -- fail a cold field there).
         self._stop_offset = stop_offset
+        # A CALLABLE returning (verdict kind, expected gear), filed as
+        # RATIO_VERDICT_KEY / GEARBOX_KEY. None leaves both out.
+        self._ratio_check = ratio_check
         self._dir = Path(directory) if directory is not None else None
         self._now = now
         self._free_bytes = free_bytes or _default_free_bytes
@@ -863,6 +874,13 @@ class FlightRecorder:
                 ctx[STOP_OFFSET_KEY] = self._stop_offset()
             except Exception:
                 ctx[STOP_OFFSET_KEY] = None   # unknown, said so
+        if self._ratio_check is not None:
+            try:
+                verdict, gear = self._ratio_check()
+            except Exception:
+                verdict, gear = None, None   # unknown, said so
+            ctx[RATIO_VERDICT_KEY] = verdict
+            ctx[GEARBOX_KEY] = gear
         return ctx
 
     def _emit_context_if_changed(self, snap) -> None:
@@ -977,8 +995,10 @@ class FlightRecorder:
             "context_fields": list(CONTEXT_FIELDS),
             # Host-side context keys that are NOT registers, named so a reader
             # does not mistake them for snapshot fields (see STOP_OFFSET_KEY).
-            "context_host_fields": ([STOP_OFFSET_KEY]
-                                    if self._stop_offset is not None else []),
+            "context_host_fields": (
+                ([STOP_OFFSET_KEY] if self._stop_offset is not None else [])
+                + ([RATIO_VERDICT_KEY, GEARBOX_KEY]
+                   if self._ratio_check is not None else [])),
             "fsm_states": list(self._states),
             "sample_every_n_ticks": self._every,
             "board_tick_hz": 30,

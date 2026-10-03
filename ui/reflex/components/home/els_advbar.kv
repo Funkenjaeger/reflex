@@ -473,7 +473,7 @@
       orientation: 'vertical'
       size_hint_x: 1
       size_hint_y: None
-      height: (status_gutter.height if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (status_gutter.height if root.controller.takeup_warning else 0)
+      height: (status_gutter.height if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (status_gutter.height if root.controller.takeup_warning else 0) + (status_gutter.height if root.controller.ratio_warning else 0)
       pos_hint: {'x': 0, 'top': 1}
 
 
@@ -544,6 +544,36 @@
             size: self.size
         Label:
           text: root.controller.takeup_warning
+          text_size: self.size
+          halign: 'center'
+          valign: 'middle'
+          font_name: app.theme.font_bold
+          font_size: dp(13)
+          color: app.theme.text
+
+      # ── Coupling-ratio notice ────────────────────────────────────────────────
+      #    Shown when the coupling-ratio check (fsms/els_ratio.py) aborted the
+      #    pass -- only when that check is switched on. RED: the half nut opened
+      #    or the carriage rate fits no gearbox position. YELLOW: the lever is in
+      #    another known position, which the next Cut or Retract adopts. Same
+      #    65-character text contract as the take-up strip above.
+      BoxLayout:
+        id: ratio_notice
+        orientation: 'horizontal'
+        size_hint_y: None
+        spacing: dp(8)
+        padding: dp(8), 0
+        height: status_gutter.height if root.controller.ratio_warning else 0
+        opacity: 1 if self.height else 0
+        disabled: not self.height
+        canvas.before:
+          Color:
+            rgba: (1, 0.72, 0.16, 0.28) if root.controller.ratio_warning_yellow else (0.85, 0.16, 0.16, 0.30)
+          Rectangle:
+            pos: self.pos
+            size: self.size
+        Label:
+          text: root.controller.ratio_warning
           text_size: self.size
           halign: 'center'
           valign: 'middle'

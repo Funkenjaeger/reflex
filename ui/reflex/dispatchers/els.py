@@ -130,6 +130,15 @@ class ElsDispatcher(SavingDispatcher):
     els_overshoot_correction = BooleanProperty(False)
     els_overshoot_margin_counts = NumericProperty(1)
 
+    # ── Coupling-ratio check (half nut, gearbox lever) ─────────────────
+    # OFF = SHADOW (2026-10-03): the check runs on every pass and its verdicts
+    # are logged and filed in the flight recorder, but nothing aborts and no
+    # gear is adopted. ON = it acts: an open half nut or an unrecognized ratio
+    # aborts the pass (red), and a confident move of the gearbox lever aborts
+    # with a yellow notice and adopts that gear on the next Cut or Retract.
+    # Rules and numbers: reflex/fsms/els_ratio.py.
+    els_ratio_check = BooleanProperty(False)
+
     # ── Re-reference notify preference ────────────────────────────────
     # How to flag when a committed ELS target's DISPLAYED value changes after a
     # DRO re-zero / coordinate-system switch (the physical target is unchanged):

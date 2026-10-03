@@ -14,6 +14,8 @@ from reflex.fsms.els_phase_recorder import (
     PhaseCorrectionRecorder, PhaseLiveTracker, SpindleCountWatch)
 from reflex.fsms.els_mode_watch import ElsModeWatch
 from reflex.fsms.els_overshoot import StopOffsetCorrector
+from reflex.fsms import els_ratio
+from reflex.fsms.els_ratio import RatioWatch
 from reflex.utils.devices import (takeup_failure_text,
                                   ELS_DIAG_SCHEMA_MODE_WATCH,
                                   ELS_DIAG_SCHEMA_MODE_WATCH_V2)
@@ -171,6 +173,15 @@ class ElsUiController(EventDispatcher):
     # exactly how it presented on hardware 2026-08-08.
     takeup_warning      = StringProperty("")
 
+    # Inline coupling-ratio notice, shown under the take-up one. Non-empty
+    # means the last pass was ABORTED by the coupling-ratio check
+    # (els_ratio.py) -- only ever when that check is switched on. Red for
+    # an open half nut or an unrecognized ratio; YELLOW for a confident move
+    # of the gearbox lever, which the next Cut or Retract adopts. A latch,
+    # like takeup_warning: cleared when the operator acts.
+    ratio_warning       = StringProperty("")
+    ratio_warning_yellow = BooleanProperty(False)
+
     # ── Transient operator notices (top status bar) ────────────────────
     # The live notice, republished from the NoticeCenter for kv to bind to.
     # Empty text means nothing is showing; `notice_severity` picks the colour.
@@ -323,6 +334,10 @@ class ElsUiController(EventDispatcher):
             # the corrector is built below. The firmware's own record of what a
             # trigger used is stopTriggerOffset, in the snapshot.
             stop_offset=lambda: self._stop_offset.offset_in_effect,
+            # The coupling-ratio verdict for the current pass and the gear
+            # the controller expects. Built below; a lambda for that reason.
+            ratio_check=lambda: (self._ratio_watch.verdict.kind,
+                                 self._els_fsm.engaged_gear()),
         )
 
         # Built FIRST, before any FSM or poller exists, because `notify()` must
@@ -343,6 +358,20 @@ class ElsUiController(EventDispatcher):
             enabled=lambda: getattr(self._els, "els_overshoot_correction", False) is True,
             margin=lambda: int(getattr(self._els, "els_overshoot_margin_counts", 1)),
             notify=lambda message: self.notify(message, NOTICE_WARNING),
+        )
+
+        # Coupling-ratio check: an open half nut, or the gearbox lever in a
+        # position the controller does not expect. Always measures; acts
+        # only when els_ratio_check is on (otherwise shadow: log and file).
+        # Lambdas for the same reason as above -- _els_fsm is built below.
+        self._pending_gear = None
+        self._ratio_watch = RatioWatch(
+            self._hal, board,
+            fsm_state=lambda: self._els_fsm.state,
+            steps_per_count=lambda: self._els_fsm.steps_per_z_count(),
+            gear=lambda: self._els_fsm.engaged_gear(),
+            mm_per_count=lambda: self._els_fsm.z_mm_per_count(),
+            on_verdict=self._on_ratio_verdict,
         )
 
         # Rung-2 sampler (log-only): compares the domain FSM's state against
@@ -454,6 +483,9 @@ class ElsUiController(EventDispatcher):
         # The overshoot correction's writer. Bound BEFORE the flight recorder
         # so the offset the recorder files for this tick is the one in effect.
         self._board.bind(update_tick=self._poll_stop_offset)
+        # The coupling-ratio check. Before the flight recorder, so a verdict
+        # reached on this tick is in the context the recorder files.
+        self._board.bind(update_tick=self._poll_ratio_check)
         # The flight recorder. Bound LAST of the recorders deliberately: it
         # samples what this tick's snapshot holds, and running after the pollers
         # that may write registers means the row it files is the state the rest
@@ -899,6 +931,79 @@ class ElsUiController(EventDispatcher):
             self._stop_offset.poll()
         except Exception as e:
             log.warning(f"stop-offset correction tick failed: {e}")
+
+    def _poll_ratio_check(self, *args):
+        """Feed the coupling-ratio check this tick's snapshot.
+
+        Bound to update_tick, so it must never raise (see _poll_stop_offset).
+        A failed tick costs one sample of one pass.
+        """
+        try:
+            self._ratio_watch.poll()
+        except Exception as e:
+            log.warning(f"coupling-ratio check tick failed: {e}")
+
+    def _ratio_check_enabled(self) -> bool:
+        # `is True`: a stand-in that is merely truthy must not arm an abort.
+        return getattr(self._els, "els_ratio_check", False) is True
+
+    def _on_ratio_verdict(self, v) -> None:
+        """A pass reached a terminal coupling-ratio verdict (once per pass).
+
+        SHADOW unless els_ratio_check is on: logged, filed by the flight
+        recorder through its context, and nothing else. ON, it aborts the
+        pass the way the firmware's own take-up refusal does -- active = 1,
+        so sync stops and the domain FSM drops to stopped on its next tick
+        -- and leaves a latched message saying why.
+        """
+        acting = self._ratio_check_enabled()
+        log.warning(
+            f"coupling-ratio check: {v.kind}"
+            f"{' ' + v.gear if v.gear else ''} after {v.elapsed_ms:.0f} ms / "
+            f"{v.travel_mm:.2f} mm ({v.reason})"
+            f"{'' if acting else ' [shadow: no action]'}")
+        if not acting:
+            return
+        if self._els_fsm.state == "cutting":
+            self._hal.set_active(True)
+        if v.kind == els_ratio.GEAR_CHANGE and v.gear:
+            self._pending_gear = v.gear
+            self.ratio_warning_yellow = True
+            self.ratio_warning = els_ratio.gear_change_text(v.gear)
+        else:
+            self._pending_gear = None
+            self.ratio_warning_yellow = False
+            self.ratio_warning = els_ratio.abort_text(v.kind)
+
+    def select_gear(self, gear: str) -> bool:
+        """The operator set the gearbox position by hand (ELS settings).
+
+        Refused while the carriage is under ELS motion: changing the ratio
+        under a running pass would change its feed mid-cut. Returns False when
+        refused so the selector can snap back to the position in effect.
+        """
+        if gear == self._els_fsm.engaged_gear():
+            return True
+        if self._els_fsm.state in ("cutting", "retracting"):
+            self.notify("Gearbox position can't change during a pass.",
+                        NOTICE_WARNING)
+            return False
+        self._pending_gear = None
+        self.ratio_warning = ""
+        self.ratio_warning_yellow = False
+        self._els_fsm.adopt_gear(gear)
+        return True
+
+    def _adopt_pending_gear(self) -> None:
+        """The operator acted after a yellow gear-change notice: that is the
+        consent (decided 2026-10-03). Adopt before anything is pushed for the
+        move, so the take-up, thread geometry and sync ratio are the new
+        gear's."""
+        gear, self._pending_gear = self._pending_gear, None
+        if gear and gear != self._els_fsm.engaged_gear():
+            self._els_fsm.adopt_gear(gear)
+        self.ratio_warning = ""
+        self.ratio_warning_yellow = False
 
     @property
     def stop_offset_corrector(self):
@@ -2008,9 +2113,14 @@ class ElsUiController(EventDispatcher):
         # up through the retry reads as "still refusing" during the very window
         # where they are watching to see whether it worked.
         self.takeup_warning = ""
+        self._adopt_pending_gear()
         self._els_fsm.push_stop_to_firmware()
         self._els_fsm.cut()
 
     def start_retract(self):
+        # A retract after a yellow gear-change notice adopts too: run in the
+        # old gear, a lever moved to B would carry the carriage twice the
+        # retract distance.
+        self._adopt_pending_gear()
         self._els_fsm.retract()
  
