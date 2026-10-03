@@ -77,7 +77,7 @@ checksum, for a probe host that cannot build. Prefer the local path.
 
 Release and diagnostic builds live in separate directories: `build/` for
 release, one per `--diag=NAME`. A diagnostic build compiles in **one**
-measurement probe and must **never** reach `dev-staging`, `dev` or `main`; the
+measurement probe and must **never** reach `dev` or `main`; the
 `elsStop.diagSchema` register says which probe is running (`0` = none). The
 probes are documented in **[DIAG.md](DIAG.md)**.
 

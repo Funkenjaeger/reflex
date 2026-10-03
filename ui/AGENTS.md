@@ -8,16 +8,16 @@ emulator-backed system suite has no servo dynamics, no Modbus timing and no
 metal, and has looked green while something real was wrong. Emulator green is
 evidence, never verification.
 
-**Do NOT commit directly to `dev-staging`.** It is one step from a dev release
-and everything on it is supposed to be hardware-verified.
+**Do NOT commit directly to `dev`.** Release candidates are cut from it, and
+everything on it is supposed to be hardware-verified.
 
 - Work on a **feature branch**, or on **`integration`** when several changes are
   in flight and separate branches would just be overhead.
-- Merging `integration` or a feature branch into `dev-staging` happens **only after
-  the maintainer has verified on hardware**. The maintainer does that merge, or
+- A commit is hardware-verified when an integration build (`vX.Y.Z-alpha.N`) made
+  from it has been installed and run on the machine. Merging `integration` into
+  `dev` happens **only after that**; the maintainer does that merge, or
   explicitly asks for it.
-- Merging `dev-staging` into `dev`, and `dev` into `main`, is **the maintainer's
-  alone**. Never do these.
+- Merging `dev` into `main` is **the maintainer's alone**. Never do it.
 
 **The one exception**, for changes that cannot affect machine behavior and so
 need no hardware run: documentation, help files, and tests. Anything
@@ -29,8 +29,9 @@ firmware's `Ramps.h` are one contract, and they must land together.
 
 If unsure whether a change qualifies, it does not. Put it on a branch and ask.
 
-**Never push without being asked.** `origin` fans out to BOTH the canonical
-remote and your mirror, so any push writes two remotes at once.
+**Never push without being asked.** `origin` is the canonical remote. This
+public repository receives only `dev`, `main` and release tags, each by a
+deliberate push: never `integration`, a feature branch or an `-alpha` tag.
 
 ## Work tracking
 
