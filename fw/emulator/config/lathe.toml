@@ -23,8 +23,9 @@ backlash_mm = 0.02             # Mechanical backlash
 # Carriage settle time constant for SERVO-DRIVEN motion (seconds). The step/dir
 # drivetrain does not stop dead with the last pulse; this is the first-order lag
 # over which commanded motion actually reaches the carriage. 0 = instantaneous
-# (the pre-2026-08-22 model). NOT A MEASUREMENT -- see the z_settle_tau_s note
-# in src/physics.h and the commissioning item in ../todo.md. 0.001 s is 10 ticks
+# (the pre-2026-08-22 model). NOT A MEASUREMENT -- it is a structural
+# placeholder, and the real number comes off the machine. See the
+# z_settle_tau_s note in src/physics.h. 0.001 s is 10 ticks
 # at isr_rate_hz = 10000.
 settle_tau_s = 0.001
 max_position_mm = 300.0

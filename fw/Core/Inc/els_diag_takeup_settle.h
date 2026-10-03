@@ -78,7 +78,9 @@
  * has never demonstrated a nonzero, so "still" and "not looking" are
  * indistinguishable in its own data (v1's nonzero traversal data exercises
  * the same dZ read path, which vouches for the plumbing but not the window).
- * ELS_SLIP_SETTLE_TICKS therefore remains UNMEASURED (fw/todo.md). This probe
+ * ELS_SLIP_SETTLE_TICKS was therefore left unmeasured by that era's captures;
+ * it was commissioned later, and els_slip_horizon_commission_test.cpp carries
+ * the observations the current value rests on. This probe
  * is retained as the worked example for writing the next one. Schema ids live
  * in Ramps.h -- they are part of the register contract reflex-ui mirrors, not
  * a detail of this file. */
@@ -152,8 +154,8 @@
  * pins both the refusal and the partial-engagement outcomes under the hold.
  *
  * That divergence is itself the finding this probe exists to settle: the gate
- * releases the cut 50 ticks after the last pulse while the attribution horizon
- * in the same path claims 1000, a 20x disagreement that no measurement has
+ * releases the cut 25 ticks after the last pulse while the attribution horizon
+ * in the same path claims 1000, a 40x disagreement that no measurement has
  * ever adjudicated. */
 #define ELS_DIAG_SETTLE_WINDOW_TICKS \
   ((int32_t)ELS_DIAG_TRACE_BUCKETS * (int32_t)ELS_DIAG_BUCKET_TICKS)
@@ -165,7 +167,8 @@
  * sync with no way out but the enable escape hatch, so the wait is bounded:
  * once elsStopSettleCount passes this the dwell expires whatever the probe is
  * doing. 4x the window leaves room for the ramp tail to restart the capture a
- * few times (see elsDiagTick) and still complete one clean run. ~78 ms. */
+ * few times (see elsDiagTick) and still complete one clean run. 80 ms, exact
+ * at both 50 and 100 kHz. */
 #define ELS_DIAG_SETTLE_HOLD_CEILING_TICKS (ELS_DIAG_SETTLE_WINDOW_TICKS * 4)
 
 /* Hold the take-up gate's dwell open while a capture is armed or running, and

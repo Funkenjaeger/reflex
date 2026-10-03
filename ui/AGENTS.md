@@ -20,7 +20,7 @@ and everything on it is supposed to be hardware-verified.
   alone**. Never do these.
 
 **The one exception**, for changes that cannot affect machine behavior and so
-need no hardware run: documentation, help files, `todo.md`, and tests. Anything
+need no hardware run: documentation, help files, and tests. Anything
 that changes what gets written to a firmware register (HAL, FSM, dispatchers,
 `devices.py`) is NOT clerical, however small it looks.
 
@@ -32,14 +32,17 @@ If unsure whether a change qualifies, it does not. Put it on a branch and ask.
 **Never push without being asked.** `origin` fans out to BOTH the canonical
 remote and your mirror, so any push writes two remotes at once.
 
-## Todo Tracking
+## Work tracking
 
-Add anything that should be tracked to `todo.md` in the project root: deferred work,
-TODOs found in code or documentation, bugs or improvements found while debugging,
-deployment or configuration tasks that need documentation, and any action item that
-won't be completed in the current session.
+**The work queue is not kept in this repo.** The maintainer keeps it outside,
+so there is no in-repo file to append an item to. Raise deferred work, a bug
+found while debugging, or a deployment or configuration task that needs
+documenting by telling the maintainer in your reply.
 
-Do NOT leave TODO comments in code, documentation, or bash snippets. Route them to `todo.md` instead.
+Do NOT leave TODO comments in code, documentation, or bash snippets. If
+something is worth writing down in the source, write the fact itself — what is
+untested, what the constraint is, why the code is shaped this way — as a normal
+comment that stands on its own, not as a pointer to a queue.
 
 ## Platform and protocol
 
@@ -304,8 +307,7 @@ Every UI component follows this structure:
 - **Versioning:** ONE version for the whole monorepo: the repo-root `VERSION`
   file, mirrored into `ui/pyproject.toml`'s `version` by the release workflow.
   Both halves carry the same version even when only one changed: `v1.4.0` names
-  a known-good firmware + UI pair (`decisions/repo-structure-monorepo.md`, at the
-  repo root). Do not bump either by hand.
+  a known-good firmware + UI pair (`docs/design/decisions.md`). Do not bump either by hand.
 
 - **CI/CD:**
   - `fw.yml` / `ui.yml` / `system.yml`, the test suites, run on **every**

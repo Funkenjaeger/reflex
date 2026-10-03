@@ -170,7 +170,7 @@ reflex/
 
 * **FSM architecture pattern:** [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md)
 * **ELS shoulder-stop orchestration:** [`ELS_STOP.md`](ELS_STOP.md)
-* **Repo structure ADR:** [`decisions/repo-structure-monorepo.md`](../decisions/repo-structure-monorepo.md)
+* **Repo structure decision:** [`docs/design/decisions.md`](../docs/design/decisions.md)
 
 ---
 

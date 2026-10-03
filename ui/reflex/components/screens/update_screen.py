@@ -35,7 +35,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
 
 from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>/<ThemedLabel>
-from reflex.utils import release_version, updater
+from reflex.utils import release_source, release_version, updater
 from reflex.utils.devices import ELS_PROTOCOL_VERSION
 from reflex.utils.kv_loader import load_kv
 
@@ -59,6 +59,11 @@ class UpdateScreen(Screen):
     current_release = StringProperty(release_version.installed_tag())
     enable_update_button = BooleanProperty(False)
     allow_experimental = BooleanProperty(False)
+    # "Offer integration builds": the home source's alphas. Shown only when
+    # home_available, i.e. this machine has a source configured
+    # (reflex/utils/release_source.py); elsewhere the row has no height.
+    allow_integration = BooleanProperty(False)
+    home_available = BooleanProperty(False)
     busy = BooleanProperty(False)
     status = StringProperty("")
     protocol_version = NumericProperty(ELS_PROTOCOL_VERSION)
@@ -66,6 +71,7 @@ class UpdateScreen(Screen):
     def __init__(self, **kv):
         super().__init__(**kv)
         self._catalogue: dict[str, updater.Release] = {}
+        self._home_source = None
         self.status = ""
         # True while a "Disengage and Install" waits for the controller to
         # report the ELS job released (see _await_firmware_release).
@@ -82,9 +88,15 @@ class UpdateScreen(Screen):
         The pre-release toggle is restored first, from ``Device-0.yaml``
         (2026-09-19: it used to reset to off on every visit).
         """
+        # Read on every entry, not cached from start-up: provisioning can add
+        # or remove the file, and a local read costs nothing.
+        self._home_source = release_source.load_home_source()
+        self.home_available = self._home_source is not None
         device = self._device()
         if device is not None:
             self.allow_experimental = bool(device.offer_prereleases)
+            self.allow_integration = (self.home_available and
+                                      bool(getattr(device, "offer_integration_builds", False)))
         if not self.busy and not self._catalogue:
             self.schedule_refresh_releases()
 
@@ -114,7 +126,9 @@ class UpdateScreen(Screen):
             lambda dt: asyncio.ensure_future(self.refresh_releases()))
 
     async def refresh_releases(self):
-        self.update_status("Fetching releases from GitHub.")
+        self.update_status("Fetching releases from GitHub"
+                           + (" and the integration build source." if self._home_source
+                              else "."))
         try:
             found = await asyncio.get_running_loop().run_in_executor(
                 None, self._fetch_releases)
@@ -141,11 +155,25 @@ class UpdateScreen(Screen):
         pre-release TAGS, which the same lockstep workflow builds and which
         carry both halves.
         """
-        tags = [tag for tag, r in self._catalogue.items()
-                if self.allow_experimental or not r.prerelease]
+        tags = [tag for tag, r in self._catalogue.items() if self._offered(r)]
         self.releases = tags
         if self.selected_release not in tags:
             self.selected_release = tags[0] if tags else ""
+
+    def _offered(self, release) -> bool:
+        """Whether the toggles offer ``release``. A home-source release is an
+        integration build and is offered by its own toggle only, whatever
+        "Offer pre-releases" says; public ones follow that toggle as before."""
+        if release.source == "home":
+            return self.allow_integration and self.home_available
+        return self.allow_experimental or not release.prerelease
+
+    def on_allow_integration(self, instance, value):
+        self._set_releases()
+        device = self._device()
+        if (device is not None and self.home_available
+                and getattr(device, "offer_integration_builds", None) != value):
+            device.offer_integration_builds = value
 
     def on_allow_experimental(self, instance, value):
         self._set_releases()
@@ -176,6 +204,7 @@ class UpdateScreen(Screen):
             current_protocol=ELS_PROTOCOL_VERSION,
             workdir=Path(tempfile.gettempdir()) / "reflex-update",
             emit=self.update_status,
+            home_source=self._home_source,
         )
 
     @staticmethod
@@ -203,7 +232,7 @@ class UpdateScreen(Screen):
         if release is None:
             self.update_status("No release selected.")
             return
-        if release.prerelease:
+        if release.prerelease or release.source == "home":
             self._confirm_prerelease(release)
         else:
             self._install_unless_engaged(release)
@@ -376,10 +405,13 @@ class UpdateScreen(Screen):
         was allowed to come back is that it cannot produce one.
         """
         content = BoxLayout(orientation="vertical", spacing=10, padding=10)
+        integration = release.source == "home"
+        what = ("an integration build: not a public release, and not yet tested "
+                "outside the bench" if integration else "a pre-release")
         # Themed: a stock Label is white, 1.38:1 on the light popup.
         content.add_widget(Factory.ThemedLabel(
             text=(
-                f"{release.tag} is a pre-release.\n\n"
+                f"{release.tag} is {what}.\n\n"
                 "- It may be unstable or incomplete\n"
                 "- Both the controller firmware and this UI will be updated\n"
                 "- The machine must not be powered off during the update"
@@ -395,7 +427,8 @@ class UpdateScreen(Screen):
         buttons.add_widget(btn_confirm)
         content.add_widget(buttons)
 
-        popup = Popup(title="Pre-release", content=content,
+        popup = Popup(title="Integration build" if integration else "Pre-release",
+                      content=content,
                       size_hint=(0.7, 0.5), auto_dismiss=False)
         btn_cancel.bind(on_release=popup.dismiss)
         btn_confirm.bind(on_release=lambda _: (popup.dismiss(),

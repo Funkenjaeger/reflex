@@ -45,9 +45,10 @@
  * introduced.
  *
  * The consequence is that a tick constant has always meant a DIFFERENT WALL
- * CLOCK DURATION in the emulator than on the machine: ELS_SLIP_SETTLE_TICKS =
- * 700 is 7 ms on hardware and was 70 ms in the emulator. Every emulator test
- * that exercises settle behaviour has been exercising the 10x horizon.
+ * CLOCK DURATION in the emulator than on the machine: ELS_SLIP_SETTLE_TICKS
+ * (ELS_MS_TO_TICKS(20), Ramps.c) is 1000 ticks, 20 ms, on hardware at 50 kHz
+ * and 200 ms in the emulator. Every emulator test that exercises settle
+ * behaviour has been exercising the 10x horizon.
  *
  * So the emulator build pins ELS_ISR_TICK_HZ to the OLD hardware rate
  * (emulator/CMakeLists.txt), which reproduces exactly the tick values those

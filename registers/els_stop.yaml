@@ -155,7 +155,7 @@ fields:
   # snapshot and each of these turned up in one; the audit now runs as a gate,
   # so this class of mistake fails instead of shipping. See the audit output in
   # the wiki journal 2026-09-07.
-  - {id: 42, name: takeupThreshCounts, type: int32, access: sw_write, group: hot, doc: "READ-ONLY (firmware-derived, not operator-set): Z counts the last take-up had to move to be confirmed. Derived from (backlashSteps - mean(calMeasured)) via elsTakeupConfirmThreshold(); falls back to calMotionThreshCounts with no calibration on file or in turning mode. Published so the UI can say \"moved 3, needed 4\""}
+  - {id: 42, name: takeupThreshCounts, type: int32, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-derived, not operator-set): Z counts the last take-up had to move to be confirmed. Derived from (backlashSteps - mean(calMeasured)) via elsTakeupConfirmThreshold(); falls back to calMotionThreshCounts with no calibration on file or in turning mode. Published so the UI can say \"moved 3, needed 4\""}
   - {id: 44, name: stepPulseMinCycles, type: uint32, access: ro_firmware, group: hot, doc: "READ-ONLY except for reset: narrowest STEP pulse since host wrote 0. 0 = nothing measured yet"}
   - {id: 45, name: stepPulseRuntCount, type: uint32, access: ro_firmware, group: hot, doc: "READ-ONLY except for reset: pulses narrower than ELS_STEP_RUNT_CYCLES since host wrote 0"}
   - {id: 47, name: diagSeq,           type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [diagBucketTicks, diagBucketCount, diagSettleTicks, diagNetCounts, diagTrace, diagCaptureTicks, diagEndReason], doc: "READ-ONLY (firmware-owned): increments once per completed capture. Edge-detect it; there is no \"capture in progress\" register to poll. Ordering invariant: must stay at a lower address than the capture payload it counts, or a host can read a torn capture"}
@@ -203,12 +203,12 @@ fields:
   # ===========================================================================
 
   # --- calibration results + machine-specific limits ------------------------
-  - {id: 39, name: calMeasured,       type: int32, count: 3, access: ro_firmware, group: cold, audit: unverified, doc: "READ-ONLY (firmware-owned): lash measured at each of the 3 reversals, in servo steps. The host judges whether the spread is acceptable"}
+  - {id: 39, name: calMeasured,       type: int32, count: 3, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): lash measured at each of the 3 reversals, in servo steps. The host judges whether the spread is acceptable"}
   - {id: 40, name: calCeilingSteps,   type: int32,  access: sw_write, group: cold, doc: "SW write: per-leg hard ceiling in servo steps. Driving this far without Z moving is the open-half-nut / uncoupled failure. Machine-specific; size it comfortably past the largest credible lash"}
   - {id: 41, name: calMotionThreshCounts, type: int32, access: sw_write, group: cold, doc: "SW write: Z scale counts that count as real motion. Machine-specific: ~2 counts on a 200 counts/mm scale (1 count \u2248 2.5 servo steps); the emulator is 400 counts/mm. 0 disables detection and fails closed (never confirms)"}
 
   # --- performance counters: diagnostic, monotonic, never urgent ------------
-  - {id: 43, name: executionCyclesPeak, type: uint32, access: ro_firmware, group: cold, audit: unverified, doc: "READ-ONLY except for reset: highest executionCycles since the host last wrote 0 here. Compare against ELS_ISR_CYCLE_BUDGET (els_isr_rate.h), one tick at the 100 MHz core clock: 2000 cycles at the 50 kHz hardware tick"}
+  - {id: 43, name: executionCyclesPeak, type: uint32, access: ro_firmware, group: cold, doc: "READ-ONLY except for reset: highest executionCycles since the host last wrote 0 here. Compare against ELS_ISR_CYCLE_BUDGET (els_isr_rate.h), one tick at the 100 MHz core clock: 2000 cycles at the 50 kHz hardware tick"}
 
   # --- the diagnostic scratchpad: 64 registers, ZERO in any release build ----
   #     Reserved in every build, written only under ELS_DIAG_SCRATCH. This is

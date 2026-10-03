@@ -30,6 +30,17 @@ When enabled, release candidates appear in the list alongside final releases.
 There is no longer a "dev" entry. It tracked a branch, and no firmware image is
 built for a branch — so it could only ever have updated half the machine.
 
+### Offer Integration Builds (bench only)
+Shown only on a machine set up with an integration build source; on any other
+machine this row does not appear. When enabled, integration builds
+(`vX.Y.Z-alpha.N`) appear in the list. They are built the same way and carry
+both halves, but they come before a release candidate and have not been tested
+beyond the bench, so you are asked to confirm.
+
+Before any update the settings are saved to the commissioning snapshots. An
+older release does not know settings that a newer one added, and resets them
+to their defaults the first time it saves; the snapshot is how to get one back.
+
 ### Available Releases
 Pick the version to install.
 

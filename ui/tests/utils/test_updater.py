@@ -442,7 +442,12 @@ RELEASE = Release(tag="v1.2.0", prerelease=False,
 
 def _session(runner, tmp_path, **kw):
     restarts = []
+    snapshots = []
     kw.setdefault("restart", lambda: restarts.append(1))
+    # Never the real one: it writes the commissioning bundle into the
+    # developer's own config dir (~/.config/reflex/ledger/snapshots).
+    kw.setdefault("snapshot", lambda reason: (snapshots.append(reason),
+                                              tmp_path / f"{reason}.yaml")[1])
     kw.setdefault("manifest", tmp_path / "home" / "firmware" / "flashed.json")
     kw.setdefault("checkout", tmp_path / "checkout")
     if "elspi_release_path" not in kw:
@@ -467,6 +472,7 @@ def _session(runner, tmp_path, **kw):
         **kw,
     )
     s.restarts = restarts
+    s.snapshots = snapshots
     return s
 
 

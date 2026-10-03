@@ -53,6 +53,18 @@
           help_file: "software_update.md"
           on_value: root.allow_experimental = self.value
 
+        # Only on a machine with an integration build source configured
+        # (reflex/utils/release_source.py); everywhere else the row has no
+        # height, is invisible and cannot be touched.
+        BooleanItem:
+          height: 60 if root.home_available else 0
+          opacity: 1 if root.home_available else 0
+          name: "Offer integration builds (bench only)"
+          value: root.allow_integration
+          disabled: root.busy or not root.home_available
+          help_file: "software_update.md"
+          on_value: root.allow_integration = self.value
+
         DropDownItem:
           height: 60
           name: "Available releases"
