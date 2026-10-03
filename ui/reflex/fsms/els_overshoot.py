@@ -78,22 +78,23 @@ from typing import Callable, Deque, Optional, Sequence, Tuple
 # overshoots by exactly zero.
 #
 # BOUND TO THIS MACHINE: elspi's Z scale at 5 um/count (200 counts/mm) -- the
-# table is in counts -- its CL86T drive and the drive's own settings, and the
-# gearing between motor and carriage (the lathe's A/B/C gearbox position and
-# the leadscrew). The overshoot is the drive carrying the carriage on after the
-# trigger: ~v*Td (a delay; the same carriage distance at any gearing if Td is a
-# time) plus a ramp ~v^2/2a whose deceleration is in MOTOR terms, so gearing
-# changes it (about half the total at the top of the table). Change any of
-# those and this table is wrong -- RE-MEASURE before relying on it again.
+# table is in counts -- and its CL86T drive and the drive's own settings.
+# Change either and this table is wrong -- RE-MEASURE before relying on it.
+#
+# The lathe's A/B/C gearbox position does NOT need its own table. Measured in
+# all three positions at matched carriage speed, the overshoot agrees within
+# 1-2 counts up to ~1700 counts/s; above that position B (leadscrew twice as
+# fast as in A) runs up to ~5 counts higher, still inside this envelope, and
+# every correction landed short. That is not what a delay-plus-ramp model with
+# the ramp in motor terms predicts (it puts B LOWER), so treat
+# the envelope as measured, not derived. The correction keys on the measured
+# Z rate, so it needs no knowledge of the gearing.
 #
 # NOT a binding, although an earlier version of this comment (and the docs)
 # said so: the ServoBar maxSpeed / acceleration settings. They shape only steps
 # still queued, and the firmware has none queued at the trigger
 # (stopTriggerStepsToGo was 0 on every recorded stop), so nothing it sends
-# after the stop fires exists for them to shape. Measuring the overshoot in
-# all three gearbox positions gates the elspi hardware-verification checklist
-# item 8 (2026-09-26). Only if the gearing turns out to matter does the table
-# also need the engaged position at runtime: sensorless gearing detection.
+# after the stop fires exists for them to shape.
 OVERSHOOT_TABLE: Tuple[Tuple[int, int], ...] = (
     (0, 0),
     (280, 1),       # snapshot 300
