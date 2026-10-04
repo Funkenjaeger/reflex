@@ -160,4 +160,5 @@ recovery path.
 
 ## License
 
-MIT — see `LICENSE`.
+MIT — see `LICENSE`. The STM32 drivers and CMSIS under `Drivers/` and FreeRTOS
+under `Middlewares/` keep their own licenses, in those directories.
