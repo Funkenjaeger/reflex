@@ -114,6 +114,13 @@ SETTLE_POLLS = 3
 SETTLE_DEADLINE_MS = 1000
 SETTLE_DEADLINE_MM = 2.0        # 0.079 in
 
+#: After settling, a trailing window off the expected gear (but above the
+#: decoupled floor) for this many polls counts as a steady partial slip even
+#: while the since-start estimate still lags it. Two windows (~0.8 s): an
+#: opening half nut crosses that band in a few polls and must reach
+#: DECOUPLED first.
+PARTIAL_SLIP_POLLS = 2 * WINDOW_POLLS
+
 #: The trailing window must sit within this of the candidate position for the
 #: since-start estimate to count as settled on it (the steadiness test).
 TRAILING_AGREE_TOL = 0.15
@@ -214,6 +221,7 @@ class CouplingRatioCheck:
     _settle_polls: int = field(default=0, init=False)
     _settled: bool = field(default=False, init=False)
     _drift_polls: int = field(default=0, init=False)
+    _trail_off_polls: int = field(default=0, init=False)
     _latched: Optional[Verdict] = field(default=None, init=False)
     _last: Verdict = field(default_factory=lambda: Verdict(UNKNOWN), init=False)
 
@@ -232,6 +240,7 @@ class CouplingRatioCheck:
         self._settle_polls = 0
         self._settled = False
         self._drift_polls = 0
+        self._trail_off_polls = 0
         self._latched = None
         self._last = Verdict(UNKNOWN)
 
@@ -351,7 +360,25 @@ class CouplingRatioCheck:
         if not past_deadline:
             self._last = verdict(OK, self.gear)
             return self._last
+        # A DRIFT IS ONLY A DRIFT IF IT IS NOT STILL FALLING (2026-10-03,
+        # shadow bench). A half nut opened 5 s into a pass dragged the
+        # since-start estimate 6.8 % low within ~0.3 s, while the trailing
+        # window was still on its way down to 0: the drift rule called
+        # RATIO_WRONG one poll before DECOUPLED could. So a poll off the gear
+        # counts only when the trailing window AGREES with the since-start
+        # estimate (a steady wrong ratio), or has itself sat off the gear --
+        # above the decoupled floor -- for PARTIAL_SLIP_POLLS (a steady
+        # partial slip, which the since-start estimate converges on only
+        # slowly). An opening half nut passes through that band far faster.
+        gf = float(gear_factor(self.gear))
+        trail_off = (r_trail is not None and r_trail >= DECOUPLED_BELOW
+                     and abs(r_trail / gf - 1.0) > TIGHT_TOL)
+        self._trail_off_polls = self._trail_off_polls + 1 if trail_off else 0
+        steady = (r_trail is not None
+                  and abs(r_trail / r_all - 1.0) <= TRAILING_AGREE_TOL)
         if gear == self.gear and abs(dev) <= TIGHT_TOL:
+            self._drift_polls = 0
+        elif not (steady or self._trail_off_polls >= PARTIAL_SLIP_POLLS):
             self._drift_polls = 0
         else:
             self._drift_polls += 1

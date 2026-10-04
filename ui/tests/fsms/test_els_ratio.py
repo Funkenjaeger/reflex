@@ -105,6 +105,31 @@ def test_half_nut_opening_mid_pass_is_decoupled():
     assert first - 40 <= R.WINDOW_POLLS + R.DECOUPLED_POLLS
 
 
+def test_half_nut_opening_late_in_a_long_pass_is_decoupled_not_ratio_wrong():
+    """2026-10-03 shadow bench: a half nut opened ~5 s into a pass pulled the
+    since-start estimate 5 % low before the trailing window reached the
+    decoupled floor, and the drift rule called RATIO_WRONG first. A drift
+    counts only once the trailing window agrees, so this is DECOUPLED."""
+    # One of 40 such shapes (of 96 swept) the old rule called RATIO_WRONG.
+    open_at = 40                                     # ~1.6 s in, past the deadline
+    riding = 8                                       # the nut rides ~0.3 s first
+    vs = _run(_check("A"), 1.0, polls=200,
+              ratio_at=lambda i: 1.0 if i < open_at
+              else 0.5 if i < open_at + riding else 0.0)
+    assert not any(v.kind == R.RATIO_WRONG for v in vs)
+    assert vs[-1].kind == R.DECOUPLED
+
+
+def test_a_steady_partial_slip_after_settling_is_still_ratio_wrong():
+    """The other side of that rule: a coupling slipping 10 % for good is not
+    a half nut, and must still be called once the trailing window has sat
+    off the gear for a full window."""
+    vs = _run(_check("A"), 1.0, polls=300,
+              ratio_at=lambda i: 1.0 if i < 60 else 0.9)
+    assert vs[-1].kind == R.RATIO_WRONG
+    assert not any(v.kind == R.DECOUPLED for v in vs)
+
+
 def test_half_nut_opening_at_the_start_is_never_a_gear_change():
     """The since-start estimate falls from 1 to 0 through C's band; only the
     trailing window agreeing can make it a gear, and here it never does."""
