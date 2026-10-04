@@ -130,16 +130,28 @@ def emulator_binary():
         )
 
     # (The reflex-fw SHA is surfaced via pytest_report_header for run provenance.)
-    needs_build = not EMULATOR_BIN.exists()
-    if not needs_build:
-        try:
-            needs_build = _emulator_sources_newer_than(EMULATOR_BIN.stat().st_mtime)
-        except OSError:
-            needs_build = True
+    #
+    # ONE BUILD AT A TIME. Under pytest-xdist (`-n auto`) every worker runs
+    # this session fixture, so on a fresh checkout or after a firmware change
+    # they would all run cmake in the same build directory at once. An
+    # exclusive lock serializes them; the staleness check is repeated inside
+    # it, so the workers that waited find the binary current and skip. The
+    # system tests are Linux/WSL-only (PTY transport), so fcntl is available.
+    import fcntl
+    build_dir = EMULATOR_DIR / "build"
+    build_dir.mkdir(exist_ok=True)
+    with open(build_dir / ".system-tests-build.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        needs_build = not EMULATOR_BIN.exists()
+        if not needs_build:
+            try:
+                needs_build = _emulator_sources_newer_than(EMULATOR_BIN.stat().st_mtime)
+            except OSError:
+                needs_build = True
 
-    if needs_build:
-        subprocess.run(["cmake", "-B", "build"], cwd=EMULATOR_DIR, check=True)
-        subprocess.run(["cmake", "--build", "build"], cwd=EMULATOR_DIR, check=True)
+        if needs_build:
+            subprocess.run(["cmake", "-B", "build"], cwd=EMULATOR_DIR, check=True)
+            subprocess.run(["cmake", "--build", "build"], cwd=EMULATOR_DIR, check=True)
     return EMULATOR_BIN
 
 

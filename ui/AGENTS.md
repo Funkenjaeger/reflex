@@ -114,10 +114,14 @@ across ELS mode and machine-wiring polarity.
 
 - **Opt-in and excluded by default.** They carry the `system` marker and `pyproject.toml` sets
   `addopts = "-m 'not system'"`, so a plain `uv run pytest` skips them (and never builds/launches
-  the emulator). Run them explicitly:
+  the emulator). Run them explicitly, in parallel:
   ```bash
-  uv run pytest -m system tests/system/
+  uv run pytest -m system -n auto tests/system/
   ```
+  Each test starts its own emulator on its own PTY with its own temporary HOME, so they run in
+  parallel under pytest-xdist: about 70-100 s with 8-12 workers, against about 11 minutes one at a
+  time (measured 2026-10-03). They are real-time against the emulator's clock, so if one ever turns
+  out to be timing-sensitive under load, mark it to run alone rather than giving up `-n`.
 - **WSL/Linux only.** The emulator's Modbus link is a PTY (`/dev/pts/N`); native Windows can't open
   it, and the venv is a WSL venv. Run from a WSL shell.
 - **Requires the fw/ emulator.** The in-repo `../fw` is the default; set `REFLEX_FW_DIR` only to point at a different checkout.
