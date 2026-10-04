@@ -220,8 +220,21 @@ class Board(EventDispatcher):
             self.update_tick = (self.update_tick + 1) % 100
             return
 
+        # ONE request for the whole tick: fastData and the elsStop hot group
+        # are adjacent registers, read as one span (Global.read_tick). There
+        # used to be two requests here, one per block, and requests are what
+        # time out when the firmware's ISR is saturated.
+        #
+        # A FAILED READ IS NOW A FAILED fastData READ, for every caller: the
+        # one request carries both blocks, so its failure takes the path a
+        # failed fastData read always took -- link torn down, retry backoff,
+        # fast_data_values left as it was, els_stop_values cleared. What no
+        # longer exists is the half-failure in which fastData arrived and only
+        # the elsStop read failed (which kept the link up); a single exchange
+        # cannot half-fail. The hot group's DECODE can still fail on its own,
+        # and that keeps the old elsStop policy (_refresh_els_stop_snapshot).
         try:
-            self.fast_data_values = self.device['fastData'].refresh()
+            self.fast_data_values, hot_raw = self.device.read_tick()
         except Exception as e:
             self.connection_manager._log_error_once(str(e))
             self.connection_manager.disconnect()
@@ -234,7 +247,7 @@ class Board(EventDispatcher):
         # Taken BEFORE update_tick is bumped, because the tick-driven pollers
         # that consume it are bound to update_tick -- so by the time any of them
         # runs, the snapshot it reads is this tick's.
-        self._refresh_els_stop_snapshot()
+        self._refresh_els_stop_snapshot(hot_raw)
 
         was_disconnected = not self.connected
         self.connection_manager.connected = True
@@ -246,8 +259,8 @@ class Board(EventDispatcher):
 
         self.update_tick = (self.update_tick + 1) % 100
 
-    def _refresh_els_stop_snapshot(self):
-        """Read the whole elsStop block once per tick, for the pollers to share.
+    def _refresh_els_stop_snapshot(self, hot_raw):
+        """Publish this tick's elsStop hot group, for the pollers to share.
 
         The same arrangement `fast_data_values` has always had, extended to the
         block the ELS pollers read. It exists because `BaseDevice.__getitem__`
@@ -257,10 +270,13 @@ class Board(EventDispatcher):
         cost five to fourteen exchanges depending on which edges were due. At
         30 Hz, with the firmware's 100 kHz ISR saturated at cut-start, that is
         what lost comms on six of six cuts on 2026-08-23 -- every drop a
-        timeout, none a corrupted frame. One block read of 122 registers is two
-        exchanges (BaseDevice.MAX_REGISTERS_PER_READ) no matter how many
-        pollers read it, and it costs MORE bytes than the reads it replaces.
-        That trade is the point: bytes are not what times out, exchanges are.
+        timeout, none a corrupted frame. The snapshot now rides the tick's one
+        request (Global.read_tick) no matter how many pollers read it, and it
+        costs MORE bytes than the reads it replaces. That trade is the point:
+        bytes are not what times out, exchanges are.
+
+        `hot_raw` is the hot group's registers from that request; this only
+        decodes them.
 
         A SNAPSHOT THAT DID NOT HAPPEN MUST NOT LOOK LIKE ONE THAT DID, which
         is why failure CLEARS the dict rather than leaving the last good one in
@@ -272,19 +288,19 @@ class Board(EventDispatcher):
         number with the counter unmoved, which is precisely the fabricated-zero
         hole that counter was added to close.
 
-        Deliberately NOT a disconnect path. `fast_data_values` above owns the
-        connection verdict; a single failed elsStop read is one bad tick for the
-        ELS pollers, and tearing the link down over it would take the DRO with
-        it for no reason.
+        Deliberately NOT a disconnect path. The tick read above owns the
+        connection verdict; a hot group that fails to decode is one bad tick
+        for the ELS pollers, and tearing the link down over it would take the
+        DRO with it for no reason.
         """
         try:
-            # HOT GROUP ONLY, and that is the point: one FC3 request instead of
-            # two. Every field any tick-driven reader touches is in this group by
-            # construction -- tools/audit_tick_readers.py enumerates the four
-            # readers of this dict and FAILS if a `cold` field appears in one, so
-            # a future reader reaching for a cold field breaks the audit rather
-            # than silently reintroducing a second request per tick.
-            self.els_stop_values = self.device['elsStop'].refresh_hot()
+            # HOT GROUP ONLY, and that is the point: it is what lets the tick
+            # stay one request. Every field any tick-driven reader touches is in
+            # this group by construction -- tools/audit_tick_readers.py
+            # enumerates the four readers of this dict and FAILS if a `cold`
+            # field appears in one, so a future reader reaching for a cold field
+            # breaks the audit rather than silently adding a request per tick.
+            self.els_stop_values = self.device['elsStop'].decode_hot(hot_raw)
         except Exception as e:
             self.els_stop_values = {}
             self.connection_manager._log_error_once(str(e))

@@ -66,6 +66,18 @@ class BaseDevice:
     # purpose.
     MAX_REGISTERS_PER_READ = 72  # 2026-09-07: elsStop is 140 regs (protocolVersion 9); two requests need >= 70, the 60%-of-125 rule caps at 75
 
+    # The largest single request read_span() will issue, and a separate number
+    # from the refresh() chunk above on purpose. The one span past that chunk
+    # is the board tick (devices.Global.read_tick): fastData plus the elsStop
+    # hot group, 30 + 56 = 86 registers, a 177-byte reply. That is 69% of the
+    # firmware's 125-register FC3 ceiling, past the 60% this file otherwise
+    # keeps to, and accepted as such: it makes the tick ONE request instead of
+    # two. Set to exactly the tick's size so the tick is the largest request
+    # anything makes, and a hot group that grows refuses loudly here (and in
+    # tests/fsms/test_els_stop_snapshot.py) instead of creeping toward the
+    # ceiling, where every failure is silent.
+    MAX_REGISTERS_PER_SPAN = 86
+
     def __init__(self, connection_manager, base_address=0):
         from reflex.utils.communication import ConnectionManager
         self.base_address = base_address
@@ -307,11 +319,14 @@ class BaseDevice:
         cut. The generated group sizes are asserted against the same budget at
         generation time, so this should be unreachable from generated callers --
         which is exactly why it must be loud if it ever is not.
+
+        The budget is MAX_REGISTERS_PER_SPAN, not the refresh() chunk: the
+        board tick's merged read is the one span larger than a chunk.
         """
-        if register_count > self.MAX_REGISTERS_PER_READ:
+        if register_count > self.MAX_REGISTERS_PER_SPAN:
             raise ValueError(
                 f"span of {register_count} registers exceeds the "
-                f"{self.MAX_REGISTERS_PER_READ}-register single-request budget; "
+                f"{self.MAX_REGISTERS_PER_SPAN}-register single-request budget; "
                 f"a one-request read is the whole point of asking for a span")
         return self.dm.device.read_registers(
             registeraddress=self.base_address + first_register,
@@ -342,6 +357,13 @@ class BaseDevice:
                 remaining_address += remaining_size
                 raw_data += part_data
 
+        return self.decode(raw_data)
+
+    def decode(self, raw_data):
+        """Unpack this device's registers, read by whatever request, into the
+        same dict refresh() returns. Split out so a caller that read the block
+        as part of a larger span (devices.Global.read_tick) decodes it exactly
+        as refresh() would."""
         with kev("struct"):
             raw_bytes = struct.pack("<" + "H" * self.size, *raw_data)
             values = list(struct.unpack("<" + self.struct_unpack_string, raw_bytes))

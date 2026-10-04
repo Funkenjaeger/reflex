@@ -165,20 +165,20 @@ class ElsStop(BaseDevice):
     # fw/Core/Inc/Ramps_generated.h. Edit the schema, not this.
     definition = els_stop_map.DEFINITION
 
-    def refresh_hot(self):
-        """Read the HOT group as ONE FC3 request and decode it.
+    def decode_hot(self, raw):
+        """Decode the HOT group's registers, read by the board tick.
 
-        The tick path's read. refresh() still reads the whole block in two
-        requests and is what an on-demand caller wants; this reads only the
-        registers a tick-driven reader can actually touch, which is the entire
-        return on the hot/cold split -- three exchanges per tick become two.
+        No I/O: the tick reads the hot group as the tail of ONE request that
+        starts at fastData (Global.read_tick). refresh() still reads the whole
+        block in two requests and is what an on-demand caller wants; the tick
+        touches only the registers a tick-driven reader can, which is the
+        entire return on the hot/cold split.
 
-        Both the span and the decoder come from the generated map, so they
-        cannot disagree about where a field is: a field added to the schema
-        moves the offsets, the format string and the field list together, or
-        generation fails.
+        The decoder comes from the generated map, so it cannot disagree with
+        the span about where a field is: a field added to the schema moves the
+        offsets, the format string and the field list together, or generation
+        fails.
         """
-        raw = self.read_span(els_stop_map.HOT_BASE, els_stop_map.HOT_COUNT)
         return els_stop_map.decode_hot(raw)
 
 
@@ -343,6 +343,18 @@ ELS_TAKEUP_TIMEOUT_LATCHED = (            # 62 ch, 398 px of 435
 ELS_TAKEUP_UNKNOWN = "Cut aborted — backlash take-up failed."
 
 
+# The board tick's span (Global.read_tick): fastData, then the elsStop hot
+# group directly after it. Derived from the generated maps rather than
+# written down, and refused at import if the two ever stop being adjacent:
+# one span over a gap would decode unrelated registers as hot fields.
+TICK_BASE = fast_data_map.FAST_DATA_BASE
+TICK_COUNT = fast_data_map.TOTAL_REGISTERS + els_stop_map.HOT_COUNT
+if (fast_data_map.FAST_DATA_BASE + fast_data_map.TOTAL_REGISTERS
+        != els_stop_map.ELS_STOP_BASE + els_stop_map.HOT_BASE):
+    raise RuntimeError("fastData and the elsStop hot group are no longer "
+                       "adjacent; the one-request board tick cannot span them")
+
+
 class Global(BaseDevice):
     root_structure = True
     definition = """
@@ -357,6 +369,25 @@ typedef struct {
   elsStop_t elsStop;
 } rampsSharedData_t;
 """
+
+    def read_tick(self):
+        """The board tick's ONE request: fastData and the elsStop hot group.
+
+        The two blocks are adjacent -- fastData ends at register 104, where
+        elsStop and its hot group begin -- and the firmware serves FC3 from
+        rampsSharedData_t as one array, copying registers in ascending order
+        (process_FC3, fw/Core/Src/Modbus.c). So both are read as a single
+        span of TICK_COUNT registers, where the tick used to make two
+        requests. fastData is decoded here exactly as refresh() decodes it;
+        the hot group's registers are returned RAW, because their decode has
+        its own failure policy in Board (an empty snapshot, link kept).
+
+        Raises on a failed exchange, like refresh(). Returns
+        (fast_data_values, hot_raw).
+        """
+        raw = self.read_span(TICK_BASE, TICK_COUNT)
+        split = fast_data_map.TOTAL_REGISTERS
+        return self['fastData'].decode(raw[:split]), raw[split:]
 
 
 def takeup_failure_text(result_code, z_delta=None, reference_latched=False):
