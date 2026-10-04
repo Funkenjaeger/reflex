@@ -23,7 +23,24 @@
 #define ENABLE_USART_DMA 1
 
 
-#define T35  5              // Timer T35 period (in ticks) for end frame detection.
+/* T35: end-of-frame silence, in FreeRTOS ticks (configTICK_RATE_HZ 1000, so
+ * ms). It is a software timer reset from the RX interrupt on every received
+ * byte (UARTCallback.c, USART_HW mode), and FreeRTOS dates that reset to the
+ * tick count at the moment of the reset, so the frame is declared over
+ * between T35-1 and T35 ms after its last byte. 2 therefore means at least
+ * 1 ms of silence, about 11.5 character times at 115200 baud. 1 would allow
+ * a silence of almost nothing and must not be used.
+ *
+ * This is shorter than the 1.75 ms the Modbus RTU specification sets above
+ * 19200 baud. The cost is that a pause of 1-2 ms INSIDE a request can now
+ * split it, and the pieces fail their size or CRC check and are dropped,
+ * where 5 tolerated a pause of up to 4 ms. The gain is that every reply
+ * starts 3 ms sooner: at 5, the reply waited 4-5 ms after each request.
+ *
+ * Only the application uses this; the bootloader detects frames from the
+ * USART's IDLE flag and does not include this file. The emulator compiles
+ * Modbus.c with this header, so it runs at 2 ms as well. */
+#define T35  2              // Timer T35 period (in ticks) for end frame detection.
 #define MAX_BUFFER  256	    // Maximum size for the communication buffer in bytes.
 #define MB_MAX_WINDOWS 2    // Auxiliary register windows per handler (modbus_window.h).
 #define TIMEOUT_MODBUS 1000 // Timeout for master query (in ticks)
