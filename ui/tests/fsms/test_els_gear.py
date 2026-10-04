@@ -122,7 +122,8 @@ def test_cut_pushes_the_take_up_in_the_engaged_gear(gear, expected):
     fsm.enable()
     fsm.hal.reset_mock()
     fsm.cut()
-    fsm.hal.set_backlash_steps.assert_called_once_with(expected)
+    # Carried in the arming batch now, not written on its own.
+    assert fsm.hal.arm.call_args.kwargs["backlash_steps"] == expected
 
 
 def test_a_servo_without_a_gearbox_is_the_reference():

@@ -32,6 +32,31 @@ def _is_structure(type_definition: TypeDefinition) -> bool:
     return isinstance(rf, type) and issubclass(rf, BaseDevice)
 
 
+class _PlainWrite:
+    """One write to a dict-shaped double: no wire, so it cannot fail.
+
+    Lets a Batch be built over the doubles the suite uses without every one of
+    them having to grow a register layer. A double that wants a write REFUSED
+    implements write_command itself and returns something whose execute() says
+    so.
+    """
+
+    def __init__(self, device, key, value):
+        self.device, self.key, self.value = device, key, value
+
+    def execute(self, cm):
+        self.device[self.key] = self.value
+        return True
+
+
+def write_command(device, key, value):
+    """The command one write becomes, for collecting several into a Batch."""
+    builder = getattr(device, "write_command", None)
+    if builder is None:
+        return _PlainWrite(device, key, value)
+    return builder(key, value)
+
+
 def write_confirmed(device, key, value) -> bool:
     """Write `key` on `device` and return the controller's acknowledgement.
 
@@ -143,8 +168,14 @@ class BaseDevice:
                 for i in range(var.count))))
         return self._port().call(Read(var.type.read_function, address))
 
-    def _write_command(self, key, value):
-        """The Write (or Batch of them) one assignment to `key` becomes."""
+    def write_command(self, key, value):
+        """The Write (or Batch of them) one assignment to `key` becomes.
+
+        Public so a caller can COLLECT several into one Batch -- the arming
+        sequence does, because those writes must reach the controller back to
+        back with no tick scan between them, and must come back with a verdict
+        per write rather than one for the lot.
+        """
         var = self._variable_index[key]
         if var.count > 1 and isinstance(value, (list, tuple)):
             # Symmetric with __getitem__'s array read: element-wise at
@@ -180,7 +211,7 @@ class BaseDevice:
         A WRITE THAT GATES A TRANSITION DOES NOT BELONG HERE -- use
         write_confirmed(), which returns the controller's acknowledgement.
         """
-        self._port().submit(self._write_command(key, value))
+        self._port().submit(self.write_command(key, value))
 
     def write_confirmed(self, key, value) -> bool:
         """Write and WAIT, returning whether the controller acknowledged it.
@@ -196,7 +227,7 @@ class BaseDevice:
         acknowledged.
         """
         try:
-            result = self._port().call(self._write_command(key, value))
+            result = self._port().call(self.write_command(key, value))
         except Exception as e:                           # noqa: BLE001
             # Includes the proxy's TimeoutError. An answer that never came is
             # not an acknowledgement, and the whole point of this call is that

@@ -1,4 +1,20 @@
-"""The single owner of the Modbus port.
+"""The single owner of the Modbus port -- AND THE HARDWARE SEAM.
+
+WHICH LAYER IS THE ABSTRACTION. Every exchange the application makes goes
+through here, by construction: BaseDevice item access, refresh, read_span
+and the board tick all funnel into submit(), and
+tests/dispatchers/test_board_wire_trace.py pins that call for call. The
+invariants live here and nowhere else -- one owner of the instrument, FIFO
+order, a batch that is never split, a per-write acknowledgement, and the
+write epoch that keeps a stale snapshot from being applied over a newer
+command.
+
+fsms/els_stop_hal.py is NOT that layer, whatever its name suggests: it is a
+domain facade over the elsStop block. Most of the register writes in this
+application never pass through it (the servo, axis and input dispatchers
+write their own), so it cannot carry an invariant and nothing should be
+built on the assumption that it does. Open Loops has the question of what
+to do about that; the answer is not to put transport back into it.
 
 WHAT IT OWNS. The ConnectionManager, and through it the minimalmodbus
 Instrument (opening, closing, every exchange), the connection verdict
