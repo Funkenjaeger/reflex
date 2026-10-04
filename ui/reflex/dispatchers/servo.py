@@ -41,7 +41,7 @@ class ServoDispatcher(SavingDispatcher):
     elsMode = BooleanProperty(False)
     leadScrewPitch = NumericProperty(0.25)
     leadScrewPitchIn = BooleanProperty(True)
-    leadScrewPitchSteps = BooleanProperty(800)
+    leadScrewPitchSteps = NumericProperty(800)
     #: The lathe gearbox lever position between servo and leadscrew (A/B/C,
     #: reflex/fsms/els_gear.py). Lead Screw Pitch Steps is the REFERENCE
     #: gear's; this scales the derived mm-per-step. Persisted, because the

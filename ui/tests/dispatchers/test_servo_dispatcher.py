@@ -284,3 +284,13 @@ class TestToggleEnable:
         servo.servoMode = 1
         servo.toggle_enable()
         assert servo.servoMode == 0
+
+
+def test_lead_screw_pitch_steps_is_numeric():
+    """It held a step count in a BooleanProperty, which Kivy happened to
+    accept; a numeric setting must be a NumericProperty."""
+    from kivy.properties import NumericProperty
+    from reflex.dispatchers.servo import ServoDispatcher
+    prop = ServoDispatcher.leadScrewPitchSteps
+    assert isinstance(prop, NumericProperty)
+    assert prop.defaultvalue == 800
