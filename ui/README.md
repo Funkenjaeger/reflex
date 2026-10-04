@@ -176,4 +176,5 @@ reflex/
 
 ## 📄 License
 
-MIT — see `LICENSE`.
+MIT — see `LICENSE`. The bundled fonts are under the SIL Open Font License 1.1;
+each family's license is the `*-OFL.txt` file beside it in `reflex/fonts/`.

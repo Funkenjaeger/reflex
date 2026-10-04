@@ -83,4 +83,9 @@ with no upstream tracking: [what Reflex changes](https://funkenjaeger.github.io/
 
 ## License
 
-MIT; see `fw/LICENSE` and `ui/LICENSE`. Issues and pull requests are welcome.
+MIT; see `LICENSE` (and `fw/LICENSE`, `ui/LICENSE` for each half). Reflex is a fork of
+Stefano Bertelli's rotary-controller projects, and those files carry his copyright line.
+Bundled third-party code keeps its own license: the STM32 drivers and CMSIS
+(`fw/Drivers/`), FreeRTOS (`fw/Middlewares/`), and the UI fonts (SIL Open Font
+License 1.1, one `*-OFL.txt` per family in `ui/reflex/fonts/`). Issues and pull
+requests are welcome.
