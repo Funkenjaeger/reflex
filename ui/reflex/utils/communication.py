@@ -274,6 +274,7 @@ def read_signed(dm, address):
         return value
     except Exception as e:
         dm.connected = False
+        dm.read_failures += 1
         dm._log_error_once(str(e))
         return 0
 
