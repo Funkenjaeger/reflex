@@ -29,6 +29,10 @@ from types import SimpleNamespace
 import minimalmodbus
 import pytest
 
+# timing: real threads and real waits. Not known to be flaky; marked
+# because contention is exactly what would make a threading test lie.
+pytestmark = pytest.mark.timing
+
 from reflex.utils import communication
 from reflex.utils.communication import ConnectionManager
 from reflex.utils.devices import TICK_BASE, TICK_COUNT

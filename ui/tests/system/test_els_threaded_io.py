@@ -26,7 +26,10 @@ import time
 
 import pytest
 
-pytestmark = pytest.mark.system
+# timing: a real owner thread, with waits on snapshots actually arriving.
+# Stable so far, marked on principle: contention is the one thing that
+# would make these lie, and they are the cases guarding the threading.
+pytestmark = [pytest.mark.system, pytest.mark.timing]
 
 
 def test_the_link_comes_up_with_the_scan_on_its_own_thread(threaded_harness):

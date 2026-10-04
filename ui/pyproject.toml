@@ -35,6 +35,7 @@ dev = [
 addopts = "-m 'not system'"  # explicit `-m system` on the CLI overrides this
 markers = [
     "system: emulator-backed end-to-end system tests (requires the reflex-fw emulator; slow, excluded from default `uv run pytest` runs -- invoke explicitly with `-m system`)",
+    "timing: asserts on WALL-CLOCK behaviour (a write rate, a travel distance in a fixed window). Starved by `-n auto` alongside sixty emulator processes, where it measures the box rather than the code -- scripts/run_tests.py runs these serially, on their own, after everything else.",
 ]
 
 [build-system]

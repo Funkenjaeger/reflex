@@ -17,7 +17,11 @@ from fractions import Fraction
 
 import pytest
 
-pytestmark = pytest.mark.system
+# timing: these assert on the WRITE RATE the limiter allows over a real
+# interval (writes per second against t1 - t0). Under `-n auto` this one
+# failed its budget once on 2026-10-04 and passed alone and in four runs
+# since -- a starved box, not the code.
+pytestmark = [pytest.mark.system, pytest.mark.timing]
 
 
 @pytest.mark.parametrize(

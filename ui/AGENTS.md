@@ -106,6 +106,34 @@ values (UI commissioning *and* the emulator's own physics patched to match);
   `KIVY_WINDOW=mock`) for the whole suite, so tests run headless without `xvfb-run`.
 - Test files go in `tests/`, mirroring the `reflex/` structure.
 
+### How to run the suite: `scripts/run_tests.py`
+
+`python scripts/run_tests.py` (add `--system` for the emulator-backed suite) is
+what CI runs and what you should run. It does three things a bare `pytest`
+does not:
+
+- **The bulk runs under `-n auto`.** The system suite goes from about 9m30 to
+  about 1m45 this way, which is why CI uses it.
+- **Tests marked `timing` run afterwards, serially, on their own.** They assert
+  on wall-clock behaviour — a write rate over a real interval, a travel
+  distance in a fixed window — and under `-n auto` beside sixty emulator
+  processes they measure a starved box instead of the code. Mark a new test
+  `timing` if it asserts on elapsed time or a rate, and say in a comment what
+  the evidence is.
+- **A failure is retried ALONE before it counts.** Serial, no xdist, only the
+  tests that failed. If it survives that, it is real.
+
+**A test that passes only on the retry is not a pass.** The runner names it on
+stderr and as a CI annotation, and the run still goes green — that is what
+makes it a net rather than a gate. Chase it: with the Modbus I/O on its own
+thread, a test that fails in the suite and passes alone is a race until shown
+otherwise. Do not mark it `timing` to quieten it unless it really does assert
+on wall-clock behaviour.
+
+`release.yml` deliberately still calls `pytest` directly: every command it runs
+must also appear in estate/reflex-ci's `alpha/build.sh`, and the two are kept
+in step by the release builder's drift check.
+
 ### System tests (emulator-backed) — opt-in
 
 `tests/system/` drives the UI's FSM/dispatcher stack against the firmware emulator (the
