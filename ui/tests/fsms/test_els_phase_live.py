@@ -10,6 +10,8 @@ fabricated sync ratio, or it floods the file at tick rate.
 import json
 import math
 
+import pytest
+
 from reflex.fsms.els_phase_recorder import (
     LIVE_SAMPLE_SECONDS,
     MAX_FAILURES,
@@ -321,6 +323,33 @@ def test_a_fabricated_ratio_poisons_nothing(tmp_path):
     rows = _lines(t)
     assert len(rows) == 1
     assert rows[0]["syncRatioNum"] == 360
+
+
+@pytest.mark.parametrize("board_kw", [
+    {"num": 0},                       # ratio never taught: reads a clean 0
+    {"den": 0},
+    {"fabricate_ratio": True},        # a failed frame
+], ids=["num-zero", "den-zero", "read-failed"])
+def test_an_unusable_ratio_is_retried_once_a_second_not_every_tick(
+        tmp_path, board_kw):
+    """Every ratio attempt costs two LIVE reads. A latched, armed job whose
+    firmware ratio reads 0 used to retry on every board tick -- two extra
+    exchanges per tick, at 30 Hz, until the ratio was re-taught. The retry
+    runs at the sample cadence instead."""
+    clock = _Clock()
+    board = _Board(_snapshot(), _fast(), **board_kw)
+    t = _tracker(tmp_path, board, clock)
+
+    for _ in range(30):                       # one second of board ticks
+        t.poll()
+        clock.t += 1.0 / 30
+    assert board._scales.reads == 2, (
+        f"{board._scales.reads} ratio reads in one second of ticks")
+
+    clock.t += 0.05                           # past the one-second slot
+    t.poll()
+    assert board._scales.reads == 4           # retried, once
+    assert _lines(t) == []
 
 
 # ── it cannot take the UI down ─────────────────────────────────────────────
