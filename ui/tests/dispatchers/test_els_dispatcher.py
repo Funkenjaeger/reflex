@@ -132,6 +132,87 @@ def test_firmware_originated_mode_changes_are_skipped(els, board):
     )
 
 
+class _RecordingBlock:
+    """A register block that appends every WRITE to one shared, ordered log.
+
+    Reads return the last value written (0 before any), which is all the
+    syncEnable paths here read back. One log across every block is what lets
+    a test pin the ORDER of writes, not just their presence."""
+
+    def __init__(self, name, log):
+        self._name = name
+        self._log = log
+        self._regs = {}
+
+    def __getitem__(self, key):
+        return self._regs.get(key, 0)
+
+    def __setitem__(self, key, value):
+        self._log.append((self._name, key, value))
+        self._regs[key] = value
+
+
+@pytest.fixture
+def writes(els, board):
+    """Swap the fastData block and the scales for recording ones, AFTER the
+    fixture's connect, so the log holds only what the test itself causes."""
+    log = []
+    board.device['fastData'] = _RecordingBlock('fastData', log)
+    board.device['scales'] = [_RecordingBlock(f'scales[{i}]', log)
+                              for i in range(N_SCALES)]
+    return log
+
+
+@pytest.mark.parametrize("firmware_modes", [[1], [2], [1, 0]],
+                         ids=["off-to-sync", "off-to-jog", "sync-then-off"])
+def test_a_polled_mode_change_writes_nothing_back(els, board, writes,
+                                                  firmware_modes):
+    """A servoMode the poll read FROM the firmware is not written back TO it.
+
+    The readback assigns the property, which fires on_servoMode; that handler
+    used to write fastData.servoMode before checking where the change came
+    from. Every firmware-originated change was therefore echoed to the
+    firmware. With one exchange per tick the echo only repeats the value just
+    read; once writes can be queued behind a stale snapshot, the echo of an
+    old 1 can land after a UI stop and re-assert the feed."""
+    for mode in firmware_modes:
+        board.fast_data_values['servoMode'] = mode
+        els.app.servo.on_update_tick(None, None)
+        # Guard the guard: the property really changed, so on_servoMode and
+        # the syncEnable binding both had their chance to write.
+        assert els.app.servo.servoMode == mode
+    assert writes == [], f"a firmware readback was written back: {writes}"
+
+
+def test_connect_adoption_writes_no_servo_mode_back(els, board, writes):
+    """The connect-time adoption is the same observation as the poll mirror
+    and rides the same flag, so it must not echo either. Other connect-time
+    writes (sync ratio, scale direction) are legitimate and not this test's
+    business; only servoMode and syncEnable are."""
+    board.connected = False
+    board.fast_data_values['servoMode'] = 1        # firmware retained a feed
+    writes.clear()
+    board.connected = True                         # -> ServoDispatcher.on_connected
+    assert els.app.servo.servoMode == 1, "adoption should have mirrored the readback"
+    echoed = [w for w in writes if w[1] in ('servoMode', 'syncEnable')]
+    assert echoed == [], f"the connect adoption was written back: {echoed}"
+
+
+def test_a_ui_mode_change_writes_exactly_as_before(els, board, writes):
+    """The negative control for the two tests above, and the pin on the path
+    that must NOT change: a UI-originated servoMode writes fastData.servoMode
+    first, then the binding drives syncEnable -- same registers, same values,
+    same order."""
+    els.app.servo.servoMode = 1
+    assert writes == [('fastData', 'servoMode', 1),
+                      ('scales[0]', 'syncEnable', 1)]
+    writes.clear()
+
+    els.app.servo.servoMode = 0
+    assert writes == [('fastData', 'servoMode', 0)] + [
+        (f'scales[{i}]', 'syncEnable', 0) for i in range(N_SCALES)]
+
+
 def test_clear_path_needs_no_spindle_axis(els, board):
     """A scale armed via toggle_sync with NO spindle role assigned must still
     be cleared on mode -> 0; the clear path is deliberately not gated on

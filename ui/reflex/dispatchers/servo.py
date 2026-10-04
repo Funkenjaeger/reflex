@@ -423,8 +423,14 @@ class ServoDispatcher(SavingDispatcher):
             log.error(f"Unable to write servoDir: {e}")
 
     def on_servoMode(self, instance, value):
-        self.board.device['fastData']['servoMode'] = self.servoMode
         if not self.servoMode_from_firmware:
+            # Only a UI-originated change is written to the firmware. A value
+            # mirrored from a readback came FROM the firmware; writing it back
+            # turns an observation into a command, and once the read it came
+            # from is stale (a write queued behind it, a UI stop landing first)
+            # that command re-asserts a mode nobody asked for. Same rule as the
+            # syncEnable binding in dispatchers/els.py.
+            self.board.device['fastData']['servoMode'] = self.servoMode
             # Remember what WE asked for. Only UI-originated changes count as
             # commands; a value mirrored back from the firmware is an
             # observation, and recording it here would make the watchdog below
