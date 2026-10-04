@@ -290,9 +290,18 @@ def test_status_update_compares_state_words(nmcli, monkeypatch):
 
     monkeypatch.setattr(screen, "refresh", fake_refresh)
 
-    asyncio.run(screen.status_update())
-    assert refreshes == [], "an unchanged state must not trigger a refresh"
+    # A PRIVATE loop, not asyncio.run(): asyncio.run() leaves the thread's
+    # event loop set to None when it finishes, and a later test whose fixture
+    # ticks the Kivy clock fires a leftover update-screen callback that calls
+    # asyncio.ensure_future -- which then raises "no current event loop".
+    # That broke the full suite (test_update_screen_els) only in suite order.
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(screen.status_update())
+        assert refreshes == [], "an unchanged state must not trigger a refresh"
 
-    nmcli.device.show.return_value = {"GENERAL.STATE": "30 (disconnected)"}
-    asyncio.run(screen.status_update())
-    assert refreshes == [True]
+        nmcli.device.show.return_value = {"GENERAL.STATE": "30 (disconnected)"}
+        loop.run_until_complete(screen.status_update())
+        assert refreshes == [True]
+    finally:
+        loop.close()
