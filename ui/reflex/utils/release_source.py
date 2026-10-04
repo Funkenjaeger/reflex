@@ -2,7 +2,7 @@
 
 WHY IT EXISTS. Public releases come from GitHub (:mod:`reflex.utils.updater`).
 A machine that is also a development bench can be pointed at a private forge
-that publishes integration builds (``vX.Y.Z-alpha.N``) in the same shape -- a
+that publishes integration builds (``vX.Y.Z-rc.N.dev.M``) in the same shape -- a
 release with a tag and a ``reflex-app-*.bin`` asset -- so a build can be
 bench-tested on the real machine without publishing it.
 

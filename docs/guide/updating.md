@@ -30,7 +30,7 @@ What happens underneath, and the command-line route, are in
    releases only, unless **Offer pre-releases (experimental)** is on. The
    screen remembers that choice. **Refresh available releases** fetches the
    list again. A machine set up with an integration build source also shows
-   **Offer integration builds (bench only)**, which adds `-alpha.N` builds;
+   **Offer integration builds (bench only)**, which adds `-rc.N.dev.M` builds;
    other machines do not show that row.
 
 4. **Tap Install Selected Release.** A release candidate asks first, in a

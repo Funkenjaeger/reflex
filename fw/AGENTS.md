@@ -12,7 +12,7 @@ everything on it is supposed to be hardware-verified.
 
 - Work on a **feature branch**, or on **`integration`** when several changes are
   in flight and separate branches would just be overhead.
-- A commit is hardware-verified when an integration build (`vX.Y.Z-alpha.N`) made
+- A commit is hardware-verified when an integration build (`vX.Y.Z-rc.N.dev.M`) made
   from it has been installed and run on the machine. Merging `integration` into
   `dev` happens **only after that**; the maintainer does that merge, or
   explicitly asks for it.
@@ -28,7 +28,7 @@ If unsure whether a change qualifies, it does not. Put it on a branch and ask.
 
 **Never push without being asked.** `origin` is the canonical remote. This
 public repository receives only `dev`, `main` and release tags, each by a
-deliberate push: never `integration`, a feature branch or an `-alpha` tag.
+deliberate push: never `integration`, a feature branch or a `.dev` tag.
 
 What has and has not been proven on metal is recorded where a claim belongs: in
 the header or test that makes it. A constant nobody has measured says so in its

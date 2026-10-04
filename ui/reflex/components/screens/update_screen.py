@@ -59,7 +59,7 @@ class UpdateScreen(Screen):
     current_release = StringProperty(release_version.installed_tag())
     enable_update_button = BooleanProperty(False)
     allow_experimental = BooleanProperty(False)
-    # "Offer integration builds": the home source's alphas. Shown only when
+    # "Offer integration builds": the home source's dev builds. Shown only when
     # home_available, i.e. this machine has a source configured
     # (reflex/utils/release_source.py); elsewhere the row has no height.
     allow_integration = BooleanProperty(False)
