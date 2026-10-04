@@ -311,6 +311,11 @@ class MainApp(App):
             background_texture=lambda _i, v: setattr(self._bg_rect, "texture", v)
         )
         self.board = Board(formats=self.formats, offset_provider=self)
+        # THE RUNNING APP IS THE ONLY CALLER. Every test and the system
+        # harness keep driving Board.update() on their own thread, which
+        # is still a whole cycle, so the suite stays deterministic while
+        # the real UI stops blocking on the serial port.
+        self.board.start_io_thread()
 
         # Load beep sound
         sound_path = os.path.join(os.path.dirname(__file__), "sounds", "snap.wav")

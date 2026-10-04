@@ -521,8 +521,15 @@ class ElsUiController(EventDispatcher):
         self._sync_ui_state_to_modes()
 
     # ——— event handlers ———
-    # Bus events may originate on the ConnectionManager polling thread, so
-    # all assignments to Kivy properties are marshaled to the main thread.
+    # Every handler below marshals its Kivy property writes to the main
+    # thread. That is DEFENSIVE, not required: the bus is published from the
+    # pollers, which are bound to Board.update_tick and so run on the main
+    # thread already -- before step 2 because everything did, and after it
+    # because the Modbus owner thread publishes only snapshots, through
+    # Clock.schedule_once, and never calls bus.publish or touches an
+    # EventDispatcher. The marshalling stays because it costs a frame at
+    # most and makes the file safe to call into from a thread that does
+    # not exist yet.
     def _on_ui_state_changed(self, state):
         log.debug("ui controller _on_ui_state_changed()")
         def _apply(_dt):
@@ -600,7 +607,7 @@ class ElsUiController(EventDispatcher):
         empty -- i.e. the caller built it out of nothing -- and is worth
         checking in a test, never worth branching on at a call site.
 
-        Safe to call from the board polling thread, like the other property
+        Safe to call from any thread, like the other property
         writes in this file: the queue itself is locked, and a Kivy property
         assignment is atomic enough for a string.
         """
@@ -1078,7 +1085,9 @@ class ElsUiController(EventDispatcher):
         When the operator hand-retracts past retract_z (waiting_to_retract →
         waiting_to_cut), or backs the carriage below retract_z while waiting
         to cut (waiting_to_cut → waiting_to_retract). Marshals FSM triggers
-        to the main thread since this fires on the board polling thread.
+        to the main thread. It is bound to Board.update_tick, so it already
+        fires there; the marshalling is the same defensive habit as the rest
+        of this file, not a thread crossing.
 
         Only active when retract is enabled — in stop-only mode there is no
         retract threshold to cross, so polling here would incorrectly

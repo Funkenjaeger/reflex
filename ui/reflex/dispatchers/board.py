@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from pathlib import Path
 
 from kivy.clock import Clock
@@ -15,6 +17,12 @@ from reflex.dispatchers.servo import ServoDispatcher
 from reflex.utils.communication import ConnectionManager
 from reflex.utils.paths import config_dir
 from reflex.utils.port_owner import SCAN_PERIOD_S, PortOwner, Snapshot
+
+# No snapshot for this long, while not paused, means the owner thread has
+# stopped producing: the UI would otherwise sit on stale values believing
+# the link is up. Comfortably longer than the 1.0 s failed-read backoff, so
+# a link that is merely down does not trip it.
+SNAPSHOT_WATCHDOG_S = 1.5
 
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
@@ -38,6 +46,24 @@ class Board(EventDispatcher):
     servo = ObjectProperty(None, allownone=True)
     inputs = ListProperty()
     axes = ListProperty()
+
+    # PLAIN CLASS ATTRIBUTES, NOT Kivy properties, and declared here rather
+    # than only in __init__ because a Board assembled WITHOUT __init__ (the
+    # tests' BoardUnderTest, which wires a fake ConnectionManager by hand) must
+    # still read them. __init__ re-binds them per instance; these are what an
+    # instance that skipped it sees. None of them is bound in kv, so a class
+    # attribute is the whole contract.
+    _io_threaded = False
+    _pending_snapshot = None
+    _watchdog_event = None
+    _last_snapshot_at = None
+    _watchdog_tripped = False
+    # The acquisition time of the applied snapshot: when the last reply byte
+    # arrived, NOT when the main thread got round to it. Every rate the host
+    # computes should be measured against this.
+    t_acq = None
+    snapshots_applied = 0
+    snapshots_dropped = 0
 
     def __init__(self, formats, offset_provider, **kv):
         super().__init__(**kv)
@@ -68,6 +94,16 @@ class Board(EventDispatcher):
             ))
 
         self._create_axes()
+
+        # Per-instance copies of the I/O-thread state declared on the class.
+        self._io_threaded = False
+        self._pending_snapshot = None
+        self._watchdog_event = None
+        self._last_snapshot_at = None
+        self._watchdog_tripped = False
+        self.t_acq = None
+        self.snapshots_applied = 0
+        self.snapshots_dropped = 0
 
         self.task_update = Clock.schedule_interval(self.update, SCAN_PERIOD_S)
         Clock.schedule_interval(self.blinker, 1.0 / 4)
@@ -103,16 +139,29 @@ class Board(EventDispatcher):
     # the handover can be applied after it.
 
     def pause_polling(self):
-        """Stop polling and close the serial port. Idempotent."""
+        """Stop polling and close the serial port. Idempotent.
+
+        With the I/O thread running the close happens on that thread, between
+        two exchanges, and pause() waits for it. A False answer means the port
+        may STILL BE OPEN: it is logged at error, and the caller (the firmware
+        update screen) must treat the handover as failed rather than flash over
+        a port this process still holds.
+        """
         if self.link_paused:
             return
         self.link_paused = True
         self.task_update.cancel()
-        self._port().pause()
+        released = self._port().pause()
         self.connected = False
         self.els_stop_values = {}
         self.fast_data_values = {}
-        log.warning("Board polling paused and the serial port released")
+        self._pending_snapshot = None
+        if released:
+            log.warning("Board polling paused and the serial port released")
+        else:
+            log.error("Board polling paused but the port owner did not confirm "
+                      "the port was closed; it may still be open")
+        return released
 
     def resume_polling(self):
         """Re-open the port and resume polling. Idempotent."""
@@ -120,6 +169,12 @@ class Board(EventDispatcher):
             return
         self.link_paused = False
         self._port().resume()
+        self._last_snapshot_at = None
+        self._watchdog_tripped = False
+        if self._io_threaded:
+            # The owner thread paces itself; there is no Clock event to re-arm.
+            log.info("Board polling resumed (port owner thread)")
+            return
         # A fresh event: a cancelled ClockEvent is not re-armed by assigning to
         # its timeout, and `update()` reads `self.task_update.timeout` on every
         # tick.
@@ -254,10 +309,16 @@ class Board(EventDispatcher):
         if snapshot.generation != self._port().generation:
             return
 
+        self._last_snapshot_at = time.monotonic()
+        self.snapshots_applied += 1
+        # None on a scan that read nothing; readers keep the last good one.
+        if snapshot.t_acq is not None:
+            self.t_acq = snapshot.t_acq
+
         if not snapshot.ok_fast:
             self.connected = False
             self.els_stop_values = {}
-            self.task_update.timeout = snapshot.retry_after
+            self._set_backoff(snapshot.retry_after)
             self.update_tick = (self.update_tick + 1) % 100
             return
 
@@ -271,10 +332,113 @@ class Board(EventDispatcher):
         self.connected = True
 
         if was_disconnected:
-            self.task_update.timeout = SCAN_PERIOD_S
+            self._set_backoff(SCAN_PERIOD_S)
             self._check_protocol_version()
 
         self.update_tick = (self.update_tick + 1) % 100
+
+    def _set_backoff(self, seconds):
+        """Carry the scan's retry cadence on whatever is pacing it.
+
+        The Clock event is the pacer only while update() is on the Clock; with
+        the I/O thread running the owner paces itself from the same constants
+        (PortOwner.next_scan_at), so there is nothing to set here.
+        """
+        if self._io_threaded:
+            return
+        self.task_update.timeout = seconds
+
+    # ------------------------------------------------------------------
+    # The I/O thread
+    # ------------------------------------------------------------------
+    # OPT-IN, taken only by the running app (app.py). Every test and the system
+    # harness keep driving update() directly, which is still a whole cycle on
+    # the calling thread -- the determinism the suite depends on.
+
+    def start_io_thread(self):
+        """Move the scan off the Kivy thread. Idempotent.
+
+        After this the Clock no longer calls update(); the owner thread runs
+        the cycle and each Snapshot comes back through Clock.schedule_once.
+        """
+        if self._io_threaded:
+            return
+        self._io_threaded = True
+        self.task_update.cancel()
+        self._last_snapshot_at = None
+        self._watchdog_tripped = False
+        self._port().start(self._publish_from_owner)
+        self._watchdog_event = Clock.schedule_interval(self._watchdog, 0.5)
+        log.info("Modbus I/O moved to the port owner thread")
+
+    def stop_io_thread(self):
+        """Stop the owner thread and put the scan back on the Clock. Idempotent."""
+        if not self._io_threaded:
+            return
+        self._port().stop()
+        if self._watchdog_event is not None:
+            self._watchdog_event.cancel()
+            self._watchdog_event = None
+        self._io_threaded = False
+        self._pending_snapshot = None
+        if not self.link_paused:
+            self.task_update = Clock.schedule_interval(self.update, SCAN_PERIOD_S)
+        log.info("Modbus I/O returned to the Kivy thread")
+
+    def _publish_from_owner(self, snapshot):
+        """ON THE OWNER THREAD. Hand one scan to the main thread.
+
+        ONLY THE NEWEST SNAPSHOT IS WORTH APPLYING. If the main thread is busy
+        with a long frame, an older scan describes a machine that has already
+        moved on, so it is replaced rather than queued and the loss is counted.
+        The seq-edge pollers survive the drop because the firmware's counters
+        are monotonic -- they compare against what they last saw, not against
+        the previous tick.
+
+        Nothing here touches a Kivy property: the rebind below is a plain
+        attribute, and schedule_once is what @mainthread itself uses.
+        """
+        if self._pending_snapshot is not None:
+            self.snapshots_dropped += 1
+        self._pending_snapshot = snapshot
+        Clock.schedule_once(self._apply_pending, 0)
+
+    def _apply_pending(self, _dt=0):
+        """On the main thread: apply whatever the owner left, if anything."""
+        snapshot, self._pending_snapshot = self._pending_snapshot, None
+        if snapshot is None:
+            # A second schedule_once for a snapshot the first call already
+            # applied. Not a drop; the drop was counted when it was replaced.
+            return
+        self._apply_snapshot(snapshot)
+
+    def _watchdog(self, _dt):
+        """Say so, once, when the owner thread stops producing snapshots.
+
+        A silent link looks exactly like a working one to a UI reading the last
+        values, which is the failure this is here to make loud. Paused does not
+        count: the port is away on purpose.
+        """
+        if not self._io_threaded or self.link_paused:
+            return
+        if not self._port().running:
+            if not self._watchdog_tripped:
+                self._watchdog_tripped = True
+                log.error("the Modbus owner thread is not running; no scans "
+                          "are being taken")
+            return
+        last = self._last_snapshot_at
+        if last is None:
+            return
+        silent_for = time.monotonic() - last
+        if silent_for > SNAPSHOT_WATCHDOG_S:
+            if not self._watchdog_tripped:
+                self._watchdog_tripped = True
+                log.error(f"no Modbus snapshot for {silent_for:.1f} s while the "
+                          f"link is not paused")
+        elif self._watchdog_tripped:
+            self._watchdog_tripped = False
+            log.warning("Modbus snapshots resumed")
 
     def _check_protocol_version(self):
         """Verify the firmware's register-layout version on each new connection.

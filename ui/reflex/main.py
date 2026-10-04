@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from keke import ktrace
 from kivy.base import EventLoop
 from kivy.logger import Logger
@@ -33,6 +34,15 @@ class _DropCutBufferCritical:
 
 
 Logger.addFilter(_DropCutBufferCritical())
+
+
+# A LONG FRAME MUST NOT SIT ON A REPLY THAT HAS ALREADY ARRIVED.
+# Python 3.13 switches threads every 5 ms by default, so the Kivy thread
+# could hold the GIL for that long after the Modbus owner thread became
+# runnable with a decoded snapshot in hand -- latency the owner cannot see
+# and cannot shorten. 1 ms is short against the 33 ms scan period and long
+# against a bytecode batch, so it costs no measurable throughput.
+sys.setswitchinterval(0.001)
 
 
 if __name__ == "__main__":

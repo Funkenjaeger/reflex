@@ -22,7 +22,14 @@ THE SHAPE, and why each part exists:
     and the tests call directly.
   * pause() / resume(): the serial-port handover to the firmware flasher.
 
-HOW IT RUNS TODAY: ON THE CALLING THREAD, SYNCHRONOUSLY. A Board's owner is
+HOW IT RUNS. In the app, on its OWN THREAD: Board.start_io_thread() calls
+start(), which switches the owner out of synchronous mode and runs run_cycle in
+a loop on a daemon thread named "modbus-owner". submit() from the Kivy thread
+then ENQUEUES, the owner thread drains, and call() blocks on the future -- the
+blocking proxy. Snapshots go back through the publish callback, which is
+Clock.schedule_once, the same marshalling @mainthread uses.
+
+IN THE TESTS, ON THE CALLING THREAD, SYNCHRONOUSLY. A Board's owner is
 built with `synchronous=True`, so submit() executes the command before it
 returns and hands back a future that is already done; the queue stays empty
 and run_cycle only scans. That keeps the exact order the code had when every
@@ -35,9 +42,14 @@ recording in tests/dispatchers/test_board_wire_trace.py pins the resulting
 traffic call for call.
 
 `synchronous=False` is the queued mode: submit() from any thread other than
-the one inside run_cycle enqueues, and run_cycle drains. Nothing in the app
-uses it yet; the unit tests drive it by calling run_cycle by hand, which is
-how its ordering guarantees are checked without a thread.
+the one inside run_cycle enqueues, and run_cycle drains. start() turns it on;
+the unit tests also drive it by calling run_cycle by hand, which is how its
+ordering guarantees are checked without a thread.
+
+WHY THE SEAM SURVIVES. Board.update() still exists and still runs a whole cycle
+on the calling thread, so the system harness's pump() (Clock.tick() then
+board.update()) stays deterministic and every test that calls board.update()
+keeps working. The thread is opt-in, taken only by the running app.
 
 PACING. While Board's Kivy Clock event drives run_cycle, the event is the
 pacer -- its timeout carries the retry backoff, as it always has -- so Board
@@ -45,6 +57,13 @@ calls run_cycle(force_scan=True). The owner still records when its next scan
 is due (`scan_due`) from the same constants, which is the cadence a loop that
 paces itself follows: SCAN_PERIOD_S after a good tick, 1.0 s after a failed
 tick read, 2.0 s when the port would not open.
+
+PAUSING A RUNNING THREAD. pause() cannot close the port under the owner's
+feet, so on a thread it ASKS: it sets a request, wakes the loop, and waits
+(bounded) for the loop to finish whatever exchange is in flight, close the port
+and acknowledge. It returns False if that acknowledgement does not arrive,
+because a port that might still be open must not be handed to the flasher.
+Synchronously there is no one to ask and it closes inline.
 
 THE LINK GENERATION increments on pause(). Every Snapshot carries the
 generation it was taken under, and Board drops one from an older generation at
@@ -59,13 +78,20 @@ import time
 from collections import deque
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 
 # The board tick's period, and the two retry intervals of its failure paths.
 SCAN_PERIOD_S = 1.0 / 30
 RETRY_AFTER_FAILED_READ_S = 1.0
 RETRY_AFTER_NO_DEVICE_S = 2.0
+
+# How long pause() waits for the owner thread to finish its exchange and close
+# the port. One exchange is about 30 ms; a timed-out one is bounded by
+# minimalmodbus's own read timeout, so this is several times the worst case.
+PAUSE_ACK_TIMEOUT_S = 0.5
+# How long stop() waits for the loop to leave. Same reasoning.
+STOP_JOIN_TIMEOUT_S = 2.0
 
 
 # ── commands ─────────────────────────────────────────────────────────────────
@@ -169,6 +195,17 @@ class PortOwner:
         self.paused = False
         self._seq = 0
         self.next_scan_at = 0.0
+        # ── the thread, when there is one ────────────────────────────────
+        self._thread: threading.Thread | None = None
+        self._stopping = threading.Event()
+        # Set when a command is queued or a pause is asked for, so the loop
+        # stops waiting for its next scan and attends to it at once.
+        self._wake = threading.Event()
+        self._pause_requested = threading.Event()
+        self._pause_acked = threading.Event()
+        self._publish: Optional[Callable[["Snapshot"], None]] = None
+        # Counted, not logged per occurrence: a loop iteration that raised.
+        self.loop_exceptions = 0
 
     @classmethod
     def of(cls, connection_manager) -> "PortOwner":
@@ -197,6 +234,9 @@ class PortOwner:
             self._execute(command, future)
         else:
             self._queue.append((command, future))
+            # deque.append is atomic under the GIL, so no lock is needed to
+            # hand the command over; the wake only shortens the loop's wait.
+            self._wake.set()
         return future
 
     def call(self, command):
@@ -226,6 +266,10 @@ class PortOwner:
         exactly as a direct call would) but nothing scans."""
         self._cycle_thread = threading.get_ident()
         try:
+            # Asked for by another thread between two exchanges, never during
+            # one: this is the only place the port closes while a loop runs.
+            if self._pause_requested.is_set() and not self.paused:
+                self._close_for_pause()
             while self._queue:
                 command, future = self._queue.popleft()
                 self._execute(command, future)
@@ -254,7 +298,7 @@ class PortOwner:
             cm.connect()
 
         if cm.device is None:
-            return self._publish(started, t_acq=None, port_open=False,
+            return self._publish_snapshot(started, t_acq=None, port_open=False,
                                  fast_data=None, els_stop={}, ok_hot=False,
                                  retry_after=RETRY_AFTER_NO_DEVICE_S)
 
@@ -268,14 +312,14 @@ class PortOwner:
         except Exception as e:
             cm._log_error_once(str(e))
             cm.disconnect()
-            return self._publish(started, t_acq=None, port_open=True,
+            return self._publish_snapshot(started, t_acq=None, port_open=True,
                                  fast_data=None, els_stop={}, ok_hot=False,
                                  retry_after=RETRY_AFTER_FAILED_READ_S)
         t_acq = time.monotonic()
 
         els_stop, ok_hot = self._decode_hot(hot_raw)
         cm.connected = True
-        return self._publish(started, t_acq=t_acq, port_open=True,
+        return self._publish_snapshot(started, t_acq=t_acq, port_open=True,
                              fast_data=fast_data, els_stop=els_stop,
                              ok_hot=ok_hot, retry_after=None)
 
@@ -323,8 +367,8 @@ class PortOwner:
             self._cm._log_error_once(str(e))
             return {}, False
 
-    def _publish(self, started, *, t_acq, port_open, fast_data, els_stop,
-                 ok_hot, retry_after) -> Snapshot:
+    def _publish_snapshot(self, started, *, t_acq, port_open, fast_data,
+                          els_stop, ok_hot, retry_after) -> Snapshot:
         self._seq += 1
         self.next_scan_at = started + (retry_after or SCAN_PERIOD_S)
         return Snapshot(
@@ -341,22 +385,135 @@ class PortOwner:
 
     # ── the flasher handover ─────────────────────────────────────────────
 
-    def pause(self) -> None:
-        """Stop scanning and close the port. Idempotent.
+    def pause(self, timeout_s: float = PAUSE_ACK_TIMEOUT_S) -> bool:
+        """Stop scanning and close the port. Idempotent. True when the port is
+        known to be closed.
 
-        Called on the thread that runs run_cycle, so no exchange can be in
-        flight: the port is closed between two exchanges, never during one.
+        WITHOUT A THREAD the caller IS the cycle, so no exchange can be in
+        flight and the close happens inline, as it always did.
+
+        WITH A THREAD the close must happen between two exchanges, so this asks
+        the loop to do it and waits for the acknowledgement. It returns False if
+        the loop does not acknowledge in time -- the port may still be open, and
+        the caller must not hand it to the firmware flasher on that answer.
         """
         if self.paused:
-            return
-        self.paused = True
-        self.generation += 1
-        self._cm.disconnect()
+            return True
+        if not self.running:
+            self._close_for_pause()
+            return True
+        self._pause_acked.clear()
+        self._pause_requested.set()
+        self._wake.set()
+        return self._pause_acked.wait(timeout_s)
 
     def resume(self) -> None:
         """Re-open the port and allow scanning again. Idempotent."""
         if not self.paused:
             return
+        self._pause_requested.clear()
+        self._pause_acked.clear()
         self.paused = False
         self._cm.connect()
         self.next_scan_at = 0.0
+        self._wake.set()
+
+    def _close_for_pause(self) -> None:
+        """Do the pause, on whichever thread owns the cycle. See pause()."""
+        self.paused = True
+        self.generation += 1
+        self._cm.disconnect()
+        self._pause_acked.set()
+
+    # ── the thread ───────────────────────────────────────────────────────
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def start(self, publish: Callable[["Snapshot"], None]) -> None:
+        """Run the loop on a daemon thread; `publish` receives each Snapshot.
+
+        `publish` IS CALLED ON THE OWNER THREAD and must marshal to the main
+        thread itself -- Board hands in a Clock.schedule_once. Starting also
+        leaves synchronous mode, so from now on a submit() from the Kivy thread
+        is queued for this loop rather than executed in place.
+        """
+        if self.running:
+            return
+        self._publish = publish
+        self._synchronous = False
+        self._stopping.clear()
+        self._thread = threading.Thread(
+            target=self._loop, name="modbus-owner", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Ask the loop to leave and wait briefly for it. Idempotent.
+
+        Daemon threads do not keep the process alive, so this is for an orderly
+        shutdown and for tests, not for correctness at exit.
+        """
+        self._stopping.set()
+        self._wake.set()
+        thread, self._thread = self._thread, None
+        if thread is not None and thread.is_alive():
+            thread.join(STOP_JOIN_TIMEOUT_S)
+        self._synchronous = True
+        self._publish = None
+
+    def _loop(self) -> None:
+        """One cycle, then wait until the next scan is due or something wakes us.
+
+        NOTHING IS ALLOWED OUT OF THIS LOOP. An exception here would end the
+        thread and the link would go quiet with the UI still believing in it, so
+        every iteration is wrapped: the error is reported, a link-fault snapshot
+        is published so the pollers see the link down exactly as they do for a
+        failed read, and the loop carries on at the failed-read backoff.
+        """
+        while not self._stopping.is_set():
+            try:
+                snapshot = self.run_cycle()
+                if snapshot is not None:
+                    self._emit(snapshot)
+            except Exception as e:                       # noqa: BLE001
+                self.loop_exceptions += 1
+                self._report_loop_error(e)
+                try:
+                    self._emit(self._fault_snapshot())
+                except Exception:                        # noqa: BLE001
+                    pass
+                self.next_scan_at = time.monotonic() + RETRY_AFTER_FAILED_READ_S
+            self._wake.wait(max(0.0, self.next_scan_at - time.monotonic()))
+            self._wake.clear()
+
+    def _emit(self, snapshot) -> None:
+        publish = self._publish
+        if publish is not None:
+            publish(snapshot)
+
+    def _fault_snapshot(self) -> "Snapshot":
+        """What the pollers see when the loop itself failed: the same shape a
+        failed tick read produces, so no reader needs a new case."""
+        return self._publish_snapshot(
+            time.monotonic(), t_acq=None, port_open=False, fast_data=None,
+            els_stop={}, ok_hot=False, retry_after=RETRY_AFTER_FAILED_READ_S)
+
+    def _report_loop_error(self, exc: BaseException) -> None:
+        """Log once per distinct message, and tell Sentry if it is configured.
+
+        Deliberately quiet on repeats: a link that is down fails every cycle,
+        and 30 identical tracebacks a second would bury the first one.
+        """
+        try:
+            self._cm._log_error_once(f"port owner loop: {exc}")
+        except Exception:                                # noqa: BLE001
+            pass
+        try:
+            import sentry_sdk
+        except Exception:                                # noqa: BLE001
+            return
+        try:
+            sentry_sdk.capture_exception(exc)
+        except Exception:                                # noqa: BLE001
+            pass
