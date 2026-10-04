@@ -204,6 +204,11 @@ def read_float(dm: ConnectionManager, address) -> float:
         return 0
 
 
+# The write helpers return the exchange's acknowledgement: True when the
+# controller answered, False when the write raised. They also set
+# dm.connected from it, which is what callers that accumulate a per-write
+# ACK (els_fsm.on_enter_cutting) read; the return value is the same verdict
+# as the result of a port-owner Write command.
 def write_float(dm, address, value, variable_name: Optional[str] = ""):
     try:
         dm.device.write_float(
@@ -211,9 +216,11 @@ def write_float(dm, address, value, variable_name: Optional[str] = ""):
         )
         dm.connected = True
         log.debug(f"Write {variable_name}: float {value} to address {address}")
+        return True
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))
+        return False
 
 
 def read_long(dm, address) -> int:
@@ -240,9 +247,11 @@ def write_long(dm, address, value, variable_name: Optional[str] = ""):
         )
         dm.connected = True
         log.debug(f"Write {variable_name}: long {value} to address {address}")
+        return True
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))
+        return False
 
 
 def read_unsigned(dm, address):
@@ -262,9 +271,11 @@ def write_unsigned(dm, address, value, variable_name: Optional[str] = ""):
         dm.device.write_register(address, signed=False, value=int(value))
         dm.connected = True
         log.debug(f"Write {variable_name}: unsigned {value} to address {address}")
+        return True
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))
+        return False
 
 
 def read_signed(dm, address):
@@ -284,9 +295,11 @@ def write_signed(dm, address, value, variable_name: Optional[str] = ""):
         dm.device.write_register(address, signed=True, value=int(value))
         dm.connected = True
         log.debug(f"Write {variable_name}: signed {value} to address {address}")
+        return True
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))
+        return False
 
 
 if __name__ == "__main__":

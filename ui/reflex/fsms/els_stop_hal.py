@@ -19,7 +19,7 @@ class TickReads:
     describe the machine NOW. It was ruinous for the tick-driven pollers, which
     between them made several such exchanges 30 times a second and lost comms on
     six of six cuts on 2026-08-23 by asking the firmware to answer them at the
-    moment its 100 kHz ISR had nothing spare (see Board._refresh_els_stop_snapshot).
+    moment its 100 kHz ISR had nothing spare (see PortOwner._decode_hot).
 
     So: the pollers read through here, everything else keeps reading live. The
     split is deliberately visible at the call site — ``hal.tick.active()`` reads

@@ -127,7 +127,7 @@ class ElsStop(BaseDevice):
     never reading this block on a tick. That argument was overturned on
     2026-08-23 and the note is kept because the reasoning is worth having: the
     whole elsStop block IS now refreshed once per board tick
-    (Board._refresh_els_stop_snapshot). What the byte-count argument missed is
+    (PortOwner._decode_hot). What the byte-count argument missed is
     that bytes are not what fails. The firmware answers when its 100 kHz ISR
     lets it, so what times out is REQUESTS, and the per-field live reads the
     snapshot replaced cost five to fourteen of those per tick against the

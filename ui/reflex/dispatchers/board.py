@@ -14,6 +14,7 @@ from reflex.dispatchers.saving_dispatcher import read_settings
 from reflex.dispatchers.servo import ServoDispatcher
 from reflex.utils.communication import ConnectionManager
 from reflex.utils.paths import config_dir
+from reflex.utils.port_owner import SCAN_PERIOD_S, PortOwner, Snapshot
 
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
@@ -43,8 +44,8 @@ class Board(EventDispatcher):
         self.formats = formats
         self.offset_provider = offset_provider
         self.fast_data_values = dict()
-        # This tick's elsStop registers. See _refresh_els_stop_snapshot for what
-        # an EMPTY dict means and why it is the only honest way to say it.
+        # This tick's elsStop registers. See PortOwner._decode_hot for what an
+        # EMPTY dict means and why it is the only honest way to say it.
         self.els_stop_values = dict()
 
         serial_port = config.getdefault("device", "serial_port", "/dev/serial0")
@@ -57,6 +58,7 @@ class Board(EventDispatcher):
             address=address,
         )
         self.device = self.connection_manager['Global']
+        self._port()
         self.connection_manager.connect()
 
         self.servo = ServoDispatcher(board=self, formats=formats, id_override="0")
@@ -67,8 +69,18 @@ class Board(EventDispatcher):
 
         self._create_axes()
 
-        self.task_update = Clock.schedule_interval(self.update, 1.0 / 30)
+        self.task_update = Clock.schedule_interval(self.update, SCAN_PERIOD_S)
         Clock.schedule_interval(self.blinker, 1.0 / 4)
+
+    def _port(self) -> PortOwner:
+        """The owner of this board's serial port: every Modbus exchange, the
+        tick's and every BaseDevice field access's, goes through it. Looked up
+        rather than stored, so a Board assembled without __init__ (the tests'
+        BoardUnderTest) reaches the same owner as its devices do."""
+        owner = PortOwner.of(self.connection_manager)
+        if owner.scan_device is None:
+            owner.scan_device = self.device
+        return owner
 
     # ------------------------------------------------------------------
     # Handing the serial port to something else
@@ -81,10 +93,14 @@ class Board(EventDispatcher):
     # not actually stopped.
     #
     # A PAIR OF METHODS RATHER THAN THE SCREEN REACHING IN, because the resume
-    # half is not symmetric with the pause half: `update()` re-connects on its
-    # own when `connection_manager.device` is None, but only if its Clock event
-    # is running, and the event's timeout has to go back to the fast cadence
-    # rather than whatever backoff it was left on.
+    # half is not symmetric with the pause half: the tick scan re-connects on
+    # its own when `connection_manager.device` is None, but only if its Clock
+    # event is running, and the event's timeout has to go back to the fast
+    # cadence rather than whatever backoff it was left on.
+    #
+    # The port itself is opened and closed by the PortOwner (pause/resume),
+    # which also bumps the link generation so that no tick read from before
+    # the handover can be applied after it.
 
     def pause_polling(self):
         """Stop polling and close the serial port. Idempotent."""
@@ -92,7 +108,7 @@ class Board(EventDispatcher):
             return
         self.link_paused = True
         self.task_update.cancel()
-        self.connection_manager.disconnect()
+        self._port().pause()
         self.connected = False
         self.els_stop_values = {}
         self.fast_data_values = {}
@@ -103,11 +119,11 @@ class Board(EventDispatcher):
         if not self.link_paused:
             return
         self.link_paused = False
-        self.connection_manager.connect()
+        self._port().resume()
         # A fresh event: a cancelled ClockEvent is not re-armed by assigning to
         # its timeout, and `update()` reads `self.task_update.timeout` on every
         # tick.
-        self.task_update = Clock.schedule_interval(self.update, 1.0 / 30)
+        self.task_update = Clock.schedule_interval(self.update, SCAN_PERIOD_S)
         log.info("Board polling resumed")
 
     def _settings_folder(self) -> Path:
@@ -210,100 +226,55 @@ class Board(EventDispatcher):
         return filtered[0]
 
     def update(self, *args):
-        if self.connection_manager.device is None:
-            self.connection_manager.connect()
+        """One board tick: the port owner's cycle, then its snapshot applied.
 
-        if self.connection_manager.device is None:
+        Both on the main thread. The Kivy Clock event is the pacer -- its
+        timeout carries the failure backoff -- so every call scans
+        (force_scan); see the PortOwner module docstring for the scan itself
+        and its failure policy.
+        """
+        snapshot = self._port().run_cycle(force_scan=True)
+        if snapshot is not None:
+            self._apply_snapshot(snapshot)
+
+    def _apply_snapshot(self, snapshot: Snapshot):
+        """Publish one tick scan to the board's properties. Main thread only.
+
+        A FAILED TICK READ IS A FAILED fastData READ, for every caller: the
+        tick's one request carries both blocks, so its failure takes the path
+        a failed fastData read always took -- link down, retry backoff,
+        fast_data_values left as it was, els_stop_values cleared (without the
+        clear, the pollers would read a snapshot from before the link dropped,
+        on a tick where update_tick still fires). No port at all is the same,
+        with the longer backoff.
+
+        A snapshot from an older link generation (taken before a pause) is
+        dropped: pause_polling cleared the dicts, and they stay clear.
+        """
+        if snapshot.generation != self._port().generation:
+            return
+
+        if not snapshot.ok_fast:
             self.connected = False
             self.els_stop_values = {}
-            self.task_update.timeout = 2.0
+            self.task_update.timeout = snapshot.retry_after
             self.update_tick = (self.update_tick + 1) % 100
             return
 
-        # ONE request for the whole tick: fastData and the elsStop hot group
-        # are adjacent registers, read as one span (Global.read_tick). There
-        # used to be two requests here, one per block, and requests are what
-        # time out when the firmware's ISR is saturated.
-        #
-        # A FAILED READ IS NOW A FAILED fastData READ, for every caller: the
-        # one request carries both blocks, so its failure takes the path a
-        # failed fastData read always took -- link torn down, retry backoff,
-        # fast_data_values left as it was, els_stop_values cleared. What no
-        # longer exists is the half-failure in which fastData arrived and only
-        # the elsStop read failed (which kept the link up); a single exchange
-        # cannot half-fail. The hot group's DECODE can still fail on its own,
-        # and that keeps the old elsStop policy (_refresh_els_stop_snapshot).
-        try:
-            self.fast_data_values, hot_raw = self.device.read_tick()
-        except Exception as e:
-            self.connection_manager._log_error_once(str(e))
-            self.connection_manager.disconnect()
-            self.connected = False
-            self.els_stop_values = {}
-            self.task_update.timeout = 1.0
-            self.update_tick = (self.update_tick + 1) % 100
-            return
-
+        self.fast_data_values = snapshot.fast_data
         # Taken BEFORE update_tick is bumped, because the tick-driven pollers
         # that consume it are bound to update_tick -- so by the time any of them
         # runs, the snapshot it reads is this tick's.
-        self._refresh_els_stop_snapshot(hot_raw)
+        self.els_stop_values = snapshot.els_stop
 
         was_disconnected = not self.connected
-        self.connection_manager.connected = True
         self.connected = True
 
         if was_disconnected:
-            self.task_update.timeout = 1.0 / 30
+            self.task_update.timeout = SCAN_PERIOD_S
             self._check_protocol_version()
 
         self.update_tick = (self.update_tick + 1) % 100
-
-    def _refresh_els_stop_snapshot(self, hot_raw):
-        """Publish this tick's elsStop hot group, for the pollers to share.
-
-        The same arrangement `fast_data_values` has always had, extended to the
-        block the ELS pollers read. It exists because `BaseDevice.__getitem__`
-        is a LIVE per-field read, not a cache lookup: every
-        ``device['elsStop']['active']`` in a tick-driven poller was its own
-        Modbus exchange, and there are enough of those pollers that a board tick
-        cost five to fourteen exchanges depending on which edges were due. At
-        30 Hz, with the firmware's 100 kHz ISR saturated at cut-start, that is
-        what lost comms on six of six cuts on 2026-08-23 -- every drop a
-        timeout, none a corrupted frame. The snapshot now rides the tick's one
-        request (Global.read_tick) no matter how many pollers read it, and it
-        costs MORE bytes than the reads it replaces. That trade is the point:
-        bytes are not what times out, exchanges are.
-
-        `hot_raw` is the hot group's registers from that request; this only
-        decodes them.
-
-        A SNAPSHOT THAT DID NOT HAPPEN MUST NOT LOOK LIKE ONE THAT DID, which
-        is why failure CLEARS the dict rather than leaving the last good one in
-        place. Every reader goes through ElsStopHal's snapshot accessor, which
-        treats an empty dict exactly as it treats a read attempted with no link
-        -- returning the fallback AND bumping ConnectionManager.read_failures --
-        so `reads_fabricated_since()` still tells the acknowledgement pollers to
-        discard the poll. Keeping the stale values would serve a plausible
-        number with the counter unmoved, which is precisely the fabricated-zero
-        hole that counter was added to close.
-
-        Deliberately NOT a disconnect path. The tick read above owns the
-        connection verdict; a hot group that fails to decode is one bad tick
-        for the ELS pollers, and tearing the link down over it would take the
-        DRO with it for no reason.
-        """
-        try:
-            # HOT GROUP ONLY, and that is the point: it is what lets the tick
-            # stay one request. Every field any tick-driven reader touches is in
-            # this group by construction -- tools/audit_tick_readers.py
-            # enumerates the four readers of this dict and FAILS if a `cold`
-            # field appears in one, so a future reader reaching for a cold field
-            # breaks the audit rather than silently adding a request per tick.
-            self.els_stop_values = self.device['elsStop'].decode_hot(hot_raw)
-        except Exception as e:
-            self.els_stop_values = {}
-            self.connection_manager._log_error_once(str(e))
 
     def _check_protocol_version(self):
         """Verify the firmware's register-layout version on each new connection.
@@ -323,7 +294,7 @@ class Board(EventDispatcher):
         """
         from reflex.utils.devices import ELS_PROTOCOL_VERSION
         try:
-            # From THIS tick's snapshot, taken moments ago in update(). It used
+            # From THIS tick's snapshot, applied moments ago. It used
             # to refresh the block again here, which read the same 122
             # registers twice on the tick a connection comes up. An empty
             # snapshot (the refresh failed) raises KeyError and lands in the

@@ -5,6 +5,8 @@ from keke import ktrace, kev
 
 from pydantic import BaseModel
 from kivy.logger import Logger
+
+from reflex.utils.port_owner import Batch, PortOwner, Read, ReadSpan, Write
 log = Logger.getChild(__name__)
 
 
@@ -21,6 +23,13 @@ class VariableDefinition(BaseModel):
     address: int
     type: TypeDefinition
     count: int = 1
+
+
+def _is_structure(type_definition: TypeDefinition) -> bool:
+    """True for a struct member (its read function is a BaseDevice subclass),
+    False for a scalar register field."""
+    rf = type_definition.read_function
+    return isinstance(rf, type) and issubclass(rf, BaseDevice)
 
 
 class BaseDevice:
@@ -90,18 +99,29 @@ class BaseDevice:
         self._sub_device_cache: dict[tuple, "BaseDevice"] = {}
         self.parse_addresses_from_definition()
 
+    def _port(self) -> PortOwner:
+        """The owner every exchange of this device goes through."""
+        return PortOwner.of(self.dm)
+
     def __getitem__(self, key):
         var = self._variable_index[key]
+        address = var.address + self.base_address
 
+        if _is_structure(var.type):
+            # A sub-structure (servo, scales[i], elsStop): building the view is
+            # not an exchange, so it does not go through the port owner.
+            if var.count > 1:
+                return [var.type.read_function(self.dm, address + var.type.length * i)
+                        for i in range(var.count)]
+            return var.type.read_function(self.dm, address)
+
+        # A LIVE read, one exchange per element. An array's elements are one
+        # Batch so they reach the wire back to back.
         if var.count > 1:
-            list_type = list()
-            for i in range(var.count):
-                list_type.append(
-                    var.type.read_function(self.dm, var.address + self.base_address + var.type.length * i)
-                )
-            return list_type
-        else:
-            return var.type.read_function(self.dm, var.address + self.base_address)
+            return self._port().call(Batch(tuple(
+                Read(var.type.read_function, address + var.type.length * i)
+                for i in range(var.count))))
+        return self._port().call(Read(var.type.read_function, address))
 
     def __setitem__(self, key, value):
         var = self._variable_index[key]
@@ -113,13 +133,14 @@ class BaseDevice:
             # only as connected=False -- a silent no-op write. Needed by the
             # calMeasured round-trip (the calibration legs the take-up gate
             # derives its threshold from, restored at connect).
-            for i, v in enumerate(value[:var.count]):
-                var.type.write_function(
-                    self.dm,
-                    var.address + self.base_address + var.type.length * i,
-                    v, f"{key}[{i}]")
+            self._port().call(Batch(tuple(
+                Write(var.type.write_function,
+                      var.address + self.base_address + var.type.length * i,
+                      v, f"{key}[{i}]")
+                for i, v in enumerate(value[:var.count]))))
             return
-        var.type.write_function(self.dm, var.address + self.base_address, value, key)
+        self._port().call(Write(var.type.write_function,
+                                var.address + self.base_address, value, key))
         return
 
     @classmethod
@@ -328,34 +349,28 @@ class BaseDevice:
                 f"span of {register_count} registers exceeds the "
                 f"{self.MAX_REGISTERS_PER_SPAN}-register single-request budget; "
                 f"a one-request read is the whole point of asking for a span")
-        return self.dm.device.read_registers(
-            registeraddress=self.base_address + first_register,
-            number_of_registers=register_count,
-        )
+        return self._port().call(
+            ReadSpan(self.base_address + first_register, register_count))
 
     @ktrace()
     def refresh(self):
+        """Read the whole device, in chunks of MAX_REGISTERS_PER_READ, as one
+        Batch: the chunks reach the wire back to back. A failed chunk raises
+        and the chunks after it are not requested."""
         remaining_size = self.size
         max_size = self.MAX_REGISTERS_PER_READ
-        raw_data = []
         remaining_address = self.base_address
-        with kev("read_registers"):
-            while remaining_size > max_size:
-                part_data = self.dm.device.read_registers(
-                    registeraddress=remaining_address,
-                    number_of_registers=max_size
-                )
-                remaining_size -= max_size
-                remaining_address += max_size
-                raw_data += part_data
+        requests = []
+        while remaining_size > max_size:
+            requests.append(ReadSpan(remaining_address, max_size))
+            remaining_size -= max_size
+            remaining_address += max_size
+        if remaining_size > 0:
+            requests.append(ReadSpan(remaining_address, remaining_size))
 
-            if remaining_size > 0:
-                part_data = self.dm.device.read_registers(
-                    registeraddress=remaining_address,
-                    number_of_registers=remaining_size
-                )
-                remaining_address += remaining_size
-                raw_data += part_data
+        with kev("read_registers"):
+            parts = self._port().call(Batch(tuple(requests)))
+        raw_data = [register for part in parts for register in part]
 
         return self.decode(raw_data)
 
