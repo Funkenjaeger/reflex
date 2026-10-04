@@ -1382,6 +1382,66 @@ def test_sync_off_while_disengaged_does_NOT_raise(ctrl):
     assert ctrl._els_fsm.state == "disabled"
 
 
+# ─── Retract is gated on Sync Enable, like Cut (2026-10-03) ─────────────────
+# Shadow bench, 21:14:52: Retract pressed with sync off parked the machine in
+# 'retracting' with nothing moving; the next Sync Enable press re-issued the
+# move and the carriage went. An arm-only button must never start a move.
+
+def _waiting_to_retract_rig(ctrl, *, sync_on):
+    z = ctrl._els.get_z_axis()
+    z.scaledPosition = 10.0                  # parked at the stop after a cut
+    ctrl.els_forward = False
+    ctrl.retract_enabled = True
+    ctrl.commit_standalone_stop_z(10.0)
+    ctrl.commit_standalone_retract_z(0.0)
+    ctrl.toggle_engage()
+    _pump()
+    _arm_toggle_enable(ctrl).servoMode = 1 if sync_on else 0
+    ctrl._ui_fsm.fsm.set_state("in_cycle.waiting_to_retract")
+    ctrl._apply_policy()
+    return ctrl
+
+
+def test_retract_is_greyed_with_sync_off(ctrl):
+    c = _waiting_to_retract_rig(ctrl, sync_on=False)
+    assert c.action_allowed is False
+    assert c.instruction_text == "Turn Sync Enable on, then retract"
+
+
+def test_retract_is_allowed_with_sync_on(ctrl):
+    c = _waiting_to_retract_rig(ctrl, sync_on=True)
+    assert c.action_allowed is True
+
+
+def test_a_stale_retract_press_with_sync_off_does_not_start_a_retract(ctrl):
+    """The fresh check behind the button: even if the press arrives, the UI
+    must not enter 'retracting' and the domain FSM must not either."""
+    c = _waiting_to_retract_rig(ctrl, sync_on=False)
+    assert c.may_retract() is False
+    c.on_action_button_clicked()
+    _pump()
+    assert c._ui_fsm.state == "in_cycle.waiting_to_retract"
+    assert c._els_fsm.state == "stopped"
+
+
+def test_sync_off_mid_retract_abandons_it_and_disengages(ctrl):
+    """Left in 'retracting', the rest of the move would wait for the next
+    Sync Enable press. Disengaging clears it with the job, as for a cut."""
+    c = _waiting_to_retract_rig(ctrl, sync_on=True)
+    c.on_action_button_clicked()
+    _pump()
+    assert c._els_fsm.state == "retracting", "the rig never reached a retract"
+    seen = []
+    c.notify = lambda msg, sev=None, **kw: seen.append(msg)
+
+    c.request_feed_enable()
+    _pump()
+
+    assert c._els_fsm.state == "disabled"
+    assert c.in_cycle is False
+    assert any("Retract abandoned" in m for m in seen), seen
+
+
 # ─── Flight recorder wiring ────────────────────────────────────────────────
 
 def test_flight_recorder_is_bound_to_the_board_tick(ctrl):

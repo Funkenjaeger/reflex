@@ -1239,6 +1239,16 @@ class ElsUiController(EventDispatcher):
             elif self.is_threading and not self._x_clear_of_start_dia():
                 text = "Move X clear of start diameter, then retract"
                 allowed = False
+            elif not self.is_feeding:
+                # SYNC ON BEFORE RETRACT (2026-10-03), the twin of the Cut
+                # gate above. The firmware emits no steps with servoMode 0,
+                # so a Retract pressed with sync off parked the machine in
+                # 'retracting' with nothing moving and nothing said -- and the
+                # next Sync Enable press re-issued the move and the carriage
+                # went (shadow bench, 2026-10-03, 21:14:52). An arm-only
+                # button must never start a move.
+                text = "Turn Sync Enable on, then retract"
+                allowed = False
         self.instruction_text = text
         self.action_allowed = allowed
 
@@ -1901,7 +1911,13 @@ class ElsUiController(EventDispatcher):
         """True iff the domain FSM would accept a retract right now — a FRESH
         check, the retract-side twin of :meth:`may_cut`. Gates the UI
         waiting_to_retract→retracting transition so a refused retract can't lock
-        the UI in 'Retracting…' with no exit. Any error → refuse."""
+        the UI in 'Retracting…' with no exit. Any error → refuse.
+
+        Also refuses with Sync Enable off, the same rule the policy gate
+        shows the operator, checked fresh here so a stale press cannot
+        start a retract that only moves once sync comes on."""
+        if not self.is_feeding:
+            return False
         try:
             return bool(self._els_fsm.may_retract())
         except Exception:
@@ -2015,9 +2031,15 @@ class ElsUiController(EventDispatcher):
         Disengage button is greyed by in_cycle, which follows the UI FSM, so
         disabling one without cancelling the other leaves the button dead.
         """
-        if self._els_fsm.state != "cutting":
+        # 'retracting' too (2026-10-03): sync off mid-retract stops the
+        # carriage the same way, and left in 'retracting' the remaining move
+        # would wait for the next Sync Enable press. Disengaging clears the
+        # firmware's pending motion with the job (enable falling edge).
+        state = self._els_fsm.state
+        if state not in ("cutting", "retracting"):
             return
-        log.info("Sync Enable off during a cut — abandoning the cut and "
+        what = "cut" if state == "cutting" else "retract"
+        log.info(f"Sync Enable off during a {what} — abandoning it and "
                  "disengaging (drive de-energized, thread reference lost)")
         if self._ui_fsm.state.startswith("in_cycle"):
             self._ui_fsm.cancel()
@@ -2038,7 +2060,7 @@ class ElsUiController(EventDispatcher):
             # clear.
             log.error("could not disengage after sync-off from "
                       f"'{self._els_fsm.state}' — ELS may still read as armed")
-        self.notify("Cut abandoned — ELS disengaged", NOTICE_INFO)
+        self.notify(f"{what.capitalize()} abandoned — ELS disengaged", NOTICE_INFO)
 
     def request_feed_enable(self, confirmed: bool = False) -> bool:
         """Operator asked to toggle the sync/power feed (advanced ELS context).
