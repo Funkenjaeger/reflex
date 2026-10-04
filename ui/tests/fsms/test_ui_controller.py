@@ -544,6 +544,10 @@ def test_on_action_button_clicked_without_x_axis_does_not_raise():
 @pytest.mark.parametrize("els_forward, stop_z", [(True, -10.0), (False, 10.0)])
 def test_on_action_button_clicked_in_waiting_to_cut_enters_cutting(ctrl, els_forward, stop_z):
     """Non-wizard cycle: action button drives waiting_to_cut → cutting."""
+    # A cut needs a link: the HAL declines its gating writes when
+    # board.connected is False, and the arming now reads each write's own
+    # acknowledgement rather than the fake link object's truthy `connected`.
+    ctrl._board.connected = True
     z = ctrl._els.get_z_axis()
     z.scaledPosition = 0.0
     ctrl.els_forward = els_forward
@@ -1263,7 +1267,16 @@ def _arm_toggle_enable(ctrl):
 
 
 def _cutting_rig(ctrl):
-    """A connected rig mid-cut with the feed running."""
+    """A connected rig mid-cut with the feed running.
+
+    board.connected is set here because the rig genuinely needs a link: the
+    HAL's gating setters have always skipped the write when it is False, and
+    since the ACK is now each write's own answer rather than
+    connection_manager.connected, a cut arming on writes that never happened
+    correctly refuses. Before, the fake link's truthy `connected` stood in for
+    writes the HAL had declined to make.
+    """
+    ctrl._board.connected = True
     z = ctrl._els.get_z_axis()
     z.scaledPosition = 0.0
     ctrl.els_forward = False

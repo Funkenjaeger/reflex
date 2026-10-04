@@ -98,6 +98,7 @@ class FakeHal:
 
     def set_scale_index(self, scale_index):
         self.scale_index_written = scale_index
+        return True
 
     def set_cal_measured(self, legs):
         self.cal_measured_written = list(legs)

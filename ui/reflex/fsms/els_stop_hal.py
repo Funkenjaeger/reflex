@@ -4,6 +4,7 @@ The HAL is the single place that knows about firmware register names and
 encoding. Methods are named in domain terms; callers (the FSM) never see
 register keys. Replacing the firmware protocol means writing one new HAL.
 """
+from reflex.utils.base_device import write_confirmed
 from kivy.logger import Logger
 
 log = Logger.getChild(__name__)
@@ -120,17 +121,22 @@ class ElsStopHal:
         return self._board.connected
 
     # ── enable / active ───────────────────────────────────────────────
-    def set_enable(self, enabled: bool) -> None:
+    def set_enable(self, enabled: bool) -> bool:
+        """Arm or disarm the stop. CONFIRMED: this is the one write that
+        actually stops the feed, and both the cut arming and the disengage
+        branch on whether it landed. False means no link or no acknowledgement
+        -- the caller must treat the stop as NOT armed."""
         if not self._board.connected:
-            return
-        self._board.device['elsStop']['enable'] = 1 if enabled else 0
+            return False
+        return write_confirmed(
+            self._board.device['elsStop'], 'enable', 1 if enabled else 0)
 
     def set_active(self, active: bool) -> None:
         if not self._board.connected:
             return
         self._board.device['elsStop']['active'] = 1 if active else 0
 
-    def stop_sync(self) -> None:
+    def stop_sync(self) -> bool:
         """Clear syncEnable on every scale. The MOTION SOURCE off-switch.
 
         ORDER MATTERS AT DISENGAGE, and this is the whole point of the method.
@@ -155,9 +161,14 @@ class ElsStopHal:
         (enable == 0 gates the stop check off) -- i.e. no backstop left.
         """
         if not self._board.connected:
-            return
+            return False
+        acknowledged = True
         for scale in self._board.device['scales']:
-            scale['syncEnable'] = 0
+            # CONFIRMED, every one: this is the motion-source off-switch at
+            # disengage, and one scale left enabled is enough for the
+            # firmware's servoEnableTask to switch the feed back on.
+            acknowledged = write_confirmed(scale, 'syncEnable', 0) and acknowledged
+        return acknowledged
 
     def read_motion_in_flight(self) -> dict:
         """Snapshot of whether the FIRMWARE is driving the carriage right now.
@@ -227,12 +238,15 @@ class ElsStopHal:
         self._board.device['elsStop']['hysteresis'] = counts
 
     # ── stop target / scale source ────────────────────────────────────
-    def set_stop_position(self, encoder_counts: int) -> None:
+    def set_stop_position(self, encoder_counts: int) -> bool:
+        """The stop target. CONFIRMED: cutting against an unverified shoulder
+        is the failure this gate exists for."""
         if not self._board.connected:
-            return
-        self._board.device['elsStop']['stopPosition'] = encoder_counts
+            return False
+        return write_confirmed(
+            self._board.device['elsStop'], 'stopPosition', encoder_counts)
 
-    def set_stop_offset(self, counts: int) -> None:
+    def set_stop_offset(self, counts: int) -> bool:
         """Stop-overshoot correction: fire the stop `counts` EARLY.
 
         protocolVersion 11. A separate 16-bit register rather than a rewritten
@@ -242,15 +256,23 @@ class ElsStopHal:
         ELS_STOP_OFFSET_MAX] and treats negative as 0. Written LIVE, through
         the rate limiter in fsms/els_overshoot.py -- every call here is a
         Modbus exchange on the tick.
+
+        CONFIRMED, and the answer is returned: the corrector forgets a write
+        that was not acknowledged so the next good tick re-sends, rather than
+        its limiter believing a value the firmware never got.
         """
         if not self._board.connected:
-            return
-        self._board.device['elsStop']['stopOffset'] = int(counts)
+            return False
+        return write_confirmed(
+            self._board.device['elsStop'], 'stopOffset', int(counts))
 
-    def set_scale_index(self, scale_index: int) -> None:
+    def set_scale_index(self, scale_index: int) -> bool:
+        """Which scale the stop watches. CONFIRMED: an unacknowledged write
+        here leaves the stop reading the wrong axis."""
         if not self._board.connected:
-            return
-        self._board.device['elsStop']['scaleIndex'] = scale_index
+            return False
+        return write_confirmed(
+            self._board.device['elsStop'], 'scaleIndex', scale_index)
 
     def set_steps_to_go(self, steps: int) -> None:
         if not self._board.connected:

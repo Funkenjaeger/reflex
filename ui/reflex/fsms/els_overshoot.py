@@ -482,12 +482,12 @@ class StopOffsetCorrector:
     def _write(self, value: Optional[int]) -> Optional[int]:
         if value is None:
             return None
-        self._hal.set_stop_offset(value)
-        cm = getattr(self._board, "connection_manager", None)
-        if cm is not None and not getattr(cm, "connected", True):
-            # The write was not acknowledged (the write helpers drop the link
-            # on a failed exchange). Forget it, so the next good tick re-sends
+        if not self._hal.set_stop_offset(value):
+            # Not acknowledged. Forget it, so the next good tick re-sends
             # instead of the limiter believing a value the firmware never got.
+            # The answer is the write's own now: reading connection_manager
+            # afterwards could be overwritten by a tick scan on the owner
+            # thread between the write and the check.
             self.limiter.reset()
             return None
         return value

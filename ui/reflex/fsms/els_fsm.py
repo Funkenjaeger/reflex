@@ -159,25 +159,26 @@ class ElsFsm:
         # fire-and-forget over Modbus; if any silently failed the cut could run
         # against a stale stop (wrong shoulder) or — on the engage-past-stop path
         # where `enable` is 0 until this point, with a feed possibly already
-        # running — with NO armed stop at all (safety audit #4 + review). Every
-        # Modbus write is ACK'd by the firmware (minimalmodbus raises on a
-        # missing/bad response, which the write helpers turn into
-        # connection_manager.connected = False), so accumulate that per-write ACK
-        # — a later write recovering the link can't mask an earlier failure.
-        cm = self.board.connection_manager
+        # running — with NO armed stop at all (safety audit #4 + review).
+        #
+        # EACH WRITE RETURNS ITS OWN ACKNOWLEDGEMENT and they are accumulated,
+        # so a later write cannot mask an earlier failure. This used to read
+        # connection_manager.connected after each write, which meant only "did
+        # the last exchange succeed" -- once the scan runs on the owner thread
+        # a tick read between the write and the check could set it True over a
+        # write that failed. A verdict an unrelated success can overwrite is
+        # not a verdict, and this is the one the cut rests on.
+        #
         # Write stopPosition and scaleIndex individually (not via set_stop_z,
-        # which bundles both) so the per-write ACK is checked at the right
-        # granularity — otherwise the scaleIndex write would recover `connected`
-        # and mask a failed stopPosition write. stopPosition is the FROZEN
-        # leadscrew encoder captured when the operator set the stop — immune to
-        # any DRO re-zero / units switch since (the physical shoulder is fixed).
+        # which bundles both) so the ACK is checked at the right granularity.
+        # stopPosition is the FROZEN leadscrew encoder captured when the
+        # operator set the stop — immune to any DRO re-zero / units switch
+        # since (the physical shoulder is fixed).
         enc = self.controller.stop_z_encoder
         armed_ok = enc is not None
         if armed_ok:
-            self.hal.set_stop_position(enc)
-            armed_ok = bool(cm.connected)
-        self.hal.set_scale_index(self._saddle_input.inputIndex)
-        armed_ok = armed_ok and bool(cm.connected)
+            armed_ok = self.hal.set_stop_position(enc)
+        armed_ok = self.hal.set_scale_index(self._saddle_input.inputIndex) and armed_ok
         if self.controller.is_threading:
             self.push_thread_geometry()
         else:
@@ -193,8 +194,7 @@ class ElsFsm:
         # first arming on the engage-past-stop path, and the one thing that
         # actually stops the feed. (stopDirection/hysteresis are re-asserted
         # post-release; their values are already correct from engage time.)
-        self.hal.set_enable(True)
-        armed_ok = armed_ok and bool(cm.connected)
+        armed_ok = self.hal.set_enable(True) and armed_ok
 
         if not armed_ok:
             # A safety-critical stop write wasn't confirmed — do NOT release the
@@ -271,16 +271,24 @@ class ElsFsm:
         # still going — with the ELS stop simultaneously disarmed, because the
         # firmware gates the stop check on enable. Feed running, backstop gone.
         feed_was_on = self.board.servo.servoMode != 0
-        self.hal.stop_sync()
-        self.hal.set_enable(False)
-        self.board.servo.stop_feed()
-        if feed_was_on and not self.board.connection_manager.connected:
+        # Each returns its own acknowledgement, for the same reason the cut
+        # arming above accumulates them: `connected` only ever meant "the last
+        # exchange worked", so the enable-off or the feed-off succeeding could
+        # hide the sync-off having failed -- and sync left on after enable
+        # drops is exactly the window that let the carriage keep feeding with
+        # the stop disarmed.
+        sync_off = self.hal.stop_sync()
+        enable_off = self.hal.set_enable(False)
+        feed_off = self.board.servo.stop_feed()
+        if feed_was_on and not (sync_off and enable_off and feed_off):
             # A stop-feed write was attempted but not acknowledged (link down).
             # Nothing more software can do to stop it here — surface it loudly.
             # (Only when the feed was actually on, so an offline idle disengage
             # doesn't cry wolf.)
-            log.error("on_enter_disabled: feed-stop write NOT acknowledged — "
-                      "sync feed may still be running (controller link down)")
+            log.error("on_enter_disabled: a disengage write was NOT "
+                      f"acknowledged (sync_off={sync_off} "
+                      f"enable_off={enable_off} feed_off={feed_off}) — "
+                      "sync feed may still be running")
 
     def _raise_stop_write_fault(self):
         """Top-level fault after an unacknowledged cut-stop write (scheduled from

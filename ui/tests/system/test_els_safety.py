@@ -209,16 +209,22 @@ def test_cut_aborts_when_stop_write_not_acked(harness):
     h.set_stop_z(z0 - 50.0)         # mm
     h.engage()
 
-    # Inject: the stopPosition write "fails to ACK" (connected drops); the very
-    # next write recovers the link. A naive end-of-sequence check would miss this.
-    cm = h.board.connection_manager
+    # Inject: the stopPosition write goes out and is NOT acknowledged, while
+    # every write after it succeeds. A naive end-of-sequence check would miss
+    # this, which is the whole point of accumulating the per-write verdict.
+    #
+    # The refusal is the setter's RETURN VALUE since step 3. It used to be
+    # injected by dropping connection_manager.connected, which stopped meaning
+    # anything here when the ACK moved onto the write's own future -- and the
+    # test would have gone on passing, because the wrapper happened to return
+    # None. Saying False out loud is what keeps this able to fail.
     orig_set_stop_position = h.hal.set_stop_position
 
-    def failing_set_stop_position(counts):
+    def refusing_set_stop_position(counts):
         orig_set_stop_position(counts)
-        cm.connected = False        # write went out but was not acknowledged
+        return False                # went out, never acknowledged
 
-    h.hal.set_stop_position = failing_set_stop_position
+    h.hal.set_stop_position = refusing_set_stop_position
 
     h.enable_sync()
     h.cut()
@@ -238,7 +244,7 @@ def test_cut_aborts_when_stop_write_not_acked(harness):
     # Recovery: the operator can clear the alarm with Disengage — BOTH FSMs must
     # leave alarm (domain → disabled AND the UI FSM out of its alarm state), or
     # ELS is soft-locked until app restart.
-    h.hal.set_stop_position = orig_set_stop_position  # link "recovers"
+    h.hal.set_stop_position = orig_set_stop_position  # the controller answers again
     h.controller.toggle_engage()
     h.pump()
     assert h.els_fsm.state == "disabled", (
@@ -265,14 +271,15 @@ def test_cut_aborts_when_enable_write_not_acked(harness):
     h.set_stop_z(z0 - 50.0)         # mm
     h.engage()
 
-    cm = h.board.connection_manager
+    # Refused by the setter's return value -- see the note in the
+    # stopPosition case above for why it is no longer connection_manager.
     orig_set_enable = h.hal.set_enable
 
-    def failing_set_enable(enabled):
+    def refusing_set_enable(enabled):
         orig_set_enable(enabled)
-        cm.connected = False        # enable write went out but was not acknowledged
+        return False                # went out, never acknowledged
 
-    h.hal.set_enable = failing_set_enable
+    h.hal.set_enable = refusing_set_enable
 
     h.enable_sync()
     h.cut()

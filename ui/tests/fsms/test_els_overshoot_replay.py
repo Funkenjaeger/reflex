@@ -93,6 +93,8 @@ class _Hal:
 
     def set_stop_offset(self, counts):
         self.writes.append((round(self._clock() * 1000), int(counts)))
+        return True
+
 
 
 def _load():

@@ -102,6 +102,12 @@ RETRY_AFTER_NO_DEVICE_S = 2.0
 PAUSE_ACK_TIMEOUT_S = 0.5
 # How long stop() waits for the loop to leave. Same reasoning.
 STOP_JOIN_TIMEOUT_S = 2.0
+# How long the blocking proxy waits for the owner to answer. A wait with no
+# bound is a UI that can hang for ever if the owner thread dies or wedges, and
+# that is a worse failure than a refused write: the operator gets a frozen
+# screen instead of an alarm. Generous against the real worst case -- one
+# timed-out exchange plus the one in front of it.
+CALL_TIMEOUT_S = 5.0
 
 
 # ── commands ─────────────────────────────────────────────────────────────────
@@ -265,10 +271,17 @@ class PortOwner:
             self._wake.set()
         return future
 
-    def call(self, command):
+    def call(self, command, timeout_s: float = CALL_TIMEOUT_S):
         """Submit and wait for the result: the blocking proxy. Re-raises the
-        command's exception, if it raised."""
-        return self.submit(command).result()
+        command's exception, if it raised, and raises TimeoutError if the owner
+        does not answer within `timeout_s` (see CALL_TIMEOUT_S).
+
+        The timeout can only fire when the owner thread is dead or wedged -- in
+        synchronous mode the result is already there, and a healthy loop answers
+        within an exchange. The watchdog in Board names that state; this stops
+        the caller hanging on it.
+        """
+        return self.submit(command).result(timeout=timeout_s)
 
     def _execute(self, command, future: Future) -> None:
         if not future.set_running_or_notify_cancel():

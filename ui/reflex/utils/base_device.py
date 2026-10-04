@@ -32,6 +32,26 @@ def _is_structure(type_definition: TypeDefinition) -> bool:
     return isinstance(rf, type) and issubclass(rf, BaseDevice)
 
 
+def write_confirmed(device, key, value) -> bool:
+    """Write `key` on `device` and return the controller's acknowledgement.
+
+    Use this, not `device[key] = value`, wherever the answer GATES something:
+    the cut arming, the disengage, the stop offset. A plain assignment is fire
+    and forget and tells the caller nothing.
+
+    Falls back to an assignment for the dict-shaped doubles that stand in for a
+    device across the suite. A dict write cannot fail, so True is the honest
+    answer for one -- and a double that wants to REFUSE a write says so by
+    implementing write_confirmed itself, which is how the nack-injection tests
+    reach these paths.
+    """
+    confirm = getattr(device, "write_confirmed", None)
+    if confirm is None:
+        device[key] = value
+        return True
+    return bool(confirm(key, value))
+
+
 class BaseDevice:
     definition = ""
     root_structure = False
@@ -123,7 +143,8 @@ class BaseDevice:
                 for i in range(var.count))))
         return self._port().call(Read(var.type.read_function, address))
 
-    def __setitem__(self, key, value):
+    def _write_command(self, key, value):
+        """The Write (or Batch of them) one assignment to `key` becomes."""
         var = self._variable_index[key]
         if var.count > 1 and isinstance(value, (list, tuple)):
             # Symmetric with __getitem__'s array read: element-wise at
@@ -133,35 +154,58 @@ class BaseDevice:
             # only as connected=False -- a silent no-op write. Needed by the
             # calMeasured round-trip (the calibration legs the take-up gate
             # derives its threshold from, restored at connect).
-            results = self._port().call(Batch(tuple(
+            return Batch(tuple(
                 Write(var.type.write_function,
                       var.address + self.base_address + var.type.length * i,
                       v, f"{key}[{i}]")
-                for i, v in enumerate(value[:var.count]))))
-            self._settle_ack(all(results))
-            return
-        self._settle_ack(self._port().call(
-            Write(var.type.write_function,
-                  var.address + self.base_address, value, key)))
-        return
+                for i, v in enumerate(value[:var.count])))
+        return Write(var.type.write_function,
+                     var.address + self.base_address, value, key)
 
-    def _settle_ack(self, acknowledged):
-        """Re-assert THIS write's verdict on `connected` before returning.
+    def __setitem__(self, key, value):
+        """FIRE AND FORGET: queue the write and return without waiting.
 
-        Callers read `dm.connected` immediately after a write to mean "did that
-        write land" (els_fsm accumulates the cut-arming ACK exactly so). That
-        only ever worked because nothing could run in between. Once the owner
-        has a thread of its own it can take a tick scan between the write
-        finishing and the caller reading, and a scan that succeeds would set
-        `connected` True over a write that FAILED -- masking an unacknowledged
-        safety write, which is the one thing the accumulation exists to catch.
+        Most writes do not gate anything -- servo speeds, directions, sync
+        ratios, cal limits, the settings pushed at start-up. Waiting for each
+        one bought nothing and cost the UI the round trip: a Cut press runs
+        about 14 writes and a jog start 6, which at ~8.7 ms an exchange is the
+        120-220 ms freeze this step exists to remove. A failure still surfaces
+        the way it always did, through the write helper's log line and the
+        connection verdict.
 
-        So the write's own answer is written back here, on the caller's thread,
-        with nothing able to intervene before it returns. This restores the
-        single-threaded meaning exactly; step 3 replaces the channel itself
-        with the future's result and this goes away.
+        ORDER IS UNCHANGED. The owner's queue is FIFO, so these reach the wire
+        in the order they were issued, and a later read or confirmed write
+        queued behind them still sees their effect.
+
+        A WRITE THAT GATES A TRANSITION DOES NOT BELONG HERE -- use
+        write_confirmed(), which returns the controller's acknowledgement.
         """
-        self.dm.connected = bool(acknowledged)
+        self._port().submit(self._write_command(key, value))
+
+    def write_confirmed(self, key, value) -> bool:
+        """Write and WAIT, returning whether the controller acknowledged it.
+
+        The replacement for reading `dm.connected` after a write. That only
+        ever meant "did the last exchange succeed", so any later exchange --
+        another write, or a tick scan on the owner thread -- could set it True
+        over a write that failed and mask it. A verdict that can be masked by
+        an unrelated success is not a verdict, and the cut arming rests on it.
+
+        The answer here is THIS write's own, carried back on its future, and
+        nothing can overwrite it. For an array every element must be
+        acknowledged.
+        """
+        try:
+            result = self._port().call(self._write_command(key, value))
+        except Exception as e:                           # noqa: BLE001
+            # Includes the proxy's TimeoutError. An answer that never came is
+            # not an acknowledgement, and the whole point of this call is that
+            # the caller can trust a True.
+            log.error(f"write_confirmed({key}): no acknowledgement: {e}")
+            return False
+        if isinstance(result, list):
+            return all(bool(r) for r in result)
+        return bool(result)
 
     @classmethod
     def register_type(cls, variable_definitions) -> TypeDefinition:
