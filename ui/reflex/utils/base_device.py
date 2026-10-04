@@ -133,15 +133,35 @@ class BaseDevice:
             # only as connected=False -- a silent no-op write. Needed by the
             # calMeasured round-trip (the calibration legs the take-up gate
             # derives its threshold from, restored at connect).
-            self._port().call(Batch(tuple(
+            results = self._port().call(Batch(tuple(
                 Write(var.type.write_function,
                       var.address + self.base_address + var.type.length * i,
                       v, f"{key}[{i}]")
                 for i, v in enumerate(value[:var.count]))))
+            self._settle_ack(all(results))
             return
-        self._port().call(Write(var.type.write_function,
-                                var.address + self.base_address, value, key))
+        self._settle_ack(self._port().call(
+            Write(var.type.write_function,
+                  var.address + self.base_address, value, key)))
         return
+
+    def _settle_ack(self, acknowledged):
+        """Re-assert THIS write's verdict on `connected` before returning.
+
+        Callers read `dm.connected` immediately after a write to mean "did that
+        write land" (els_fsm accumulates the cut-arming ACK exactly so). That
+        only ever worked because nothing could run in between. Once the owner
+        has a thread of its own it can take a tick scan between the write
+        finishing and the caller reading, and a scan that succeeds would set
+        `connected` True over a write that FAILED -- masking an unacknowledged
+        safety write, which is the one thing the accumulation exists to catch.
+
+        So the write's own answer is written back here, on the caller's thread,
+        with nothing able to intervene before it returns. This restores the
+        single-threaded meaning exactly; step 3 replaces the channel itself
+        with the future's result and this goes away.
+        """
+        self.dm.connected = bool(acknowledged)
 
     @classmethod
     def register_type(cls, variable_definitions) -> TypeDefinition:

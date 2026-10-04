@@ -556,7 +556,7 @@ class FlightRecorder:
     def __init__(self, board, fsm_state=None, fsm_states=None, stop_offset=None,
                  ratio_check=None,
                  directory=None,
-                 now=time.monotonic, free_bytes=None,
+                 now=time.monotonic, acq=None, free_bytes=None,
                  segment_max_bytes=SEGMENT_MAX_BYTES,
                  max_total_bytes=MAX_TOTAL_BYTES,
                  min_free_bytes=MIN_FREE_BYTES,
@@ -579,6 +579,14 @@ class FlightRecorder:
         self._ratio_check = ratio_check
         self._dir = Path(directory) if directory is not None else None
         self._now = now
+        # WHEN THE SAMPLE'S NUMBERS WERE ACQUIRED, not when this poll ran.
+        # A callable returning Board.t_acq (None before the first snapshot).
+        # Since step 2 the scan happens on the port owner's thread and the
+        # apply is marshalled to the main thread, so poll time lags the last
+        # reply byte by up to a frame -- jitter that would otherwise land in
+        # every rate computed from these rows. Both clocks are
+        # time.monotonic, so the two are directly comparable.
+        self._acq = acq
         self._free_bytes = free_bytes or _default_free_bytes
         self._segment_max = int(segment_max_bytes)
         self._max_total = int(max_total_bytes)
@@ -724,6 +732,15 @@ class FlightRecorder:
 
     def _poll(self) -> None:
         now = self._now()
+        # The row's timebase: acquisition when the board has one, poll time
+        # otherwise (no snapshot yet, or a recorder built without `acq`).
+        # _start_session is stamped from it too, so the first sample is 0 and
+        # not a few milliseconds negative.
+        sampled_at = now
+        if self._acq is not None:
+            acquired = self._acq()
+            if acquired is not None:
+                sampled_at = acquired
         self._tick += 1
         self.ticks_seen += 1
 
@@ -769,7 +786,7 @@ class FlightRecorder:
             self._last_armed = now
             self._last_armed_utc = _utc_now_iso()
             if self._writer is None:
-                self._start_session(now, fast, snap, state)
+                self._start_session(sampled_at, fast, snap, state)
 
         if self._writer is not None:
             self._emit_context_if_changed(snap)
@@ -780,7 +797,7 @@ class FlightRecorder:
                 # Stamped HERE, not in _sample(): on the tick a session opens,
                 # the row was built before _session_start existed. Recomputing
                 # at the write is the only place both facts are known.
-                row[0] = self._t_ms(now)
+                row[0] = self._t_ms(sampled_at)
                 self._writer.write(row)
                 self.samples_written += 1
                 self._last_sample_utc = _utc_now_iso()
@@ -800,7 +817,7 @@ class FlightRecorder:
             if self._tick % self._every == 0:
                 # Carried with its own monotonic time so the flush can rebase
                 # it against a session start that has not happened yet.
-                self._preroll.append((now, row))
+                self._preroll.append((sampled_at, row))
 
         self._maybe_status(now)
 

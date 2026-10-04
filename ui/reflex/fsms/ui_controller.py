@@ -1,4 +1,5 @@
 
+import time
 from kivy.properties import StringProperty, BooleanProperty, NumericProperty
 from kivy.event import EventDispatcher
 from kivy.clock import Clock
@@ -13,7 +14,7 @@ from reflex.fsms.els_flight_recorder import FlightRecorder
 from reflex.fsms.els_phase_recorder import (
     PhaseCorrectionRecorder, PhaseLiveTracker, SpindleCountWatch)
 from reflex.fsms.els_mode_watch import ElsModeWatch
-from reflex.fsms.els_overshoot import StopOffsetCorrector
+from reflex.fsms.els_overshoot import OffsetWriteLimiter, StopOffsetCorrector
 from reflex.fsms import els_ratio
 from reflex.fsms.els_ratio import RatioWatch
 from reflex.utils.devices import (takeup_failure_text,
@@ -338,6 +339,9 @@ class ElsUiController(EventDispatcher):
             # the controller expects. Built below; a lambda for that reason.
             ratio_check=lambda: (self._ratio_watch.verdict.kind,
                                  self._els_fsm.engaged_gear()),
+            # Stamp rows with the moment the numbers were acquired, not the
+            # moment this poll ran. See FlightRecorder's `acq`.
+            acq=lambda: board.t_acq,
         )
 
         # Built FIRST, before any FSM or poller exists, because `notify()` must
@@ -358,6 +362,18 @@ class ElsUiController(EventDispatcher):
             enabled=lambda: getattr(self._els, "els_overshoot_correction", False) is True,
             margin=lambda: int(getattr(self._els, "els_overshoot_margin_counts", 1)),
             notify=lambda message: self.notify(message, NOTICE_WARNING),
+            # ON THE ACQUISITION TIMEBASE. One clock feeds the limiter, the
+            # hold AND the Z-rate window (the corrector reads it once per tick
+            # and passes it down), so this single substitution takes the rate
+            # off poll time. Since step 2 the apply is marshalled from the
+            # owner thread, and that lag is not constant: left on poll time it
+            # would land in the measured rate, and the rate is what picks the
+            # offset out of the overshoot table. Falls back before the first
+            # snapshot; both clocks are time.monotonic, so the hold's ~1 s and
+            # the limiter's 250 ms keep meaning what they did.
+            limiter=OffsetWriteLimiter(
+                clock=lambda: (board.t_acq if board.t_acq is not None
+                               else time.monotonic())),
         )
 
         # Coupling-ratio check: an open half nut, or the gearbox lever in a

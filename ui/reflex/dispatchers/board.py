@@ -24,6 +24,16 @@ from reflex.utils.port_owner import SCAN_PERIOD_S, PortOwner, Snapshot
 # a link that is merely down does not trip it.
 SNAPSHOT_WATCHDOG_S = 1.5
 
+# The Kivy properties below. A write to one of these from any thread but the
+# main one is the classic once-a-week graphics crash: Kivy dispatches to bound
+# widgets inline, so the setter runs canvas work on whatever thread set it.
+# Nothing in the port owner touches an EventDispatcher by design -- this is
+# what makes a mistake in that design LOUD instead of intermittent.
+_GUARDED_PROPERTIES = frozenset((
+    "connected", "protocol_version", "protocol_mismatch", "protocol_message",
+    "update_tick", "blink", "link_paused", "device", "servo", "inputs", "axes",
+))
+
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
 
@@ -107,6 +117,42 @@ class Board(EventDispatcher):
 
         self.task_update = Clock.schedule_interval(self.update, SCAN_PERIOD_S)
         Clock.schedule_interval(self.blinker, 1.0 / 4)
+
+    def __setattr__(self, name, value):
+        """Say so, loudly and once, if a Kivy property is set off the main thread.
+
+        NOT an exception: this runs on a lathe, and a raise here would take the
+        UI down over a fault whose whole point is that it is survivable-looking.
+        The log line plus Sentry is what turns a once-a-week mystery crash into
+        a named defect. Checked only for the declared properties, so the cost on
+        everything else is one frozenset lookup.
+        """
+        if name in _GUARDED_PROPERTIES and \
+                threading.current_thread() is not threading.main_thread():
+            self._report_off_thread_write(name)
+        super().__setattr__(name, value)
+
+    # Names already reported, so a property written every tick from the wrong
+    # thread produces one line rather than thirty a second.
+    _off_thread_reported: frozenset = frozenset()
+
+    def _report_off_thread_write(self, name):
+        if name in self._off_thread_reported:
+            return
+        self._off_thread_reported = self._off_thread_reported | {name}
+        thread = threading.current_thread().name
+        message = (f"Board.{name} was set from thread {thread!r}, not the main "
+                   f"thread; Kivy dispatches property changes inline, so this "
+                   f"can run canvas work off the main thread")
+        log.error(message)
+        try:
+            import sentry_sdk
+        except Exception:                                # noqa: BLE001
+            return
+        try:
+            sentry_sdk.capture_message(message, level="error")
+        except Exception:                                # noqa: BLE001
+            pass
 
     def _port(self) -> PortOwner:
         """The owner of this board's serial port: every Modbus exchange, the
@@ -306,7 +352,17 @@ class Board(EventDispatcher):
         A snapshot from an older link generation (taken before a pause) is
         dropped: pause_polling cleared the dicts, and they stay clear.
         """
-        if snapshot.generation != self._port().generation:
+        owner = self._port()
+        if snapshot.generation != owner.generation:
+            return
+
+        # ACQUIRED BEFORE A WRITE THAT HAS SINCE LANDED. Applying it would show
+        # the machine as it was before the UI changed it -- and the ELS stop
+        # detector, reading the snapshot, takes the pre-arming registers of a
+        # cut that has just started as the stop having fired. One scan at most
+        # is lost per write, and the next one is already on its way.
+        if snapshot.write_epoch < owner.write_epoch:
+            self.snapshots_dropped += 1
             return
 
         self._last_snapshot_at = time.monotonic()

@@ -65,6 +65,16 @@ and acknowledge. It returns False if that acknowledgement does not arrive,
 because a port that might still be open must not be handed to the flasher.
 Synchronously there is no one to ask and it closes inline.
 
+THE WRITE EPOCH increments every time a Write reaches the wire, and every
+Snapshot carries the epoch its scan ran under. Board drops a snapshot whose
+epoch is behind the owner's at apply, because such a snapshot was ACQUIRED
+BEFORE a write that has since landed: it describes the machine as it was
+before the UI changed it. Without this a scan already in flight when a cut's
+arming burst went out could be applied after it and show the pre-arming
+registers -- which the ELS stop detector reads as the stop having fired, and
+the cut is abandoned on the tick it started. The generation below is the same
+idea for the port handover; this is the idea for writes.
+
 THE LINK GENERATION increments on pause(). Every Snapshot carries the
 generation it was taken under, and Board drops one from an older generation at
 apply, so a tick read that was already under way when the port was handed over
@@ -154,12 +164,25 @@ class Batch:
 
 # ── the tick's result ────────────────────────────────────────────────────────
 
+def _writes(command) -> bool:
+    """True if this command puts anything on the wire that changes the
+    controller: a Write, or a Batch holding one at any depth."""
+    if isinstance(command, Write):
+        return True
+    if isinstance(command, Batch):
+        return any(_writes(item) for item in command.items)
+    return False
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """One board-tick scan, applied on the main thread by Board._apply_snapshot.
 
     seq          increments per scan.
     generation   the link generation the scan ran under.
+    write_epoch  the write epoch the scan ran under. Behind the owner's at
+                 apply means a write landed after this scan was taken, so it
+                 describes a machine the UI has already changed.
     t_acq        time.monotonic() just after the tick read returned, which is
                  when its last reply byte arrived; None when nothing was read.
     port_open    False when there was no port to read (it would not open).
@@ -171,6 +194,7 @@ class Snapshot:
     """
     seq: int
     generation: int
+    write_epoch: int
     t_acq: float | None
     port_open: bool
     ok_fast: bool
@@ -192,6 +216,8 @@ class PortOwner:
         # The Global device whose read_tick() is the scan. Set by Board.
         self.scan_device = None
         self.generation = 0
+        # Bumped by every Write that reaches the wire. See the module docstring.
+        self.write_epoch = 0
         self.paused = False
         self._seq = 0
         self.next_scan_at = 0.0
@@ -247,12 +273,21 @@ class PortOwner:
     def _execute(self, command, future: Future) -> None:
         if not future.set_running_or_notify_cancel():
             return
+        # Decided BEFORE the attempt, so the bump below cannot be skipped by an
+        # exception on a path that has already touched the wire.
+        changes_the_controller = _writes(command)
         try:
             result = command.execute(self._cm)
         except Exception as e:
             future.set_exception(e)
         else:
             future.set_result(result)
+        finally:
+            # Bumped even when the command raised: a write that failed may
+            # still have reached the controller, so a snapshot older than it
+            # is no more trustworthy than one older than a write that worked.
+            if changes_the_controller:
+                self.write_epoch += 1
 
     # ── the loop body ────────────────────────────────────────────────────
 
@@ -374,6 +409,7 @@ class PortOwner:
         return Snapshot(
             seq=self._seq,
             generation=self.generation,
+            write_epoch=self.write_epoch,
             t_acq=t_acq,
             port_open=port_open,
             ok_fast=fast_data is not None,

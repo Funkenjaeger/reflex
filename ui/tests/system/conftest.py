@@ -282,6 +282,27 @@ def harness(emulator_process, tmp_path, monkeypatch):
     h.disconnect()
 
 
+@pytest.fixture
+def threaded_harness(emulator_process, tmp_path, monkeypatch):
+    """A connected SystemHarness with the Modbus scan on the port owner's
+    thread, as the running app has it.
+
+    Deliberately NOT the default: the rest of the system suite relies on one
+    pump() being exactly one tick, and the synchronous seam is what gives it
+    that. This fixture exists for the handful of cases whose whole subject is
+    the threading -- see tests/system/test_els_threaded_io.py.
+    """
+    from tests.system.harness import SystemHarness
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    proc, pty_path = emulator_process
+    h = SystemHarness(pty_path, proc=proc)
+    h.connect(threaded=True)
+    yield h
+    h.disconnect()
+
+
 @pytest.fixture  # parametrized indirectly by pytest_generate_tests (16 wiring perms)
 def wiring_cut_harness(request, emulator_binary, tmp_path, monkeypatch):
     """Parametrized over all 16 physical-wiring permutations: launches an
