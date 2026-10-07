@@ -20,7 +20,12 @@
   Label:
     size_hint_y: 0.7
     font_name: app.theme.font_seg
-    font_size: self.height / 3
+    # Capped by width as well as height: the box is square (width == the row
+    # height) and a signed 4-decimal inch value ("-12.3456") is wider than a
+    # box sized from height alone. DSEG7 advances 0.8 em per digit/sign and
+    # draws the decimal point inside the digit cell, so a value of N chars with
+    # one point is 0.8 * (N - 1) em wide; 8 dp keeps it off the recess edge.
+    font_size: min(self.height / 3, (self.width - dp(8)) / (0.8 * max(len(self.text) - 1, 1)))
     text: root.display_value
     color: app.formats.display_color
     halign: "center"
