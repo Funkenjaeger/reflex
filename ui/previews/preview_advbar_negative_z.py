@@ -102,8 +102,20 @@ def _settle(n=6):
         EventLoop.idle()
 
 
+def _find(pred, root=None):
+    root = root or app.root
+    if pred(root):
+        return root
+    for child in root.children:
+        got = _find(pred, child)
+        if got is not None:
+            return got
+    return None
+
+
 def _bar():
-    return app.manager.get_screen("home").els_bar.ids.get("advanced_bar")
+    return app.manager.get_screen("home").els_bar.ids.get("advanced_bar") \
+        or _find(lambda w: type(w).__name__ == "ElsAdvancedBar")
 
 
 def _value_label(btn):
@@ -128,6 +140,7 @@ def _measure(tag):
 def _capture(_dt):
     try:
         bar = _bar()
+        assert bar is not None, "ElsAdvancedBar is not mounted"
         bar.enable_wizard = False
         bar.enable_retract = True
         _settle()
