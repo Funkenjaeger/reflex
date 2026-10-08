@@ -314,6 +314,46 @@ WIZARD_STEPS = [
 ]
 
 
+def _press_sync_enable(uic):
+    """Turn Sync Enable on the way the button does: app.on_servo_enable_pressed.
+
+    ui_controller replaces the waiting_to_cut prompt with "Turn Sync Enable on,
+    then Cut" while the servo is not armed (the sync-before-cut gate), so the
+    last wizard frame only shows its own prompt once sync is on. The press goes
+    through the real handler (and its confirm branch); the one thing posed is board.connected, because
+    ServoDispatcher.toggle_enable refuses (and leaves servoMode 0) on a board
+    that is not connected, and there is no board in this run.
+    """
+    app.board.connected = True
+    app.on_servo_enable_pressed()
+    if not uic.is_feeding:
+        # No armed ELS stop in this run, so the button opens its "No ELS Stop
+        # Armed" confirm popup instead of enabling. Close it and take its
+        # "Enable Feed" branch, the callback it was built with.
+        from kivy.core.window import Window
+        from kivy.uix.modalview import ModalView
+        for w in list(Window.children):
+            if isinstance(w, ModalView):
+                w.dismiss(animation=False)
+        uic.request_feed_enable(confirmed=True)
+    _settle()
+    assert uic.is_feeding, (
+        "Sync Enable press did not arm sync (servoMode still 0) -- the "
+        "waiting_to_cut frame would carry the sync-off prompt")
+
+
+def _print_stopretract_boxes(bar):
+    """Print and require the Stop Z / Start Z box text, so a "--" cannot ship."""
+    texts = {}
+    for hdr in ("Stop Z", "Start Z"):
+        w = _find(lambda w, h=hdr: getattr(w, "text_header", None) == h)
+        assert w is not None, f"cannot find the {hdr} box"
+        texts[hdr] = w.text_button
+        print(f"  {hdr} box text: {w.text_button!r}")
+    assert all(t not in ("--", "") for t in texts.values()), (
+        f"stop+retract frame still shows unset values: {texts}")
+
+
 def _capture_wizard(bar):
     """Walk the wizard and photograph each step.
 
@@ -339,6 +379,8 @@ def _capture_wizard(bar):
     _settle()
 
     for name, want_state, gate in WIZARD_STEPS:
+        if want_state == "in_cycle.waiting_to_cut":
+            _press_sync_enable(uic)
         assert fsm.state == want_state, (
             f"{name}: wizard is in {fsm.state!r}, not {want_state!r} -- the "
             f"frame would carry another step's instruction under this "
@@ -412,6 +454,14 @@ def _capture(_dt):
         app.formats.theme = "dark"
         _settle()
         _set_mode(bar, wizard=False, retract=True)
+        # Real values in the stop + retract boxes, not "--": committed through
+        # the same path the wizard and keypad use. Both negative (the case the
+        # boxes once overflowed on). Start Z must differ from Stop Z by the
+        # safety margin or it validates False and still shows "--".
+        app.els_uic.commit_standalone_stop_z(-12.3456)
+        app.els_uic.commit_standalone_retract_z(-2.0)
+        _settle()
+        _print_stopretract_boxes(bar)
         _shot("home_els_stopretract")
 
         _capture_wizard(bar)
