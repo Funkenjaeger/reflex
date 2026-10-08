@@ -1,14 +1,59 @@
 import copy
+import errno
 import inspect
+import os
+import select
 import time
 from typing import Optional
 
 import minimalmodbus
+import serial
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
 
 _ERROR_REPEAT_INTERVAL_S = 10.0        # first repeat of a persisting error
 _ERROR_REPEAT_INTERVAL_MAX_S = 600.0   # backoff cap: one line per 10 min while stuck
+
+
+def _write_waiting_only_for_the_port(port):
+    """A replacement for `port.write` whose timeout covers only the wait for
+    the port to accept bytes.
+
+    pyserial 3.5's posix write starts its timer before os.write() and checks it
+    again AFTER the frame has been handed to the kernel. os.write() releases the
+    GIL; if another thread then holds it for longer than write_timeout (one long
+    C call: the 1 ms switch interval cannot preempt it), the writer gets the GIL
+    back late and pyserial raises 'Write timeout' for a frame that was sent.
+    With writes queued from the UI thread and executed on the port owner's
+    thread, that is a link reset on a healthy link, and an arming batch read as
+    refused when it was not.
+
+    Here the timeout is applied only to select(): a frame that the port accepts
+    is never failed, and a port that stops draining still raises within
+    write_timeout, as before.
+    """
+    def write(data):
+        if not port.is_open:
+            raise serial.PortNotOpenError()
+        remaining = memoryview(bytes(data))
+        total = len(remaining)
+        while remaining:
+            try:
+                n = os.write(port.fd, remaining)
+            except BlockingIOError:
+                n = 0
+            except OSError as e:
+                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    n = 0
+                else:
+                    raise serial.SerialException(f"write failed: {e}") from e
+            remaining = remaining[n:]
+            if remaining:
+                _, ready, _ = select.select([], [port.fd], [], port.write_timeout)
+                if not ready:
+                    raise serial.SerialTimeoutException("Write timeout")
+        return total
+    return write
 
 
 class ConnectionManager:
@@ -130,6 +175,11 @@ class ConnectionManager:
             self.device.serial.timeout = 0.1
             self.device.serial.write_timeout = 0.1
             self.device.serial.baudrate = self.baudrate
+            # Only a real posix port has an fd to wait on; the doubles the
+            # suite uses do not, and keep their own write.
+            if getattr(self.device.serial, "fd", None) is not None:
+                self.device.serial.write = _write_waiting_only_for_the_port(
+                    self.device.serial)
         except Exception as e:
             self.device = None
             self.connected = False
