@@ -174,7 +174,7 @@ def test_on_enter_disabled_writes_set_enable_false():
     fsm.disable()   # stopped → disabled (fires on_enter_disabled)
     # The disengage is ONE BATCH now (every syncEnable, then enable), so what
     # is asserted is that it was built and put on the wire -- the order inside
-    # it is ElsStopHal.disengage_batch's contract and is tested there.
+    # it is ElsStopRegisters.disengage_batch's contract and is tested there.
     hal.disengage.assert_called_once_with()
 
 
@@ -391,7 +391,7 @@ def test_on_enter_cutting_arms_and_writes_thread_geometry():
     assert fsm.state == "cutting"
     # The arming writes are ONE BATCH now, so the assertion is on the numbers
     # it carries rather than on which setter was called. stopPosition and
-    # enable are in there too, by construction -- see ElsStopHal.arming_batch.
+    # enable are in there too, by construction -- see ElsStopRegisters.arming_batch.
     armed = hal.arm.call_args.kwargs
     assert armed["scale_index"] == z_inp.inputIndex
     assert armed["backlash_steps"] == 42

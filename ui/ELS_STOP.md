@@ -22,13 +22,13 @@ The re-sync correction needs the sync ratio (encoder counts per leadscrew step),
 | Concern | File |
 |---|---|
 | FSM states (`disabled`, `stopped`, `cutting`, `retracting`, `alarm`) and their `on_enter_*` register writes | [`reflex/fsms/els_fsm.py`](reflex/fsms/els_fsm.py) |
-| Hardware-abstracted register access (`set_active`, `set_enable`, `set_stop_position`, etc.) | [`reflex/fsms/els_stop_hal.py`](reflex/fsms/els_stop_hal.py) |
+| ELS stop register facade (`set_active`, `set_enable`, `set_stop_position`, etc.) | [`reflex/fsms/els_stop_registers.py`](reflex/fsms/els_stop_registers.py) |
 | Wizard state machine (configuration sequence, then cycle loop) | [`reflex/fsms/ui_fsm.py`](reflex/fsms/ui_fsm.py) |
 | User-facing controller that wires the wizard, the ELS FSM, and the UI together | [`reflex/fsms/ui_controller.py`](reflex/fsms/ui_controller.py) |
 | Thread-geometry computation and unit conversions | [`reflex/dispatchers/els.py`](reflex/dispatchers/els.py) |
 | Advanced settings (backlash, hysteresis, direction modes) | [`reflex/components/home/els_advbar.py`](reflex/components/home/els_advbar.py), [`els_settings_popup.py`](reflex/components/home/els_settings_popup.py) |
 
-The layered architecture these files implement (UI → Controller → FSM → HAL → firmware registers) is in [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md).
+The layered architecture these files implement (UI → Controller → FSM → register facade → PortOwner → firmware registers) is in [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md).
 
 ## Backlash calibration (Python side)
 

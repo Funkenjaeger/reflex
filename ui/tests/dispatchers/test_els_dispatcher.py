@@ -4,7 +4,7 @@ Sync follows the SYNC-FEED mode, not "any mode" (review 2026-08-16, F5/F6):
 
   * servoMode == 1 (sync feed)  -> arm the SPINDLE scale's syncEnable, only.
   * servoMode == anything else  -> clear syncEnable on ALL scales, the
-    els_stop_hal.stop_sync shape. 2 is jog, 0 is off; neither is a reason for
+    els_stop_registers.stop_sync shape. 2 is jog, 0 is off; neither is a reason for
     any scale to keep feeding the firmware's `anySyncMotionEnabled` term, and
     toggle_sync (Jog/Index coordbars) can have armed a NON-spindle scale that
     must not survive into a feed stop.

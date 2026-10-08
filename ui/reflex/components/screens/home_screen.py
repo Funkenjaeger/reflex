@@ -81,7 +81,7 @@ class HomePage(Screen):
         # dispatchers/els.py firing as a side effect -- teardown inherited
         # from binding order in another module, the exact shape the FSM paths
         # were purged of (see the SYNC OFF FIRST comments in fsms/els_fsm.py
-        # and els_stop_hal.stop_sync for the firmware re-assert race this
+        # and els_stop_registers.stop_sync for the firmware re-assert race this
         # guards against). A mode switch must kill every motion source even
         # if that binding is gone or servoMode is already 0 (a same-value
         # write fires no binding at all).

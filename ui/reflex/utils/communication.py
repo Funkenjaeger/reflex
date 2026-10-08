@@ -113,7 +113,7 @@ class ConnectionManager:
         #
         #   * a read that raised -- checksum, timeout, short frame (below);
         #   * a read attempted with no link at all, which the HAL
-        #     short-circuits to a zero (els_stop_hal.py).
+        #     short-circuits to a zero (els_stop_registers.py).
         #
         # The second door is why this counter exists in its current form: it
         # was originally incremented only on the first, so a DISCONNECT

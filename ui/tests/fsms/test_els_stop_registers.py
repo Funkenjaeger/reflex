@@ -1,4 +1,4 @@
-"""Tests for ElsStopHal — the firmware HAL boundary used by the ELS FSM.
+"""Tests for ElsStopRegisters — the firmware HAL boundary used by the ELS FSM.
 
 The HAL is a thin shim over `board.device[...]`; we mock the board and
 assert that each HAL method touches the right register key with the
@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_stop_registers import ElsStopRegisters
 
 
 class _CountingCM:
@@ -65,7 +65,7 @@ def _make_board(connected=True, **registers):
 def test_is_move_done_false_when_steps_to_go_nonzero():
     board = _make_board(servo={'stepsToGo': 100,
                                'desiredSteps': 0, 'currentSteps': 0})
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     assert hal.is_move_done() is False
 
 
@@ -76,14 +76,14 @@ def test_is_move_done_false_when_pulses_still_in_flight():
     re-issue a retract on top of pending pulses → physical overshoot."""
     board = _make_board(servo={'stepsToGo': 0,
                                'desiredSteps': 1512, 'currentSteps': 1094})
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     assert hal.is_move_done() is False
 
 
 def test_is_move_done_true_when_planner_done_and_pulses_flushed():
     board = _make_board(servo={'stepsToGo': 0,
                                'desiredSteps': 1512, 'currentSteps': 1512})
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     assert hal.is_move_done() is True
 
 
@@ -91,14 +91,14 @@ def test_is_move_done_false_when_board_disconnected():
     board = _make_board(connected=False,
                         servo={'stepsToGo': 0,
                                'desiredSteps': 100, 'currentSteps': 100})
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     assert hal.is_move_done() is False
 
 
 def test_is_move_done_true_at_rest():
     board = _make_board(servo={'stepsToGo': 0,
                                'desiredSteps': 0, 'currentSteps': 0})
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     assert hal.is_move_done() is True
 
 
@@ -144,13 +144,13 @@ def _hal_with_timeouts(fabricate, **servo):
     board.connection_manager = cm
     board._blocks['servo'] = _FabricatingBlock(
         cm, board._blocks['servo'], fabricate)
-    return ElsStopHal(board)
+    return ElsStopRegisters(board)
 
 
 def _healthy_counting_hal(**servo):
     board = _make_board(connected=True, servo=servo)
     board.connection_manager = _CountingCM()
-    return ElsStopHal(board)
+    return ElsStopRegisters(board)
 
 
 def test_is_move_done_false_when_every_read_times_out():
@@ -221,7 +221,7 @@ def test_is_move_done_false_for_a_real_in_flight_move_that_read_cleanly():
 
 def test_set_enable_writes_register():
     board = _make_board()
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     hal.set_enable(True)
     assert board._blocks['elsStop']['enable'] == 1
     hal.set_enable(False)
@@ -230,14 +230,14 @@ def test_set_enable_writes_register():
 
 def test_set_steps_to_go_writes_register():
     board = _make_board()
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     hal.set_steps_to_go(-1512)
     assert board._blocks['servo']['stepsToGo'] == -1512
 
 
 def test_set_active_skipped_when_disconnected():
     board = _make_board(connected=False)
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     hal.set_active(True)
     # Mock will still allow assignment to a returned dict, but we wired
     # the board path through .connected; verify the dict was untouched.
@@ -246,13 +246,13 @@ def test_set_active_skipped_when_disconnected():
 
 def test_read_active_false_when_disconnected():
     board = _make_board(connected=False, elsStop={'active': 1})
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     assert hal.read_active() is False
 
 
 def test_read_active_reflects_register():
     board = _make_board(elsStop={'active': 1})
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     assert hal.read_active() is True
     board._blocks['elsStop']['active'] = 0
     assert hal.read_active() is False
@@ -260,7 +260,7 @@ def test_read_active_reflects_register():
 
 def test_set_hysteresis_tight_vs_loose():
     board = _make_board()
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     hal.set_hysteresis_tight()
     assert board._blocks['elsStop']['hysteresis'] == 0
     hal.set_hysteresis_loose()
@@ -277,20 +277,20 @@ def test_set_hysteresis_tight_vs_loose():
 # "take-up CONFIRMED" that clears a live refusal was reachable that way on any
 # disconnect, which on this machine is routine: flashing requires one.
 #
-# These drive the REAL ElsStopHal. Everything else in this area uses a fake,
+# These drive the REAL ElsStopRegisters. Everything else in this area uses a fake,
 # and mutations to the production helper survived the entire suite until this
 # section existed.
 
 def _disconnected_hal():
     board = _make_board(connected=False)
     board.connection_manager = _CountingCM()
-    return ElsStopHal(board)
+    return ElsStopRegisters(board)
 
 
 def _connected_hal():
     board = _make_board(connected=True)
     board.connection_manager = _CountingCM()
-    return ElsStopHal(board)
+    return ElsStopRegisters(board)
 
 
 NO_LINK_READS = [

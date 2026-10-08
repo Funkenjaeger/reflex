@@ -8,7 +8,7 @@ from kivy.logger import Logger
 from reflex.dispatchers import els, board
 from reflex.fsms.ui_fsm import ElsUiFsm
 from reflex.fsms.els_fsm import ElsFsm
-from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_stop_registers import ElsStopRegisters
 from reflex.fsms.els_diag import ElsDiagRecorder
 from reflex.fsms.els_flight_recorder import FlightRecorder
 from reflex.fsms.els_phase_recorder import (
@@ -310,7 +310,7 @@ class ElsUiController(EventDispatcher):
         super().__init__(**kw)
         self._els = els
         self._board = board
-        self._hal = ElsStopHal(board)
+        self._hal = ElsStopRegisters(board)
         self._diag_recorder = ElsDiagRecorder(self._hal, board)
         self._phase_recorder = PhaseCorrectionRecorder(board)
         self._phase_tracker = PhaseLiveTracker(board)
@@ -1087,7 +1087,7 @@ class ElsUiController(EventDispatcher):
         # Bound to board.update_tick. Kivy property writes from the polling
         # thread are an existing project-wide pattern; matching that here.
         #
-        # Served from the tick snapshot (see ElsStopHal.TickReads): the domain
+        # Served from the tick snapshot (see ElsStopRegisters.TickReads): the domain
         # FSM's _on_board_update wants the same register on the same tick, and
         # before the snapshot the two spent an exchange each — and could
         # disagree, having read the register a few milliseconds apart.
@@ -2102,7 +2102,7 @@ class ElsUiController(EventDispatcher):
             # don't toggle it off just because it was enabled meanwhile).
             if not confirmed:
                 # CLEAR SYNC FIRST, THEN DROP THE MODE. This ordering is the
-                # whole fix, and it is not new: ElsStopHal.stop_sync's docstring
+                # whole fix, and it is not new: ElsStopRegisters.stop_sync's docstring
                 # spells out the race, and on_enter_disabled and on_enter_alarm
                 # both already do it. THIS BUTTON WAS THE THIRD CALL SITE AND
                 # NEVER GOT IT.

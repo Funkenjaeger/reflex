@@ -140,7 +140,7 @@ def _address(device, field):
 def run_session(tmp_path, monkeypatch):
     """The scripted session. Returns the combined record."""
     from reflex.dispatchers.board import Board
-    from reflex.fsms.els_stop_hal import ElsStopHal
+    from reflex.fsms.els_stop_registers import ElsStopRegisters
     from reflex.utils import communication
     from reflex.utils.communication import ConnectionManager
     from reflex.utils.devices import ELS_PROTOCOL_VERSION
@@ -173,7 +173,7 @@ def run_session(tmp_path, monkeypatch):
 
             board = Board(formats=MockFormats(), offset_provider=MockOffsetProvider())
             cm = board.connection_manager
-            hal = ElsStopHal(board)
+            hal = ElsStopRegisters(board)
 
             def state(step):
                 record.append((

@@ -207,7 +207,7 @@ deleted and never reissued.
 Read [kivy-fsm-design-pattern.md](kivy-fsm-design-pattern.md) before adding or
 refactoring `transitions`-based FSMs, dispatchers that mediate between widgets and
 hardware, or multi-step operator flows. It defines the layered architecture
-(UI → Controller → FSM → HAL), event bus conventions, the declarative state-to-UI
+(UI → Controller → FSM → register facade → PortOwner → firmware registers), event bus conventions, the declarative state-to-UI
 policy table, and anti-patterns to avoid.
 
 ## Build and Run

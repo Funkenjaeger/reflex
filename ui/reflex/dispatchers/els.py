@@ -216,7 +216,7 @@ class ElsDispatcher(SavingDispatcher):
         flip the feed on by itself the moment jog ends (review 2026-08-16, F5).
 
         And when the mode leaves 1, clear syncEnable on ALL scales — the
-        els_stop_hal.stop_sync shape — not just the spindle's. toggle_sync
+        els_stop_registers.stop_sync shape — not just the spindle's. toggle_sync
         (dispatchers/axis.py, reachable from the Jog/Index coordbars) can arm
         any axis's scale, and a non-spindle scale left armed across a feed
         stop is the same firmware re-assert hazard on a different register.

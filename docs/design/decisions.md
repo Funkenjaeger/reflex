@@ -6,6 +6,7 @@ alternatives that were rejected.
 - [One repository for firmware and UI](#one-repository-for-firmware-and-ui)
 - [One register map for bootloader and application](#one-register-map-for-bootloader-and-application)
 - [Stop overshoot correction](#stop-overshoot-correction)
+- [PortOwner is the hardware seam](#portowner-is-the-hardware-seam)
 
 ## One repository for firmware and UI
 
@@ -164,3 +165,33 @@ see, so a moved lever silently doubled or halved every feed and thread pitch.
 - In thread mode the phase correction runs before the check can read, so the
   first pass after a lever move cuts briefly at the wrong pitch before the
   check stops it.
+
+## PortOwner is the hardware seam
+
+### Context
+
+The ELS stop state machines reached the firmware through a class named
+`ElsStopHal`, which read as the hardware abstraction layer. It was not: it
+covered one register block, and the servo, axis and input dispatchers wrote
+their registers without passing through it. The name promised an invariant
+point that did not exist.
+
+### Decision
+
+`PortOwner` (`ui/reflex/utils/port_owner.py`) is the hardware seam. Servo, axis
+and input writes stay as they are and are not moved behind typed facades. The
+class was renamed `ElsStopRegisters`, the ELS stop register facade, after the
+register-block device class `ElsStop`. No behavior changed.
+
+### Why
+
+- Every exchange already funnels through `PortOwner`, and the wire-trace test
+  pins that, so the invariants have one home.
+- Rejected: per-device typed facades. They would add a layer per register block
+  with nothing to enforce that `PortOwner` does not already enforce.
+- Rejected: keeping the name and documenting it. The name was the defect.
+
+### Consequences
+
+Dispatchers other than the ELS stop code write through `PortOwner` directly, and
+a new invariant belongs in `PortOwner`, not in a facade.

@@ -365,7 +365,7 @@ class OffsetHold:
 
 class StopOffsetCorrector:
     """Per-tick glue: Z positions -> rate window -> offset -> hold -> limiter
-    -> ElsStopHal.
+    -> ElsStopRegisters.
 
     Duck-typed so it stays Kivy-free and testable: `hal` needs
     set_stop_offset(int) and `.tick` (TickReads: enable(), active(),

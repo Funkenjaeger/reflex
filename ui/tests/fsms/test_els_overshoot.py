@@ -705,14 +705,14 @@ class _Recording(dict):
 
 
 def test_hal_set_stop_offset_writes_only_stopOffset():
-    from reflex.fsms.els_stop_hal import ElsStopHal
+    from reflex.fsms.els_stop_registers import ElsStopRegisters
     els = _Recording()
     board = SimpleNamespace(connected=True, device={"elsStop": els},
                             els_stop_values={"enable": 1, "active": 0,
                                              "scaleIndex": 1},
                             fast_data_values={"scaleCurrent": [0, 0, 0, 0]},
                             connection_manager=SimpleNamespace(connected=True))
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     clk = _Clock()
     cor = StopOffsetCorrector(hal, board, enabled=lambda: True, margin=lambda: 1,
                               notify=lambda _m: None,
@@ -726,9 +726,9 @@ def test_hal_set_stop_offset_writes_only_stopOffset():
 
 
 def test_hal_set_stop_offset_is_silent_when_disconnected():
-    from reflex.fsms.els_stop_hal import ElsStopHal
+    from reflex.fsms.els_stop_registers import ElsStopRegisters
     els = _Recording()
-    hal = ElsStopHal(SimpleNamespace(connected=False, device={"elsStop": els}))
+    hal = ElsStopRegisters(SimpleNamespace(connected=False, device={"elsStop": els}))
     hal.set_stop_offset(12)
     assert els.assignments == []
 

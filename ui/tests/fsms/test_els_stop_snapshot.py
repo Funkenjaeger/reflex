@@ -15,7 +15,7 @@ Two changes collapsed that traffic, and this file pins both:
     instead of going to the wire per field.
 
 THE PART THAT NEEDED THE MOST CARE is not the saving, it is the failure.
-``ElsStopHal`` gained ``reads_baseline()`` / ``reads_fabricated_since()`` on
+``ElsStopRegisters`` gained ``reads_baseline()`` / ``reads_fabricated_since()`` on
 2026-08-23, and several pollers discard a whole poll rather than act on a value
 that might be fabricated -- because in this register map 0 is never neutral: it
 reads as "not enabled", "no offset", "sequence reset". A snapshot that quietly
@@ -36,7 +36,7 @@ import pytest
 from kivy.event import EventDispatcher
 
 from reflex.dispatchers.board import Board
-from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_stop_registers import ElsStopRegisters
 from reflex.utils.base_device import BaseDevice
 from reflex.utils.communication import ConnectionManager
 
@@ -165,7 +165,7 @@ def _board(*, els_values=None):
 
 
 class HalBoard:
-    """The two attributes ElsStopHal reads a board through."""
+    """The two attributes ElsStopRegisters reads a board through."""
 
     def __init__(self, device, connection_manager, snapshot=None, connected=True):
         self.device = device
@@ -181,7 +181,7 @@ def _hal(snapshot=None, live=None, connected=True):
     device = FakeDevice(elsStop=els)
     cm = FakeConnectionManager(device=device)
     board = HalBoard(device, cm, snapshot=snapshot, connected=connected)
-    return ElsStopHal(board), board, els
+    return ElsStopRegisters(board), board, els
 
 
 # ─── 1. chunking ──────────────────────────────────────────────────────────

@@ -1,8 +1,11 @@
-"""Hardware abstraction layer for the elsStop register block.
+"""Domain facade over the elsStop register block.
 
-The HAL is the single place that knows about firmware register names and
-encoding. Methods are named in domain terms; callers (the FSM) never see
-register keys. Replacing the firmware protocol means writing one new HAL.
+This is the ELS stop register facade, not the hardware seam. The seam is
+PortOwner (utils/port_owner.py), which every exchange goes through. This
+module is the one place the ELS state machines look to for elsStop register
+names and encoding: methods are named in domain terms and callers never see
+register keys. The servo, axis and input dispatchers write their own
+registers through PortOwner directly, by design.
 """
 from reflex.utils.base_device import write_command, write_confirmed
 from reflex.utils.port_owner import Batch, PortOwner
@@ -14,7 +17,7 @@ log = Logger.getChild(__name__)
 class TickReads:
     """elsStop values served from THIS BOARD TICK's snapshot, not from the wire.
 
-    WHAT THIS IS FOR, and the line it draws. Every read on ElsStopHal below is
+    WHAT THIS IS FOR, and the line it draws. Every read on ElsStopRegisters below is
     live: ``device['elsStop']['active']`` is a Modbus exchange, not a cache
     lookup. That is correct for an on-demand read — an apply, a wizard step, a
     calibration run — where the operator has just acted and the answer must
@@ -32,12 +35,12 @@ class TickReads:
 
     FABRICATION IS REPORTED THE SAME WAY IT ALWAYS WAS. When the board holds no
     snapshot — the refresh failed, or the link is down — these return the same
-    fallbacks the live readers return, through the same ElsStopHal._no_link, so
+    fallbacks the live readers return, through the same ElsStopRegisters._no_link, so
     reads_baseline()/reads_fabricated_since() keep working for the callers that
     discard a poll rather than act on a value they cannot trust.
     """
 
-    def __init__(self, hal: "ElsStopHal"):
+    def __init__(self, hal: "ElsStopRegisters"):
         self._hal = hal
 
     def _get(self, key, fallback):
@@ -103,12 +106,13 @@ class TickReads:
         return int(self._get('scaleIndex', 0))
 
 
-class ElsStopHal:
-    """A DOMAIN FACADE OVER THE elsStop BLOCK -- not the hardware seam, despite
-    the name. That is utils/port_owner.py, which every exchange in the
-    application actually goes through; the servo, axis and input
-    dispatchers write their registers without coming anywhere near here,
-    so no invariant can be enforced at this layer. What this class is for
+class ElsStopRegisters:
+    """THE ELS STOP REGISTER FACADE: a domain facade over the elsStop block,
+    not the hardware seam. The seam is PortOwner (utils/port_owner.py), which
+    every exchange in the application goes through; the servo, axis and input
+    dispatchers write their registers through it directly, by design, and
+    never come here, so no invariant can be enforced at this layer. What this
+    class is for
     is giving the ELS state machines verbs in their own vocabulary --
     arm, disengage, set the stop -- instead of register names.
 

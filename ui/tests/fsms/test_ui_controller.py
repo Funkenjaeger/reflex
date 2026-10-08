@@ -107,7 +107,7 @@ def _make_collaborators(*, z_axis=None, x_axis=None, connected=False):
     board = MagicMock()
     board.connected = connected
     # A REAL dict, for the same reason FakeConnectionManager is a real object.
-    # This is the board's once-per-tick elsStop snapshot, and ElsStopHal.TickReads
+    # This is the board's once-per-tick elsStop snapshot, and ElsStopRegisters.TickReads
     # treats an empty one as "no snapshot -> fabricated read". Left as a MagicMock
     # attribute it would be truthy and would hand every snapshot read a Mock, so
     # a poller under test would interpret a Mock as a register value and the test
@@ -1185,7 +1185,7 @@ def test_unarmed_stop_message_names_the_actual_cause():
 # THE MECHANISM: servoEnableTask re-asserts servoMode = 1 every 100 ms while
 # ANY scale still has syncEnable set and elsStop.active is 0 -- and during a cut
 # active IS 0. Dropping servoMode alone hands the firmware a window to switch
-# the feed straight back on. ElsStopHal.stop_sync exists precisely to close it,
+# the feed straight back on. ElsStopRegisters.stop_sync exists precisely to close it,
 # and on_enter_disabled / on_enter_alarm both already use it. This button was
 # the third call site and never did.
 

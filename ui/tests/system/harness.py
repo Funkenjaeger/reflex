@@ -1,7 +1,7 @@
 """Minimal real object-graph harness for emulator-backed system tests (Task 5).
 
 Builds the REAL reflex-ui dispatcher + FSM stack -- Board, ServoDispatcher,
-InputDispatchers, ElsDispatcher, ElsStopHal, ElsFsm, ElsUiFsm, ElsUiController --
+InputDispatchers, ElsDispatcher, ElsStopRegisters, ElsFsm, ElsUiFsm, ElsUiController --
 wired to the running emulator over its PTY Modbus link, with NO Kivy App/UI and
 NO mocks of the code under test.
 

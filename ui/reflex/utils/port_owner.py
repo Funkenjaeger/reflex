@@ -9,12 +9,12 @@ order, a batch that is never split, a per-write acknowledgement, and the
 write epoch that keeps a stale snapshot from being applied over a newer
 command.
 
-fsms/els_stop_hal.py is NOT that layer, whatever its name suggests: it is a
-domain facade over the elsStop block. Most of the register writes in this
-application never pass through it (the servo, axis and input dispatchers
-write their own), so it cannot carry an invariant and nothing should be
-built on the assumption that it does. Open Loops has the question of what
-to do about that; the answer is not to put transport back into it.
+fsms/els_stop_registers.py is NOT that layer: it is a domain facade over the
+elsStop block. PortOwner is the hardware seam, and the other dispatchers
+(servo, axis, input) write through it directly by design; their writes are
+not moved behind typed per-device facades. The facade cannot carry an
+invariant, so nothing should be built on the assumption that it does, and
+transport does not go back into it.
 
 WHAT IT OWNS. The ConnectionManager, and through it the minimalmodbus
 Instrument (opening, closing, every exchange), the connection verdict
@@ -405,7 +405,7 @@ class PortOwner:
 
         A SNAPSHOT THAT DID NOT HAPPEN MUST NOT LOOK LIKE ONE THAT DID, which
         is why failure yields an EMPTY dict rather than the last good one.
-        Every reader goes through ElsStopHal's snapshot accessor, which treats
+        Every reader goes through ElsStopRegisters's snapshot accessor, which treats
         an empty dict exactly as it treats a read attempted with no link --
         returning the fallback AND bumping ConnectionManager.read_failures --
         so `reads_fabricated_since()` still tells the acknowledgement pollers to

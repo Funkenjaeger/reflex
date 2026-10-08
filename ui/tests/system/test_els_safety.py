@@ -33,7 +33,7 @@ class _RefusedAck:
 def _refuse_arming_write(harness, index):
     """Let the arming batch go out for real, then refuse the ack at `index`.
 
-    Positions follow ElsStopHal.arming_batch: 0 stopPosition, 1 scaleIndex,
+    Positions follow ElsStopRegisters.arming_batch: 0 stopPosition, 1 scaleIndex,
     2 threadPitchSteps, 3 zCountsPerPitch, 4 backlashSteps, 5 enable.
     """
     original = harness.hal.arm

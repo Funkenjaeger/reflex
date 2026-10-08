@@ -7,7 +7,7 @@ from reflex.fsms.els_gear import (
     REFERENCE_GEAR, gear_factor, steps_in_gear, worst_case_travel_factor,
 )
 from reflex.fsms.els_mode_watch import mode_name
-from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_stop_registers import ElsStopRegisters
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
 from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
 
@@ -81,7 +81,7 @@ class ElsFsm:
         {'trigger': 'fault', 'source': '*', 'dest': 'alarm'},
     ]
 
-    def __init__(self, els: els, board: board, hal: ElsStopHal, controller,
+    def __init__(self, els: els, board: board, hal: ElsStopRegisters, controller,
                  diag_recorder=None):
         self.els = els
         self.board = board
@@ -1020,7 +1020,7 @@ class ElsFsm:
         return self.hal.read_phase_offset_steps()
 
     def reads_baseline(self) -> int:
-        """Snapshot for detecting fabricated reads; see ElsStopHal."""
+        """Snapshot for detecting fabricated reads; see ElsStopRegisters."""
         return self.hal.reads_baseline()
 
     def reads_fabricated_since(self, baseline: int) -> bool:
