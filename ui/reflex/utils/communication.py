@@ -56,6 +56,46 @@ def _write_waiting_only_for_the_port(port):
     return write
 
 
+def _read_timing_only_silence(port):
+    """A replacement for `port.read` whose timeout is silence on the port.
+
+    The read twin of _write_waiting_only_for_the_port. pyserial 3.5's posix
+    read checks its overall timer after every os.read(), and os.read() releases
+    the GIL: a reader that gets the GIL back late returns whatever it had,
+    though the rest of the frame is already waiting in the kernel. On the lathe
+    that was a 177-byte tick reply cut to 112 bytes, a checksum error, and a
+    link reset, at start-up while the UI thread built its screens.
+
+    Here a read ends only when it has `size` bytes or the port has been silent
+    for a whole `timeout`: a frame that is arriving or has arrived is always
+    read in full, and a controller that does not answer still gives up after
+    `timeout`, as before.
+    """
+    def read(size=1):
+        if not port.is_open:
+            raise serial.PortNotOpenError()
+        got = bytearray()
+        while len(got) < size:
+            ready, _, _ = select.select([port.fd], [], [], port.timeout)
+            if not ready:
+                break
+            try:
+                buf = os.read(port.fd, size - len(got))
+            except BlockingIOError:
+                continue
+            except OSError as e:
+                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINTR):
+                    continue
+                raise serial.SerialException(f"read failed: {e}") from e
+            if not buf:
+                raise serial.SerialException(
+                    "device reports readiness to read but returned no data "
+                    "(device disconnected or multiple access on port?)")
+            got.extend(buf)
+        return bytes(got)
+    return read
+
+
 class ConnectionManager:
     def __init__(
         self, serial_device="/dev/ttyUSB0", baudrate=115200, address=17, debug=False
@@ -179,6 +219,8 @@ class ConnectionManager:
             # suite uses do not, and keep their own write.
             if getattr(self.device.serial, "fd", None) is not None:
                 self.device.serial.write = _write_waiting_only_for_the_port(
+                    self.device.serial)
+                self.device.serial.read = _read_timing_only_silence(
                     self.device.serial)
         except Exception as e:
             self.device = None

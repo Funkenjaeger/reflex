@@ -110,3 +110,80 @@ def test_a_port_that_stops_draining_still_times_out():
         assert elapsed < 1.0, f"the stalled write took {elapsed:.2f} s to give up"
     finally:
         _close(cm, master, slave)
+
+
+# ── the read twin ────────────────────────────────────────────────────────────
+# pyserial's read checks its timer after every os.read(); a reader that got
+# the GIL back late returned part of a frame that had already arrived (a
+# 177-byte tick reply read as 112 on the lathe). The bytes here come from a
+# separate PROCESS, so they keep arriving while this process's GIL is held.
+
+TICK = bytes(range(177))
+# Each frame in two parts 40 ms apart, as a reply still on the wire is: a
+# reader starved between the parts is the case pyserial gets wrong (its timer
+# runs out while it waits for the GIL, and it returns the first part alone).
+FEEDER = (
+    "import os, sys, time\n"
+    "fd = int(sys.argv[1]); frame = bytes(range(177)); n = int(sys.argv[2])\n"
+    "for _ in range(n):\n"
+    "    os.write(fd, frame[:112]); time.sleep(0.04)\n"
+    "    os.write(fd, frame[112:]); time.sleep(0.26)\n"
+)
+
+
+def _a_list_that_sorts_in(seconds):
+    probe = [random.random() for _ in range(200_000)]
+    t0 = time.monotonic()
+    sorted(probe)
+    per_item = (time.monotonic() - t0) / len(probe)
+    return [random.random() for _ in range(max(200_000, int(seconds / per_item)))]
+
+
+def test_a_frame_that_arrived_is_read_whole_while_another_thread_holds_the_gil():
+    import subprocess
+    cm, master, slave = _connected_pty()
+    port = cm.device.serial
+    frames = 20
+    feeder = subprocess.Popen([sys.executable, "-c", FEEDER, str(master), str(frames)],
+                              pass_fds=(master,))
+    reads, done = [], threading.Event()
+
+    def reader():
+        while len(reads) < frames and not done.is_set():
+            got = port.read(len(TICK))
+            if got:
+                reads.append(got)
+        done.set()
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    big = _a_list_that_sorts_in(0.12)
+    try:
+        deadline = time.monotonic() + 30
+        while not done.is_set() and time.monotonic() < deadline:
+            # Back to back, each one C call holding the GIL ~120 ms: past the
+            # 100 ms timeout, and short enough that the reader, running only at
+            # the switch between two sorts, is often between a frame's parts.
+            sorted(big)
+    finally:
+        done.set()
+        t.join(2)
+        feeder.wait(10)
+        _close(cm, master, slave)
+
+    short = [len(r) for r in reads if r != TICK]
+    assert reads, "the reader never got a byte"
+    assert not short, f"{len(short)} of {len(reads)} reads were not a whole frame: {short[:5]}"
+
+
+def test_a_silent_port_still_gives_up_after_the_timeout():
+    cm, master, slave = _connected_pty()
+    port = cm.device.serial
+    try:
+        t0 = time.monotonic()
+        got = port.read(len(TICK))
+        elapsed = time.monotonic() - t0
+    finally:
+        _close(cm, master, slave)
+    assert got == b""
+    assert 0.08 <= elapsed < 0.5, f"a silent read took {elapsed:.3f} s"
