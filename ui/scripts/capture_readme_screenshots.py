@@ -74,6 +74,56 @@ TARGET_SIZE = [1024, 600]
 FAILED = []
 WROTE = []
 
+
+def _commission_this_machine():
+    """Give the isolated HOME the config directory a commissioned lathe has.
+
+    The UNCOMMISSIONED strip is not a style the capture can switch off: the app
+    asks reflex.utils.commissioning_state.latch() once, in MainApp.build, and
+    sets app.uncommissioned = not commissioned. That predicate is the restore
+    contract -- a non-empty Els-0.yaml plus at least MIN_YAML_FILES *.yaml files
+    directly in the config directory -- so an EMPTY config home reads as a
+    freshly flashed card, and every frame wore the strip. A machine somebody has
+    measured has those files, so that is what this writes.
+
+    The values are representative, invented for the capture. The other files
+    leave every property at its class default; the runtime overrides in _arm()
+    are what the frames show. The count comes from the app's own constants, so
+    a change to the bar moves this with it.
+    """
+    import yaml
+    from reflex.utils import commissioning_state as cs
+    from reflex.utils.paths import config_dir
+
+    cfg = config_dir()
+    cfg.mkdir(parents=True, exist_ok=True)
+    els = {
+        "spindle_axis_index": 2, "z_axis_index": 0, "x_axis_index": 1,
+        "els_cal_ceiling_steps": 1008,
+        "els_cal_motion_thresh_counts": 2,
+        "els_cal_max_spread_steps": 12,
+        "els_cal_measured_legs": [302, 298, 300],
+    }
+    (cfg / cs.ANCHOR_FILE).write_text(yaml.dump(els))
+    # Stems of files a real install holds that are safe to leave at defaults.
+    # NO Axis-N.yaml: board._create_axes builds identity axes from CoordBar-N
+    # only when it finds none, and a stub Axis file would stand in for that and
+    # leave every axis on input 0. The remainder is padding to the bar; the app
+    # counts *.yaml files and reads nothing else from these.
+    stems = (["ServoBar-0", "Formats-0", "Device-0"]
+             + [f"CoordBar-{i}" for i in range(4)]
+             + [f"Spare-{i}" for i in range(cs.MIN_YAML_FILES)])
+    for stem in stems:
+        if len(list(cfg.glob("*.yaml"))) >= cs.MIN_YAML_FILES:
+            break
+        (cfg / f"{stem}.yaml").write_text("{}\n")
+    assert cs.is_commissioned(cfg), (
+        f"the seeded config in {cfg} does not meet the restore contract "
+        f"({cs.ANCHOR_FILE} plus {cs.MIN_YAML_FILES} .yaml files)")
+
+
+_commission_this_machine()
+
 app = MainApp()
 
 
@@ -266,9 +316,56 @@ def _find(pred, root=None):
     return None
 
 
+# Frames that are MEANT to show the UNCOMMISSIONED strip. Empty on purpose: a
+# screenshot of the warning state is an exhibit about that state, and nothing
+# in the README is one. Nobody should be running a machine in that state, so
+# showing it as the ordinary look of the product would teach the wrong thing.
+# A name added here must really show the strip (see _assert_banner).
+UNCOMMISSIONED_FRAMES = frozenset()
+
+
+def _banner_state():
+    """Return (shown, why) for the UNCOMMISSIONED strip on the live screen.
+
+    Reads both the app flag the strip is bound to and the strip's own geometry,
+    so a frame cannot slip through on one of them alone.
+    """
+    # Searched from the home SCREEN, not the window: the setup frames are taken
+    # with another screen current, which takes the home screen out of the tree.
+    banner = _find(lambda w: type(w).__name__ == "UncommissionedBanner",
+                   root=app.manager.get_screen("home"))
+    assert banner is not None, (
+        "cannot find the UncommissionedBanner to check it is hidden -- if it "
+        "was renamed, this check has stopped checking anything")
+    reasons = []
+    if app.uncommissioned:
+        reasons.append("app.uncommissioned is True")
+    if banner.active:
+        reasons.append("banner.active is True")
+    if banner.height > 0 and banner.opacity > 0:
+        reasons.append(f"banner is drawn (h={round(banner.height)} "
+                       f"opacity={banner.opacity})")
+    return bool(reasons), "; ".join(reasons)
+
+
+def _assert_banner(name):
+    """Refuse a frame whose screen shows the UNCOMMISSIONED strip, unless the
+    frame is on the allowlist; refuse an allowlisted frame that does not."""
+    shown, why = _banner_state()
+    if name in UNCOMMISSIONED_FRAMES:
+        assert shown, (f"{name} is on the UNCOMMISSIONED allowlist but the "
+                       f"screen does not show the strip -- drop it from the list")
+        return
+    assert not shown, (
+        f"{name}: the screen shows the UNCOMMISSIONED strip ({why}). Pose the "
+        f"capture as a commissioned machine (see _commission_this_machine); "
+        f"only frames in UNCOMMISSIONED_FRAMES may show it.")
+
+
 def _shot(name):
     out = os.path.join(OUT_DIR, f"{name}.png")
     _settle()
+    _assert_banner(name)
     # First export under-renders (only one tile); export twice.
     app.root.export_to_png(out)
     app.root.export_to_png(out)
