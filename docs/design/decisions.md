@@ -171,8 +171,6 @@ see, so a moved lever silently doubled or halved every feed and thread pitch.
 
 ## The gearbox is a table the owner sets
 
-Decided 2026-10-09.
-
 ### Context
 
 The coupling-ratio check and the gearbox position above were built for one
