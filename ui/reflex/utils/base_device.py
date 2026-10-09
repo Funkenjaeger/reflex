@@ -5,6 +5,8 @@ from keke import ktrace, kev
 
 from pydantic import BaseModel
 from kivy.logger import Logger
+
+from reflex.utils.port_owner import Batch, PortOwner, Read, ReadSpan, Write
 log = Logger.getChild(__name__)
 
 
@@ -21,6 +23,58 @@ class VariableDefinition(BaseModel):
     address: int
     type: TypeDefinition
     count: int = 1
+
+
+def _is_structure(type_definition: TypeDefinition) -> bool:
+    """True for a struct member (its read function is a BaseDevice subclass),
+    False for a scalar register field."""
+    rf = type_definition.read_function
+    return isinstance(rf, type) and issubclass(rf, BaseDevice)
+
+
+class _PlainWrite:
+    """One write to a dict-shaped double: no wire, so it cannot fail.
+
+    Lets a Batch be built over the doubles the suite uses without every one of
+    them having to grow a register layer. A double that wants a write REFUSED
+    implements write_command itself and returns something whose execute() says
+    so.
+    """
+
+    def __init__(self, device, key, value):
+        self.device, self.key, self.value = device, key, value
+
+    def execute(self, cm):
+        self.device[self.key] = self.value
+        return True
+
+
+def write_command(device, key, value):
+    """The command one write becomes, for collecting several into a Batch."""
+    builder = getattr(device, "write_command", None)
+    if builder is None:
+        return _PlainWrite(device, key, value)
+    return builder(key, value)
+
+
+def write_confirmed(device, key, value) -> bool:
+    """Write `key` on `device` and return the controller's acknowledgement.
+
+    Use this, not `device[key] = value`, wherever the answer GATES something:
+    the cut arming, the disengage, the stop offset. A plain assignment is fire
+    and forget and tells the caller nothing.
+
+    Falls back to an assignment for the dict-shaped doubles that stand in for a
+    device across the suite. A dict write cannot fail, so True is the honest
+    answer for one -- and a double that wants to REFUSE a write says so by
+    implementing write_confirmed itself, which is how the nack-injection tests
+    reach these paths.
+    """
+    confirm = getattr(device, "write_confirmed", None)
+    if confirm is None:
+        device[key] = value
+        return True
+    return bool(confirm(key, value))
 
 
 class BaseDevice:
@@ -66,6 +120,18 @@ class BaseDevice:
     # purpose.
     MAX_REGISTERS_PER_READ = 72  # 2026-09-07: elsStop is 140 regs (protocolVersion 9); two requests need >= 70, the 60%-of-125 rule caps at 75
 
+    # The largest single request read_span() will issue, and a separate number
+    # from the refresh() chunk above on purpose. The one span past that chunk
+    # is the board tick (devices.Global.read_tick): fastData plus the elsStop
+    # hot group, 30 + 56 = 86 registers, a 177-byte reply. That is 69% of the
+    # firmware's 125-register FC3 ceiling, past the 60% this file otherwise
+    # keeps to, and accepted as such: it makes the tick ONE request instead of
+    # two. Set to exactly the tick's size so the tick is the largest request
+    # anything makes, and a hot group that grows refuses loudly here (and in
+    # tests/fsms/test_els_stop_snapshot.py) instead of creeping toward the
+    # ceiling, where every failure is silent.
+    MAX_REGISTERS_PER_SPAN = 86
+
     def __init__(self, connection_manager, base_address=0):
         from reflex.utils.communication import ConnectionManager
         self.base_address = base_address
@@ -78,20 +144,38 @@ class BaseDevice:
         self._sub_device_cache: dict[tuple, "BaseDevice"] = {}
         self.parse_addresses_from_definition()
 
+    def _port(self) -> PortOwner:
+        """The owner every exchange of this device goes through."""
+        return PortOwner.of(self.dm)
+
     def __getitem__(self, key):
         var = self._variable_index[key]
+        address = var.address + self.base_address
 
+        if _is_structure(var.type):
+            # A sub-structure (servo, scales[i], elsStop): building the view is
+            # not an exchange, so it does not go through the port owner.
+            if var.count > 1:
+                return [var.type.read_function(self.dm, address + var.type.length * i)
+                        for i in range(var.count)]
+            return var.type.read_function(self.dm, address)
+
+        # A LIVE read, one exchange per element. An array's elements are one
+        # Batch so they reach the wire back to back.
         if var.count > 1:
-            list_type = list()
-            for i in range(var.count):
-                list_type.append(
-                    var.type.read_function(self.dm, var.address + self.base_address + var.type.length * i)
-                )
-            return list_type
-        else:
-            return var.type.read_function(self.dm, var.address + self.base_address)
+            return self._port().call(Batch(tuple(
+                Read(var.type.read_function, address + var.type.length * i)
+                for i in range(var.count))))
+        return self._port().call(Read(var.type.read_function, address))
 
-    def __setitem__(self, key, value):
+    def write_command(self, key, value):
+        """The Write (or Batch of them) one assignment to `key` becomes.
+
+        Public so a caller can COLLECT several into one Batch -- the arming
+        sequence does, because those writes must reach the controller back to
+        back with no tick scan between them, and must come back with a verdict
+        per write rather than one for the lot.
+        """
         var = self._variable_index[key]
         if var.count > 1 and isinstance(value, (list, tuple)):
             # Symmetric with __getitem__'s array read: element-wise at
@@ -101,14 +185,58 @@ class BaseDevice:
             # only as connected=False -- a silent no-op write. Needed by the
             # calMeasured round-trip (the calibration legs the take-up gate
             # derives its threshold from, restored at connect).
-            for i, v in enumerate(value[:var.count]):
-                var.type.write_function(
-                    self.dm,
-                    var.address + self.base_address + var.type.length * i,
-                    v, f"{key}[{i}]")
-            return
-        var.type.write_function(self.dm, var.address + self.base_address, value, key)
-        return
+            return Batch(tuple(
+                Write(var.type.write_function,
+                      var.address + self.base_address + var.type.length * i,
+                      v, f"{key}[{i}]")
+                for i, v in enumerate(value[:var.count])))
+        return Write(var.type.write_function,
+                     var.address + self.base_address, value, key)
+
+    def __setitem__(self, key, value):
+        """FIRE AND FORGET: queue the write and return without waiting.
+
+        Most writes do not gate anything -- servo speeds, directions, sync
+        ratios, cal limits, the settings pushed at start-up. Waiting for each
+        one bought nothing and cost the UI the round trip: a Cut press runs
+        about 14 writes and a jog start 6, which at ~8.7 ms an exchange is the
+        120-220 ms freeze this step exists to remove. A failure still surfaces
+        the way it always did, through the write helper's log line and the
+        connection verdict.
+
+        ORDER IS UNCHANGED. The owner's queue is FIFO, so these reach the wire
+        in the order they were issued, and a later read or confirmed write
+        queued behind them still sees their effect.
+
+        A WRITE THAT GATES A TRANSITION DOES NOT BELONG HERE -- use
+        write_confirmed(), which returns the controller's acknowledgement.
+        """
+        self._port().submit(self.write_command(key, value))
+
+    def write_confirmed(self, key, value) -> bool:
+        """Write and WAIT, returning whether the controller acknowledged it.
+
+        The replacement for reading `dm.connected` after a write. That only
+        ever meant "did the last exchange succeed", so any later exchange --
+        another write, or a tick scan on the owner thread -- could set it True
+        over a write that failed and mask it. A verdict that can be masked by
+        an unrelated success is not a verdict, and the cut arming rests on it.
+
+        The answer here is THIS write's own, carried back on its future, and
+        nothing can overwrite it. For an array every element must be
+        acknowledged.
+        """
+        try:
+            result = self._port().call(self.write_command(key, value))
+        except Exception as e:                           # noqa: BLE001
+            # Includes the proxy's TimeoutError. An answer that never came is
+            # not an acknowledgement, and the whole point of this call is that
+            # the caller can trust a True.
+            log.error(f"write_confirmed({key}): no acknowledgement: {e}")
+            return False
+        if isinstance(result, list):
+            return all(bool(r) for r in result)
+        return bool(result)
 
     @classmethod
     def register_type(cls, variable_definitions) -> TypeDefinition:
@@ -307,41 +435,45 @@ class BaseDevice:
         cut. The generated group sizes are asserted against the same budget at
         generation time, so this should be unreachable from generated callers --
         which is exactly why it must be loud if it ever is not.
+
+        The budget is MAX_REGISTERS_PER_SPAN, not the refresh() chunk: the
+        board tick's merged read is the one span larger than a chunk.
         """
-        if register_count > self.MAX_REGISTERS_PER_READ:
+        if register_count > self.MAX_REGISTERS_PER_SPAN:
             raise ValueError(
                 f"span of {register_count} registers exceeds the "
-                f"{self.MAX_REGISTERS_PER_READ}-register single-request budget; "
+                f"{self.MAX_REGISTERS_PER_SPAN}-register single-request budget; "
                 f"a one-request read is the whole point of asking for a span")
-        return self.dm.device.read_registers(
-            registeraddress=self.base_address + first_register,
-            number_of_registers=register_count,
-        )
+        return self._port().call(
+            ReadSpan(self.base_address + first_register, register_count))
 
     @ktrace()
     def refresh(self):
+        """Read the whole device, in chunks of MAX_REGISTERS_PER_READ, as one
+        Batch: the chunks reach the wire back to back. A failed chunk raises
+        and the chunks after it are not requested."""
         remaining_size = self.size
         max_size = self.MAX_REGISTERS_PER_READ
-        raw_data = []
         remaining_address = self.base_address
+        requests = []
+        while remaining_size > max_size:
+            requests.append(ReadSpan(remaining_address, max_size))
+            remaining_size -= max_size
+            remaining_address += max_size
+        if remaining_size > 0:
+            requests.append(ReadSpan(remaining_address, remaining_size))
+
         with kev("read_registers"):
-            while remaining_size > max_size:
-                part_data = self.dm.device.read_registers(
-                    registeraddress=remaining_address,
-                    number_of_registers=max_size
-                )
-                remaining_size -= max_size
-                remaining_address += max_size
-                raw_data += part_data
+            parts = self._port().call(Batch(tuple(requests)))
+        raw_data = [register for part in parts for register in part]
 
-            if remaining_size > 0:
-                part_data = self.dm.device.read_registers(
-                    registeraddress=remaining_address,
-                    number_of_registers=remaining_size
-                )
-                remaining_address += remaining_size
-                raw_data += part_data
+        return self.decode(raw_data)
 
+    def decode(self, raw_data):
+        """Unpack this device's registers, read by whatever request, into the
+        same dict refresh() returns. Split out so a caller that read the block
+        as part of a larger span (devices.Global.read_tick) decodes it exactly
+        as refresh() would."""
         with kev("struct"):
             raw_bytes = struct.pack("<" + "H" * self.size, *raw_data)
             values = list(struct.unpack("<" + self.struct_unpack_string, raw_bytes))

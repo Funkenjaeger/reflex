@@ -1,7 +1,7 @@
 """Minimal real object-graph harness for emulator-backed system tests (Task 5).
 
 Builds the REAL reflex-ui dispatcher + FSM stack -- Board, ServoDispatcher,
-InputDispatchers, ElsDispatcher, ElsStopHal, ElsFsm, ElsUiFsm, ElsUiController --
+InputDispatchers, ElsDispatcher, ElsStopRegisters, ElsFsm, ElsUiFsm, ElsUiController --
 wired to the running emulator over its PTY Modbus link, with NO Kivy App/UI and
 NO mocks of the code under test.
 
@@ -96,8 +96,17 @@ class SystemHarness:
         self.hal = None
         self._fake_app = None
         self._orig_get_running_app = None
+        # Set by connect(threaded=True): the Modbus scan runs on the port
+        # owner's thread, as it does in the app, instead of being driven by
+        # pump(). The DEFAULT STAYS SYNCHRONOUS -- the rest of the system suite
+        # depends on one pump() meaning exactly one tick.
+        self.threaded = False
 
-    def connect(self):
+    # How long a threaded pump() waits for a snapshot to land. Generous: a
+    # scan is 33 ms, and a failed one backs off a second.
+    PUMP_TIMEOUT_S = 2.0
+
+    def connect(self, threaded: bool = False):
         # Point Board's ConnectionManager at the emulator PTY before Board is
         # built (Board reads these in __init__ and connects immediately).
         from reflex.components.appsettings import config
@@ -109,6 +118,13 @@ class SystemHarness:
 
         from reflex.dispatchers.board import Board
         self.board = Board(_Formats(), _OffsetProvider())
+        self.threaded = bool(threaded)
+        if self.threaded:
+            # Started HERE, before the dispatchers are built, because that is
+            # where app.py starts it: the settings pushed during construction
+            # then cross the queue to the owner thread exactly as they do on
+            # the machine.
+            self.board.start_io_thread()
 
         # Register the fake app BEFORE ElsDispatcher (its __init__ calls
         # App.get_running_app()). MainApp inherits get_running_app from App.
@@ -150,9 +166,32 @@ class SystemHarness:
         Board.update() handles its own Modbus/comms failures internally; we do
         NOT swallow exceptions here so a genuine crash in an update_tick-bound
         handler (ElsFsm._on_board_update, controller polls — the code under
-        test) surfaces loudly instead of hiding as a generic wait_until timeout."""
+        test) surfaces loudly instead of hiding as a generic wait_until timeout.
+
+        THREADED: the owner thread is already scanning, so there is nothing to
+        drive -- Clock.tick() alone runs the schedule_once the owner posted,
+        which is what applies the snapshot and bumps update_tick. Calling
+        update() too would take a SECOND scan on this thread and defeat the
+        point.
+
+        It does WAIT for one, though, because every helper in this file was
+        written against "one pump() is one tick's worth of state". Without the
+        wait, enable_sync() would return before the servoMode it wrote had come
+        back in a snapshot, and the next line -- a Cut press, say -- would read
+        a controller policy computed from the tick BEFORE the write. That is a
+        test artifact, not a defect (at the machine the gate opens within one
+        frame and the operator's finger is slower than that), but it would make
+        every helper racy, so the contract is kept here instead."""
         Clock.tick()
-        self.board.update()
+        if not self.threaded:
+            self.board.update()
+            return
+        target = self.board.snapshots_applied + 1
+        deadline = time.monotonic() + self.PUMP_TIMEOUT_S
+        while (self.board.snapshots_applied < target
+               and time.monotonic() < deadline):
+            time.sleep(0.001)
+            Clock.tick()
 
     def wait_until(self, predicate, timeout_s: float, poll_s: float = 0.02) -> bool:
         deadline = time.monotonic() + timeout_s
@@ -362,9 +401,10 @@ class SystemHarness:
         ratios are exact int properties.
 
         Real-units consequences tests must respect:
-          * The reference machine starts at Z=0 mm with min_position_mm=-5, and
-            an els_forward=True cut feeds physically -Z — so cut spans must
-            clear the ~3.49 mm safety margin yet stay well inside 5 mm.
+          * The reference machine starts at Z=0 mm with min_position_mm=-20,
+            and an els_forward=True cut feeds physically -Z — so cut spans
+            must clear the ~7 mm safety margin (sized for the fastest
+            gearbox position) yet stay well inside 20 mm.
           * Feed selection is separate (a per-job operator choice, not machine
             geometry): call set_feed() after this, or the spindle axis's
             default syncRatio (360/100, a rotary-axis default) is what feeds.
@@ -458,6 +498,13 @@ class SystemHarness:
         # callback with no stored handle needed; Board schedules update+blinker,
         # and each InputDispatcher schedules a 25 Hz _speed_task.
         if self.board is not None:
+            try:
+                # Stop the owner thread FIRST: a scan in flight would otherwise
+                # post a schedule_once against a board being torn down, and the
+                # thread would outlive the test that made it.
+                self.board.stop_io_thread()
+            except Exception:
+                pass
             try:
                 Clock.unschedule(self.board.update)
                 Clock.unschedule(self.board.blinker)

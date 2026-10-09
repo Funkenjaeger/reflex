@@ -13,7 +13,7 @@ everything on it is supposed to be hardware-verified.
 
 - Work on a **feature branch**, or on **`integration`** when several changes are
   in flight and separate branches would just be overhead.
-- A commit is hardware-verified when an integration build (`vX.Y.Z-alpha.N`) made
+- A commit is hardware-verified when an integration build (`vX.Y.Z-rc.N.dev.M`) made
   from it has been installed and run on the machine. Merging `integration` into
   `dev` happens **only after that**; the maintainer does that merge, or
   explicitly asks for it.
@@ -31,7 +31,7 @@ If unsure whether a change qualifies, it does not. Put it on a branch and ask.
 
 **Never push without being asked.** `origin` is the canonical remote. This
 public repository receives only `dev`, `main` and release tags, each by a
-deliberate push: never `integration`, a feature branch or an `-alpha` tag.
+deliberate push: never `integration`, a feature branch or a `.dev` tag.
 
 ## Work tracking
 
@@ -106,6 +106,34 @@ values (UI commissioning *and* the emulator's own physics patched to match);
   `KIVY_WINDOW=mock`) for the whole suite, so tests run headless without `xvfb-run`.
 - Test files go in `tests/`, mirroring the `reflex/` structure.
 
+### How to run the suite: `scripts/run_tests.py`
+
+`python scripts/run_tests.py` (add `--system` for the emulator-backed suite) is
+what CI runs and what you should run. It does three things a bare `pytest`
+does not:
+
+- **The bulk runs under `-n auto`.** The system suite goes from about 9m30 to
+  about 1m45 this way, which is why CI uses it.
+- **Tests marked `timing` run afterwards, serially, on their own.** They assert
+  on wall-clock behaviour — a write rate over a real interval, a travel
+  distance in a fixed window — and under `-n auto` beside sixty emulator
+  processes they measure a starved box instead of the code. Mark a new test
+  `timing` if it asserts on elapsed time or a rate, and say in a comment what
+  the evidence is.
+- **A failure is retried ALONE before it counts.** Serial, no xdist, only the
+  tests that failed. If it survives that, it is real.
+
+**A test that passes only on the retry is not a pass.** The runner names it on
+stderr and as a CI annotation, and the run still goes green — that is what
+makes it a net rather than a gate. Chase it: with the Modbus I/O on its own
+thread, a test that fails in the suite and passes alone is a race until shown
+otherwise. Do not mark it `timing` to quieten it unless it really does assert
+on wall-clock behaviour.
+
+`release.yml` deliberately still calls `pytest` directly: every command it runs
+must also appear in estate/reflex-ci's `alpha/build.sh`, and the two are kept
+in step by the release builder's drift check.
+
 ### System tests (emulator-backed) — opt-in
 
 `tests/system/` drives the UI's FSM/dispatcher stack against the firmware emulator (the
@@ -114,10 +142,14 @@ across ELS mode and machine-wiring polarity.
 
 - **Opt-in and excluded by default.** They carry the `system` marker and `pyproject.toml` sets
   `addopts = "-m 'not system'"`, so a plain `uv run pytest` skips them (and never builds/launches
-  the emulator). Run them explicitly:
+  the emulator). Run them explicitly, in parallel:
   ```bash
-  uv run pytest -m system tests/system/
+  uv run pytest -m system -n auto tests/system/
   ```
+  Each test starts its own emulator on its own PTY with its own temporary HOME, so they run in
+  parallel under pytest-xdist: about 70-100 s with 8-12 workers, against about 11 minutes one at a
+  time (measured 2026-10-03). They are real-time against the emulator's clock, so if one ever turns
+  out to be timing-sensitive under load, mark it to run alone rather than giving up `-n`.
 - **WSL/Linux only.** The emulator's Modbus link is a PTY (`/dev/pts/N`); native Windows can't open
   it, and the venv is a WSL venv. Run from a WSL shell.
 - **Requires the fw/ emulator.** The in-repo `../fw` is the default; set `REFLEX_FW_DIR` only to point at a different checkout.
@@ -175,7 +207,7 @@ deleted and never reissued.
 Read [kivy-fsm-design-pattern.md](kivy-fsm-design-pattern.md) before adding or
 refactoring `transitions`-based FSMs, dispatchers that mediate between widgets and
 hardware, or multi-step operator flows. It defines the layered architecture
-(UI → Controller → FSM → HAL), event bus conventions, the declarative state-to-UI
+(UI → Controller → FSM → register facade → PortOwner → firmware registers), event bus conventions, the declarative state-to-UI
 policy table, and anti-patterns to avoid.
 
 ## Build and Run

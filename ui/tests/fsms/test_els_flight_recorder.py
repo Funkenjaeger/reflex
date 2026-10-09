@@ -43,7 +43,8 @@ TICK = 1.0 / 30.0
 #: honest -- a state added there and not here is a row column whose meaning has
 #: quietly shifted, which is exactly the failure the header's own fsm_states
 #: list exists to make impossible for a reader.
-STATES = ["disabled", "stopped", "retracting", "cutting", "alarm"]
+STATES = ["disabled", "stopped", "retracting", "cutting", "alarm",
+          'arming']
 
 
 class _Clock:

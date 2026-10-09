@@ -27,6 +27,7 @@ depends on that distinction.
 """
 from kivy.logger import Logger
 
+from reflex.fsms.els_gear import REFERENCE_GEAR
 from reflex.utils.devices import (
     ELS_CAL_ERR_CONFIG,
     ELS_CAL_MESSAGES,
@@ -35,6 +36,13 @@ from reflex.utils.devices import (
 )
 
 log = Logger.getChild(__name__)
+
+
+def gearbox_refusal_text(gear: str) -> str:
+    """Why a calibration will not run with `gear` set (docs/guide/
+    when-it-refuses.md is generated from this)."""
+    return (f"Calibration runs in gearbox position {REFERENCE_GEAR}; "
+            f"this is set for {gear}.")
 
 
 # ── Pure policy ──────────────────────────────────────────────────────
@@ -128,9 +136,11 @@ class BacklashCalibration:
     CAL_MAX_SPEED = 800.0
     CAL_ACCEL = 4000.0
 
-    def __init__(self, hal, els):
+    def __init__(self, hal, els, gear=lambda: REFERENCE_GEAR):
         self._hal = hal
         self._els = els
+        # Callable: the gearbox position the controller believes is engaged.
+        self._gear = gear
         self.state = CalState.IDLE
         self.measured = [0, 0, 0]
         self.result_code = ELS_CAL_OK
@@ -164,6 +174,16 @@ class BacklashCalibration:
                 f"(reports register version {version}, this UI needs "
                 f"{ELS_PROTOCOL_VERSION}). Flash the firmware to match this UI.",
             )
+            return False
+
+        # IN THE REFERENCE GEAR ONLY (2026-10-03). Every step-valued result
+        # this writes -- the commanded take-up, the measured legs, the last
+        # measurement -- is stored as the reference gear's (els_gear.py), and
+        # the ceiling it drives against is too. Measured in another gear they
+        # would be off by the gear's factor, so refuse rather than convert.
+        gear = self._gear()
+        if gear != REFERENCE_GEAR:
+            self._fail(ELS_CAL_ERR_CONFIG, gearbox_refusal_text(gear))
             return False
 
         ceiling = int(self._els.els_cal_ceiling_steps)
@@ -378,7 +398,7 @@ class BacklashCalibration:
         # The legs themselves, not just the mean: reconcile re-teaches them to
         # firmware RAM after a power cycle so the take-up gate keeps its
         # derived threshold instead of falling to the floor (see
-        # ElsStopHal.set_cal_measured).
+        # ElsStopRegisters.set_cal_measured).
         self._els.els_cal_measured_legs = [int(v) for v in self.measured]
         self._els.els_backlash_steps = self.command_steps
         self._hal.set_backlash_steps(self.command_steps)

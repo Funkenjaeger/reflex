@@ -15,7 +15,7 @@ Two changes collapsed that traffic, and this file pins both:
     instead of going to the wire per field.
 
 THE PART THAT NEEDED THE MOST CARE is not the saving, it is the failure.
-``ElsStopHal`` gained ``reads_baseline()`` / ``reads_fabricated_since()`` on
+``ElsStopRegisters`` gained ``reads_baseline()`` / ``reads_fabricated_since()`` on
 2026-08-23, and several pollers discard a whole poll rather than act on a value
 that might be fabricated -- because in this register map 0 is never neutral: it
 reads as "not enabled", "no offset", "sequence reset". A snapshot that quietly
@@ -36,7 +36,7 @@ import pytest
 from kivy.event import EventDispatcher
 
 from reflex.dispatchers.board import Board
-from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_stop_registers import ElsStopRegisters
 from reflex.utils.base_device import BaseDevice
 from reflex.utils.communication import ConnectionManager
 
@@ -75,29 +75,29 @@ class FakeConnectionManager:
 
 
 class FakeStruct:
-    """One register block. `fail=True` makes refresh() raise like a bad frame."""
+    """One register block. `fail=True` makes refresh() raise like a bad frame;
+    `decode_fail=True` makes the hot-group decode raise."""
 
     def __init__(self, values, fail: bool = False):
         self.values = dict(values)
         self.fail = fail
+        self.decode_fail = False
         self.refresh_count = 0
 
     def refresh(self):
-        """The whole-block read. fastData still uses this; so does an
-        on-demand elsStop caller."""
+        """The whole-block read: what an on-demand elsStop caller uses. The
+        tick no longer does (FakeDevice.read_tick)."""
         self.refresh_count += 1
         if self.fail:
             raise RuntimeError("no communication with the instrument (no answer)")
         return dict(self.values)
 
-    def refresh_hot(self):
-        """The TICK path's read -- the HOT group only, one FC3 request.
-
-        Shares the counter and the failure mode with refresh() because from a
-        board's point of view it is the same event: one block read per tick,
-        which either produced a snapshot or did not.
-        """
-        return self.refresh()
+    def decode_hot(self, _raw):
+        """The tick path's decode of the hot group. No I/O: the registers came
+        with the tick's one request."""
+        if self.decode_fail:
+            raise ValueError("span is 55 registers, format wants 56 -- refusing to decode")
+        return dict(self.values)
 
     def __getitem__(self, key):
         """A LIVE per-field read -- what the snapshot exists to replace."""
@@ -112,9 +112,20 @@ class FakeDevice:
         self.structs = structs
         for s in structs.values():
             s.live_reads = []
+        self.tick_reads = 0
+        self.tick_fail = False
 
     def __getitem__(self, name):
         return self.structs[name]
+
+    def read_tick(self):
+        """The board tick's ONE request (devices.Global.read_tick): fastData's
+        values and the hot group's raw registers, or a raise like a bad frame.
+        A single exchange carries both blocks, so it fails as a whole."""
+        self.tick_reads += 1
+        if self.tick_fail:
+            raise RuntimeError("no communication with the instrument (no answer)")
+        return dict(self.structs["fastData"].values), ["hot-raw"]
 
 
 class BoardUnderTest(Board):
@@ -143,18 +154,18 @@ class BoardUnderTest(Board):
         self.ticks_seen_with_snapshot.append(dict(self.els_stop_values))
 
 
-def _board(*, els_fail=False, fast_fail=False, els_values=None):
+def _board(*, els_values=None):
     els = FakeStruct(els_values or {"active": 1, "takeupSeq": 7,
                                     "phaseOffsetSteps": 500, "diagSeq": 3,
-                                    "machineMode": 5}, fail=els_fail)
-    fast = FakeStruct({"servoMode": 1}, fail=fast_fail)
+                                    "machineMode": 5})
+    fast = FakeStruct({"servoMode": 1})
     device = FakeDevice(elsStop=els, fastData=fast)
     cm = FakeConnectionManager(device=device)
-    return BoardUnderTest(device, cm), els, fast
+    return BoardUnderTest(device, cm), els, device
 
 
 class HalBoard:
-    """The two attributes ElsStopHal reads a board through."""
+    """The two attributes ElsStopRegisters reads a board through."""
 
     def __init__(self, device, connection_manager, snapshot=None, connected=True):
         self.device = device
@@ -170,7 +181,7 @@ def _hal(snapshot=None, live=None, connected=True):
     device = FakeDevice(elsStop=els)
     cm = FakeConnectionManager(device=device)
     board = HalBoard(device, cm, snapshot=snapshot, connected=connected)
-    return ElsStopHal(board), board, els
+    return ElsStopRegisters(board), board, els
 
 
 # ─── 1. chunking ──────────────────────────────────────────────────────────
@@ -200,32 +211,34 @@ def els_stop_device():
     return cm['Global']['elsStop'], cm.device
 
 
-def test_the_hot_group_is_read_in_exactly_one_request(els_stop_device):
-    """THE POINT OF THE 2026-09-07 SPLIT, and the case that guards it.
+def test_the_tick_reads_fast_data_and_the_hot_group_in_one_request():
+    """THE POINT OF THE HOT/COLD SPLIT AND OF THE MERGED TICK READ.
 
-    The tick path reads the HOT group only. 56 registers is one FC3 request, so
-    a board tick costs fastData(1) + elsStop(1) = TWO exchanges where it used to
-    cost three. Requests are the quantity that fails -- see the module docstring
-    and the 2026-08-23 comms loss -- so this is a 33% cut in the thing that
-    actually breaks, not in bytes.
+    The tick reads the HOT group only, and reads it in the same request as
+    fastData, which ends exactly where elsStop begins. So a board tick costs
+    ONE exchange: it cost three before the split and two after it. Requests
+    are the quantity that fails -- see the module docstring and the 2026-08-23
+    comms loss -- so each step is a cut in the thing that actually breaks, not
+    in bytes.
 
-    Asserted as ONE request rather than "at most two": the moment it becomes two
-    the split has bought nothing and the failure should say so loudly, at the
-    boundary, rather than showing up as a timeout during a cut.
+    Asserted as ONE request rather than "at most two": the moment it becomes
+    two the merge has bought nothing and the failure should say so loudly, at
+    the boundary, rather than showing up as a timeout during a cut.
     """
-    from reflex.utils import els_stop_map
-    device, transport = els_stop_device
+    from reflex.utils import devices, els_stop_map, fast_data_map
+    cm = ConnectionManager(serial_device="/dev/null")
+    cm.device = RecordingInstrument()
 
-    device.refresh_hot()
+    fast, hot_raw = cm['Global'].read_tick()
 
-    base = device.base_address
-    assert transport.requests == [(base + els_stop_map.HOT_BASE,
-                                   els_stop_map.HOT_COUNT)], (
-        f"the hot group must be ONE request; got {transport.requests}")
-    assert els_stop_map.HOT_COUNT <= BaseDevice.MAX_REGISTERS_PER_READ, (
-        f"the hot group is {els_stop_map.HOT_COUNT} registers against a "
-        f"{BaseDevice.MAX_REGISTERS_PER_READ}-register chunk -- it no longer "
-        f"fits one request, which is the whole return on the split")
+    assert cm.device.requests == [(devices.TICK_BASE, devices.TICK_COUNT)], (
+        f"the tick must be ONE request; got {cm.device.requests}")
+    assert devices.TICK_BASE == fast_data_map.FAST_DATA_BASE == 74
+    assert (fast_data_map.FAST_DATA_BASE + fast_data_map.TOTAL_REGISTERS
+            == els_stop_map.ELS_STOP_BASE + els_stop_map.HOT_BASE == 104), (
+        "fastData no longer ends where the hot group begins")
+    assert len(hot_raw) == els_stop_map.HOT_COUNT
+    assert set(fast) >= set(fast_data_map.ALL_FIELDS)
 
 
 def test_the_whole_block_refresh_is_still_two_requests(els_stop_device):
@@ -315,6 +328,11 @@ def test_the_chunk_size_keeps_real_headroom_against_the_firmware():
     of BOTH limits, which is what "conservative" was decided to mean here, and
     it is the check that fires if someone later reaches for the ceiling to buy
     one more request back.
+
+    THIS GOVERNS THE refresh() CHUNK ONLY. The largest request on the wire is
+    no longer a chunk but the board tick's merged read, which deliberately
+    sits past this 60% line; its own margin is pinned in
+    test_the_tick_read_keeps_its_stated_margin_against_the_firmware below.
     """
     from_buffer = (256 - 5) // 2      # 5 + 2N must fit MAX_BUFFER
     from_uint8 = (255 - 5) // 2       # ...and fit the uint8_t counting it
@@ -354,17 +372,58 @@ def test_the_chunk_size_keeps_real_headroom_against_the_firmware():
         f"two requests")
 
 
+def test_the_tick_read_keeps_its_stated_margin_against_the_firmware():
+    """The merged tick read, checked against the same firmware arithmetic.
+
+    fastData (30) plus the elsStop hot group (56) is 86 registers in one FC3
+    request, a reply of 5 + 2*86 = 177 bytes. That is 69% of the 125-register
+    ceiling and 69% of the 256-byte buffer: PAST the 60% this file holds the
+    refresh() chunk to, by decision rather than by drift. One request per tick
+    instead of two was judged worth nine points of headroom, because requests
+    are what time out when the ISR is saturated, and 39 registers (79 buffer
+    bytes) still stand between this read and the cliff where every failure is
+    silent.
+
+    So the pin is exact. The size is asserted, not bounded, so that the next
+    hot field -- which grows this read with it -- fails here and gets the
+    margin re-decided, instead of eroding it one register at a time. 70% is
+    the line the decision accepted; the read is not allowed to pass it without
+    another one.
+    """
+    from reflex.utils import devices
+    ceiling = 125                       # see the chunk test above for the derivation
+    buffer_bytes = 256                  # MAX_BUFFER, fw/Core/Inc/ModbusConfig.h
+
+    n = devices.TICK_COUNT
+    assert n == 86, (
+        f"the tick read is {n} registers, not the 86 this margin was decided "
+        f"at -- re-decide it against the ceiling, do not just edit the number")
+    reply = 5 + 2 * n
+    assert reply == 177
+    assert reply <= buffer_bytes and n <= ceiling
+    assert n <= 0.70 * ceiling, (
+        f"the tick read is {n / ceiling:.0%} of the FC3 ceiling, past the 70% "
+        f"that was accepted for it")
+    assert reply <= 0.70 * buffer_bytes, (
+        f"the tick reply is {reply} of {buffer_bytes} buffer bytes, past 70%")
+    # read_span() refuses anything larger than the tick, so the tick is the
+    # largest request anything here makes.
+    assert BaseDevice.MAX_REGISTERS_PER_SPAN == n
+    assert BaseDevice.MAX_REGISTERS_PER_READ <= n
+
+
 # ─── 2. the board takes the snapshot ──────────────────────────────────────
 
 def test_update_publishes_one_els_stop_snapshot_per_tick():
-    board, els, _fast = _board()
+    board, els, device = _board()
     board.update()          # the connect tick, which also checks the protocol
-    els.refresh_count = 0
+    device.tick_reads = 0
 
     board.update()
     board.update()
 
-    assert els.refresh_count == 2, "one block read per tick, no more and no less"
+    assert device.tick_reads == 2, "one tick read per tick, no more and no less"
+    assert els.refresh_count == 0, "the tick must not refresh the whole block"
     assert board.els_stop_values["takeupSeq"] == 7
     assert els.live_reads == [], (
         "the snapshot must not be assembled out of per-field live reads")
@@ -372,12 +431,13 @@ def test_update_publishes_one_els_stop_snapshot_per_tick():
 
 def test_the_connect_tick_does_not_read_the_block_twice():
     """The protocol-version check runs on the tick a connection comes up and
-    wants the same 122 registers the snapshot just read. Reading them again
+    wants the same registers the snapshot just read. Reading them again
     doubled the cost of the one tick where the link is least established."""
-    board, els, _fast = _board(
+    board, els, device = _board(
         els_values={"protocolVersion": 5, "takeupSeq": 0})
     board.update()
-    assert els.refresh_count == 1
+    assert device.tick_reads == 1
+    assert els.refresh_count == 0
     assert board.protocol_version == 5
 
 
@@ -385,7 +445,7 @@ def test_the_snapshot_is_in_place_before_the_pollers_run():
     """Ordering, and it is load-bearing: every poller is bound to update_tick,
     so a snapshot taken after the tick was bumped would serve the PREVIOUS
     tick's registers to everything that reads it."""
-    board, _els, _fast = _board()
+    board, _els, _device = _board()
     board.update()
     assert board.ticks_seen_with_snapshot == [{"active": 1, "takeupSeq": 7,
                                                "phaseOffsetSteps": 500,
@@ -394,46 +454,68 @@ def test_the_snapshot_is_in_place_before_the_pollers_run():
 
 def test_a_failed_refresh_clears_the_snapshot_rather_than_keeping_the_old_one():
     """THE CASE THIS DESIGN TURNS ON. Serving the previous tick's values after
-    a failed refresh would hand every poller a plausible number with nothing
-    saying it was stale -- a fabricated read that no guard can see."""
-    board, els, _fast = _board()
+    a failed read would hand every poller a plausible number with nothing
+    saying it was stale -- a fabricated read that no guard can see. Both ways
+    the snapshot can fail now: the tick's one request, and the hot decode."""
+    board, els, device = _board()
     board.update()
     assert board.els_stop_values, "fixture precondition: a good snapshot first"
 
-    els.fail = True
+    device.tick_fail = True
     board.update()
+    assert board.els_stop_values == {}
 
+    board.connection_manager.device = device    # the failure disconnected it
+    device.tick_fail = False
+    board.update()
+    assert board.els_stop_values, "precondition: a good snapshot again"
+
+    els.decode_fail = True
+    board.update()
     assert board.els_stop_values == {}
     assert board.ticks_seen_with_snapshot[-1] == {}
 
 
-def test_a_failed_els_stop_refresh_does_not_tear_down_the_link():
-    """fastData owns the connection verdict. Dropping the link over one bad
-    elsStop frame would take the DRO down with it for no reason."""
-    board, els, _fast = _board(els_fail=True)
+def test_a_hot_group_that_fails_to_decode_does_not_tear_down_the_link():
+    """The tick read owns the connection verdict. Dropping the link over a
+    hot group that would not decode would take the DRO down with it for no
+    reason -- the policy a failed elsStop READ had when it was its own
+    request, kept for the one elsStop failure that can still happen alone."""
+    board, els, _device = _board()
+    els.decode_fail = True
     board.update()
     assert board.connected is True
     assert board.connection_manager.disconnects == 0
+    assert board.fast_data_values == {"servoMode": 1}, "fastData still lands"
     assert board.connection_manager.errors, "the failure must still be logged"
 
 
-def test_a_failed_fast_data_refresh_also_clears_the_snapshot():
-    """That path returns early, before the elsStop refresh -- so without an
-    explicit clear the pollers would read a snapshot from before the link
-    dropped, on a tick where update_tick still fires."""
-    board, _els, fast = _board()
+def test_a_failed_tick_read_is_handled_as_a_failed_fast_data_read():
+    """One request carries both blocks, so its failure takes the path a
+    failed fastData read always took, and every consumer sees what it saw
+    then: link torn down, a one-second retry, fast_data_values left as it was
+    (that path never cleared it), and the elsStop snapshot CLEARED -- that
+    path returns before the snapshot is published, so without the explicit
+    clear the pollers would read one from before the link dropped, on a tick
+    where update_tick still fires."""
+    board, _els, device = _board()
     board.update()
     assert board.els_stop_values
+    before = dict(board.fast_data_values)
 
-    fast.fail = True
+    device.tick_fail = True
     board.update()
 
     assert board.els_stop_values == {}
     assert board.connected is False
+    assert board.connection_manager.disconnects == 1
+    assert board.task_update.timeout == 1.0
+    assert board.fast_data_values == before
+    assert board.connection_manager.errors, "the failure must still be logged"
 
 
 def test_no_device_clears_the_snapshot():
-    board, _els, _fast = _board()
+    board, _els, _device = _board()
     board.update()
     assert board.els_stop_values
 
@@ -441,6 +523,53 @@ def test_no_device_clears_the_snapshot():
     board.update()
 
     assert board.els_stop_values == {}
+
+
+# ─── 2b. the tick read, through the REAL register layout ──────────────────
+
+class AddressEchoInstrument(RecordingInstrument):
+    """Answers every register with its own address. Distinct values per
+    register make a mis-sliced span visible as a wrong field, and small values
+    keep every float a finite denormal, so decoded dicts compare with ==."""
+
+    def read_registers(self, registeraddress, number_of_registers, **_kw):
+        self.requests.append((registeraddress, number_of_registers))
+        return list(range(registeraddress, registeraddress + number_of_registers))
+
+
+def _real_board():
+    cm = ConnectionManager(serial_device="/dev/null")
+    cm.device = AddressEchoInstrument()
+    board = BoardUnderTest(cm['Global'], cm)
+    return board, cm
+
+
+def test_a_board_tick_is_one_request_spanning_both_blocks():
+    """fastData (74-103) and the elsStop hot group (104-159) are adjacent in
+    rampsSharedData_t, and the firmware serves FC3 from that one struct
+    (process_FC3 over u16regs), so the tick reads them as ONE 86-register
+    request. It used to be two; requests, not bytes, are what time out."""
+    board, cm = _real_board()
+    board.update()
+    assert cm.device.requests == [(74, 86)], (
+        f"a board tick must be ONE request; got {cm.device.requests}")
+
+
+def test_the_merged_read_fills_both_dicts_exactly_as_the_two_reads_did():
+    """Same registers, same decoders, so every consumer sees the same dicts:
+    fastData through BaseDevice's typedef decode (pad field included), the hot
+    group through the generated decoder."""
+    from reflex.utils import els_stop_map
+    board, cm = _real_board()
+    board.update()
+
+    expected_fast = cm['Global']['fastData'].refresh()       # the old tick read
+    expected_hot = els_stop_map.decode_hot(
+        list(range(104, 104 + els_stop_map.HOT_COUNT)))
+    assert board.fast_data_values == expected_fast
+    assert board.els_stop_values == expected_hot
+    assert board.fast_data_values['servoMode'] == 74 + 28    # spot-check the slice
+    assert board.els_stop_values['enable'] == 104
 
 
 # ─── 3. TickReads: values, and the fabrication signal ─────────────────────

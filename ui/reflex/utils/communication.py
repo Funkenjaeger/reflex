@@ -1,14 +1,99 @@
 import copy
+import errno
 import inspect
+import os
+import select
 import time
 from typing import Optional
 
 import minimalmodbus
+import serial
 from kivy.logger import Logger
 log = Logger.getChild(__name__)
 
 _ERROR_REPEAT_INTERVAL_S = 10.0        # first repeat of a persisting error
 _ERROR_REPEAT_INTERVAL_MAX_S = 600.0   # backoff cap: one line per 10 min while stuck
+
+
+def _write_waiting_only_for_the_port(port):
+    """A replacement for `port.write` whose timeout covers only the wait for
+    the port to accept bytes.
+
+    pyserial 3.5's posix write starts its timer before os.write() and checks it
+    again AFTER the frame has been handed to the kernel. os.write() releases the
+    GIL; if another thread then holds it for longer than write_timeout (one long
+    C call: the 1 ms switch interval cannot preempt it), the writer gets the GIL
+    back late and pyserial raises 'Write timeout' for a frame that was sent.
+    With writes queued from the UI thread and executed on the port owner's
+    thread, that is a link reset on a healthy link, and an arming batch read as
+    refused when it was not.
+
+    Here the timeout is applied only to select(): a frame that the port accepts
+    is never failed, and a port that stops draining still raises within
+    write_timeout, as before.
+    """
+    def write(data):
+        if not port.is_open:
+            raise serial.PortNotOpenError()
+        remaining = memoryview(bytes(data))
+        total = len(remaining)
+        while remaining:
+            try:
+                n = os.write(port.fd, remaining)
+            except BlockingIOError:
+                n = 0
+            except OSError as e:
+                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    n = 0
+                else:
+                    raise serial.SerialException(f"write failed: {e}") from e
+            remaining = remaining[n:]
+            if remaining:
+                _, ready, _ = select.select([], [port.fd], [], port.write_timeout)
+                if not ready:
+                    raise serial.SerialTimeoutException("Write timeout")
+        return total
+    return write
+
+
+def _read_timing_only_silence(port):
+    """A replacement for `port.read` whose timeout is silence on the port.
+
+    The read twin of _write_waiting_only_for_the_port. pyserial 3.5's posix
+    read checks its overall timer after every os.read(), and os.read() releases
+    the GIL: a reader that gets the GIL back late returns whatever it had,
+    though the rest of the frame is already waiting in the kernel. On the lathe
+    that was a 177-byte tick reply cut to 112 bytes, a checksum error, and a
+    link reset, at start-up while the UI thread built its screens.
+
+    Here a read ends only when it has `size` bytes or the port has been silent
+    for a whole `timeout`: a frame that is arriving or has arrived is always
+    read in full, and a controller that does not answer still gives up after
+    `timeout`, as before.
+    """
+    def read(size=1):
+        if not port.is_open:
+            raise serial.PortNotOpenError()
+        got = bytearray()
+        while len(got) < size:
+            ready, _, _ = select.select([port.fd], [], [], port.timeout)
+            if not ready:
+                break
+            try:
+                buf = os.read(port.fd, size - len(got))
+            except BlockingIOError:
+                continue
+            except OSError as e:
+                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINTR):
+                    continue
+                raise serial.SerialException(f"read failed: {e}") from e
+            if not buf:
+                raise serial.SerialException(
+                    "device reports readiness to read but returned no data "
+                    "(device disconnected or multiple access on port?)")
+            got.extend(buf)
+        return bytes(got)
+    return read
 
 
 class ConnectionManager:
@@ -28,7 +113,7 @@ class ConnectionManager:
         #
         #   * a read that raised -- checksum, timeout, short frame (below);
         #   * a read attempted with no link at all, which the HAL
-        #     short-circuits to a zero (els_stop_hal.py).
+        #     short-circuits to a zero (els_stop_registers.py).
         #
         # The second door is why this counter exists in its current form: it
         # was originally incremented only on the first, so a DISCONNECT
@@ -130,6 +215,13 @@ class ConnectionManager:
             self.device.serial.timeout = 0.1
             self.device.serial.write_timeout = 0.1
             self.device.serial.baudrate = self.baudrate
+            # Only a real posix port has an fd to wait on; the doubles the
+            # suite uses do not, and keep their own write.
+            if getattr(self.device.serial, "fd", None) is not None:
+                self.device.serial.write = _write_waiting_only_for_the_port(
+                    self.device.serial)
+                self.device.serial.read = _read_timing_only_silence(
+                    self.device.serial)
         except Exception as e:
             self.device = None
             self.connected = False
@@ -204,6 +296,11 @@ def read_float(dm: ConnectionManager, address) -> float:
         return 0
 
 
+# The write helpers return the exchange's acknowledgement: True when the
+# controller answered, False when the write raised. They also set
+# dm.connected from it, which is what callers that accumulate a per-write
+# ACK (els_fsm.on_enter_cutting) read; the return value is the same verdict
+# as the result of a port-owner Write command.
 def write_float(dm, address, value, variable_name: Optional[str] = ""):
     try:
         dm.device.write_float(
@@ -211,9 +308,11 @@ def write_float(dm, address, value, variable_name: Optional[str] = ""):
         )
         dm.connected = True
         log.debug(f"Write {variable_name}: float {value} to address {address}")
+        return True
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))
+        return False
 
 
 def read_long(dm, address) -> int:
@@ -240,9 +339,11 @@ def write_long(dm, address, value, variable_name: Optional[str] = ""):
         )
         dm.connected = True
         log.debug(f"Write {variable_name}: long {value} to address {address}")
+        return True
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))
+        return False
 
 
 def read_unsigned(dm, address):
@@ -262,9 +363,11 @@ def write_unsigned(dm, address, value, variable_name: Optional[str] = ""):
         dm.device.write_register(address, signed=False, value=int(value))
         dm.connected = True
         log.debug(f"Write {variable_name}: unsigned {value} to address {address}")
+        return True
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))
+        return False
 
 
 def read_signed(dm, address):
@@ -274,6 +377,7 @@ def read_signed(dm, address):
         return value
     except Exception as e:
         dm.connected = False
+        dm.read_failures += 1
         dm._log_error_once(str(e))
         return 0
 
@@ -283,9 +387,11 @@ def write_signed(dm, address, value, variable_name: Optional[str] = ""):
         dm.device.write_register(address, signed=True, value=int(value))
         dm.connected = True
         log.debug(f"Write {variable_name}: signed {value} to address {address}")
+        return True
     except Exception as e:
         dm.connected = False
         dm._log_error_once(str(e))
+        return False
 
 
 if __name__ == "__main__":

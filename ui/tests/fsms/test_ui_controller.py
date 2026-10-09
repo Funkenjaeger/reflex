@@ -107,7 +107,7 @@ def _make_collaborators(*, z_axis=None, x_axis=None, connected=False):
     board = MagicMock()
     board.connected = connected
     # A REAL dict, for the same reason FakeConnectionManager is a real object.
-    # This is the board's once-per-tick elsStop snapshot, and ElsStopHal.TickReads
+    # This is the board's once-per-tick elsStop snapshot, and ElsStopRegisters.TickReads
     # treats an empty one as "no snapshot -> fabricated read". Left as a MagicMock
     # attribute it would be truthy and would hand every snapshot read a Mock, so
     # a poller under test would interpret a Mock as a register value and the test
@@ -544,6 +544,10 @@ def test_on_action_button_clicked_without_x_axis_does_not_raise():
 @pytest.mark.parametrize("els_forward, stop_z", [(True, -10.0), (False, 10.0)])
 def test_on_action_button_clicked_in_waiting_to_cut_enters_cutting(ctrl, els_forward, stop_z):
     """Non-wizard cycle: action button drives waiting_to_cut → cutting."""
+    # A cut needs a link: the HAL declines its gating writes when
+    # board.connected is False, and the arming now reads each write's own
+    # acknowledgement rather than the fake link object's truthy `connected`.
+    ctrl._board.connected = True
     z = ctrl._els.get_z_axis()
     z.scaledPosition = 0.0
     ctrl.els_forward = els_forward
@@ -1181,7 +1185,7 @@ def test_unarmed_stop_message_names_the_actual_cause():
 # THE MECHANISM: servoEnableTask re-asserts servoMode = 1 every 100 ms while
 # ANY scale still has syncEnable set and elsStop.active is 0 -- and during a cut
 # active IS 0. Dropping servoMode alone hands the firmware a window to switch
-# the feed straight back on. ElsStopHal.stop_sync exists precisely to close it,
+# the feed straight back on. ElsStopRegisters.stop_sync exists precisely to close it,
 # and on_enter_disabled / on_enter_alarm both already use it. This button was
 # the third call site and never did.
 
@@ -1263,7 +1267,16 @@ def _arm_toggle_enable(ctrl):
 
 
 def _cutting_rig(ctrl):
-    """A connected rig mid-cut with the feed running."""
+    """A connected rig mid-cut with the feed running.
+
+    board.connected is set here because the rig genuinely needs a link: the
+    HAL's gating setters have always skipped the write when it is False, and
+    since the ACK is now each write's own answer rather than
+    connection_manager.connected, a cut arming on writes that never happened
+    correctly refuses. Before, the fake link's truthy `connected` stood in for
+    writes the HAL had declined to make.
+    """
+    ctrl._board.connected = True
     z = ctrl._els.get_z_axis()
     z.scaledPosition = 0.0
     ctrl.els_forward = False
@@ -1380,6 +1393,66 @@ def test_sync_off_while_disengaged_does_NOT_raise(ctrl):
     _pump()
 
     assert ctrl._els_fsm.state == "disabled"
+
+
+# ─── Retract is gated on Sync Enable, like Cut (2026-10-03) ─────────────────
+# Shadow bench, 21:14:52: Retract pressed with sync off parked the machine in
+# 'retracting' with nothing moving; the next Sync Enable press re-issued the
+# move and the carriage went. An arm-only button must never start a move.
+
+def _waiting_to_retract_rig(ctrl, *, sync_on):
+    z = ctrl._els.get_z_axis()
+    z.scaledPosition = 10.0                  # parked at the stop after a cut
+    ctrl.els_forward = False
+    ctrl.retract_enabled = True
+    ctrl.commit_standalone_stop_z(10.0)
+    ctrl.commit_standalone_retract_z(0.0)
+    ctrl.toggle_engage()
+    _pump()
+    _arm_toggle_enable(ctrl).servoMode = 1 if sync_on else 0
+    ctrl._ui_fsm.fsm.set_state("in_cycle.waiting_to_retract")
+    ctrl._apply_policy()
+    return ctrl
+
+
+def test_retract_is_greyed_with_sync_off(ctrl):
+    c = _waiting_to_retract_rig(ctrl, sync_on=False)
+    assert c.action_allowed is False
+    assert c.instruction_text == "Turn Sync Enable on, then retract"
+
+
+def test_retract_is_allowed_with_sync_on(ctrl):
+    c = _waiting_to_retract_rig(ctrl, sync_on=True)
+    assert c.action_allowed is True
+
+
+def test_a_stale_retract_press_with_sync_off_does_not_start_a_retract(ctrl):
+    """The fresh check behind the button: even if the press arrives, the UI
+    must not enter 'retracting' and the domain FSM must not either."""
+    c = _waiting_to_retract_rig(ctrl, sync_on=False)
+    assert c.may_retract() is False
+    c.on_action_button_clicked()
+    _pump()
+    assert c._ui_fsm.state == "in_cycle.waiting_to_retract"
+    assert c._els_fsm.state == "stopped"
+
+
+def test_sync_off_mid_retract_abandons_it_and_disengages(ctrl):
+    """Left in 'retracting', the rest of the move would wait for the next
+    Sync Enable press. Disengaging clears it with the job, as for a cut."""
+    c = _waiting_to_retract_rig(ctrl, sync_on=True)
+    c.on_action_button_clicked()
+    _pump()
+    assert c._els_fsm.state == "retracting", "the rig never reached a retract"
+    seen = []
+    c.notify = lambda msg, sev=None, **kw: seen.append(msg)
+
+    c.request_feed_enable()
+    _pump()
+
+    assert c._els_fsm.state == "disabled"
+    assert c.in_cycle is False
+    assert any("Retract abandoned" in m for m in seen), seen
 
 
 # ─── Flight recorder wiring ────────────────────────────────────────────────

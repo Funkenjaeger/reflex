@@ -244,3 +244,33 @@ def test_sync_is_threading_rebinds_live_when_mode_name_changes(advbar_factory, r
 
     fake_bar.mode_name = "Feed IN"
     assert bar.controller.is_threading is False
+
+
+# ── Active gear readout ─────────────────────────────────────────────────────
+
+class _FakeServo(EventDispatcher):
+    """Stands in for the servo dispatcher: a real StringProperty, so the
+    bar's binding is a real Kivy binding."""
+    gearbox_position = StringProperty("A")
+
+
+def test_advbar_shows_the_active_gear_and_follows_changes(advbar_factory, running_app):
+    running_app.servo = _FakeServo(gearbox_position="B")
+    bar = advbar_factory(els_bar=None)
+    assert bar.gear_text == "Gear B"
+
+    # Same path the coupling check takes when it adopts a new gear.
+    running_app.servo.gearbox_position = "C"
+    assert bar.gear_text == "Gear C"
+
+
+def test_the_kv_gear_label_reads_the_live_text():
+    """The widget tree is never built in this suite, so pin the kv binding:
+    a label bound to a constant would pass the property test above."""
+    from pathlib import Path
+    import reflex.components.home.els_advbar as mod
+
+    kv = (Path(mod.__file__).parent / "els_advbar.kv").read_text(encoding="utf-8")
+    block = kv[kv.index("id: label_gear"):]
+    block = block[:block.index("\n\n")]
+    assert "text: root.gear_text" in block

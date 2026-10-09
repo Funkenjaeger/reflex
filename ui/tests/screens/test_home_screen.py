@@ -26,7 +26,7 @@ import pytest
 from kivy.event import EventDispatcher
 from kivy.properties import NumericProperty
 
-from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_stop_registers import ElsStopRegisters
 
 N_SCALES = 4
 
@@ -59,7 +59,7 @@ def rig():
     app = SimpleNamespace(
         board=board,
         servo=servo,
-        els_uic=SimpleNamespace(hal=ElsStopHal(board)),
+        els_uic=SimpleNamespace(hal=ElsStopRegisters(board)),
     )
     return SimpleNamespace(page=_make_page(app), scales=scales, servo=servo)
 
@@ -92,7 +92,7 @@ def test_mode_switch_clears_sync_even_when_servo_mode_is_already_0(rig):
 
 
 def test_sync_is_cleared_before_the_servo_mode_write(rig):
-    """SYNC OFF FIRST, the ordering rule from els_stop_hal.stop_sync: at the
+    """SYNC OFF FIRST, the ordering rule from els_stop_registers.stop_sync: at the
     moment the servoMode write lands, every scale must already be clear, so
     there is no window where the mode drops with a motion source still armed."""
     rig.scales[0]['syncEnable'] = 1

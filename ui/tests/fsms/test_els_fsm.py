@@ -172,8 +172,10 @@ def test_on_enter_disabled_writes_set_enable_false():
     fsm = _build_fsm(hal=hal)
     fsm.enable()    # disabled → stopped
     fsm.disable()   # stopped → disabled (fires on_enter_disabled)
-    # The last set_enable(False) call should come from on_enter_disabled.
-    hal.set_enable.assert_called_with(False)
+    # The disengage is ONE BATCH now (every syncEnable, then enable), so what
+    # is asserted is that it was built and put on the wire -- the order inside
+    # it is ElsStopRegisters.disengage_batch's contract and is tested there.
+    hal.disengage.assert_called_once_with()
 
 
 # ─── stopped re-arm: hysteresis driven by mode flags ───────────────────────
@@ -387,12 +389,18 @@ def test_on_enter_cutting_arms_and_writes_thread_geometry():
     hal.reset_mock()   # focus on cutting writes only
     fsm.cut()
     assert fsm.state == "cutting"
-    hal.set_scale_index.assert_called_with(z_inp.inputIndex)
-    hal.set_backlash_steps.assert_called_once_with(42)
+    # The arming writes are ONE BATCH now, so the assertion is on the numbers
+    # it carries rather than on which setter was called. stopPosition and
+    # enable are in there too, by construction -- see ElsStopRegisters.arming_batch.
+    armed = hal.arm.call_args.kwargs
+    assert armed["scale_index"] == z_inp.inputIndex
+    assert armed["backlash_steps"] == 42
+    # Thread geometry comes from spindle/servo ratios; verify it is carried
+    # and is a real pitch, not the turning zero.
+    assert armed["thread_pitch_steps"] != 0.0
+    assert armed["z_counts_per_pitch"] != 0.0
+    # The release stays in on_enter_cutting, after the batch is acknowledged.
     hal.set_active.assert_called_once_with(False)
-    # Thread geometry comes from spindle/servo ratios; just verify writes happened.
-    assert hal.set_thread_pitch_steps.called
-    assert hal.set_z_counts_per_pitch.called
 
 
 def test_on_enter_cutting_in_turning_keeps_backlash_and_signed_polarity():
@@ -415,10 +423,11 @@ def test_on_enter_cutting_in_turning_keeps_backlash_and_signed_polarity():
     hal.reset_mock()
     fsm.cut()
     assert fsm.state == "cutting"
-    hal.set_thread_pitch_steps.assert_called_once_with(0.0)
-    (zcpp,), _ = hal.set_z_counts_per_pitch.call_args
-    assert zcpp < 0, "the Z polarity sign must reach the firmware in turning"
-    hal.set_backlash_steps.assert_called_once_with(42)
+    armed = hal.arm.call_args.kwargs
+    assert armed["thread_pitch_steps"] == 0.0
+    assert armed["z_counts_per_pitch"] < 0, \
+        "the Z polarity sign must reach the firmware in turning"
+    assert armed["backlash_steps"] == 42
     hal.set_active.assert_called_once_with(False)
 
 

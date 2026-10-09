@@ -21,9 +21,12 @@ log = Logger.getChild(__name__)
 def notify_operator(message: str, severity: str) -> bool:
     """Post to the top status bar. Returns True iff the operator will see it.
 
-    Safe to call from the board polling thread, by els_uic.notify's own
-    contract: the notice queue is locked and a Kivy property assignment is
-    atomic enough for a string.
+    Safe to call from any thread, by els_uic.notify's own contract: the
+    notice queue is locked and a Kivy property assignment is atomic enough for
+    a string. (It names no particular thread on purpose. The Modbus owner
+    thread added in step 2 publishes only snapshots, through
+    Clock.schedule_once, so nothing that posts a notice runs on it today --
+    but the locking is what makes that a detail rather than a dependency.)
 
     NEVER RAISES. Every caller is a guard or a watchdog -- code whose whole job
     is to be reliable when something else is already wrong -- and at the lathe

@@ -40,4 +40,9 @@ jobs:
           uv sync
       - name: Run system tests against the in-repo firmware
         working-directory: ui
-        run: uv run --frozen pytest -m system tests/system -q
+        # Through the runner, which parallelises the bulk, runs the
+        # wall-clock-sensitive cases serially on their own, and retries a
+        # failure ALONE before calling it one -- annotating anything that only
+        # passed on the retry, because a test that needs isolating is a finding
+        # rather than a pass. See scripts/run_tests.py.
+        run: uv run --frozen python scripts/run_tests.py --system -- -q

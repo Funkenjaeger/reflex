@@ -143,6 +143,30 @@ class TestConfigureLeadScrewRatio:
         assert servo.ratioNum == expected.numerator
         assert servo.ratioDen == expected.denominator
 
+    @pytest.mark.parametrize("gear, factor", [("A", 1), ("B", 2), ("C", Fraction(1, 2))])
+    def test_gearbox_position_scales_mm_per_step(self, servo, gear, factor):
+        """Lead Screw Pitch Steps is the reference gear's; the lever's factor
+        scales the carriage travel per step (reflex/fsms/els_gear.py)."""
+        servo.elsMode = True
+        servo.leadScrewPitch = 0.125
+        servo.leadScrewPitchIn = True
+        servo.leadScrewPitchSteps = 1600
+        servo.gearbox_position = gear
+        servo.configure_lead_screw_ratio(servo, None)
+        expected = Fraction(0.125) * Fraction(254, 10) * Fraction(1, 1600) * factor
+        assert Fraction(servo.ratioNum, servo.ratioDen) == expected
+
+    def test_changing_the_gear_recomputes_the_ratio(self, servo):
+        servo.elsMode = True
+        servo.leadScrewPitch = 0.125
+        servo.leadScrewPitchIn = True
+        servo.leadScrewPitchSteps = 1600
+        servo.gearbox_position = "A"
+        servo.configure_lead_screw_ratio(servo, None)
+        a = Fraction(servo.ratioNum, servo.ratioDen)
+        servo.gearbox_position = "B"          # the binding, not a direct call
+        assert Fraction(servo.ratioNum, servo.ratioDen) == 2 * a
+
     def test_non_els_mode_skips(self, servo):
         servo.elsMode = False
         original_num = servo.ratioNum
@@ -260,3 +284,13 @@ class TestToggleEnable:
         servo.servoMode = 1
         servo.toggle_enable()
         assert servo.servoMode == 0
+
+
+def test_lead_screw_pitch_steps_is_numeric():
+    """It held a step count in a BooleanProperty, which Kivy happened to
+    accept; a numeric setting must be a NumericProperty."""
+    from kivy.properties import NumericProperty
+    from reflex.dispatchers.servo import ServoDispatcher
+    prop = ServoDispatcher.leadScrewPitchSteps
+    assert isinstance(prop, NumericProperty)
+    assert prop.defaultvalue == 800

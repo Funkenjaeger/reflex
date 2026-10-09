@@ -35,4 +35,7 @@ jobs:
           # The firmware is always in-repo; a skip in the contract tests can
           # only mean a broken resolver, and must fail loudly, not pass quietly.
           REFLEX_FW_REQUIRED: "1"
-        run: uv run --frozen pytest -q
+        # See scripts/run_tests.py: bulk in parallel, the wall-clock cases
+        # serially, and one isolated retry as a safety net that never goes
+        # quiet about having fired.
+        run: uv run --frozen python scripts/run_tests.py -- -q

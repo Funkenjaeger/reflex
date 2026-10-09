@@ -3,8 +3,11 @@ from transitions import Machine
 
 from reflex.dispatchers import els, board
 from reflex.fsms import els_adopt
+from reflex.fsms.els_gear import (
+    REFERENCE_GEAR, gear_factor, steps_in_gear, worst_case_travel_factor,
+)
 from reflex.fsms.els_mode_watch import mode_name
-from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_stop_registers import ElsStopRegisters
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
 from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
 
@@ -17,11 +20,26 @@ log = Logger.getChild(__name__)
 class ElsFsm:
 
     # TODO: Consider putting STATES and TRANSITIONS in their own module
+    # How long the arming batch has to come back before the cut is refused.
+    # One exchange is ~9 ms and the batch is six, so this is several times the
+    # worst case; a link that is merely slow must not fail an arming, and a
+    # link that is gone must not leave the UI in 'arming' for ever.
+    ARM_TIMEOUT_S = 1.0
+
+    # APPEND-ONLY. The flight recorder writes this state as an INDEX into
+    # this list, so inserting one in the middle re-maps every recording ever
+    # made. The order is a vocabulary, not a flow.
     STATES = ['disabled',
-              'stopped', 
+              'stopped',
               'retracting',
               'cutting',
-              'alarm'
+              'alarm',
+              # Between pressing Cut and the feed being released: the arming
+              # writes are in flight. The cut is released only when the
+              # controller has acknowledged EVERY one of them. Before this
+              # state existed the Kivy thread blocked here, six exchanges
+              # deep, with the UI frozen for the length of it.
+              'arming',
     ]
 
     # Note - Fields: trigger, source, dest, conditions, unless, before, after, prepare
@@ -36,8 +54,19 @@ class ElsFsm:
          'conditions': ['is_ready_to_retract', 'has_retract_target']},
         {'trigger': 'retract_done', 'source': 'retracting', 'dest': 'stopped', 'conditions': ['is_retracted']},
         {'trigger': 'retract_done', 'source': 'retracting', 'dest': '='},
-        {'trigger': 'cut', 'source': 'stopped', 'dest': 'cutting', 'conditions': ['is_ready_to_cut']}, 
-        {'trigger': 'stop_active', 'source': 'cutting', 'dest': 'stopped'},
+        {'trigger': 'cut', 'source': 'stopped', 'dest': 'arming', 'conditions': ['is_ready_to_cut']},
+        # The arming batch came back with every write acknowledged.
+        {'trigger': 'armed', 'source': 'arming', 'dest': 'cutting'},
+        # It did not, or it never came back. Either way the stop is not known
+        # to be armed and the feed must not be released: on_enter_arming's
+        # handler stops the feed and raises the alarm, as the blocking version
+        # did inline.
+        {'trigger': 'arm_failed', 'source': 'arming', 'dest': 'alarm'},
+        {'trigger': 'arm_timeout', 'source': 'arming', 'dest': 'alarm'},
+        # The operator got out while it was in flight. A result arriving after
+        # this is ignored -- see _arming_done, which checks the generation it
+        # was issued under.
+        {'trigger': 'stop_active', 'source': ['cutting', 'arming'], 'dest': 'stopped'},
         # 'cutting' IS a valid source, added 2026-09-01. Until then the only way
         # out of 'cutting' was stop_active (the carriage actually reaching the
         # shoulder) or fault -- so a cut ABANDONED by turning Sync Enable off
@@ -47,12 +76,12 @@ class ElsFsm:
         # past the stop point by hand to publish stop_active. The drive is
         # de-energized by then and the cut is over; the FSM should say so.
         {'trigger': 'disable',
-         'source': ['stopped', 'retracting', 'cutting', 'alarm'],
+         'source': ['stopped', 'arming', 'retracting', 'cutting', 'alarm'],
          'dest': 'disabled'},
         {'trigger': 'fault', 'source': '*', 'dest': 'alarm'},
     ]
 
-    def __init__(self, els: els, board: board, hal: ElsStopHal, controller,
+    def __init__(self, els: els, board: board, hal: ElsStopRegisters, controller,
                  diag_recorder=None):
         self.els = els
         self.board = board
@@ -64,6 +93,10 @@ class ElsFsm:
         # gate, so no second diagSchema read is ever issued. Optional: None
         # simply keeps the adopt gates failed (see _read_adoptable_mode).
         self.diag_recorder = diag_recorder
+        # The arming attempt in flight. Incremented per attempt so a batch
+        # result or a timeout belonging to an abandoned one is ignored.
+        self._arming_seq = 0
+        self._arm_timeout_event = None
 
         self.fsm = Machine(
             model=self,
@@ -130,7 +163,7 @@ class ElsFsm:
         # stays True until the next cut (or disable) resets it.
         backlash_added = 0
         if step_delta != 0 and not self._retract_backlash_applied:
-            backlash_steps = int(self.els.els_backlash_steps or 0)
+            backlash_steps = self.engaged_backlash_steps()
             if backlash_steps:
                 sign = 1 if step_delta > 0 else -1
                 backlash_added = sign * backlash_steps
@@ -146,70 +179,150 @@ class ElsFsm:
         self.hal.set_steps_to_go(step_delta)
         self.board.bind(update_tick=self._on_board_update)
 
-    def on_enter_cutting(self):
+    def on_enter_arming(self):
+        """Put every arming write on the wire as ONE batch and wait for it
+        OFF the Kivy thread.
+
+        This is what the blocking version did inline, six exchanges deep, with
+        the UI unable to render or take a touch for the ~120 ms it took. The
+        writes are the same ones in the same order; what changed is who waits.
+
+        The verdict covers EVERY write in the batch. Until 2026-10-04 only
+        stopPosition, scaleIndex and enable were checked, so a failed geometry
+        or backlash write was masked by the later successful enable -- a cut
+        with half-written thread geometry is not one to release.
+        """
         # Starting a new cut reverses direction, so the next retract will
         # again need to traverse the play window.
         self._retract_backlash_applied = False
 
-        # ARM the ELS stop and verify the safety-critical writes are acknowledged
-        # BEFORE releasing the cut. stopPosition, scaleIndex and enable are
-        # fire-and-forget over Modbus; if any silently failed the cut could run
-        # against a stale stop (wrong shoulder) or — on the engage-past-stop path
-        # where `enable` is 0 until this point, with a feed possibly already
-        # running — with NO armed stop at all (safety audit #4 + review). Every
-        # Modbus write is ACK'd by the firmware (minimalmodbus raises on a
-        # missing/bad response, which the write helpers turn into
-        # connection_manager.connected = False), so accumulate that per-write ACK
-        # — a later write recovering the link can't mask an earlier failure.
-        cm = self.board.connection_manager
-        # Write stopPosition and scaleIndex individually (not via set_stop_z,
-        # which bundles both) so the per-write ACK is checked at the right
-        # granularity — otherwise the scaleIndex write would recover `connected`
-        # and mask a failed stopPosition write. stopPosition is the FROZEN
-        # leadscrew encoder captured when the operator set the stop — immune to
-        # any DRO re-zero / units switch since (the physical shoulder is fixed).
+        # A PENDING GEAR IS ALREADY ADOPTED by the time this runs:
+        # ui_controller.start_cut adopts, pushes the stop, then triggers cut().
+        # It is not folded into the batch because adopting drives Kivy property
+        # handlers (the servo's mm-per-step, the axes' sync ratios, the
+        # calibration legs), which is not a register sequence. What matters
+        # here is that the geometry and backlash below are computed AFTER it,
+        # so the batch carries the new gear's numbers.
+        #
+        # stopPosition is the FROZEN leadscrew encoder captured when the
+        # operator set the stop -- immune to any DRO re-zero or units switch
+        # since, because the physical shoulder is fixed.
         enc = self.controller.stop_z_encoder
-        armed_ok = enc is not None
-        if armed_ok:
-            self.hal.set_stop_position(enc)
-            armed_ok = bool(cm.connected)
-        self.hal.set_scale_index(self._saddle_input.inputIndex)
-        armed_ok = armed_ok and bool(cm.connected)
+        if enc is None:
+            log.error("on_enter_arming: no committed stop position — "
+                      "refusing to arm")
+            self._arm_failed("no committed stop position")
+            return
+
         if self.controller.is_threading:
-            self.push_thread_geometry()
+            thread_pitch_steps, z_counts_per_pitch = self._thread_geometry()
         else:
             # Turning: no thread phase to correct, but the pre-cut take-up and
             # its Z confirmation run at the start of EVERY pass since
             # 2026-08-21 -- the feed goes through the same half-nut. What
-            # turning clears is the pitch only; see push_turning_geometry.
-            self.push_turning_geometry()
-        # Mode-independent since 2026-08-21. Until then turning wrote 0 here
-        # "so firmware skips takeup", which left every turning pass ungated.
-        self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
-        # Arm `enable` here (not just post-release) and verify it — this is the
-        # first arming on the engage-past-stop path, and the one thing that
-        # actually stops the feed. (stopDirection/hysteresis are re-asserted
-        # post-release; their values are already correct from engage time.)
-        self.hal.set_enable(True)
-        armed_ok = armed_ok and bool(cm.connected)
+            # turning clears is the pitch only; the Z polarity still has to go
+            # down, because the firmware reads the take-up direction from the
+            # SIGN of zCountsPerPitch.
+            thread_pitch_steps = 0.0
+            z_counts_per_pitch = self._z_counts_per_pitch(self._spindle_pitch_mm())
 
-        if not armed_ok:
-            # A safety-critical stop write wasn't confirmed — do NOT release the
-            # cut. Stop any feed and fault out rather than cut against an
-            # unverified / unarmed stop.
-            log.error("on_enter_cutting: ELS stop not acknowledged — "
-                      "aborting cut (stop not released)")
-            self.board.servo.stop_feed()
-            bus.publish("alarm_raised",
-                        reason="ELS stop not confirmed — cut aborted. Check the "
-                               "controller connection and try again.")
-            # Defer the fault transition to the top level: triggering it from
-            # inside this (nested) cut transition callback doesn't reliably
-            # process on a queued machine.
+        future = self.hal.arm(
+            stop_position=enc,
+            scale_index=self._saddle_input.inputIndex,
+            thread_pitch_steps=thread_pitch_steps,
+            z_counts_per_pitch=z_counts_per_pitch,
+            # Mode-independent since 2026-08-21. Until then turning wrote 0
+            # here "so firmware skips takeup", which left every turning pass
+            # ungated.
+            backlash_steps=self.engaged_backlash_steps(),
+        )
+
+        # The attempt this result belongs to. A batch still in flight when the
+        # operator stops or disengages must not drive the FSM afterwards.
+        self._arming_seq += 1
+        attempt = self._arming_seq
+
+        from kivy.clock import Clock
+        self._arm_timeout_event = Clock.schedule_once(
+            lambda _dt: self._on_arm_timeout(attempt), self.ARM_TIMEOUT_S)
+
+        if future.done():
+            # The synchronous owner: the batch ran inside submit() and we are
+            # already on the main thread. Settling inline keeps one Cut press
+            # one step, which is what the whole suite and the system harness
+            # are written against.
+            self._arming_done(attempt, future)
+            return
+        # On the owner thread add_done_callback fires THERE; schedule_once is
+        # the hand-off to the main thread, the same one Board uses for
+        # snapshots.
+        future.add_done_callback(
+            lambda f: Clock.schedule_once(
+                lambda _dt: self._arming_done(attempt, f), 0))
+
+    def _arming_done(self, attempt, future):
+        """On the main thread: the arming batch came back."""
+        if attempt != self._arming_seq or self.state != 'arming':
+            # Superseded, or the operator already left the state. A late
+            # result must never re-drive the FSM.
+            return
+        self._cancel_arm_timeout()
+        try:
+            results = future.result()
+        except Exception as e:                           # noqa: BLE001
+            self._arm_failed(f"the arming writes raised: {e}")
+            return
+        if not all(bool(r) for r in results):
+            self._arm_failed(f"not every arming write was acknowledged: "
+                             f"{[bool(r) for r in results]}")
+            return
+        self.armed()
+
+    def _on_arm_timeout(self, attempt):
+        if attempt != self._arming_seq or self.state != 'arming':
+            return
+        self._arm_timeout_event = None
+        log.error("on_enter_arming: the arming batch did not come back in "
+                  f"{self.ARM_TIMEOUT_S} s — aborting the cut")
+        self._abort_arming()
+        self.arm_timeout()
+        # The UI FSM mirrors the fault off THIS, not off the domain state --
+        # _raise_stop_write_fault published it on the blocking path and the
+        # arming path has to as well, or the domain sits in alarm with the UI
+        # still showing "Cutting...", which is the soft-lock the fault exists
+        # to avoid.
+        bus.publish("els_alarm")
+
+    def _cancel_arm_timeout(self):
+        if self._arm_timeout_event is not None:
+            self._arm_timeout_event.cancel()
+            self._arm_timeout_event = None
+
+    def _arm_failed(self, why: str):
+        """A safety-critical stop write was not confirmed: do NOT release the
+        cut. Stop any feed and fault out rather than cut against an unverified
+        or unarmed stop."""
+        self._cancel_arm_timeout()
+        log.error(f"on_enter_arming: ELS stop not acknowledged ({why}) — "
+                  "aborting cut (stop not released)")
+        self._abort_arming()
+        if self.state == 'arming':
+            self.arm_failed()
+            bus.publish("els_alarm")   # see _on_arm_timeout
+        else:
+            # _arm_failed can be reached before the machine settled in
+            # 'arming' (the no-stop-position path runs inside on_enter).
             from kivy.clock import Clock
             Clock.schedule_once(lambda _dt: self._raise_stop_write_fault(), 0)
-            return
 
+    def _abort_arming(self):
+        self.board.servo.stop_feed()
+        bus.publish("alarm_raised",
+                    reason="ELS stop not confirmed — cut aborted. Check the "
+                           "controller connection and try again.")
+
+    def on_enter_cutting(self):
+        """The release. Everything that had to be acknowledged already was."""
         self.hal.set_active(False)
         self.hal.set_stop_direction(
             self.els.stop_direction_value(self.controller.els_forward)
@@ -220,7 +333,8 @@ class ElsFsm:
             self.hal.set_hysteresis_loose()
         log.info(
             f"on_enter_cutting: els_forward={self.controller.els_forward} "
-            f"backlash_steps={int(self.els.els_backlash_steps)}"
+            f"backlash_steps={self.engaged_backlash_steps()} "
+            f"gear={self.engaged_gear()}"
         )
         self.board.bind(update_tick=self._on_board_update)
 
@@ -267,16 +381,33 @@ class ElsFsm:
         # still going — with the ELS stop simultaneously disarmed, because the
         # firmware gates the stop check on enable. Feed running, backstop gone.
         feed_was_on = self.board.servo.servoMode != 0
-        self.hal.stop_sync()
-        self.hal.set_enable(False)
-        self.board.servo.stop_feed()
-        if feed_was_on and not self.board.connection_manager.connected:
+        # ONE BATCH: every syncEnable, then enable. Back to back with nothing
+        # able to get between them -- for as long as any syncEnable is still
+        # set after enable has gone to 0, the firmware's servoEnableTask is
+        # entitled to switch the feed back on and nothing will switch it off
+        # again. A verdict per write, so the enable-off succeeding cannot hide
+        # the sync-off having failed.
+        #
+        # BLOCKING, deliberately. This is the safety stop; the operator has
+        # asked for motion to end, and the few milliseconds it costs are not
+        # worth handing back a UI that says disengaged before it is.
+        if self.board.connected:
+            try:
+                writes_ok = self.hal.disengage()
+            except Exception as e:                       # noqa: BLE001
+                log.error(f"on_enter_disabled: the disengage raised: {e}")
+                writes_ok = False
+        else:
+            writes_ok = False
+        feed_off = self.board.servo.stop_feed()
+        if feed_was_on and not (writes_ok and feed_off):
             # A stop-feed write was attempted but not acknowledged (link down).
             # Nothing more software can do to stop it here — surface it loudly.
             # (Only when the feed was actually on, so an offline idle disengage
             # doesn't cry wolf.)
-            log.error("on_enter_disabled: feed-stop write NOT acknowledged — "
-                      "sync feed may still be running (controller link down)")
+            log.error("on_enter_disabled: a disengage write was NOT "
+                      f"acknowledged (batch={writes_ok} feed_off={feed_off}) "
+                      "— sync feed may still be running")
 
     def _raise_stop_write_fault(self):
         """Top-level fault after an unacknowledged cut-stop write (scheduled from
@@ -547,7 +678,10 @@ class ElsFsm:
         # refuses LOUDLY and the fix (recalibrate) is in the message.
         legs = [int(v) for v in self.els.els_cal_measured_legs]
         if len(legs) == 3 and all(v > 0 for v in legs):
-            self.hal.set_cal_measured(legs)
+            # Stored in the reference gear, like the take-up they are
+            # compared against (els_gear.py).
+            self.hal.set_cal_measured(
+                [steps_in_gear(v, self.engaged_gear()) for v in legs])
 
         # Sync ratios, every axis: the firmware registers are written only by
         # a property-CHANGE binding, so an unchanged UI setting is never
@@ -743,7 +877,7 @@ class ElsFsm:
             self.push_thread_geometry()
         else:
             self.push_turning_geometry()
-        self.hal.set_backlash_steps(int(self.els.els_backlash_steps))
+        self.hal.set_backlash_steps(self.engaged_backlash_steps())
 
     def _spindle_pitch_mm(self) -> Fraction:
         # spindle.syncRatioNum/Den is mm-per-rev (= mm-per-thread-pitch when
@@ -777,6 +911,20 @@ class ElsFsm:
         self.hal.set_thread_pitch_steps(0.0)
         self.hal.set_z_counts_per_pitch(self._z_counts_per_pitch(self._spindle_pitch_mm()))
 
+    def _thread_geometry(self) -> tuple:
+        """(threadPitchSteps, zCountsPerPitch) for the current pitch and gear.
+
+        Split out from push_thread_geometry so the arming batch can CARRY the
+        numbers instead of writing them separately -- the two must not be able
+        to drift apart.
+        """
+        spindle_pitch_mm = self._spindle_pitch_mm()
+        # servo.ratioNum/Den is mm-per-step (linear leadscrew).
+        servo_ratio = Fraction(abs(self.servo.ratioNum),
+                               abs(self.servo.ratioDen))
+        return (float(spindle_pitch_mm / servo_ratio),
+                self._z_counts_per_pitch(spindle_pitch_mm))
+
     def push_thread_geometry(self) -> None:
         # Writes both threadPitchSteps and zCountsPerPitch. The firmware uses
         # both to perform Z-scale-based phase re-sync after a retract/resume,
@@ -787,8 +935,7 @@ class ElsFsm:
         servo_ratio = Fraction(abs(self.servo.ratioNum),
                                abs(self.servo.ratioDen))
 
-        thread_pitch_steps = float(spindle_pitch_mm / servo_ratio)
-        z_counts_per_pitch = self._z_counts_per_pitch(spindle_pitch_mm)
+        thread_pitch_steps, z_counts_per_pitch = self._thread_geometry()
 
         log.info(
             f"*** push_thread_geometry: pitch_mm={float(spindle_pitch_mm)} "
@@ -873,7 +1020,7 @@ class ElsFsm:
         return self.hal.read_phase_offset_steps()
 
     def reads_baseline(self) -> int:
-        """Snapshot for detecting fabricated reads; see ElsStopHal."""
+        """Snapshot for detecting fabricated reads; see ElsStopRegisters."""
         return self.hal.reads_baseline()
 
     def reads_fabricated_since(self, baseline: int) -> bool:
@@ -1051,14 +1198,18 @@ class ElsFsm:
     def _safety_margin_display(self) -> float:
         """Minimum distance (in display units) Z must be from stop_z before cutting is allowed.
 
-        Leadscrew pitch + backlash distance × 1.1 ensures that even a worst-case
-        backlash takeup followed by thread re-sync cannot push the carriage
-        past the workpiece before ELS can fire. Result is converted to
+        (correction + backlash distance) × fastest-gear factor × 1.1. The
+        stop cannot cancel motion the firmware has already committed: the
+        backlash take-up and, when threading, the phase correction keep going
+        after it fires. So this must cover both, in the worst gear the lever
+        could be in. The correction term is the larger of one motor revolution
+        of travel and, when threading, one THREAD pitch, because the firmware
+        folds the correction to within a thread pitch. Result is converted to
         display units (mm or inches) so it matches scaledPosition/stop_z.
 
-        Uses the servo leadscrew pitch, not the thread pitch being cut — the
-        safety margin is about how far the servo can move before ELS fires,
-        independent of what thread is being cut.
+        Until 2026-10-03 this used the leadscrew pitch alone, in the gear the
+        settings assume, which under-budgets a thread coarser than the
+        leadscrew and a lever left in the fast position.
 
         INVARIANT THIS DEPENDS ON (closed-loop backlash calibration, 2026-08-08).
         ``els_backlash_steps`` must hold the COMMANDED take-up (measured lash +
@@ -1081,31 +1232,113 @@ class ElsFsm:
         firmware refuses it unless ``elsStop.enable == 0``, and the operator
         modal owns "tool clear of the work".
         """
-        # Leadscrew pitch in mm (not thread pitch)
         try:
-            pitch_mm = float(Fraction(self.servo.leadScrewPitch))
+            # One motor revolution's worth of carriage travel in the ENGAGED
+            # gear: the historical stand-in for "a correction move", kept as
+            # the floor.
+            leadscrew_mm = float(Fraction(self.servo.leadScrewPitch)
+                                 * gear_factor(self.engaged_gear()))
             if self.servo.leadScrewPitchIn:
-                pitch_mm *= 25.4  # convert inches to mm
-        except (ValueError, ZeroDivisionError):
-            return 0.0
-
-        try:
+                leadscrew_mm *= 25.4  # convert inches to mm
+            # mm of carriage per motor step in the ENGAGED gear (the servo
+            # dispatcher folds the gearbox factor into ratioNum/Den).
             servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
         except (ValueError, ZeroDivisionError):
             return 0.0
 
-        backlash_steps = int(self.els.els_backlash_steps or 0)
-        backlash_mm = float(backlash_steps * float(servo_ratio))
+        # THE THREAD PITCH, NOT ONLY THE LEADSCREW PITCH (2026-10-03). The
+        # firmware folds the phase correction to within one THREAD pitch and
+        # biases it forward (els_phase.h, elsComputePhaseCorrection), so a
+        # thread coarser than the leadscrew can move the carriage further than
+        # one leadscrew pitch before ELS can stop it -- up to 6.35 mm at 4 TPI
+        # on an 8 TPI leadscrew, against the 4.55 mm this used to allow.
+        correction_mm = leadscrew_mm
+        if self.controller.is_threading:
+            try:
+                correction_mm = max(correction_mm, float(self._spindle_pitch_mm()))
+            except (ValueError, ZeroDivisionError, TypeError, AttributeError):
+                pass
 
-        margin_mm = (pitch_mm + backlash_mm) * 1.1
+        backlash_steps = self.engaged_backlash_steps()
+        backlash_mm = float(backlash_steps * servo_ratio)
+
+        # SIZED FOR THE FASTEST GEAR (2026-10-03). The lever may sit in a
+        # faster position than the controller believes, and the take-up and
+        # the correction run before the coupling check has a reading. Motion
+        # already committed keeps going after the stop fires, so it is
+        # budgeted as if every step moved the carriage the furthest any
+        # position can: 2x in A, 4x in C, 1x in B.
+        travel_factor = float(worst_case_travel_factor(self.engaged_gear()))
+        margin_mm = (correction_mm + backlash_mm) * travel_factor * 1.1
         # Convert mm to display units so comparison with scaledPosition is valid
         factor = self.board.formats.factor
         margin_display = margin_mm * float(factor)
         log.debug(
-            f"_safety_margin: pitch={pitch_mm:.4f}mm backlash={backlash_mm:.4f}mm "
+            f"_safety_margin: correction={correction_mm:.4f}mm backlash={backlash_mm:.4f}mm "
+            f"gear={self.engaged_gear()} x{travel_factor:g} "
             f"margin={margin_mm:.4f}mm → {margin_display:.6f} display units (factor={float(factor):.6f})"
         )
         return margin_display
+
+    def engaged_gear(self) -> str:
+        """The gearbox position the controller currently believes is engaged.
+
+        Read through getattr because a servo with no gearbox notion (a rotary
+        configuration, or a test double) is by definition in the reference gear.
+        """
+        return getattr(self.servo, "gearbox_position", REFERENCE_GEAR)
+
+    def z_mm_per_count(self):
+        """Z scale resolution in mm per count, or None if unknown."""
+        saddle = self._saddle_input
+        if saddle is None or not saddle.ratioDen or not saddle.ratioNum:
+            return None
+        return float(Fraction(abs(saddle.ratioNum), abs(saddle.ratioDen)))
+
+    def steps_per_z_count(self):
+        """Commanded steps per Z count in the ENGAGED gear, or None.
+
+        A coupled pass moves the scale one count per this many steps; the
+        coupling-ratio check (els_ratio.py) measures against it.
+        """
+        mm_per_count = self.z_mm_per_count()
+        try:
+            servo_ratio = Fraction(abs(self.servo.ratioNum), abs(self.servo.ratioDen))
+        except (ValueError, ZeroDivisionError, TypeError):
+            return None
+        if not mm_per_count or servo_ratio == 0:
+            return None
+        return mm_per_count / float(servo_ratio)
+
+    def adopt_gear(self, gear: str) -> None:
+        """Make `gear` the engaged gearbox position, and re-teach the firmware
+        every number that depends on it.
+
+        Setting the servo's gearbox_position recomputes its mm-per-step (and
+        persists, so a restart stays in the adopted gear). The sync ratios are
+        firmware RAM written only on a property CHANGE, so they are pushed here
+        explicitly, as reconcile does; the backlash and thread geometry follow
+        when the caller next pushes the stop. The calibration legs are re-sent
+        in the new gear's steps, as on connect.
+        """
+        previous = self.engaged_gear()
+        self.servo.gearbox_position = gear
+        for axis in self.board.axes:
+            axis.push_sync_ratio()
+        legs = [int(v) for v in self.els.els_cal_measured_legs]
+        if len(legs) == 3 and all(v > 0 for v in legs):
+            self.hal.set_cal_measured([steps_in_gear(v, gear) for v in legs])
+        log.warning(f"gearbox position adopted: {previous} -> {gear}")
+
+    def engaged_backlash_steps(self) -> int:
+        """The commanded take-up in the ENGAGED gear's motor steps.
+
+        els_backlash_steps is stored in the reference gear; the play is on the
+        leadscrew side of the lever, so B needs half the steps and C twice as
+        many (els_gear.py). Every write of backlashSteps goes through here.
+        """
+        return steps_in_gear(int(self.els.els_backlash_steps or 0),
+                             self.engaged_gear())
 
     # ——— Helpers ———
     def _scale_counts_to_steps(self, scale_counts : int) -> int:

@@ -83,3 +83,47 @@ def test_the_status_bar_shows_the_status_label():
     kv = (Path(reflex.__file__).parent / "components/home/statusbar.kv").read_text()
     assert "text: release_version.status_label(app.version)" in kv
     assert "text: app.version\n" not in kv
+
+
+# ── Integration builds: dev releases of the next rc (2026-10-03) ─────────
+
+@pytest.mark.parametrize("package, tag", [
+    ("1.2.2rc2.dev1", "v1.2.2-rc.2.dev.1"),
+    ("1.2.2rc12.dev30", "v1.2.2-rc.12.dev.30"),
+    ("1.3.0.dev2", "v1.3.0-dev.2"),
+])
+def test_tag_for_a_dev_build(package, tag):
+    assert rv.tag_for(package) == tag
+    assert rv.same_release(tag, package)
+
+
+def test_dev_builds_are_not_their_rc():
+    assert not rv.same_release("v1.2.2-rc.2.dev.1", "v1.2.2-rc.2")
+    assert not rv.same_release("v1.2.2-rc.2.dev.1", "v1.2.2-rc.2.dev.2")
+
+
+def test_dev_builds_sort_between_the_rcs():
+    """The whole point of the scheme: builds and rcs alternate on one
+    version, and every dev build sorts just below the rc it leads to."""
+    ordered = ["v1.2.1", "v1.2.2-alpha.1", "v1.2.2-alpha.2", "v1.2.2-rc.1",
+               "v1.2.2-rc.2.dev.1", "v1.2.2-rc.2.dev.2", "v1.2.2-rc.2",
+               "v1.2.2-rc.3.dev.1", "v1.2.2", "v1.2.3-dev.1",
+               "v1.2.3-rc.1.dev.1", "v1.2.3-rc.1"]
+    assert sorted(reversed(ordered), key=rv.precedence_key) == ordered
+
+
+def test_package_and_tag_spellings_sort_alike():
+    assert rv.precedence_key("1.2.2rc2.dev1") == rv.precedence_key("v1.2.2-rc.2.dev.1")
+
+
+@pytest.mark.parametrize("full, shown", [
+    ("v1.2.2-rc.2.dev.1", "v1.2.2-rc2.d1"),
+    ("v1.12.10-rc.12.dev.30", "v1.12.10-rc12.d30"),
+])
+def test_status_label_for_a_dev_build(full, shown):
+    """Both numbers stay (rc2.d1 and rc3.d1 are different builds); it costs
+    one character plus the dev number's digits over the rc it leads to."""
+    assert rv.status_label(full) == shown
+    assert rv.same_release(shown, full)
+    rc, dev = full.split(".dev.")
+    assert len(shown) == len(rc) + 1 + len(dev)

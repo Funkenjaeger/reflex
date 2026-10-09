@@ -29,7 +29,10 @@ backlash_mm = 0.02             # Mechanical backlash
 # at isr_rate_hz = 10000.
 settle_tau_s = 0.001
 max_position_mm = 300.0
-min_position_mm = -5.0
+# -20, not -5 (2026-10-03): the system tests cut -Z from Z=0 and must clear
+# the UI's cut-start safety margin, which is now sized for the fastest
+# gearbox position (~7 mm on this geometry, ~3.5 mm before).
+min_position_mm = -20.0
 initial_position_mm = 0.0
 half_nut_engaged = false       # Initial half-nut state
 scale_dir = 1                  # +1 or -1: encoder direction for Z scale

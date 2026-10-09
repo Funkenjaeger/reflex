@@ -1,9 +1,14 @@
-"""Hardware abstraction layer for the elsStop register block.
+"""Domain facade over the elsStop register block.
 
-The HAL is the single place that knows about firmware register names and
-encoding. Methods are named in domain terms; callers (the FSM) never see
-register keys. Replacing the firmware protocol means writing one new HAL.
+This is the ELS stop register facade, not the hardware seam. The seam is
+PortOwner (utils/port_owner.py), which every exchange goes through. This
+module is the one place the ELS state machines look to for elsStop register
+names and encoding: methods are named in domain terms and callers never see
+register keys. The servo, axis and input dispatchers write their own
+registers through PortOwner directly, by design.
 """
+from reflex.utils.base_device import write_command, write_confirmed
+from reflex.utils.port_owner import Batch, PortOwner
 from kivy.logger import Logger
 
 log = Logger.getChild(__name__)
@@ -12,14 +17,14 @@ log = Logger.getChild(__name__)
 class TickReads:
     """elsStop values served from THIS BOARD TICK's snapshot, not from the wire.
 
-    WHAT THIS IS FOR, and the line it draws. Every read on ElsStopHal below is
+    WHAT THIS IS FOR, and the line it draws. Every read on ElsStopRegisters below is
     live: ``device['elsStop']['active']`` is a Modbus exchange, not a cache
     lookup. That is correct for an on-demand read — an apply, a wizard step, a
     calibration run — where the operator has just acted and the answer must
     describe the machine NOW. It was ruinous for the tick-driven pollers, which
     between them made several such exchanges 30 times a second and lost comms on
     six of six cuts on 2026-08-23 by asking the firmware to answer them at the
-    moment its 100 kHz ISR had nothing spare (see Board._refresh_els_stop_snapshot).
+    moment its 100 kHz ISR had nothing spare (see PortOwner._decode_hot).
 
     So: the pollers read through here, everything else keeps reading live. The
     split is deliberately visible at the call site — ``hal.tick.active()`` reads
@@ -30,12 +35,12 @@ class TickReads:
 
     FABRICATION IS REPORTED THE SAME WAY IT ALWAYS WAS. When the board holds no
     snapshot — the refresh failed, or the link is down — these return the same
-    fallbacks the live readers return, through the same ElsStopHal._no_link, so
+    fallbacks the live readers return, through the same ElsStopRegisters._no_link, so
     reads_baseline()/reads_fabricated_since() keep working for the callers that
     discard a poll rather than act on a value they cannot trust.
     """
 
-    def __init__(self, hal: "ElsStopHal"):
+    def __init__(self, hal: "ElsStopRegisters"):
         self._hal = hal
 
     def _get(self, key, fallback):
@@ -56,6 +61,12 @@ class TickReads:
 
     def takeup_seq(self) -> int:
         return int(self._get('takeupSeq', 0))
+
+    # Set while the firmware is taking up backlash at the start of a pass, and
+    # sync is gated off. The coupling-ratio check (els_ratio.py) does not
+    # listen until it clears.
+    def takeup_pending(self) -> bool:
+        return bool(self._get('takeupPending', 0))
 
     def takeup_result(self) -> int:
         return int(self._get('takeupResult', 0))
@@ -95,8 +106,22 @@ class TickReads:
         return int(self._get('scaleIndex', 0))
 
 
-class ElsStopHal:
-    """Domain-named operations against the elsStop register block."""
+class ElsStopRegisters:
+    """THE ELS STOP REGISTER FACADE: a domain facade over the elsStop block,
+    not the hardware seam. The seam is PortOwner (utils/port_owner.py), which
+    every exchange in the application goes through; the servo, axis and input
+    dispatchers write their registers through it directly, by design, and
+    never come here, so no invariant can be enforced at this layer. What this
+    class is for
+    is giving the ELS state machines verbs in their own vocabulary --
+    arm, disengage, set the stop -- instead of register names.
+
+    Keep transport OUT of it. It briefly grew a submit(batch) method on
+    2026-10-04 and that was the wrong direction: a caller that wants
+    several writes to land together asks for the DOMAIN operation and is
+    handed its result.
+
+    Domain-named operations against the elsStop register block."""
 
     # Hysteresis values used by the firmware to debounce the stop trigger.
     HYSTERESIS_TIGHT = 0      # active retract / wizard — stop on first crossing
@@ -114,17 +139,118 @@ class ElsStopHal:
         return self._board.connected
 
     # ── enable / active ───────────────────────────────────────────────
-    def set_enable(self, enabled: bool) -> None:
+    def set_enable(self, enabled: bool) -> bool:
+        """Arm or disarm the stop. CONFIRMED: this is the one write that
+        actually stops the feed, and both the cut arming and the disengage
+        branch on whether it landed. False means no link or no acknowledgement
+        -- the caller must treat the stop as NOT armed."""
         if not self._board.connected:
-            return
-        self._board.device['elsStop']['enable'] = 1 if enabled else 0
+            return False
+        return write_confirmed(
+            self._board.device['elsStop'], 'enable', 1 if enabled else 0)
 
-    def set_active(self, active: bool) -> None:
+    def _submit(self, batch):
+        """Put a Batch on the wire and hand back its Future. PRIVATE: the only
+        place in this file that knows a port owner exists."""
+        return PortOwner.of(self._board.connection_manager).submit(batch)
+
+    def arm(self, *, stop_position: int, scale_index: int,
+            thread_pitch_steps: float, z_counts_per_pitch: float,
+            backlash_steps: int):
+        """Arm the stop for a cut. Returns a Future of the per-write verdicts.
+
+        THE DOMAIN VERB, not a batch and not a submit: the caller says what it
+        wants armed and gets back something it can wait on. How that reaches
+        the controller -- one batch, back to back, never split -- is this
+        file's business and is described on _arming_batch.
+        """
+        return self._submit(self._arming_batch(
+            stop_position=stop_position, scale_index=scale_index,
+            thread_pitch_steps=thread_pitch_steps,
+            z_counts_per_pitch=z_counts_per_pitch,
+            backlash_steps=backlash_steps))
+
+    def disengage(self) -> bool:
+        """Clear every sync source and disarm the stop. True iff the
+        controller acknowledged all of it.
+
+        BLOCKING, deliberately: this is the safety stop, the operator has
+        asked for motion to end, and the few milliseconds are not worth
+        handing back a UI that says disengaged before it is.
+        """
         if not self._board.connected:
-            return
-        self._board.device['elsStop']['active'] = 1 if active else 0
+            return False
+        try:
+            results = self._submit(self._disengage_batch()).result()
+        except Exception as e:                           # noqa: BLE001
+            log.error(f"disengage: the batch did not complete: {e}")
+            return False
+        return all(bool(r) for r in results)
 
-    def stop_sync(self) -> None:
+    def _arming_batch(self, *, stop_position: int, scale_index: int,
+                     thread_pitch_steps: float, z_counts_per_pitch: float,
+                     backlash_steps: int):
+        """Every write the cut arming makes, as ONE Batch.
+
+        BACK TO BACK, AND NEVER SPLIT. These used to be six separate exchanges
+        with the Kivy thread waiting on each; a tick scan could land between
+        them, and on the owner thread so could anything else queued. The
+        firmware must not see a half-written stop -- a new stopPosition with
+        the previous scaleIndex, or geometry from the gear before last.
+
+        A VERDICT PER WRITE, which is what the batch result gives: all of them
+        or the cut is not released. Until 2026-10-04 only stopPosition,
+        scaleIndex and enable were checked, so a failed geometry or backlash
+        write was masked by the later successful enable. A cut with a
+        half-written thread geometry is not one to release.
+
+        `enable` is LAST on purpose: it is the write that actually arms the
+        stop, so everything it depends on is already in the controller when it
+        lands.
+        """
+        els = self._board.device['elsStop']
+        return Batch((
+            write_command(els, 'stopPosition', stop_position),
+            write_command(els, 'scaleIndex', scale_index),
+            write_command(els, 'threadPitchSteps', thread_pitch_steps),
+            write_command(els, 'zCountsPerPitch', z_counts_per_pitch),
+            write_command(els, 'backlashSteps', max(0, int(backlash_steps))),
+            write_command(els, 'enable', 1),
+        ))
+
+    def _disengage_batch(self):
+        """Clear sync on every scale, then enable. ONE Batch, in that order.
+
+        The order is the point and stop_sync explains why: for as long as any
+        syncEnable is set after enable has gone to 0, the firmware's
+        servoEnableTask is entitled to switch the feed back on, and nothing
+        will switch it off again. Batching removes the last way anything could
+        get between the two.
+        """
+        els = self._board.device['elsStop']
+        writes = [write_command(scale, 'syncEnable', 0)
+                  for scale in self._board.device['scales']]
+        writes.append(write_command(els, 'enable', 0))
+        return Batch(tuple(writes))
+
+    def set_active(self, active: bool) -> bool:
+        """The HOLD. Clearing it is what releases a cut, so it is CONFIRMED.
+
+        It has to be. The stop detector reads `active` out of the tick
+        snapshot, and `cutting` is entered before this write is made; left
+        fire-and-forget, a snapshot taken after the arming enable but before
+        this release lands still reads active=1, and the detector takes that
+        for the stop having fired on the tick the cut began. Confirming it
+        means the write has landed before the FSM settles, which also bumps
+        the port owner's write epoch, so any snapshot older than it is dropped
+        at apply rather than applied behind it.
+        """
+        if not self._board.connected:
+            return False
+        return write_confirmed(self._board.device['elsStop'],
+                               'active', 1 if active else 0)
+
+    def stop_sync(self) -> bool:
         """Clear syncEnable on every scale. The MOTION SOURCE off-switch.
 
         ORDER MATTERS AT DISENGAGE, and this is the whole point of the method.
@@ -149,9 +275,14 @@ class ElsStopHal:
         (enable == 0 gates the stop check off) -- i.e. no backstop left.
         """
         if not self._board.connected:
-            return
+            return False
+        acknowledged = True
         for scale in self._board.device['scales']:
-            scale['syncEnable'] = 0
+            # CONFIRMED, every one: this is the motion-source off-switch at
+            # disengage, and one scale left enabled is enough for the
+            # firmware's servoEnableTask to switch the feed back on.
+            acknowledged = write_confirmed(scale, 'syncEnable', 0) and acknowledged
+        return acknowledged
 
     def read_motion_in_flight(self) -> dict:
         """Snapshot of whether the FIRMWARE is driving the carriage right now.
@@ -221,12 +352,15 @@ class ElsStopHal:
         self._board.device['elsStop']['hysteresis'] = counts
 
     # ── stop target / scale source ────────────────────────────────────
-    def set_stop_position(self, encoder_counts: int) -> None:
+    def set_stop_position(self, encoder_counts: int) -> bool:
+        """The stop target. CONFIRMED: cutting against an unverified shoulder
+        is the failure this gate exists for."""
         if not self._board.connected:
-            return
-        self._board.device['elsStop']['stopPosition'] = encoder_counts
+            return False
+        return write_confirmed(
+            self._board.device['elsStop'], 'stopPosition', encoder_counts)
 
-    def set_stop_offset(self, counts: int) -> None:
+    def set_stop_offset(self, counts: int) -> bool:
         """Stop-overshoot correction: fire the stop `counts` EARLY.
 
         protocolVersion 11. A separate 16-bit register rather than a rewritten
@@ -236,15 +370,23 @@ class ElsStopHal:
         ELS_STOP_OFFSET_MAX] and treats negative as 0. Written LIVE, through
         the rate limiter in fsms/els_overshoot.py -- every call here is a
         Modbus exchange on the tick.
+
+        CONFIRMED, and the answer is returned: the corrector forgets a write
+        that was not acknowledged so the next good tick re-sends, rather than
+        its limiter believing a value the firmware never got.
         """
         if not self._board.connected:
-            return
-        self._board.device['elsStop']['stopOffset'] = int(counts)
+            return False
+        return write_confirmed(
+            self._board.device['elsStop'], 'stopOffset', int(counts))
 
-    def set_scale_index(self, scale_index: int) -> None:
+    def set_scale_index(self, scale_index: int) -> bool:
+        """Which scale the stop watches. CONFIRMED: an unacknowledged write
+        here leaves the stop reading the wrong axis."""
         if not self._board.connected:
-            return
-        self._board.device['elsStop']['scaleIndex'] = scale_index
+            return False
+        return write_confirmed(
+            self._board.device['elsStop'], 'scaleIndex', scale_index)
 
     def set_steps_to_go(self, steps: int) -> None:
         if not self._board.connected:
@@ -276,11 +418,6 @@ class ElsStopHal:
             return self._no_link(False)
         return bool(self._board.device['elsStop']['referenceLatched'])
 
-    def read_takeup_pending(self) -> bool:
-        if not self._board.connected:
-            return self._no_link(False)
-        return bool(self._board.device['elsStop']['takeupPending'])
-
     def read_latched_z(self) -> int:
         if not self._board.connected:
             return self._no_link(0)
@@ -291,27 +428,6 @@ class ElsStopHal:
             return self._no_link(0)
         return int(self._board.device['elsStop']['latchedSpindle'])
 
-    def read_last_ideal_advance(self) -> float:
-        if not self._board.connected:
-            return self._no_link(0.0)
-        return float(self._board.device['elsStop']['lastIdealAdvance'])
-
-    def read_last_actual_advance(self) -> float:
-        if not self._board.connected:
-            return self._no_link(0.0)
-        return float(self._board.device['elsStop']['lastActualAdvance'])
-
-    def read_last_phase_error(self) -> float:
-        if not self._board.connected:
-            return self._no_link(0.0)
-        return float(self._board.device['elsStop']['lastPhaseError'])
-
-    def read_last_correction(self) -> float:
-        if not self._board.connected:
-            return self._no_link(0.0)
-        return float(self._board.device['elsStop']['lastCorrection'])
-
-    # ── protocol version ──────────────────────────────────────────────
     def read_protocol_version(self) -> int:
         """Firmware register-layout version.
 
@@ -514,33 +630,6 @@ class ElsStopHal:
             return self._no_link(0)
         return int(self._board.device['elsStop']['executionCyclesPeak'])
 
-    def reset_execution_cycles_peak(self) -> None:
-        """Arm a fresh measurement.
-
-        The ISR only ever RAISES the value, so a host write of zero that lands
-        between its compare and its store is simply lost -- write again. That
-        costs one repeat and nothing else, which is a better trade than a
-        command/ack pair for a diagnostic counter.
-        """
-        if not self._board.connected:
-            return
-        self._board.device['elsStop']['executionCyclesPeak'] = 0
-
-    # ── thread-phase offset (widening a groove past the cutter) ───────
-    # The command/ack split once more, with one addition that matters: the
-    # 32-bit Pending MUST be written before the command, never after. The ISR
-    # reads Pending only under a nonzero command, and that ordering is the only
-    # thing standing between a two-register write and a torn read of a value
-    # that displaces the thread.
-    #
-    # The firmware holds ONE absolute total and does not accumulate. Running
-    # totals are built HERE: read the total, add the entry, write the sum. That
-    # is also what makes Clear trivial -- it is an apply of zero, and the
-    # firmware acks it like any other.
-    #
-    # Applied only while enable == 1; an offset outside a job would be wiped by
-    # the next enable edge, so the absent ack IS the refusal.
-
     def request_phase_offset(self, total_steps: int) -> None:
         """Apply an ABSOLUTE total, in leadscrew steps. Not a delta.
 
@@ -674,27 +763,6 @@ class ElsStopHal:
             # collected, and every analysis would silently find no signal.
             "reserved": [int(v) for v in els['diagReserved']],
         }
-
-    def read_takeup_thresh_counts(self) -> int:
-        """Z counts the last take-up had to move to be confirmed.
-
-        Firmware-DERIVED, not operator-set: computed from the commanded take-up
-        minus the calibrated lash, so it tracks the calibration automatically.
-        Falls back to the bare detection floor with no calibration on file or in
-        turning mode. Pair with read_last_takeup_z_delta() to tell an operator
-        what was wanted versus what happened.
-        """
-        if not self._board.connected:
-            return self._no_link(0)
-        return int(self._board.device['elsStop']['takeupThreshCounts'])
-
-    def read_last_takeup_z_delta(self) -> int:
-        """Signed Z counts moved across the last take-up, projected onto the
-        take-up direction. NEGATIVE means the carriage moved the WRONG way —
-        a distinct fault from "didn't move" and worth surfacing as such."""
-        if not self._board.connected:
-            return self._no_link(0)
-        return int(self._board.device['elsStop']['lastTakeupZDelta'])
 
     def is_move_done(self) -> bool:
         """True only when the firmware's commanded indexing motion has been

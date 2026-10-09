@@ -3,6 +3,7 @@ from kivy.uix.popup import Popup
 from kivy.properties import ObjectProperty, NumericProperty
 
 from reflex.components.home.thread_type import ThreadType
+from reflex.fsms.els_gear import REFERENCE_GEAR, gear_factor
 from reflex.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
@@ -47,10 +48,14 @@ class ElsSettingsPopup(Popup):
         self.overshoot_margin_counts = int(self.app.els.els_overshoot_margin_counts)
 
     def _servo_mm_per_step(self) -> float:
+        """mm per step in the REFERENCE gear, which is what the step-valued
+        settings shown here are stored in (reflex/fsms/els_gear.py). The
+        servo's ratio carries the engaged gear's factor, so divide it out."""
         servo = self.app.servo
         if servo.ratioDen == 0:
             return 0.0
-        return float(servo.ratioNum) / float(servo.ratioDen)
+        factor = gear_factor(getattr(servo, "gearbox_position", REFERENCE_GEAR))
+        return float(servo.ratioNum) / float(servo.ratioDen) / float(factor)
 
     def _steps_to_mm(self, steps: int) -> float:
         mm_per_step = self._servo_mm_per_step()

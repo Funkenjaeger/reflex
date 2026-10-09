@@ -17,7 +17,11 @@ from fractions import Fraction
 
 import pytest
 
-pytestmark = pytest.mark.system
+# timing: these assert on the WRITE RATE the limiter allows over a real
+# interval (writes per second against t1 - t0). Under `-n auto` this one
+# failed its budget once on 2026-10-04 and passed alone and in four runs
+# since -- a starved box, not the code.
+pytestmark = [pytest.mark.system, pytest.mark.timing]
 
 
 @pytest.mark.parametrize(
@@ -41,7 +45,11 @@ def test_correction_on_fires_early_by_the_offset_it_wrote(harness):
 
     def counting(counts):
         writes.append((time.monotonic(), int(counts)))
-        original(counts)
+        # RETURN the acknowledgement: set_stop_offset answers whether the
+        # controller took the write, and the corrector forgets one it did not.
+        # A wrapper that swallows the answer makes every write look refused,
+        # which turns the rate limiter off and floods the link.
+        return original(counts)
 
     hal.set_stop_offset = counting
 

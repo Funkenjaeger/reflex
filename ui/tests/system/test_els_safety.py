@@ -12,6 +12,42 @@ pytestmark = pytest.mark.system
 _ENV = {"env": {"EMU_RPM": "30", "EMU_NO_AUTO_RETRACT": "1"}}
 
 
+class _RefusedAck:
+    """A settled Future whose results carry a refusal at one position.
+
+    Stands in for the controller not answering ONE write of the arming batch
+    while the rest land -- the interleaving the accumulated verdict exists to
+    catch, and the one a naive end-of-sequence check would miss.
+    """
+
+    def __init__(self, results):
+        self._results = results
+
+    def done(self):
+        return True
+
+    def result(self, timeout=None):
+        return self._results
+
+
+def _refuse_arming_write(harness, index):
+    """Let the arming batch go out for real, then refuse the ack at `index`.
+
+    Positions follow ElsStopRegisters.arming_batch: 0 stopPosition, 1 scaleIndex,
+    2 threadPitchSteps, 3 zCountsPerPitch, 4 backlashSteps, 5 enable.
+    """
+    original = harness.hal.arm
+
+    def arming(**kwargs):
+        results = list(original(**kwargs).result())
+        if index < len(results):
+            results[index] = False
+        return _RefusedAck(results)
+
+    harness.hal.arm = arming
+    return original
+
+
 def test_stop_z_survives_dro_rezero(harness):
     """The stop is anchored to the PHYSICAL leadscrew encoder, so re-zeroing the
     Z DRO (an offset change) must NOT move where the tool actually stops — the
@@ -209,16 +245,16 @@ def test_cut_aborts_when_stop_write_not_acked(harness):
     h.set_stop_z(z0 - 50.0)         # mm
     h.engage()
 
-    # Inject: the stopPosition write "fails to ACK" (connected drops); the very
-    # next write recovers the link. A naive end-of-sequence check would miss this.
-    cm = h.board.connection_manager
-    orig_set_stop_position = h.hal.set_stop_position
-
-    def failing_set_stop_position(counts):
-        orig_set_stop_position(counts)
-        cm.connected = False        # write went out but was not acknowledged
-
-    h.hal.set_stop_position = failing_set_stop_position
+    # Inject: the stopPosition write goes out and is NOT acknowledged, while
+    # every write after it succeeds. A naive end-of-sequence check would miss
+    # this, which is the whole point of a verdict per write.
+    #
+    # Injected on the ARMING BATCH since step 4, which sends all six writes at
+    # once; before that it was the setter's return value, and before THAT it
+    # was connection_manager.connected. Each move left the previous injection
+    # pointing at something the code no longer reads -- a test that cannot
+    # fail. Keep this pointed at whatever the arming actually consumes.
+    orig_submit = _refuse_arming_write(h, 0)
 
     h.enable_sync()
     h.cut()
@@ -238,7 +274,7 @@ def test_cut_aborts_when_stop_write_not_acked(harness):
     # Recovery: the operator can clear the alarm with Disengage — BOTH FSMs must
     # leave alarm (domain → disabled AND the UI FSM out of its alarm state), or
     # ELS is soft-locked until app restart.
-    h.hal.set_stop_position = orig_set_stop_position  # link "recovers"
+    h.hal.arm = orig_submit                           # the controller answers again
     h.controller.toggle_engage()
     h.pump()
     assert h.els_fsm.state == "disabled", (
@@ -265,14 +301,10 @@ def test_cut_aborts_when_enable_write_not_acked(harness):
     h.set_stop_z(z0 - 50.0)         # mm
     h.engage()
 
-    cm = h.board.connection_manager
-    orig_set_enable = h.hal.set_enable
-
-    def failing_set_enable(enabled):
-        orig_set_enable(enabled)
-        cm.connected = False        # enable write went out but was not acknowledged
-
-    h.hal.set_enable = failing_set_enable
+    # The enable is the LAST write of the arming batch, and the one that
+    # actually arms the stop -- see the note in the stopPosition case above
+    # for why the injection lives on the batch.
+    _refuse_arming_write(h, 5)
 
     h.enable_sync()
     h.cut()

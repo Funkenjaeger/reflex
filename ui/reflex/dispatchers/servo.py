@@ -1,3 +1,4 @@
+from reflex.utils.base_device import write_confirmed
 import collections
 import time
 
@@ -7,6 +8,7 @@ from kivy.logger import Logger
 from kivy.properties import StringProperty, NumericProperty, BooleanProperty
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
+from reflex.fsms.els_gear import gear_factor
 from reflex.utils.ctype_calc import uint32_subtract_to_int32
 from reflex.utils.notices import NOTICE_WARNING
 from reflex.utils.operator_notice import notify_operator
@@ -40,7 +42,12 @@ class ServoDispatcher(SavingDispatcher):
     elsMode = BooleanProperty(False)
     leadScrewPitch = NumericProperty(0.25)
     leadScrewPitchIn = BooleanProperty(True)
-    leadScrewPitchSteps = BooleanProperty(800)
+    leadScrewPitchSteps = NumericProperty(800)
+    #: The lathe gearbox lever position between servo and leadscrew (A/B/C,
+    #: reflex/fsms/els_gear.py). Lead Screw Pitch Steps is the REFERENCE
+    #: gear's; this scales the derived mm-per-step. Persisted, because the
+    #: lever stays where it was across a restart.
+    gearbox_position = StringProperty("A")
     reverse = BooleanProperty(False)
 
     position = NumericProperty(0)
@@ -92,6 +99,7 @@ class ServoDispatcher(SavingDispatcher):
         self.bind(leadScrewPitch=self.configure_lead_screw_ratio)
         self.bind(leadScrewPitchIn=self.configure_lead_screw_ratio)
         self.bind(leadScrewPitchSteps=self.configure_lead_screw_ratio)
+        self.bind(gearbox_position=self.configure_lead_screw_ratio)
         self.bind(reverse=self._on_reverse_changed)
 
         # Private variables that don't need dispatchers etc
@@ -119,7 +127,12 @@ class ServoDispatcher(SavingDispatcher):
             if self.leadScrewPitchIn is True:
                 leadScrewPitch = leadScrewPitch * Fraction(254, 10)
 
-            leadScrewRatio = leadScrewPitch * Fraction(1, self.leadScrewPitchSteps)
+            # mm of carriage per motor step in the ENGAGED gear: the reference
+            # gear's pitch/steps times the lever's factor. Every consumer of
+            # ratioNum/Den (sync ratio, thread geometry, retract, cut margin)
+            # then sees the real travel per step without knowing about gears.
+            leadScrewRatio = (leadScrewPitch * Fraction(1, self.leadScrewPitchSteps)
+                              * gear_factor(self.gearbox_position))
             self.ratioNum = leadScrewRatio.numerator
             self.ratioDen = leadScrewRatio.denominator
 
@@ -411,8 +424,20 @@ class ServoDispatcher(SavingDispatcher):
             log.error(f"Unable to write servoDir: {e}")
 
     def on_servoMode(self, instance, value):
-        self.board.device['fastData']['servoMode'] = self.servoMode
         if not self.servoMode_from_firmware:
+            # Only a UI-originated change is written to the firmware. A value
+            # mirrored from a readback came FROM the firmware; writing it back
+            # turns an observation into a command, and once the read it came
+            # from is stale (a write queued behind it, a UI stop landing first)
+            # that command re-asserts a mode nobody asked for. Same rule as the
+            # syncEnable binding in dispatchers/els.py.
+            # CONFIRMED, and the answer kept: stop_feed() is a safety stop
+            # at disengage and the disengage log must be able to say whether
+            # the feed-off actually landed. Reading connection_manager.connected
+            # afterwards used to serve for that and no longer can -- a tick
+            # scan on the owner thread can set it True over a failed write.
+            self.last_mode_write_acknowledged = write_confirmed(
+                self.board.device['fastData'], 'servoMode', self.servoMode)
             # Remember what WE asked for. Only UI-originated changes count as
             # commands; a value mirrored back from the firmware is an
             # observation, and recording it here would make the watchdog below
@@ -436,12 +461,28 @@ class ServoDispatcher(SavingDispatcher):
         else:
             self.servoMode = 1
 
-    def stop_feed(self):
+    # Whether the firmware acknowledged the last UI-originated servoMode
+    # write. None = no such write yet. A class attribute so a dispatcher that
+    # has never written one still answers.
+    last_mode_write_acknowledged = None
+
+    def stop_feed(self) -> bool:
         """Force the sync feed off (servoMode=0), idempotent. Used as a safety
         stop when ELS disengages so a running spindle-synced feed doesn't keep
-        driving the carriage with no ELS stop to arrest it."""
-        if self.servoMode != 0:
-            self.servoMode = 0
+        driving the carriage with no ELS stop to arrest it.
+
+        Returns whether the firmware acknowledged the feed-off write. Already
+        off is True: there was nothing to acknowledge, and reporting a failure
+        for a write nobody made would cry wolf on every idle disengage.
+        """
+        if self.servoMode == 0:
+            return True
+        self.last_mode_write_acknowledged = None
+        self.servoMode = 0
+        # Set by on_servoMode, which the assignment above fires synchronously.
+        # None means the handler did not write (a firmware-mirrored change),
+        # which cannot happen here because this is UI-originated.
+        return self.last_mode_write_acknowledged is not False
 
     def set_current_position(self, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)

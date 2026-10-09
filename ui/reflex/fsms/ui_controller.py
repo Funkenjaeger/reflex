@@ -1,4 +1,5 @@
 
+import time
 from kivy.properties import StringProperty, BooleanProperty, NumericProperty
 from kivy.event import EventDispatcher
 from kivy.clock import Clock
@@ -7,13 +8,15 @@ from kivy.logger import Logger
 from reflex.dispatchers import els, board
 from reflex.fsms.ui_fsm import ElsUiFsm
 from reflex.fsms.els_fsm import ElsFsm
-from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_stop_registers import ElsStopRegisters
 from reflex.fsms.els_diag import ElsDiagRecorder
 from reflex.fsms.els_flight_recorder import FlightRecorder
 from reflex.fsms.els_phase_recorder import (
     PhaseCorrectionRecorder, PhaseLiveTracker, SpindleCountWatch)
 from reflex.fsms.els_mode_watch import ElsModeWatch
-from reflex.fsms.els_overshoot import StopOffsetCorrector
+from reflex.fsms.els_overshoot import OffsetWriteLimiter, StopOffsetCorrector
+from reflex.fsms import els_ratio
+from reflex.fsms.els_ratio import RatioWatch
 from reflex.utils.devices import (takeup_failure_text,
                                   ELS_DIAG_SCHEMA_MODE_WATCH,
                                   ELS_DIAG_SCHEMA_MODE_WATCH_V2)
@@ -171,6 +174,24 @@ class ElsUiController(EventDispatcher):
     # exactly how it presented on hardware 2026-08-08.
     takeup_warning      = StringProperty("")
 
+    # Inline coupling-ratio notice, shown under the take-up one. Non-empty
+    # means the last pass was ABORTED by the coupling-ratio check
+    # (els_ratio.py) -- only ever when that check is switched on. Red for
+    # an open half nut or an unrecognized ratio; YELLOW for a confident move
+    # of the gearbox lever, which the next Cut or Retract adopts. A latch,
+    # like takeup_warning: cleared when the operator acts.
+    ratio_warning       = StringProperty("")
+    ratio_warning_yellow = BooleanProperty(False)
+
+    # Inline ELS alarm strip text. Non-empty exactly while the ELS is in alarm:
+    # the reason (or a generic line when there is none) plus the way out. Set in
+    # _on_alarm, cleared when the alarm clears (Disengage, or ack). Shown
+    # whether or not the wizard is enabled, unlike label_instruction.
+    ALARM_STRIP_FALLBACK = "ELS fault — disengage to clear"
+    ALARM_STRIP_SUFFIX = " — Disengage to clear"
+    ALARM_STRIP_MAX = 65          # same text contract as the other strips
+    alarm_strip         = StringProperty("")
+
     # ── Transient operator notices (top status bar) ────────────────────
     # The live notice, republished from the NoticeCenter for kv to bind to.
     # Empty text means nothing is showing; `notice_severity` picks the colour.
@@ -298,7 +319,7 @@ class ElsUiController(EventDispatcher):
         super().__init__(**kw)
         self._els = els
         self._board = board
-        self._hal = ElsStopHal(board)
+        self._hal = ElsStopRegisters(board)
         self._diag_recorder = ElsDiagRecorder(self._hal, board)
         self._phase_recorder = PhaseCorrectionRecorder(board)
         self._phase_tracker = PhaseLiveTracker(board)
@@ -323,6 +344,13 @@ class ElsUiController(EventDispatcher):
             # the corrector is built below. The firmware's own record of what a
             # trigger used is stopTriggerOffset, in the snapshot.
             stop_offset=lambda: self._stop_offset.offset_in_effect,
+            # The coupling-ratio verdict for the current pass and the gear
+            # the controller expects. Built below; a lambda for that reason.
+            ratio_check=lambda: (self._ratio_watch.verdict.kind,
+                                 self._els_fsm.engaged_gear()),
+            # Stamp rows with the moment the numbers were acquired, not the
+            # moment this poll ran. See FlightRecorder's `acq`.
+            acq=lambda: board.t_acq,
         )
 
         # Built FIRST, before any FSM or poller exists, because `notify()` must
@@ -343,6 +371,32 @@ class ElsUiController(EventDispatcher):
             enabled=lambda: getattr(self._els, "els_overshoot_correction", False) is True,
             margin=lambda: int(getattr(self._els, "els_overshoot_margin_counts", 1)),
             notify=lambda message: self.notify(message, NOTICE_WARNING),
+            # ON THE ACQUISITION TIMEBASE. One clock feeds the limiter, the
+            # hold AND the Z-rate window (the corrector reads it once per tick
+            # and passes it down), so this single substitution takes the rate
+            # off poll time. Since step 2 the apply is marshalled from the
+            # owner thread, and that lag is not constant: left on poll time it
+            # would land in the measured rate, and the rate is what picks the
+            # offset out of the overshoot table. Falls back before the first
+            # snapshot; both clocks are time.monotonic, so the hold's ~1 s and
+            # the limiter's 250 ms keep meaning what they did.
+            limiter=OffsetWriteLimiter(
+                clock=lambda: (board.t_acq if board.t_acq is not None
+                               else time.monotonic())),
+        )
+
+        # Coupling-ratio check: an open half nut, or the gearbox lever in a
+        # position the controller does not expect. Always measures; acts
+        # only when els_ratio_check is on (otherwise shadow: log and file).
+        # Lambdas for the same reason as above -- _els_fsm is built below.
+        self._pending_gear = None
+        self._ratio_watch = RatioWatch(
+            self._hal, board,
+            fsm_state=lambda: self._els_fsm.state,
+            steps_per_count=lambda: self._els_fsm.steps_per_z_count(),
+            gear=lambda: self._els_fsm.engaged_gear(),
+            mm_per_count=lambda: self._els_fsm.z_mm_per_count(),
+            on_verdict=self._on_ratio_verdict,
         )
 
         # Rung-2 sampler (log-only): compares the domain FSM's state against
@@ -454,6 +508,9 @@ class ElsUiController(EventDispatcher):
         # The overshoot correction's writer. Bound BEFORE the flight recorder
         # so the offset the recorder files for this tick is the one in effect.
         self._board.bind(update_tick=self._poll_stop_offset)
+        # The coupling-ratio check. Before the flight recorder, so a verdict
+        # reached on this tick is in the context the recorder files.
+        self._board.bind(update_tick=self._poll_ratio_check)
         # The flight recorder. Bound LAST of the recorders deliberately: it
         # samples what this tick's snapshot holds, and running after the pollers
         # that may write registers means the row it files is the state the rest
@@ -489,8 +546,15 @@ class ElsUiController(EventDispatcher):
         self._sync_ui_state_to_modes()
 
     # ——— event handlers ———
-    # Bus events may originate on the ConnectionManager polling thread, so
-    # all assignments to Kivy properties are marshaled to the main thread.
+    # Every handler below marshals its Kivy property writes to the main
+    # thread. That is DEFENSIVE, not required: the bus is published from the
+    # pollers, which are bound to Board.update_tick and so run on the main
+    # thread already -- before step 2 because everything did, and after it
+    # because the Modbus owner thread publishes only snapshots, through
+    # Clock.schedule_once, and never calls bus.publish or touches an
+    # EventDispatcher. The marshalling stays because it costs a frame at
+    # most and makes the file safe to call into from a thread that does
+    # not exist yet.
     def _on_ui_state_changed(self, state):
         log.debug("ui controller _on_ui_state_changed()")
         def _apply(_dt):
@@ -498,8 +562,21 @@ class ElsUiController(EventDispatcher):
             self._apply_policy()
         Clock.schedule_once(_apply, 0)
 
+    def _alarm_strip_text(self, reason):
+        """The reason, clipped so reason + the way out fits the strip."""
+        reason = " ".join(str(reason or "").split())
+        if not reason:
+            return self.ALARM_STRIP_FALLBACK
+        room = self.ALARM_STRIP_MAX - len(self.ALARM_STRIP_SUFFIX)
+        if len(reason) > room:
+            reason = reason[:room - 1].rstrip() + "…"
+        return reason + self.ALARM_STRIP_SUFFIX
+
     def _on_alarm(self, reason):
-        Clock.schedule_once(lambda _dt: setattr(self, "alarm_text", reason), 0)
+        def _apply(_dt):
+            self.alarm_text = reason
+            self.alarm_strip = self._alarm_strip_text(reason)
+        Clock.schedule_once(_apply, 0)
 
     def _on_connected_changed(self, instance, value):
         def _apply(_dt):
@@ -531,6 +608,8 @@ class ElsUiController(EventDispatcher):
         # fault by disengaging (domain → disabled). Without this the domain
         # recovers but the UI FSM stays parked in 'alarm' forever (Start/Stop and
         # the action button disabled), soft-locking ELS until an app restart.
+        if state == "disabled":
+            self.alarm_strip = ""
         if state == "disabled" and self._ui_fsm.state == "alarm":
             if self._ui_fsm.may_ack_alarm():
                 self._ui_fsm.ack_alarm()          # alarm → idle
@@ -568,7 +647,7 @@ class ElsUiController(EventDispatcher):
         empty -- i.e. the caller built it out of nothing -- and is worth
         checking in a test, never worth branching on at a call site.
 
-        Safe to call from the board polling thread, like the other property
+        Safe to call from any thread, like the other property
         writes in this file: the queue itself is locked, and a Kivy property
         assignment is atomic enough for a string.
         """
@@ -900,6 +979,79 @@ class ElsUiController(EventDispatcher):
         except Exception as e:
             log.warning(f"stop-offset correction tick failed: {e}")
 
+    def _poll_ratio_check(self, *args):
+        """Feed the coupling-ratio check this tick's snapshot.
+
+        Bound to update_tick, so it must never raise (see _poll_stop_offset).
+        A failed tick costs one sample of one pass.
+        """
+        try:
+            self._ratio_watch.poll()
+        except Exception as e:
+            log.warning(f"coupling-ratio check tick failed: {e}")
+
+    def _ratio_check_enabled(self) -> bool:
+        # `is True`: a stand-in that is merely truthy must not arm an abort.
+        return getattr(self._els, "els_ratio_check", False) is True
+
+    def _on_ratio_verdict(self, v) -> None:
+        """A pass reached a terminal coupling-ratio verdict (once per pass).
+
+        SHADOW unless els_ratio_check is on: logged, filed by the flight
+        recorder through its context, and nothing else. ON, it aborts the
+        pass the way the firmware's own take-up refusal does -- active = 1,
+        so sync stops and the domain FSM drops to stopped on its next tick
+        -- and leaves a latched message saying why.
+        """
+        acting = self._ratio_check_enabled()
+        log.warning(
+            f"coupling-ratio check: {v.kind}"
+            f"{' ' + v.gear if v.gear else ''} after {v.elapsed_ms:.0f} ms / "
+            f"{v.travel_mm:.2f} mm ({v.reason})"
+            f"{'' if acting else ' [shadow: no action]'}")
+        if not acting:
+            return
+        if self._els_fsm.state == "cutting":
+            self._hal.set_active(True)
+        if v.kind == els_ratio.GEAR_CHANGE and v.gear:
+            self._pending_gear = v.gear
+            self.ratio_warning_yellow = True
+            self.ratio_warning = els_ratio.gear_change_text(v.gear)
+        else:
+            self._pending_gear = None
+            self.ratio_warning_yellow = False
+            self.ratio_warning = els_ratio.abort_text(v.kind)
+
+    def select_gear(self, gear: str) -> bool:
+        """The operator set the gearbox position by hand (ELS settings).
+
+        Refused while the carriage is under ELS motion: changing the ratio
+        under a running pass would change its feed mid-cut. Returns False when
+        refused so the selector can snap back to the position in effect.
+        """
+        if gear == self._els_fsm.engaged_gear():
+            return True
+        if self._els_fsm.state in ("cutting", "retracting"):
+            self.notify("Gearbox position can't change during a pass.",
+                        NOTICE_WARNING)
+            return False
+        self._pending_gear = None
+        self.ratio_warning = ""
+        self.ratio_warning_yellow = False
+        self._els_fsm.adopt_gear(gear)
+        return True
+
+    def _adopt_pending_gear(self) -> None:
+        """The operator acted after a yellow gear-change notice: that is the
+        consent (decided 2026-10-03). Adopt before anything is pushed for the
+        move, so the take-up, thread geometry and sync ratio are the new
+        gear's."""
+        gear, self._pending_gear = self._pending_gear, None
+        if gear and gear != self._els_fsm.engaged_gear():
+            self._els_fsm.adopt_gear(gear)
+        self.ratio_warning = ""
+        self.ratio_warning_yellow = False
+
     @property
     def stop_offset_corrector(self):
         """Read-only access for the setup screen and tests."""
@@ -959,7 +1111,7 @@ class ElsUiController(EventDispatcher):
         # Bound to board.update_tick. Kivy property writes from the polling
         # thread are an existing project-wide pattern; matching that here.
         #
-        # Served from the tick snapshot (see ElsStopHal.TickReads): the domain
+        # Served from the tick snapshot (see ElsStopRegisters.TickReads): the domain
         # FSM's _on_board_update wants the same register on the same tick, and
         # before the snapshot the two spent an exchange each — and could
         # disagree, having read the register a few milliseconds apart.
@@ -973,7 +1125,9 @@ class ElsUiController(EventDispatcher):
         When the operator hand-retracts past retract_z (waiting_to_retract →
         waiting_to_cut), or backs the carriage below retract_z while waiting
         to cut (waiting_to_cut → waiting_to_retract). Marshals FSM triggers
-        to the main thread since this fires on the board polling thread.
+        to the main thread. It is bound to Board.update_tick, so it already
+        fires there; the marshalling is the same defensive habit as the rest
+        of this file, not a thread crossing.
 
         Only active when retract is enabled — in stop-only mode there is no
         retract threshold to cross, so polling here would incorrectly
@@ -1020,7 +1174,7 @@ class ElsUiController(EventDispatcher):
         # its confirmation run in turning too (els_fsm.push_turning_geometry).
         if not self.is_threading:
             self._els_fsm.push_turning_geometry()
-            self._hal.set_backlash_steps(int(self._els.els_backlash_steps))
+            self._hal.set_backlash_steps(self._els_fsm.engaged_backlash_steps())
         self._hal.set_stop_direction(self._els.stop_direction_value(self.els_forward))
         if self.retract_enabled or self.wizard_enabled:
             self._hal.set_hysteresis_tight()
@@ -1133,6 +1287,16 @@ class ElsUiController(EventDispatcher):
                 text = "Enter Start Z to retract"
             elif self.is_threading and not self._x_clear_of_start_dia():
                 text = "Move X clear of start diameter, then retract"
+                allowed = False
+            elif not self.is_feeding:
+                # SYNC ON BEFORE RETRACT (2026-10-03), the twin of the Cut
+                # gate above. The firmware emits no steps with servoMode 0,
+                # so a Retract pressed with sync off parked the machine in
+                # 'retracting' with nothing moving and nothing said -- and the
+                # next Sync Enable press re-issued the move and the carriage
+                # went (shadow bench, 2026-10-03, 21:14:52). An arm-only
+                # button must never start a move.
+                text = "Turn Sync Enable on, then retract"
                 allowed = False
         self.instruction_text = text
         self.action_allowed = allowed
@@ -1572,6 +1736,7 @@ class ElsUiController(EventDispatcher):
 
     def on_ack_alarm(self):
         self._ui_fsm.ack_alarm()
+        self.alarm_strip = ""
 
     # ——— encoder-anchored stop_z / retract_z ———
     @property
@@ -1796,7 +1961,13 @@ class ElsUiController(EventDispatcher):
         """True iff the domain FSM would accept a retract right now — a FRESH
         check, the retract-side twin of :meth:`may_cut`. Gates the UI
         waiting_to_retract→retracting transition so a refused retract can't lock
-        the UI in 'Retracting…' with no exit. Any error → refuse."""
+        the UI in 'Retracting…' with no exit. Any error → refuse.
+
+        Also refuses with Sync Enable off, the same rule the policy gate
+        shows the operator, checked fresh here so a stale press cannot
+        start a retract that only moves once sync comes on."""
+        if not self.is_feeding:
+            return False
         try:
             return bool(self._els_fsm.may_retract())
         except Exception:
@@ -1910,9 +2081,15 @@ class ElsUiController(EventDispatcher):
         Disengage button is greyed by in_cycle, which follows the UI FSM, so
         disabling one without cancelling the other leaves the button dead.
         """
-        if self._els_fsm.state != "cutting":
+        # 'retracting' too (2026-10-03): sync off mid-retract stops the
+        # carriage the same way, and left in 'retracting' the remaining move
+        # would wait for the next Sync Enable press. Disengaging clears the
+        # firmware's pending motion with the job (enable falling edge).
+        state = self._els_fsm.state
+        if state not in ("cutting", "retracting"):
             return
-        log.info("Sync Enable off during a cut — abandoning the cut and "
+        what = "cut" if state == "cutting" else "retract"
+        log.info(f"Sync Enable off during a {what} — abandoning it and "
                  "disengaging (drive de-energized, thread reference lost)")
         if self._ui_fsm.state.startswith("in_cycle"):
             self._ui_fsm.cancel()
@@ -1933,7 +2110,7 @@ class ElsUiController(EventDispatcher):
             # clear.
             log.error("could not disengage after sync-off from "
                       f"'{self._els_fsm.state}' — ELS may still read as armed")
-        self.notify("Cut abandoned — ELS disengaged", NOTICE_INFO)
+        self.notify(f"{what.capitalize()} abandoned — ELS disengaged", NOTICE_INFO)
 
     def request_feed_enable(self, confirmed: bool = False) -> bool:
         """Operator asked to toggle the sync/power feed (advanced ELS context).
@@ -1950,7 +2127,7 @@ class ElsUiController(EventDispatcher):
             # don't toggle it off just because it was enabled meanwhile).
             if not confirmed:
                 # CLEAR SYNC FIRST, THEN DROP THE MODE. This ordering is the
-                # whole fix, and it is not new: ElsStopHal.stop_sync's docstring
+                # whole fix, and it is not new: ElsStopRegisters.stop_sync's docstring
                 # spells out the race, and on_enter_disabled and on_enter_alarm
                 # both already do it. THIS BUTTON WAS THE THIRD CALL SITE AND
                 # NEVER GOT IT.
@@ -2008,9 +2185,14 @@ class ElsUiController(EventDispatcher):
         # up through the retry reads as "still refusing" during the very window
         # where they are watching to see whether it worked.
         self.takeup_warning = ""
+        self._adopt_pending_gear()
         self._els_fsm.push_stop_to_firmware()
         self._els_fsm.cut()
 
     def start_retract(self):
+        # A retract after a yellow gear-change notice adopts too: run in the
+        # old gear, a lever moved to B would carry the carriage twice the
+        # retract distance.
+        self._adopt_pending_gear()
         self._els_fsm.retract()
  

@@ -365,12 +365,17 @@ class _Hal:
     def __init__(self, board):
         self.tick = _Tick(board)
         self.writes = []
+        # What the controller answers. The write is still RECORDED when this
+        # is False -- it was attempted, it just was not acknowledged.
+        self.acknowledge = True
 
     def set_stop_offset(self, counts):
         self.writes.append(("stopOffset", counts))
+        return self.acknowledge
 
     def set_stop_position(self, counts):          # must never be called
         self.writes.append(("stopPosition", counts))
+        return True
 
 
 #: Ticks at 30 Hz, and the ticks after which the rate window first spans
@@ -594,11 +599,19 @@ def test_reset_re_sends_after_a_reconnect():
 
 
 def test_an_unacknowledged_write_is_forgotten():
+    """The verdict is the WRITE's own answer now, not the link object's.
+
+    It used to be read off connection_manager.connected, which only ever meant
+    "the last exchange worked" -- so a tick scan succeeding between the write
+    and the check could report a failed write as fine. The corrector must
+    forget a write the controller did not acknowledge, so the next good tick
+    re-sends instead of its limiter believing a value the firmware never got.
+    """
     r = _rig()
-    r.board.connection_manager.connected = False  # the write helper dropped the link
+    r.hal.acknowledge = False
     _ticks(r, FILL, rate=1170)
     assert r.cor.offset_in_effect is None
-    r.board.connection_manager.connected = True
+    r.hal.acknowledge = True
     _ticks(r, 1, rate=1170)
     assert r.cor.offset_in_effect == 10
 
@@ -692,14 +705,14 @@ class _Recording(dict):
 
 
 def test_hal_set_stop_offset_writes_only_stopOffset():
-    from reflex.fsms.els_stop_hal import ElsStopHal
+    from reflex.fsms.els_stop_registers import ElsStopRegisters
     els = _Recording()
     board = SimpleNamespace(connected=True, device={"elsStop": els},
                             els_stop_values={"enable": 1, "active": 0,
                                              "scaleIndex": 1},
                             fast_data_values={"scaleCurrent": [0, 0, 0, 0]},
                             connection_manager=SimpleNamespace(connected=True))
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     clk = _Clock()
     cor = StopOffsetCorrector(hal, board, enabled=lambda: True, margin=lambda: 1,
                               notify=lambda _m: None,
@@ -713,9 +726,9 @@ def test_hal_set_stop_offset_writes_only_stopOffset():
 
 
 def test_hal_set_stop_offset_is_silent_when_disconnected():
-    from reflex.fsms.els_stop_hal import ElsStopHal
+    from reflex.fsms.els_stop_registers import ElsStopRegisters
     els = _Recording()
-    hal = ElsStopHal(SimpleNamespace(connected=False, device={"elsStop": els}))
+    hal = ElsStopRegisters(SimpleNamespace(connected=False, device={"elsStop": els}))
     hal.set_stop_offset(12)
     assert els.assignments == []
 

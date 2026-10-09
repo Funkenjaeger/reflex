@@ -33,9 +33,9 @@ built for a branch — so it could only ever have updated half the machine.
 ### Offer Integration Builds (bench only)
 Shown only on a machine set up with an integration build source; on any other
 machine this row does not appear. When enabled, integration builds
-(`vX.Y.Z-alpha.N`) appear in the list. They are built the same way and carry
-both halves, but they come before a release candidate and have not been tested
-beyond the bench, so you are asked to confirm.
+(`vX.Y.Z-rc.N.dev.M`, a build on the way to release candidate N) appear in
+the list. They are built the same way and carry both halves, but they have not
+been tested beyond the bench, so you are asked to confirm.
 
 Before any update the settings are saved to the commissioning snapshots. An
 older release does not know settings that a newer one added, and resets them

@@ -266,3 +266,41 @@ def test_a_wizard_tap_that_works_says_nothing(ctrl):
     ctrl.on_action_button_clicked()
 
     assert ctrl.notice_text == ""
+
+
+# ─── inline ELS alarm strip ───────────────────────────────────────────────────
+#
+# The alarm reason used to reach the operator only through the wizard-gated
+# instruction label, so with the wizard off an alarm was silent on the bar. The
+# strip is driven by controller.alarm_strip, independent of enable_wizard.
+
+def test_alarm_strip_shows_reason_and_disengage_without_the_wizard(ctrl):
+    ctrl.enable_wizard = False
+    ctrl._on_alarm("Z encoder lost")
+    _pump()
+    assert "Z encoder lost" in ctrl.alarm_strip
+    assert "Disengage" in ctrl.alarm_strip
+    assert len(ctrl.alarm_strip) <= 65
+
+
+def test_alarm_strip_falls_back_when_there_is_no_reason(ctrl):
+    ctrl.enable_wizard = False
+    ctrl._on_alarm("")
+    _pump()
+    assert ctrl.alarm_strip == "ELS fault — disengage to clear"
+
+
+def test_alarm_strip_clips_a_long_reason_to_the_text_contract(ctrl):
+    ctrl._on_alarm("x" * 200)
+    _pump()
+    assert len(ctrl.alarm_strip) <= 65
+    assert ctrl.alarm_strip.endswith("Disengage to clear")
+
+
+def test_alarm_strip_hides_when_the_alarm_clears(ctrl):
+    ctrl.enable_wizard = False
+    ctrl._on_alarm("Z encoder lost")
+    _pump()
+    assert ctrl.alarm_strip
+    ctrl._sync_engaged("disabled")
+    assert ctrl.alarm_strip == ""
