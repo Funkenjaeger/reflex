@@ -15,6 +15,9 @@ drive train.
 2. **Move the tool clear** of the workpiece and the chuck.
 3. **Stop the spindle.**
 
+On a lathe with a gearbox table, it runs only with **Gearbox position** set
+to the reference position, the first in the table.
+
 The controller refuses to run while the ELS stop is engaged, and it pauses
 spindle sync for the duration, so the leadscrew is moved by the calibration and
 by nothing else.

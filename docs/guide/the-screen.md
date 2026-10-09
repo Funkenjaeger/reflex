@@ -56,13 +56,17 @@ the current work offset — not in the machine frame, and not in the controller.
 
 ![The gutter with a reference latched and an offset applied](../screenshots/flow/wt_gutter_on.png)
 
-A permanently reserved 26-pixel strip. It holds two chips and never covers
-anything else:
+A permanently reserved 26-pixel strip. It holds two chips, and on a lathe
+with a gearbox a position label, and never covers anything else:
 
 **Left — the thread reference.** Reads `NO REFERENCE` or `REF LATCHED`. This is
 the datum the controller cuts threads against. It persists across a switch to
 feed mode — the chip dims rather than disappearing, because the reference is
 still there and still usable.
+
+**Beside it — the gearbox position.** `Gear` and the name of the position in
+effect, only on a lathe with a gearbox table (ELS settings). Absent with no
+gearbox. A position the coupling check adopts shows here at once.
 
 **Right — the phase offset.** Present only when a thread-phase offset is set,
 showing the distance and its share of one pitch. See
