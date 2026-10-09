@@ -534,24 +534,25 @@ class RatioWatch:
 
 # ── What the operator reads ─────────────────────────────────────────────
 # Same contract as ELS_TAKEUP_MESSAGES in reflex/utils/devices.py, because the
-# strip sits in the same place: every text leads with "Cut aborted" (the state
-# first, then the cause) and fits 65 characters, or it lands on the status
-# chips under the translucent strip. test_els_ratio pins the length for the
-# longest names a table allows (els_gear.MAX_NAME_LEN).
+# strip sits in the same place: each text stands alone, says what happened and
+# then one action, and fits 65 characters, or it lands on the status chips
+# under the translucent strip. test_els_ratio and test_cut_refusal_text pin
+# the length for the longest names a table allows (els_gear.MAX_NAME_LEN).
 #
 # The names are the owner's own, so nothing here knows any of them. A name
 # is shown as it is: names are unique, so the name alone says which position.
-# With no gearbox nothing mentions gears at all.
+# A wrong ratio reads the same with or without a gearbox: it names the
+# drivetrain, never gears, so it is correct on a lathe with none.
 
 
 def gear_change_text(gear: str) -> str:
-    return (f"Cut aborted \u2014 gearbox looks like {gear}. "
-            f"Cut again to use it.")
+    # 53 ch, 353 px of 435 with a 3-character name.
+    return f"Detected gearbox position {gear}. Press Cut to continue."
 
 
-def abort_text(kind: str, table: GearTable) -> str:
+def abort_text(kind: str) -> str:
     if kind == DECOUPLED:
-        return "Cut aborted \u2014 carriage stopped moving. Is the half-nut open?"
-    if table.has_gearbox:
-        return "Cut aborted \u2014 carriage rate fits no gear. Check the drivetrain."
-    return "Cut aborted \u2014 carriage rate is wrong. Check the drivetrain."
+        # 65 ch, 408 px of 435.
+        return "Carriage decoupled. Close the half nut or examine the drivetrain."
+    # 52 ch, 321 px of 435.
+    return "Carriage speed is incorrect. Examine the drivetrain."

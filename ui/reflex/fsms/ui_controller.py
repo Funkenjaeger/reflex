@@ -1029,7 +1029,7 @@ class ElsUiController(EventDispatcher):
             self.ratio_warning_yellow = False
             kind = (els_ratio.RATIO_WRONG if v.kind == els_ratio.GEAR_CHANGE
                     else v.kind)
-            self.ratio_warning = els_ratio.abort_text(kind, table)
+            self.ratio_warning = els_ratio.abort_text(kind)
 
     def select_gear(self, gear: str) -> bool:
         """The operator set the gearbox position by hand (ELS settings).

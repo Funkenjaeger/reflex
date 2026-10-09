@@ -1,4 +1,4 @@
-"""Measure candidate take-up warning texts against the space they really have.
+"""Measure the cut-refusal strip texts against the space they really have.
 
 THE GAP IS NOT THE BUDGET. previews/preview_phase_offset.py's first pass at
 this compared each message's width against the space BETWEEN the two status
@@ -37,6 +37,8 @@ from kivy.core.text import Label as CoreLabel  # noqa: E402
 from kivy.metrics import dp  # noqa: E402
 
 from reflex.components.widgets.palettes import PALETTES  # noqa: E402
+from reflex.fsms import els_ratio  # noqa: E402
+from reflex.fsms.els_gear import MAX_NAME_LEN  # noqa: E402
 from reflex.utils.devices import (ELS_TAKEUP_MESSAGES,  # noqa: E402
                                   ELS_TAKEUP_WRONG_WAY,
                                   ELS_TAKEUP_UNKNOWN,
@@ -58,42 +60,22 @@ GAP = CHIP_PHASE_X - CHIP_REF_RIGHT
 FONT = os.path.join(os.path.dirname(reflex.__file__),
                     PALETTES["dark"]["font_bold"])
 
+# The strings that ship, read from the code rather than retyped: a candidate
+# list that does not include the live strings measures everything except the
+# thing on screen. Add a candidate here as a literal to compare it against
+# them. The coupling check's strips are measured with a 3-character name, the
+# longest a gearbox table allows (els_gear.MAX_NAME_LEN).
+WIDEST_NAME = "W" * MAX_NAME_LEN
 CANDIDATES = {
-    "SERVOMODE (current)": ELS_TAKEUP_MESSAGES[2],
-    "SERVOMODE alt A": "Cut aborted — servo in jog mode. Leave jog and press Cut again.",
-    "SERVOMODE alt B": "Cut aborted — servo is in jog mode. Leave jog, then Cut.",
-    "SERVOMODE alt C": "Cut aborted — servo in jog mode. Leave jog to cut.",
-    "UNCONFIRMED (current)": ELS_TAKEUP_MESSAGES[4],
-    "TIMEOUT (current)": ELS_TAKEUP_MESSAGES[6],
-    "TIMEOUT alt A": "Cut aborted — take-up did not complete. Disengage and re-engage.",
-    "TIMEOUT alt B": "Cut aborted — take-up did not complete. Re-engage the ELS stop.",
-    "TIMEOUT alt C": "Cut aborted — take-up did not complete. Disengage, then engage.",
-    "TIMEOUT alt D": "Cut aborted — take-up did not complete. Re-engage to clear.",
-    "WRONG_WAY (current)": ELS_TAKEUP_WRONG_WAY,
-    "WRONG_WAY alt A": "Cut aborted — carriage moved the WRONG way. Check Z scale direction.",
-    "WRONG_WAY alt B": "Cut aborted — carriage moved the WRONG way. Check the Z scale.",
-    "WRONG_WAY alt C": "Cut aborted — WRONG-way carriage motion. Check Z scale direction.",
-    "WRONG_WAY alt D": "Cut aborted — carriage moved WRONG way. Check Z scale direction.",
-    "WRONG_WAY alt E": "Cut aborted — WRONG-way motion. Check the Z scale direction.",
-    "WRONG_WAY alt F": "Cut aborted — carriage ran the WRONG way. Check Z scale direction.",
-    "TIMEOUT alt E": "Cut aborted — take-up did not complete. Re-engage the stop.",
-    "SERVOMODE alt D": "Cut aborted — the servo is in jog mode. Leave jog, then Cut.",
-    # ── Reference-aware TIMEOUT (Gate 1 item 1, 2026-08-30). The remedy is
-    # forced -- only the enable 1->0 edge clears a timed-out take-up
-    # (Ramps.c:1110) -- and the 0->1 edge back clears referenceLatched and
-    # phaseOffsetSteps (Ramps.c:766). The operator cannot avoid paying, so
-    # the message's job is to say what it costs, in the same budget.
-    # The one that SHIPPED, read from the constant rather than retyped --
-    # a candidate list that does not include the live string measures
-    # everything except the thing on screen.
-    "TIMEOUT_LATCHED (current)": ELS_TAKEUP_TIMEOUT_LATCHED,
-    "TIMEOUT latched A": "Cut aborted — re-engage the stop. That clears your reference.",
-    "TIMEOUT latched B": "Cut aborted — take-up stuck. Re-engaging clears the reference.",
-    "TIMEOUT latched C": "Cut aborted — take-up stuck. Re-engage; the reference is lost.",
-    "TIMEOUT latched D": "Cut aborted — re-engage the stop; this clears your reference.",
-    "TIMEOUT latched E": "Cut aborted — take-up stuck. Re-engage (clears the reference).",
-    "TIMEOUT latched F": "Cut aborted — re-engage the stop. The reference will clear.",
-    "UNKNOWN (current)": ELS_TAKEUP_UNKNOWN,
+    "SERVOMODE": ELS_TAKEUP_MESSAGES[2],
+    "UNCONFIRMED": ELS_TAKEUP_MESSAGES[4],
+    "TIMEOUT": ELS_TAKEUP_MESSAGES[6],
+    "WRONG_WAY": ELS_TAKEUP_WRONG_WAY,
+    "TIMEOUT_LATCHED": ELS_TAKEUP_TIMEOUT_LATCHED,
+    "UNKNOWN": ELS_TAKEUP_UNKNOWN,
+    "GEAR_CHANGE": els_ratio.gear_change_text(WIDEST_NAME),
+    "DECOUPLED": els_ratio.abort_text(els_ratio.DECOUPLED),
+    "RATIO_WRONG": els_ratio.abort_text(els_ratio.RATIO_WRONG),
 }
 
 

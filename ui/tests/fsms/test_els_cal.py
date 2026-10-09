@@ -486,10 +486,7 @@ def test_takeup_text_keeps_the_counts_OFF_the_screen():
     from reflex.utils.devices import (ELS_TAKEUP_ERR_UNCONFIRMED,
                                       takeup_failure_text)
     msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED, z_delta=5)
-    assert "half-nut" in msg.lower()
-    assert msg.lower().startswith("cut aborted"), (
-        "the message must lead with the machine's STATE -- an operator who is "
-        "only told the fault is left asking 'okay, what now?'")
+    assert "half nut" in msg.lower()
     assert "5" not in msg and "count" not in msg.lower(), (
         "raw Z-scale counts are for the log, not the screen: nothing else in "
         "this UI shows that unit, and the width is needed to keep the notice "
@@ -518,15 +515,15 @@ def test_takeup_text_degrades_without_a_delta():
     from reflex.utils.devices import (ELS_TAKEUP_ERR_UNCONFIRMED,
                                       takeup_failure_text)
     msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED)
-    assert "half-nut" in msg.lower()
+    assert "half nut" in msg.lower()
     assert "wrong" not in msg.lower()
 
 
 def test_takeup_timeout_has_its_own_text():
     from reflex.utils.devices import ELS_TAKEUP_ERR_TIMEOUT, takeup_failure_text
     msg = takeup_failure_text(ELS_TAKEUP_ERR_TIMEOUT)
-    assert "half-nut" not in msg.lower(), "a timeout is not a half-nut diagnosis"
-    assert msg.lower().startswith("cut aborted")
+    assert "half nut" not in msg.lower(), "a timeout is not a half-nut diagnosis"
+    assert "take-up" in msg.lower()
 
 
 # The character budget is a PROXY for a pixel budget, and the proxy is

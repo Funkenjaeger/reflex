@@ -64,8 +64,8 @@ Two invariants depend on this:
 
 The firmware refuses to start a pass whose backlash take-up it could not
 confirm. `takeupResult` / `takeupSeq` carry the outcome, and the UI renders the
-physical check rather than the register value: *"Carriage not moving — is the
-half-nut engaged?"* Recovery is disengaging and re-engaging the ELS stop.
+physical check rather than the register value: *"Carriage did not move. Close
+the half nut."* Recovery is closing the half nut and pressing Cut again.
 
 ## Picking up an existing thread (manual reference latch)
 

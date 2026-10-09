@@ -70,7 +70,7 @@ Cut nothing, but run the confirmation both ways:
 1. Engage, close the half nut, press **Cut**. The pass should start.
 2. Open the half nut and press **Cut** again. It should refuse:
 
-> Cut aborted — is the half-nut engaged?
+> Carriage did not move. Close the half nut.
 
 If it refuses with the half nut closed, or **starts with it open**, stop and
 find out why before threading anything. That check is the machine's core safety

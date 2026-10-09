@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.join(REPO, "ui"))
 from reflex.components.home.els_phase_offset_popup import REFUSAL_TEXT  # noqa: E402
 from reflex.fsms import els_ratio  # noqa: E402
 from reflex.fsms.els_cal import gearbox_refusal_text  # noqa: E402
-from reflex.fsms.els_gear import NO_GEARBOX, GearTable  # noqa: E402
+from reflex.fsms.els_gear import GearTable  # noqa: E402
 from reflex.fsms.els_fsm import ElsFsm  # noqa: E402
 from reflex.utils.devices import (  # noqa: E402
     ELS_CAL_ERR_ABORTED,
@@ -90,7 +90,7 @@ ADVICE = {
         "message exists so it is not a surprise."),
     "takeup.unknown": (
         "The controller reported a take-up result this screen does not "
-        "recognise, which usually means the UI is older than the firmware. "
+        "recognize, which usually means the UI is older than the firmware. "
         "Check the versions match."),
     "cal.enabled": (
         "A threading job is armed. **Disengage first** — but note the cost: "
@@ -133,19 +133,14 @@ ADVICE = {
         "move the lever back first."),
     "ratio.wrong": (
         "The carriage moved at a rate that matches no position in the "
-        "gearbox table, so something in the drivetrain is not doing what it "
+        "gearbox table or, on a lathe with no gearbox table, not at the "
+        "leadscrew's rate. Something in the drivetrain is not doing what it "
         "is told. Nothing is changed, and **pressing Cut again will fail "
         "the same way** until the cause is found: a slipping coupling, a "
         "half nut riding and skipping, a lever between positions, a gearbox "
-        "table that does not match the machine, or wrong servo settings."),
-    "ratio.wrong_no_gearbox": (
-        "The same check on a lathe with no gearbox table: the carriage did "
-        "not move at the leadscrew's rate. Nothing is changed, and "
-        "**pressing Cut again will fail the same way** until the cause is "
-        "found: a slipping coupling, a half nut riding and skipping, or "
-        "wrong servo settings. If the lathe does have a gearbox between the "
-        "servo and the leadscrew, enter it as **Gearbox table** in Advanced "
-        "ELS Settings."),
+        "table that does not match the machine, or wrong servo settings. If "
+        "the lathe has a gearbox between the servo and the leadscrew and no "
+        "table, enter it as **Gearbox table** in Advanced ELS Settings."),
     "cal.aborted": (
         "Conditions changed while the calibration was running — the ELS stop "
         "was engaged, or the servo mode changed. Re-run it undisturbed."),
@@ -178,9 +173,8 @@ ADVICE = {
 SECTIONS = [
     ("Take-up refusals",
      "Shown across the status gutter when a pass is stopped before it starts. "
-     "Every one of these begins with **Cut aborted**, because the first thing "
-     "an operator needs to know is the state of the machine, not the name of "
-     "the fault.",
+     "Each one says what happened, then what to do. The Cut button comes back "
+     "underneath, which shows that the pass did not start.",
      [("takeup.unconfirmed", ELS_TAKEUP_MESSAGES[ELS_TAKEUP_ERR_UNCONFIRMED]),
       ("takeup.wrong_way", ELS_TAKEUP_WRONG_WAY),
       ("takeup.servomode", ELS_TAKEUP_MESSAGES[ELS_CAL_ERR_SERVOMODE]),
@@ -198,21 +192,17 @@ SECTIONS = [
     ("Coupling check",
      "Shown across the status gutter when the coupling check stops a pass "
      "partway, and only when **Coupling check acts** is on in Advanced ELS "
-     "Settings "
-     "(it is off by default, which only logs). The check compares how far "
-     "the Z scale moved with how far the servo was told to move it. Red "
+     "Settings (it is off by default, which only logs). The check compares "
+     "how far the Z scale moved with how far the servo was told to move it. "
+     "Red "
      "strips change nothing. The yellow ones appear only on a lathe with a "
      "gearbox table, and name a position the next Cut or Retract adopts; "
      "they are shown here for the example table A=1, B=2, C=1/2, and use "
      "the names in your own table.",
-     [("ratio.decoupled", els_ratio.abort_text(els_ratio.DECOUPLED,
-                                                EXAMPLE_GEARBOX)),
+     [("ratio.decoupled", els_ratio.abort_text(els_ratio.DECOUPLED)),
       ("ratio.gear_b", els_ratio.gear_change_text("B")),
       ("ratio.gear_c", els_ratio.gear_change_text("C")),
-      ("ratio.wrong", els_ratio.abort_text(els_ratio.RATIO_WRONG,
-                                           EXAMPLE_GEARBOX)),
-      ("ratio.wrong_no_gearbox", els_ratio.abort_text(els_ratio.RATIO_WRONG,
-                                                      NO_GEARBOX))]),
+      ("ratio.wrong", els_ratio.abort_text(els_ratio.RATIO_WRONG))]),
     ("Thread phase offset refusals",
      "Shown in the phase-offset dialog. Nothing is applied when one of these "
      "appears — the total on screen is still whatever the controller held "

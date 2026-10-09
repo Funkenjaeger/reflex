@@ -78,7 +78,7 @@ are part-way through a thread, finish it before calibrating.
 Once calibrated, the controller confirms the take-up on **every pass**.
 If the carriage doesn't respond, the pass does not start and you'll see:
 
-> Carriage not moving — is the half-nut engaged?
+> Carriage did not move. Close the half nut.
 
 This is the failure the calibration exists to prevent. Previously the
 controller had no way to know, so it would proceed and cut the next

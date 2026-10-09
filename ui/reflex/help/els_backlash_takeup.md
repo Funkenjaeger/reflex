@@ -57,8 +57,8 @@ retract delta (retracts).
   as well as threading, and on the first pass of a job as well as on
   every resume (since 2026-08-21). In every case the firmware confirms
   that the carriage actually moved before it releases the cut; an open
-  or partly engaged half-nut is refused with "Carriage not moving -- is
-  the half-nut engaged?" instead of silently cutting. Turning differs
+  or partly engaged half-nut is refused with "Carriage did not move.
+  Close the half nut." instead of silently cutting. Turning differs
   only in that no thread-phase correction follows the takeup.
 - The same magnitude governs both the pre-cut and pre-retract takeups.
   If your machine has asymmetric backlash, set the value to the larger

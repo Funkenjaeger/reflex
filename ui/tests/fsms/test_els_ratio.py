@@ -282,10 +282,8 @@ def test_every_operator_text_fits_the_strip():
     widest = GearTable.parse("WWW=1, MMM=8, QQQ=1/8")
     texts = [R.gear_change_text(g) for t in (ABC, NUM, widest)
              for g in t.names]
-    texts += [R.abort_text(k, t) for k in (R.DECOUPLED, R.RATIO_WRONG)
-              for t in (ABC, NO_GEARBOX)]
+    texts += [R.abort_text(k) for k in (R.DECOUPLED, R.RATIO_WRONG)]
     for t in texts:
-        assert t.startswith("Cut aborted")
         assert len(t) <= 65, t
 
 
@@ -299,11 +297,11 @@ def test_gear_change_text_names_the_position_and_nothing_else():
         assert "fast" not in text and "slow" not in text
 
 
-def test_no_gearbox_refusal_text_never_mentions_gears():
+def test_red_refusal_text_never_mentions_gears():
+    """One text for a wrong ratio with or without a gearbox, so it has to be
+    right on a lathe with none: it names the drivetrain, never gears."""
     for kind in (R.DECOUPLED, R.RATIO_WRONG):
-        text = R.abort_text(kind, NO_GEARBOX).lower()
-        assert "gear" not in text
-    assert R.abort_text(R.RATIO_WRONG, NO_GEARBOX) != R.abort_text(R.RATIO_WRONG, ABC)
+        assert "gear" not in R.abort_text(kind).lower()
 
 
 # ─── RatioWatch: the per-tick glue ──────────────────────────────────────
@@ -465,7 +463,7 @@ def test_acting_red_verdicts_adopt_nothing(kind):
     ctrl._on_ratio_verdict(R.Verdict(R.GEAR_CHANGE, "B", reason="test"))
     ctrl._on_ratio_verdict(R.Verdict(kind, reason="test"))
     assert ctrl.ratio_warning_yellow is False
-    assert ctrl.ratio_warning == R.abort_text(kind, ABC)
+    assert ctrl.ratio_warning == R.abort_text(kind)
     assert ctrl._pending_gear is None
 
 
@@ -488,7 +486,8 @@ def test_no_gearbox_acting_verdict_is_red_neutral_and_adopts_nothing(kind):
     ctrl._on_ratio_verdict(R.Verdict(kind, "B", reason="test"))
     assert ctrl.ratio_warning_yellow is False
     assert "gear" not in ctrl.ratio_warning.lower()
-    assert ctrl.ratio_warning.startswith("Cut aborted")
+    assert ctrl.ratio_warning == R.abort_text(
+        R.RATIO_WRONG if kind == R.GEAR_CHANGE else kind)
     assert ctrl._pending_gear is None
     ctrl._adopt_pending_gear()
     assert board.servo.gearbox_position == ""
@@ -499,7 +498,7 @@ def test_a_gear_change_to_a_position_no_longer_in_the_table_is_red():
     els.els_ratio_check = True
     ctrl._on_ratio_verdict(R.Verdict(R.GEAR_CHANGE, "Q", reason="test"))
     assert ctrl.ratio_warning_yellow is False
-    assert ctrl.ratio_warning == R.abort_text(R.RATIO_WRONG, ABC)
+    assert ctrl.ratio_warning == R.abort_text(R.RATIO_WRONG)
     assert ctrl._pending_gear is None
 
 

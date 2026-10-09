@@ -270,11 +270,11 @@ ELS_CAL_MESSAGES = {
     ELS_CAL_ERR_ABORTED: "Calibration aborted — conditions changed mid-run.",
 }
 
-# EVERY TAKE-UP MESSAGE LEADS WITH "Cut aborted" (2026-08-29).
-# The old texts described the FAULT and left the machine's STATE implicit, so
-# an operator who read "Carriage not moving — is the half-nut engaged?" still
-# had to ask "okay, what now?". "Cut aborted" answers that first, and the Cut
-# button reactivating underneath is the confirming cue.
+# EVERY CUT REFUSAL STANDS ALONE, in Simplified Technical English style:
+# what happened, then one action, in short sentences of approved words. There
+# is no shared opening. The Cut button coming back underneath already shows
+# that the pass did not start, so the strip's width goes to the cause and the
+# remedy. The coupling check's strips (fsms/els_ratio.py) follow the same rules.
 #
 # AND EVERY ONE FITS 65 CHARACTERS, which is a layout contract, not a style
 # preference. The notice strip is pinned across the top of the advanced bar,
@@ -292,22 +292,23 @@ ELS_CAL_MESSAGES = {
 # the phase chip anyway (previews/preview_phase_offset.py, 2026-08-29).
 #
 # At ChakraPetch-SemiBold dp(13) these run ~6.7 px/char at worst, so 435 px is
-# 65 characters. Every string below was CHOSEN from a measurement, not counted:
-# previews/preview_takeup_text_widths.py renders candidates and reports the
+# 65 characters. The widths below are measured, not counted:
+# previews/preview_takeup_text_widths.py renders every string and reports the
 # margin. Guarded in CI by tests/fsms/test_els_cal.py, whose comment also
-# records the narrow-gap case none of this covers.
+# records the narrow-gap case none of this covers, and by
+# tests/fsms/test_cut_refusal_text.py for the whole family.
 ELS_TAKEUP_MESSAGES = {
     # Shares the calibration code: same physical cause, same remedy. The
     # firmware refuses a take-up commanded in JOG mode outright, because the
     # mode promotion that would rescue it deliberately skips jog.
-    ELS_CAL_ERR_SERVOMODE: (              # 63 ch, 400 px of 435
-        "Cut aborted — servo in jog mode. Leave jog and press Cut again."
+    ELS_CAL_ERR_SERVOMODE: (              # 44 ch, 271 px of 435
+        "Servo is in jog mode. Leave jog mode to cut."
     ),
-    ELS_TAKEUP_ERR_UNCONFIRMED: (         # 38 ch, 253 px of 435
-        "Cut aborted — is the half-nut engaged?"
+    ELS_TAKEUP_ERR_UNCONFIRMED: (         # 42 ch, 262 px of 435
+        "Carriage did not move. Close the half nut."
     ),
-    ELS_TAKEUP_ERR_TIMEOUT: (             # 59 ch, 393 px of 435
-        "Cut aborted — take-up did not complete. Re-engage the stop."
+    ELS_TAKEUP_ERR_TIMEOUT: (             # 45 ch, 299 px of 435
+        "Take-up did not complete. Re-engage the stop."
     ),
 }
 
@@ -317,8 +318,8 @@ ELS_TAKEUP_MESSAGES = {
 # it is subject to the same contract, so it is measured with the others rather
 # than hiding inside the function. WRONG stays shouted: this is a wiring or
 # scale-direction fault, not "the carriage did not move far enough".
-ELS_TAKEUP_WRONG_WAY = (                  # 60 ch, 399 px of 435
-    "Cut aborted — WRONG-way motion. Check the Z scale direction."
+ELS_TAKEUP_WRONG_WAY = (                  # 60 ch, 394 px of 435
+    "Carriage moved the WRONG way. Examine the Z scale direction."
 )
 
 # The TIMEOUT message when a thread reference is actually at stake. Kept out of
@@ -330,17 +331,15 @@ ELS_TAKEUP_WRONG_WAY = (                  # 60 ch, 399 px of 435
 # the enable 1->0 escape hatch": takeupPending stays set, so pressing Cut again
 # cannot clear it. And the enable 0->1 edge back clears referenceLatched and
 # phaseOffsetSteps (Ramps.c:766). The operator cannot route around paying, so
-# the only thing left for the message to do is say what they are paying.
-#
-# CHOSEN FROM A MEASUREMENT, like every string above it: six candidates were
-# rendered by previews/preview_takeup_text_widths.py and this one won on
-# reading, not on width -- fault, imperative, cost, in that order.
-ELS_TAKEUP_TIMEOUT_LATCHED = (            # 62 ch, 398 px of 435
-    "Cut aborted — take-up stuck. Re-engage; the reference is lost."
+# the message says what they are paying: fault, action, cost, in that order.
+ELS_TAKEUP_TIMEOUT_LATCHED = (            # 64 ch, 412 px of 435
+    "Take-up did not complete. Re-engage the stop. Reference is lost."
 )
 
-# Unknown result code. Still leads with the state, for the same reason.
-ELS_TAKEUP_UNKNOWN = "Cut aborted — backlash take-up failed."
+# Unknown result code: a UI older than the firmware driving it.
+ELS_TAKEUP_UNKNOWN = (                    # 61 ch, 403 px of 435
+    "Unknown take-up fault. Make sure the software versions match."
+)
 
 
 # The board tick's span (Global.read_tick): fastData, then the elsStop hot
