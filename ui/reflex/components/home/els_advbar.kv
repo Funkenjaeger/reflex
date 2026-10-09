@@ -216,6 +216,21 @@
           chip_color: app.theme.accent if root.controller.thread_ref_latched else app.theme.text_dim
           lit: root.controller.is_threading
 
+        # ── Active gearbox position: read-only, left of centre ────────────────
+        # Same source as the ELS settings dropdown (the servo's gearbox_position,
+        # via root.gear_text). Lives in the gutter that already exists, clear of
+        # the reference chip, so the bar's height budget is untouched.
+        Label:
+          id: label_gear
+          text: root.gear_text
+          size_hint: None, None
+          size: self.texture_size
+          x: status_gutter.x + dp(130)
+          y: status_gutter.y + root.gutter_inset + (status_gutter.height - root.gutter_inset - self.height) / 2.0
+          font_name: app.theme.font_mono
+          font_size: dp(12)
+          color: app.theme.text_dim
+
         # ── Thread-phase offset chip: pinned RIGHT, only while an offset is set ─
         # A nonzero elsStop.phaseOffsetSteps means the machine is cutting at a
         # DELIBERATE phase shift and stays that way for the whole job; an

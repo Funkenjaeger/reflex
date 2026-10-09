@@ -62,6 +62,11 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     # it gets it, and neither silently overwrites the other.
     natural_height = NumericProperty(128)
 
+    # Read-only "Gear A|B|C" for the status gutter, mirrored from the servo's
+    # gearbox_position (the same source the ELS settings dropdown shows), so a
+    # gear adopted by the coupling check shows up here too.
+    gear_text = StringProperty("")
+
     # How far the status gutter's recessed band is inset from its own bottom
     # edge, i.e. where the hairline divider sits. ONE NUMBER, FOUR USES: the
     # recess rectangle, the divider line, and both chips' vertical centring all
@@ -229,6 +234,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         "stop_z_text",
         "major_diameter_text",
         "minor_diameter_text",
+        "gear_text",
         "position",
         "x", "y",
         "minimum_width",
@@ -266,10 +272,17 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
             # threading and X is still at depth).
             self._sync_is_threading()
             self.els_bar.bind(mode_name=lambda *_: self._sync_is_threading())
+        servo = getattr(self.app, "servo", None)
+        if servo is not None and hasattr(servo, "bind"):
+            self._sync_gear_text(servo, servo.gearbox_position)
+            servo.bind(gearbox_position=self._sync_gear_text)
         self.controller.is_inner = self.inner_thread
         self.bind(inner_thread=lambda *_: setattr(self.controller, "is_inner", self.inner_thread))
 
     # ── Mode-flag mirroring (widget persistence → controller) ────────────────
+
+    def _sync_gear_text(self, instance, value):
+        self.gear_text = f"Gear {value}"
 
     def _sync_wizard_to_controller(self, instance, value):
         self.controller.wizard_enabled = value
