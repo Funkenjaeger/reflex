@@ -75,7 +75,9 @@
           height: 36 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
         ButtonItem:
           name: "Advanced ELS Settings"
-          value: "Open"
+          # The advanced ELS bar's settings glyph (els_advbar.kv, btn_settings),
+          # so the two ways in look the same.
+          icon: "\uf013"
           opacity: 1 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
           height: 60 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
           disabled: MODE_ELS not in USE_CASE_MODES.get(app.use_case, [])

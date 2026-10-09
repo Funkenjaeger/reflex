@@ -13,6 +13,9 @@ class ButtonItem(BoxLayout):
     name = StringProperty("")
     value = StringProperty("")
     help_file = StringProperty("")
+    # A glyph from the theme's icon font, shown on the button instead of
+    # `value` when set. Empty (the default) leaves every existing row as it is.
+    icon = StringProperty("")
 
     def __init__(self, **kv):
         super().__init__(**kv)

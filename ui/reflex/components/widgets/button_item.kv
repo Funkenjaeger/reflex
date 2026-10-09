@@ -15,7 +15,8 @@
     FormValueButton:
       size_hint_x: None
       width: 250
-      text: str(root.value)
+      text: root.icon if root.icon else str(root.value)
+      font_name: app.theme.font_icon if root.icon else app.theme.font_bold
       font_size: app.formats.font_size
       on_press: app.beep()
       on_release: root.dispatch_release()
