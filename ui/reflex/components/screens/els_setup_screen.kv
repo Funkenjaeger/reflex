@@ -70,11 +70,11 @@
         # bar and the same live settings (els_setup_screen.open_els_settings).
         # Hidden for a use case without ELS mode, like Setup's ELS button.
         TitleItem:
-          name: "Threading"
+          name: "Advanced"
           opacity: 1 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
           height: 36 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
         ButtonItem:
-          name: "ELS Threading Settings"
+          name: "Advanced ELS Settings"
           value: "Open"
           opacity: 1 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
           height: 60 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0

@@ -32,7 +32,7 @@ of just past it. Your Stop Z itself never changes.
 ## Where to find it
 
 Tap the **gear** on the advanced ELS bar, under the mode selector, to open
-**ELS Threading Settings**, or open it from **Setup → ELS → ELS Threading
+**Advanced ELS Settings**, or open it from **Setup → ELS → Advanced ELS
 Settings**. The two settings are at the bottom, under **Advanced**:
 
 | Setting | What it does |

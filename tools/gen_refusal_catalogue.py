@@ -113,7 +113,8 @@ ADVICE = {
         "Only on a lathe with a gearbox table. Calibration results are "
         "stored as measured in the reference position (the first one in the "
         "table, A in this example), so it only runs there. Move the lever to "
-        "it, set **Gearbox position** to it in ELS settings, and calibrate."),
+        "it, set **Gearbox position** to it in Advanced ELS Settings, and "
+        "calibrate."),
     "ratio.decoupled": (
         "The servo kept turning the leadscrew and the Z scale stopped "
         "moving partway through the pass. **Close the half nut and press "
@@ -144,8 +145,8 @@ ADVICE = {
         "**pressing Cut again will fail the same way** until the cause is "
         "found: a slipping coupling, a half nut riding and skipping, or "
         "wrong servo settings. If the lathe does have a gearbox between the "
-        "servo and the leadscrew, enter it as **Gearbox table** in ELS "
-        "settings."),
+        "servo and the leadscrew, enter it as **Gearbox table** in Advanced "
+        "ELS Settings."),
     "cal.aborted": (
         "Conditions changed while the calibration was running — the ELS stop "
         "was engaged, or the servo mode changed. Re-run it undisturbed."),
@@ -197,7 +198,8 @@ SECTIONS = [
       ("cal.gearbox", gearbox_refusal_text("B", EXAMPLE_GEARBOX.reference))]),
     ("Coupling check",
      "Shown across the status gutter when the coupling check stops a pass "
-     "partway, and only when **Coupling check acts** is on in ELS settings "
+     "partway, and only when **Coupling check acts** is on in Advanced ELS "
+     "Settings "
      "(it is off by default, which only logs). The check compares how far "
      "the Z scale moved with how far the servo was told to move it. Red "
      "strips change nothing. The yellow ones appear only on a lathe with a "

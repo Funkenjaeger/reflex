@@ -65,7 +65,7 @@ feed mode — the chip dims rather than disappearing, because the reference is
 still there and still usable.
 
 **Beside it — the gearbox position.** `Gear` and the name of the position in
-effect, only on a lathe with a gearbox table (ELS settings). Absent with no
+effect, only on a lathe with a gearbox table (Advanced ELS Settings). Absent with no
 gearbox. A position the coupling check adopts shows here at once.
 
 **Right — the phase offset.** Present only when a thread-phase offset is set,
