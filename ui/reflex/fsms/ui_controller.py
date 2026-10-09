@@ -183,6 +183,15 @@ class ElsUiController(EventDispatcher):
     ratio_warning       = StringProperty("")
     ratio_warning_yellow = BooleanProperty(False)
 
+    # Inline ELS alarm strip text. Non-empty exactly while the ELS is in alarm:
+    # the reason (or a generic line when there is none) plus the way out. Set in
+    # _on_alarm, cleared when the alarm clears (Disengage, or ack). Shown
+    # whether or not the wizard is enabled, unlike label_instruction.
+    ALARM_STRIP_FALLBACK = "ELS fault — disengage to clear"
+    ALARM_STRIP_SUFFIX = " — Disengage to clear"
+    ALARM_STRIP_MAX = 65          # same text contract as the other strips
+    alarm_strip         = StringProperty("")
+
     # ── Transient operator notices (top status bar) ────────────────────
     # The live notice, republished from the NoticeCenter for kv to bind to.
     # Empty text means nothing is showing; `notice_severity` picks the colour.
@@ -553,8 +562,21 @@ class ElsUiController(EventDispatcher):
             self._apply_policy()
         Clock.schedule_once(_apply, 0)
 
+    def _alarm_strip_text(self, reason):
+        """The reason, clipped so reason + the way out fits the strip."""
+        reason = " ".join(str(reason or "").split())
+        if not reason:
+            return self.ALARM_STRIP_FALLBACK
+        room = self.ALARM_STRIP_MAX - len(self.ALARM_STRIP_SUFFIX)
+        if len(reason) > room:
+            reason = reason[:room - 1].rstrip() + "…"
+        return reason + self.ALARM_STRIP_SUFFIX
+
     def _on_alarm(self, reason):
-        Clock.schedule_once(lambda _dt: setattr(self, "alarm_text", reason), 0)
+        def _apply(_dt):
+            self.alarm_text = reason
+            self.alarm_strip = self._alarm_strip_text(reason)
+        Clock.schedule_once(_apply, 0)
 
     def _on_connected_changed(self, instance, value):
         def _apply(_dt):
@@ -586,6 +608,8 @@ class ElsUiController(EventDispatcher):
         # fault by disengaging (domain → disabled). Without this the domain
         # recovers but the UI FSM stays parked in 'alarm' forever (Start/Stop and
         # the action button disabled), soft-locking ELS until an app restart.
+        if state == "disabled":
+            self.alarm_strip = ""
         if state == "disabled" and self._ui_fsm.state == "alarm":
             if self._ui_fsm.may_ack_alarm():
                 self._ui_fsm.ack_alarm()          # alarm → idle
@@ -1712,6 +1736,7 @@ class ElsUiController(EventDispatcher):
 
     def on_ack_alarm(self):
         self._ui_fsm.ack_alarm()
+        self.alarm_strip = ""
 
     # ——— encoder-anchored stop_z / retract_z ———
     @property
