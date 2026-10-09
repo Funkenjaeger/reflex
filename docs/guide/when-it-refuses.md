@@ -81,11 +81,11 @@ Shown across the status gutter when the coupling check stops a pass partway, and
 
 The servo kept turning the leadscrew and the Z scale stopped moving partway through the pass. **Close the half nut and press Cut again.** If it was closed, look for a slipping coupling or a Z scale that stopped reading.
 
-> Cut aborted — gearbox looks like B (fast). Cut again to use it.
+> Cut aborted — gearbox looks like B. Cut again to use it.
 
-The carriage moved at the rate of another position in the gearbox table, here twice as far per step as expected: the lever is in **B**. Nothing is wrong. **Press Cut (or Retract)** and the controller switches to B, with feeds and pitches right for it. If the lever was meant to be where it was, move it back first; the next pass will notice and switch back. **(fast)** and **(slow)** come from the position's factor: above or below the reference.
+The carriage moved at the rate of another position in the gearbox table, here twice as far per step as expected: the lever is in **B**. Nothing is wrong. **Press Cut (or Retract)** and the controller switches to B, with feeds and pitches right for it. If the lever was meant to be where it was, move it back first; the next pass will notice and switch back.
 
-> Cut aborted — gearbox looks like C (slow). Cut again to use it.
+> Cut aborted — gearbox looks like C. Cut again to use it.
 
 The same for a slower position, here half as far per step: the lever is in **C**. **Press Cut (or Retract)** to switch to it, or move the lever back first.
 

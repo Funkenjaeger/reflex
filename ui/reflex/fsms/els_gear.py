@@ -198,16 +198,6 @@ class GearTable:
         reference; an unknown name reads as the reference."""
         return dict(self._effective)[self.resolve(gear)]
 
-    def describe(self, gear: str) -> str:
-        """The name as the operator reads it, with a speed hint taken from the
-        factor alone: "B (fast)" above the reference, "C (slow)" below."""
-        f = self.factor(gear)
-        if f > 1:
-            return f"{gear} (fast)"
-        if f < 1:
-            return f"{gear} (slow)"
-        return gear
-
     def steps_in_gear(self, reference_steps: int, gear: str) -> int:
         """A step count stored in the reference position, converted to `gear`.
 

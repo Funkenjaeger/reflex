@@ -126,8 +126,7 @@ ADVICE = {
         "**B**. Nothing is wrong. **Press Cut (or Retract)** and the "
         "controller switches to B, with feeds and pitches right for it. If "
         "the lever was meant to be where it was, move it back first; the "
-        "next pass will notice and switch back. **(fast)** and **(slow)** "
-        "come from the position's factor: above or below the reference."),
+        "next pass will notice and switch back."),
     "ratio.gear_c": (
         "The same for a slower position, here half as far per step: the "
         "lever is in **C**. **Press Cut (or Retract)** to switch to it, or "
@@ -208,8 +207,8 @@ SECTIONS = [
      "the names in your own table.",
      [("ratio.decoupled", els_ratio.abort_text(els_ratio.DECOUPLED,
                                                 EXAMPLE_GEARBOX)),
-      ("ratio.gear_b", els_ratio.gear_change_text("B", EXAMPLE_GEARBOX)),
-      ("ratio.gear_c", els_ratio.gear_change_text("C", EXAMPLE_GEARBOX)),
+      ("ratio.gear_b", els_ratio.gear_change_text("B")),
+      ("ratio.gear_c", els_ratio.gear_change_text("C")),
       ("ratio.wrong", els_ratio.abort_text(els_ratio.RATIO_WRONG,
                                            EXAMPLE_GEARBOX)),
       ("ratio.wrong_no_gearbox", els_ratio.abort_text(els_ratio.RATIO_WRONG,

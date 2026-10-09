@@ -1023,7 +1023,7 @@ class ElsUiController(EventDispatcher):
         if v.kind == els_ratio.GEAR_CHANGE and v.gear and v.gear in table.names:
             self._pending_gear = v.gear
             self.ratio_warning_yellow = True
-            self.ratio_warning = els_ratio.gear_change_text(v.gear, table)
+            self.ratio_warning = els_ratio.gear_change_text(v.gear)
         else:
             self._pending_gear = None
             self.ratio_warning_yellow = False

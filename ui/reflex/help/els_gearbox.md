@@ -54,10 +54,9 @@ catches two faults:
   the lever is in another position.
 
 With a gearbox, if the check is confident the rate matches another position
-in the table, the pass is aborted with a **yellow** message naming it
-(**fast** or **slow** from its factor). Your next **Cut** or **Retract**
-takes that as your go-ahead: the controller switches to that position and
-carries on with the right feed and pitch.
+in the table, the pass is aborted with a **yellow** message naming it.
+Your next **Cut** or **Retract** takes that as your go-ahead: the controller
+switches to that position and carries on with the right feed and pitch.
 
 If the rate matches **no** position, or, with no gearbox, is not the
 leadscrew's rate, something is wrong with the drivetrain. The pass is

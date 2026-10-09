@@ -539,13 +539,13 @@ class RatioWatch:
 # chips under the translucent strip. test_els_ratio pins the length for the
 # longest names a table allows (els_gear.MAX_NAME_LEN).
 #
-# The names are the owner's own, so nothing here knows any of them; the
-# fast/slow hint comes from the factor (GearTable.describe). With no gearbox
-# nothing mentions gears at all.
+# The names are the owner's own, so nothing here knows any of them. A name
+# is shown as it is: names are unique, so the name alone says which position.
+# With no gearbox nothing mentions gears at all.
 
 
-def gear_change_text(gear: str, table: GearTable) -> str:
-    return (f"Cut aborted \u2014 gearbox looks like {table.describe(gear)}. "
+def gear_change_text(gear: str) -> str:
+    return (f"Cut aborted \u2014 gearbox looks like {gear}. "
             f"Cut again to use it.")
 
 

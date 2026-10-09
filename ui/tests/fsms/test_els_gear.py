@@ -139,13 +139,6 @@ def test_worst_case_is_the_fastest_position(gear, expected):
     assert ABC.worst_case_travel_factor(gear) == expected
 
 
-def test_the_fast_slow_hint_comes_from_the_factor_not_the_name():
-    t = GearTable.parse("Hi=1, Lo=4, B=1/3")
-    assert t.describe("Hi") == "Hi"
-    assert t.describe("Lo") == "Lo (fast)"
-    assert t.describe("B") == "B (slow)"
-
-
 def test_nearest_position_on_a_ratio_scale():
     t = GearTable.parse("1=1, 2=3/2, 3=4")
     assert t.nearest(1.02) == ("1", pytest.approx(0.02))

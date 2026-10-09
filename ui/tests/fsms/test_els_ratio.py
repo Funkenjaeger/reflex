@@ -280,7 +280,7 @@ def test_every_operator_text_fits_the_strip():
     """Same 65-character contract as the take-up strip (utils/devices.py),
     at the longest names a table allows."""
     widest = GearTable.parse("WWW=1, MMM=8, QQQ=1/8")
-    texts = [R.gear_change_text(g, t) for t in (ABC, NUM, widest)
+    texts = [R.gear_change_text(g) for t in (ABC, NUM, widest)
              for g in t.names]
     texts += [R.abort_text(k, t) for k in (R.DECOUPLED, R.RATIO_WRONG)
               for t in (ABC, NO_GEARBOX)]
@@ -289,11 +289,14 @@ def test_every_operator_text_fits_the_strip():
         assert len(t) <= 65, t
 
 
-def test_gear_change_text_uses_the_owner_names_and_the_factor_hint():
-    t = GearTable.parse("Hi=1, Lo=1/2, Top=3")
-    assert "Lo (slow)" in R.gear_change_text("Lo", t)
-    assert "Top (fast)" in R.gear_change_text("Top", t)
-    assert "Hi." in R.gear_change_text("Hi", t)
+def test_gear_change_text_names_the_position_and_nothing_else():
+    """Names are unique, so the name alone says which position. No speed
+    hint: "fast" or "slow" depends on which position is the reference, and
+    several positions can share one."""
+    for g in ("Hi", "Lo", "Top"):
+        text = R.gear_change_text(g)
+        assert f" {g}." in text
+        assert "fast" not in text and "slow" not in text
 
 
 def test_no_gearbox_refusal_text_never_mentions_gears():
@@ -448,7 +451,7 @@ def test_acting_gear_change_is_yellow_and_adopted_on_the_next_move():
     els.els_ratio_check = True
     ctrl._on_ratio_verdict(R.Verdict(R.GEAR_CHANGE, "B", reason="test"))
     assert ctrl.ratio_warning_yellow is True
-    assert "B (fast)" in ctrl.ratio_warning
+    assert ctrl.ratio_warning == R.gear_change_text("B")
     assert ctrl._pending_gear == "B"
     ctrl._adopt_pending_gear()
     assert board.servo.gearbox_position == "B"
@@ -471,7 +474,7 @@ def test_acting_gear_change_with_owner_names():
     els.els_ratio_check = True
     ctrl._on_ratio_verdict(R.Verdict(R.GEAR_CHANGE, "3", reason="test"))
     assert ctrl.ratio_warning_yellow is True
-    assert "3 (fast)" in ctrl.ratio_warning
+    assert ctrl.ratio_warning == R.gear_change_text("3")
     ctrl._adopt_pending_gear()
     assert board.servo.gearbox_position == "3"
 

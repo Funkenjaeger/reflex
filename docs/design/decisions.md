@@ -199,8 +199,9 @@ that blamed the gearbox on a lathe with none.
   position not in the table reads as the reference; with no gearbox it is
   ignored. An existing install gets no migration: its table is entered by
   hand.
-- **A fast or slow hint comes from the factor,** above or below the
-  reference, never from the name.
+- **A position is shown by its name alone.** Names are unique, so the name
+  says which position. No fast or slow hint is added: it would depend on
+  which position is the reference, and several positions can share one.
 
 ### Why
 
