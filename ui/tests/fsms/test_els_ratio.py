@@ -7,16 +7,22 @@ verdict needs, what it ignores, and what can never happen.
 import pytest
 
 from reflex.fsms import els_ratio as R
+from reflex.fsms.els_gear import NO_GEARBOX, GearTable
 
-K = 12800.0 / 5080.0          # elspi: steps per Z count in gear A
+K = 12800.0 / 5080.0          # the recorded lathe: steps per Z count in gear A
 MM_PER_COUNT = 0.005
 POLL_MS = 40
 
+#: The recorded lathe's lever: reference A, B twice as fast, C half.
+ABC = GearTable.parse("A=1, B=2, C=1/2")
+#: Owner names that are neither letters nor in order, factors not 2x apart.
+NUM = GearTable.parse("1=1, 2=3/2, 3=4")
 
-def _check(gear="A"):
-    k = K / {"A": 1.0, "B": 2.0, "C": 0.5}[gear]
+
+def _check(gear="A", table=ABC):
+    k = K / float(table.factor(gear))
     chk = R.CouplingRatioCheck(steps_per_count=k, gear=gear,
-                               mm_per_count=MM_PER_COUNT)
+                               mm_per_count=MM_PER_COUNT, table=table)
     chk.start_pass()
     return chk
 
@@ -43,10 +49,90 @@ def _run(chk, ratio, *, polls=60, steps_per_poll=120, start_polls=0,
 
 
 def test_nearest_gear():
-    assert R.nearest_gear(1.03) == ("A", pytest.approx(0.03))
-    assert R.nearest_gear(1.9)[0] == "B"
-    assert R.nearest_gear(0.52)[0] == "C"
-    assert R.nearest_gear(0.0)[0] == "C"
+    assert R.nearest_gear(1.03, ABC) == ("A", pytest.approx(0.03))
+    assert R.nearest_gear(1.9, ABC)[0] == "B"
+    assert R.nearest_gear(0.52, ABC)[0] == "C"
+    assert R.nearest_gear(0.0, ABC)[0] == "C"
+
+
+# ── A configured table: the owner's names and factors ──────────────────
+
+@pytest.mark.parametrize("real, expect", [(1.5, "2"), (4.0, "3")])
+def test_gear_change_onto_non_alphabetic_non_binary_positions(real, expect):
+    v = _run(_check("1", NUM), real)[-1]
+    assert v.kind == R.GEAR_CHANGE and v.gear == expect
+
+
+@pytest.mark.parametrize("gear, real", [("1", 1.0), ("2", 1.5), ("3", 4.0)])
+def test_each_configured_position_reads_ok_when_expected(gear, real):
+    vs = _run(_check(gear, NUM), real)
+    assert not any(v.kind in R.TERMINAL for v in vs)
+    assert vs[-1].kind == R.OK
+
+
+def test_from_the_fastest_configured_position_back_to_the_reference():
+    v = _run(_check("3", NUM), 1.0)[-1]
+    assert v.kind == R.GEAR_CHANGE and v.gear == "1"
+
+
+def test_a_ratio_between_configured_positions_is_ratio_wrong():
+    """2.4 is +60 % from "2" and -40 % from "3": no position within 15 %."""
+    assert _run(_check("1", NUM), 2.4)[-1].kind == R.RATIO_WRONG
+
+
+def test_a_name_not_in_the_table_expects_the_reference():
+    chk = _check("Q", NUM)
+    assert chk.gear == "1"
+    assert _run(chk, 1.0)[-1].kind == R.OK
+
+
+# ── No gearbox: one expected ratio, nothing to adopt ───────────────────
+
+def test_no_gearbox_coupled_pass_reads_ok():
+    vs = _run(_check("", NO_GEARBOX), 1.0)
+    assert not any(v.kind in R.TERMINAL for v in vs)
+    assert vs[-1].kind == R.OK
+
+
+@pytest.mark.parametrize("real", [2.0, 0.5, 4.0, 1.4])
+def test_no_gearbox_never_reads_a_gear_change(real):
+    """A ratio that would be another position on a geared lathe is simply
+    wrong here: RATIO_WRONG, never GEAR_CHANGE."""
+    chk = _check("", NO_GEARBOX)
+    vs = _run(chk, real)
+    assert not any(v.kind == R.GEAR_CHANGE for v in vs)
+    assert vs[-1].kind == R.RATIO_WRONG
+    assert chk.end_pass().kind == R.RATIO_WRONG
+
+
+def test_no_gearbox_short_pass_off_ratio_is_not_a_gear_change():
+    chk = _check("", NO_GEARBOX)
+    _run(chk, 2.16, polls=12)
+    assert chk.end_pass().kind != R.GEAR_CHANGE
+
+
+def test_no_gearbox_ignores_a_stored_position():
+    chk = _check("B", NO_GEARBOX)
+    assert chk.gear == ""
+    assert _run(chk, 1.0)[-1].kind == R.OK
+
+
+def test_no_gearbox_half_nut_opening_is_decoupled():
+    vs = _run(_check("", NO_GEARBOX), 1.0, polls=80,
+              ratio_at=lambda i: 1.0 if i < 40 else 0.0)
+    assert vs[-1].kind == R.DECOUPLED
+
+
+def test_decoupled_floor_follows_the_slowest_position():
+    """0.25 while nothing is slower than x1/2; half the slowest below that,
+    so a legitimate x1/4 pass is not called decoupled."""
+    assert R.decoupled_below(NO_GEARBOX) == R.DECOUPLED_BELOW
+    assert R.decoupled_below(ABC) == R.DECOUPLED_BELOW
+    slow = GearTable.parse("A=1, S=1/4")
+    assert R.decoupled_below(slow) == pytest.approx(0.125)
+    vs = _run(_check("S", slow), 0.25)
+    assert not any(v.kind in R.TERMINAL for v in vs)
+    assert vs[-1].kind == R.OK
 
 
 def test_a_coupled_pass_reads_ok_and_never_aborts():
@@ -185,18 +271,36 @@ def test_short_pass_before_the_coarse_check_decides_nothing():
 def test_decoupled_threshold_sits_below_gear_c():
     """Gear C reads ~0.5 and its windows dipped to 0.43 on 10-03; the
     2026-09-20 threshold of 0.5 would have aborted every pass in C."""
-    assert R.DECOUPLED_BELOW < 0.43
+    assert R.decoupled_below(ABC) < 0.43
     vs = _run(_check("C"), 0.45)
     assert not any(v.kind == R.DECOUPLED for v in vs)
 
 
 def test_every_operator_text_fits_the_strip():
-    """Same 65-character contract as the take-up strip (utils/devices.py)."""
-    texts = [R.gear_change_text(g) for g in ("A", "B", "C")]
-    texts += [R.abort_text(R.DECOUPLED), R.abort_text(R.RATIO_WRONG)]
+    """Same 65-character contract as the take-up strip (utils/devices.py),
+    at the longest names a table allows."""
+    widest = GearTable.parse("WWW=1, MMM=8, QQQ=1/8")
+    texts = [R.gear_change_text(g, t) for t in (ABC, NUM, widest)
+             for g in t.names]
+    texts += [R.abort_text(k, t) for k in (R.DECOUPLED, R.RATIO_WRONG)
+              for t in (ABC, NO_GEARBOX)]
     for t in texts:
         assert t.startswith("Cut aborted")
         assert len(t) <= 65, t
+
+
+def test_gear_change_text_uses_the_owner_names_and_the_factor_hint():
+    t = GearTable.parse("Hi=1, Lo=1/2, Top=3")
+    assert "Lo (slow)" in R.gear_change_text("Lo", t)
+    assert "Top (fast)" in R.gear_change_text("Top", t)
+    assert "Hi." in R.gear_change_text("Hi", t)
+
+
+def test_no_gearbox_refusal_text_never_mentions_gears():
+    for kind in (R.DECOUPLED, R.RATIO_WRONG):
+        text = R.abort_text(kind, NO_GEARBOX).lower()
+        assert "gear" not in text
+    assert R.abort_text(R.RATIO_WRONG, NO_GEARBOX) != R.abort_text(R.RATIO_WRONG, ABC)
 
 
 # ─── RatioWatch: the per-tick glue ──────────────────────────────────────
@@ -210,7 +314,7 @@ class _Board:
         self.els_stop_values = {}
 
 
-def _watch(state, verdicts, *, gear="A", k=K):
+def _watch(state, verdicts, *, gear="A", k=K, table=ABC):
     board = _Board()
     tick = SimpleNamespace(scale_index=lambda: 1,
                            takeup_pending=lambda: bool(board.takeup))
@@ -219,6 +323,7 @@ def _watch(state, verdicts, *, gear="A", k=K):
     clock = {"t": 0.0}
     w = R.RatioWatch(hal, board, fsm_state=lambda: state["s"],
                      steps_per_count=lambda: k, gear=lambda: gear,
+                     gear_table=lambda: table,
                      mm_per_count=lambda: MM_PER_COUNT,
                      on_verdict=verdicts.append, now_ms=lambda: clock["t"])
     return w, board, clock
@@ -270,6 +375,17 @@ def test_watch_starts_fresh_each_pass():
     assert len(verdicts) == 2
 
 
+def test_watch_with_no_gearbox_reports_ratio_wrong_not_a_gear():
+    state, verdicts = {"s": "stopped"}, []
+    w, board, clock = _watch(state, verdicts, gear="", table=NO_GEARBOX)
+    w.poll()
+    state["s"] = "cutting"
+    _drive(w, board, clock, state, 2.0, 60)
+    state["s"] = "stopped"
+    w.poll()
+    assert [v.kind for v in verdicts] == [R.RATIO_WRONG]
+
+
 def test_watch_without_geometry_does_nothing():
     state, verdicts = {"s": "cutting"}, []
     w, board, clock = _watch(state, verdicts, k=None)
@@ -293,7 +409,7 @@ def _isolate_event_bus():
         bus._subs[k] = v
 
 
-def _controller():
+def _controller(table=ABC):
     import os
     os.environ.setdefault("KIVY_WINDOW", "mock")
     os.environ.setdefault("KIVY_GL_BACKEND", "mock")
@@ -303,6 +419,8 @@ def _controller():
                                                _make_z_axis, _pump)
     board, els = _make_collaborators(z_axis=_make_z_axis(), x_axis=_make_x_axis())
     board.axes = []
+    board.servo.gear_table = table
+    board.servo.gearbox_position = table.reference
     ctrl = ElsUiController(els=els, board=board)
     _pump()
     ctrl._hal = MagicMock(wraps=ctrl._hal)
@@ -344,7 +462,41 @@ def test_acting_red_verdicts_adopt_nothing(kind):
     ctrl._on_ratio_verdict(R.Verdict(R.GEAR_CHANGE, "B", reason="test"))
     ctrl._on_ratio_verdict(R.Verdict(kind, reason="test"))
     assert ctrl.ratio_warning_yellow is False
-    assert ctrl.ratio_warning == R.abort_text(kind)
+    assert ctrl.ratio_warning == R.abort_text(kind, ABC)
+    assert ctrl._pending_gear is None
+
+
+def test_acting_gear_change_with_owner_names():
+    ctrl, board, els = _controller(NUM)
+    els.els_ratio_check = True
+    ctrl._on_ratio_verdict(R.Verdict(R.GEAR_CHANGE, "3", reason="test"))
+    assert ctrl.ratio_warning_yellow is True
+    assert "3 (fast)" in ctrl.ratio_warning
+    ctrl._adopt_pending_gear()
+    assert board.servo.gearbox_position == "3"
+
+
+@pytest.mark.parametrize("kind", [R.DECOUPLED, R.RATIO_WRONG, R.GEAR_CHANGE])
+def test_no_gearbox_acting_verdict_is_red_neutral_and_adopts_nothing(kind):
+    """With no gearbox the check stops the pass when it acts, says nothing
+    about gears, and never adopts -- even handed a GEAR_CHANGE verdict."""
+    ctrl, board, els = _controller(NO_GEARBOX)
+    els.els_ratio_check = True
+    ctrl._on_ratio_verdict(R.Verdict(kind, "B", reason="test"))
+    assert ctrl.ratio_warning_yellow is False
+    assert "gear" not in ctrl.ratio_warning.lower()
+    assert ctrl.ratio_warning.startswith("Cut aborted")
+    assert ctrl._pending_gear is None
+    ctrl._adopt_pending_gear()
+    assert board.servo.gearbox_position == ""
+
+
+def test_a_gear_change_to_a_position_no_longer_in_the_table_is_red():
+    ctrl, board, els = _controller(ABC)
+    els.els_ratio_check = True
+    ctrl._on_ratio_verdict(R.Verdict(R.GEAR_CHANGE, "Q", reason="test"))
+    assert ctrl.ratio_warning_yellow is False
+    assert ctrl.ratio_warning == R.abort_text(R.RATIO_WRONG, ABC)
     assert ctrl._pending_gear is None
 
 
@@ -378,6 +530,7 @@ def test_manual_gear_selection_is_refused_during_a_pass():
     ctrl, board, els = _controller()
     fsm = MagicMock()
     fsm.engaged_gear.return_value = "A"
+    fsm.gear_table.return_value = ABC
     fsm.state = "cutting"
     ctrl._els_fsm = fsm
     assert ctrl.select_gear("B") is False
@@ -385,6 +538,97 @@ def test_manual_gear_selection_is_refused_during_a_pass():
     fsm.state = "stopped"
     assert ctrl.select_gear("B") is True
     fsm.adopt_gear.assert_called_once_with("B")
+
+
+def test_manual_selection_outside_the_table_is_refused():
+    from unittest.mock import MagicMock
+    ctrl, board, els = _controller()
+    fsm = MagicMock()
+    fsm.state = "stopped"
+    fsm.engaged_gear.return_value = ""
+    fsm.gear_table.return_value = NO_GEARBOX
+    ctrl._els_fsm = fsm
+    assert ctrl.select_gear("A") is False
+    fsm.gear_table.return_value = ABC
+    fsm.engaged_gear.return_value = "A"
+    assert ctrl.select_gear("Q") is False
+    fsm.adopt_gear.assert_not_called()
+
+
+# ─── Editing the table (ELS settings) ───────────────────────────────────
+
+def _real_servo_controller(table_text=""):
+    """A controller over a real ServoDispatcher, so set_gear_table runs
+    through the persisted property and its derived table."""
+    ctrl, board, els = _controller()
+    from tests.dispatchers.conftest import MockBoard, MockFormats
+    from reflex.dispatchers.servo import ServoDispatcher
+    from unittest.mock import MagicMock
+    sb = MockBoard()
+    sb.device = MagicMock()
+    servo = ServoDispatcher(board=sb, formats=MockFormats(), id_override="0")
+    servo.gearbox_table = table_text
+    board.servo = servo
+    ctrl._els_fsm.servo = servo
+    notes = []
+    ctrl.notify = lambda msg, severity=None, **kw: notes.append(msg) or True
+    return ctrl, servo, notes
+
+
+@pytest.fixture
+def _cfg(tmp_path, monkeypatch):
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path))
+
+
+def test_a_typed_table_is_applied_and_persisted(_cfg):
+    ctrl, servo, notes = _real_servo_controller()
+    assert ctrl.set_gear_table("Lo=1, Hi=1.5") is True
+    assert servo.gearbox_table == "Lo=1, Hi=3/2"
+    assert servo.gear_table.names == ("Lo", "Hi")
+    assert servo.gearbox_engaged == "Lo"
+    assert notes == []
+
+
+def test_an_invalid_table_is_refused_with_the_reason(_cfg):
+    ctrl, servo, notes = _real_servo_controller("A=1, B=2")
+    assert ctrl.set_gear_table("A=1, B=1.1") is False
+    assert servo.gearbox_table == "A=1, B=2"
+    assert len(notes) == 1 and "too close" in notes[0]
+
+
+def test_clearing_the_table_is_no_gearbox(_cfg):
+    ctrl, servo, notes = _real_servo_controller("A=1, B=2")
+    servo.gearbox_position = "B"
+    assert ctrl.set_gear_table("") is True
+    assert not servo.gear_table.has_gearbox
+    assert servo.gearbox_engaged == ""
+
+
+def test_the_table_cannot_change_during_a_pass(_cfg):
+    from unittest.mock import PropertyMock, patch
+    ctrl, servo, notes = _real_servo_controller("A=1, B=2")
+    with patch.object(type(ctrl._els_fsm), "state", new_callable=PropertyMock,
+                      return_value="cutting", create=True):
+        assert ctrl.set_gear_table("A=1, B=3") is False
+    assert servo.gearbox_table == "A=1, B=2"
+    assert "during a pass" in notes[0]
+
+
+def test_a_table_change_drops_a_pending_adoption(_cfg):
+    ctrl, servo, notes = _real_servo_controller("A=1, B=2")
+    ctrl._pending_gear = "B"
+    ctrl.ratio_warning = "x"
+    assert ctrl.set_gear_table("Lo=1, Hi=2") is True
+    assert ctrl._pending_gear is None and ctrl.ratio_warning == ""
+    ctrl._adopt_pending_gear()
+    assert servo.gearbox_engaged == "Lo"
+
+
+def test_the_same_table_typed_differently_changes_nothing(_cfg):
+    ctrl, servo, notes = _real_servo_controller("A=1, B=2")
+    ctrl._pending_gear = "B"
+    assert ctrl.set_gear_table("A B=2.0") is True
+    assert ctrl._pending_gear == "B"
 
 
 def test_flight_recorder_files_the_verdict_and_the_gear():

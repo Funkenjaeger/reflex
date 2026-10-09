@@ -27,7 +27,7 @@ depends on that distinction.
 """
 from kivy.logger import Logger
 
-from reflex.fsms.els_gear import REFERENCE_GEAR
+from reflex.fsms.els_gear import NO_GEARBOX
 from reflex.utils.devices import (
     ELS_CAL_ERR_CONFIG,
     ELS_CAL_MESSAGES,
@@ -38,10 +38,11 @@ from reflex.utils.devices import (
 log = Logger.getChild(__name__)
 
 
-def gearbox_refusal_text(gear: str) -> str:
-    """Why a calibration will not run with `gear` set (docs/guide/
-    when-it-refuses.md is generated from this)."""
-    return (f"Calibration runs in gearbox position {REFERENCE_GEAR}; "
+def gearbox_refusal_text(gear: str, reference: str) -> str:
+    """Why a calibration will not run with `gear` set when the table's
+    reference is `reference` (docs/guide/when-it-refuses.md is generated from
+    this). Only ever shown with a gearbox configured."""
+    return (f"Calibration runs in gearbox position {reference}; "
             f"this is set for {gear}.")
 
 
@@ -136,11 +137,15 @@ class BacklashCalibration:
     CAL_MAX_SPEED = 800.0
     CAL_ACCEL = 4000.0
 
-    def __init__(self, hal, els, gear=lambda: REFERENCE_GEAR):
+    def __init__(self, hal, els, gear=lambda: "",
+                 gear_table=lambda: NO_GEARBOX):
         self._hal = hal
         self._els = els
-        # Callable: the gearbox position the controller believes is engaged.
+        # Callables: the gearbox position the controller believes is engaged,
+        # and the configured table (els_gear.py). With no gearbox the
+        # position is ignored and calibration is unrestricted.
         self._gear = gear
+        self._gear_table = gear_table
         self.state = CalState.IDLE
         self.measured = [0, 0, 0]
         self.result_code = ELS_CAL_OK
@@ -181,9 +186,12 @@ class BacklashCalibration:
         # measurement -- is stored as the reference gear's (els_gear.py), and
         # the ceiling it drives against is too. Measured in another gear they
         # would be off by the gear's factor, so refuse rather than convert.
-        gear = self._gear()
-        if gear != REFERENCE_GEAR:
-            self._fail(ELS_CAL_ERR_CONFIG, gearbox_refusal_text(gear))
+        # With no gearbox there is only the leadscrew: nothing to refuse.
+        table = self._gear_table()
+        gear = table.resolve(self._gear())
+        if table.has_gearbox and gear != table.reference:
+            self._fail(ELS_CAL_ERR_CONFIG,
+                       gearbox_refusal_text(gear, table.reference))
             return False
 
         ceiling = int(self._els.els_cal_ceiling_steps)

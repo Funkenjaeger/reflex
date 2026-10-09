@@ -62,9 +62,10 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     # it gets it, and neither silently overwrites the other.
     natural_height = NumericProperty(128)
 
-    # Read-only "Gear A|B|C" for the status gutter, mirrored from the servo's
-    # gearbox_position (the same source the ELS settings dropdown shows), so a
-    # gear adopted by the coupling check shows up here too.
+    # Read-only "Gear <name>" for the status gutter, mirrored from the servo's
+    # gearbox_engaged (the same source the ELS settings dropdown shows), so a
+    # gear adopted by the coupling check shows up here too. Empty with no
+    # gearbox, and the label is hidden: nothing on this screen implies one.
     gear_text = StringProperty("")
 
     # How far the status gutter's recessed band is inset from its own bottom
@@ -274,15 +275,15 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
             self.els_bar.bind(mode_name=lambda *_: self._sync_is_threading())
         servo = getattr(self.app, "servo", None)
         if servo is not None and hasattr(servo, "bind"):
-            self._sync_gear_text(servo, servo.gearbox_position)
-            servo.bind(gearbox_position=self._sync_gear_text)
+            self._sync_gear_text(servo, servo.gearbox_engaged)
+            servo.bind(gearbox_engaged=self._sync_gear_text)
         self.controller.is_inner = self.inner_thread
         self.bind(inner_thread=lambda *_: setattr(self.controller, "is_inner", self.inner_thread))
 
     # ── Mode-flag mirroring (widget persistence → controller) ────────────────
 
     def _sync_gear_text(self, instance, value):
-        self.gear_text = f"Gear {value}"
+        self.gear_text = f"Gear {value}" if value else ""
 
     def _sync_wizard_to_controller(self, instance, value):
         self.controller.wizard_enabled = value

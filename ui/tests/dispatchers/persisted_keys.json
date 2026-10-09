@@ -145,6 +145,7 @@
     "divisions",
     "elsMode",
     "gearbox_position",
+    "gearbox_table",
     "id_override",
     "jogSpeed",
     "leadScrewPitch",

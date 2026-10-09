@@ -9,15 +9,20 @@ is 1.00 when the drivetrain is coupled as the controller believes. Two things
 move it, and they sit far apart:
 
 - the half nut opened mid-cut: the carriage stops, r falls to exactly 0;
-- the gearbox lever in another position (reflex/fsms/els_gear.py): r reads the
-  ratio of the two positions' factors -- 2 for a lever moved A -> B, 0.5 for
-  A -> C, 4 for C -> B.
+- the gearbox lever in another position, on a lathe with a gearbox table
+  (reflex/fsms/els_gear.py): r reads the ratio of the two positions' factors
+  -- for a table A=1, B=2, C=1/2, 2 for a lever moved A -> B, 0.5 for A -> C,
+  4 for C -> B.
+
+With no gearbox (the default) there is one expected ratio, the plain leadscrew
+ratio: a mismatch can only be DECOUPLED or RATIO_WRONG, never GEAR_CHANGE, and
+nothing is ever adopted.
 
 Decided responses (2026-09-03 and 2026-10-03):
 
 - DECOUPLED: drop to stopped.
-- GEAR_CHANGE: confident the lever moved to a known position. Abort the pass
-  with a yellow notice naming it; the next Cut adopts that gear.
+- GEAR_CHANGE: confident the lever moved to another position in the table.
+  Abort the pass with a yellow notice naming it; the next Cut adopts it.
 - RATIO_WRONG: moved off the expected ratio but not confidently onto another
   position. Something is wrong: abort red, adopt nothing, fail again on every
   retry.
@@ -62,13 +67,12 @@ constant names its evidence. All passes were in air, with no cutting load.
 """
 from __future__ import annotations
 
-import math
 import time
 
 from dataclasses import dataclass, field
 from typing import Optional
 
-from reflex.fsms.els_gear import GEAR_FACTORS, gear_factor
+from reflex.fsms.els_gear import GearTable
 from reflex.utils.ctype_calc import uint32_subtract_to_int32
 
 # ── Constants ───────────────────────────────────────────────────────────
@@ -83,10 +87,23 @@ WINDOW_POLLS = 10
 MIN_WINDOW_STEPS = 40
 
 #: DECOUPLED below this absolute coupling (reference-gear terms). An open half
-#: nut reads exactly 0.0000; the slowest legitimate reading is gear C at ~0.5,
-#: whose 10-poll windows dipped to 0.43 on 10-03. The 2026-09-20 value, 0.5,
-#: would abort every good pass in C.
+#: nut reads exactly 0.0000; the slowest legitimate reading on the recorded
+#: lathe is its x1/2 position at ~0.5, whose 10-poll windows dipped to 0.43 on
+#: 10-03. The 2026-09-20 value, 0.5, would abort every good pass there.
+#: This is the CEILING; a table with a slower position lowers it (below).
 DECOUPLED_BELOW = 0.25
+
+#: With a position slower than x1/2 in the table, the floor sits at this
+#: fraction of the slowest factor instead, keeping the same proportion to the
+#: slowest reading as 0.25 has to 0.5 (els_gear.MIN_FACTOR bounds it).
+DECOUPLED_FRACTION_OF_SLOWEST = 0.5
+
+
+def decoupled_below(table: GearTable) -> float:
+    """The DECOUPLED floor for `table`: DECOUPLED_BELOW, or half its slowest
+    factor if that is lower."""
+    return min(DECOUPLED_BELOW,
+               DECOUPLED_FRACTION_OF_SLOWEST * float(table.slowest))
 
 #: Consecutive trailing windows below DECOUPLED_BELOW before it is called.
 #: RATIO.md section 6: 250-290 ms from onset at W=10, M=2.
@@ -152,15 +169,16 @@ class Verdict:
     reason: str = ""
 
 
-def nearest_gear(r_abs: float) -> tuple[str, float]:
-    """The position whose factor is nearest r_abs on a ratio scale, and the
-    relative deviation r_abs / factor - 1."""
-    if r_abs <= 0.0:
-        name = min(GEAR_FACTORS, key=lambda g: GEAR_FACTORS[g])
-        return name, -1.0
-    name = min(GEAR_FACTORS,
-               key=lambda g: abs(math.log(r_abs / float(GEAR_FACTORS[g]))))
-    return name, r_abs / float(GEAR_FACTORS[name]) - 1.0
+def nearest_gear(r_abs: float, table: GearTable) -> tuple[str, float]:
+    """The position in `table` whose factor is nearest r_abs on a ratio
+    scale, and the relative deviation r_abs / factor - 1. With no gearbox the
+    only position is "" (the plain leadscrew ratio)."""
+    return table.nearest(r_abs)
+
+
+def _where(gear: Optional[str]) -> str:
+    """A position for a log reason; "" is the plain leadscrew ratio."""
+    return gear if gear else "the leadscrew ratio"
 
 
 class _Fit:
@@ -200,13 +218,16 @@ class CouplingRatioCheck:
     steps_per_count: commanded steps per Z scale count in the EXPECTED gear
     (scale mm/count over the servo's mm/step, which already carries the gear
     factor), so a coupled pass reads 1.0 relative to it.
-    gear: the position the controller expects.
+    gear: the position the controller expects; resolved against `table`, so
+    a name not in it is the reference and, with no gearbox, "".
     mm_per_count: Z scale resolution, for the distance terms.
+    table: the gearbox table (els_gear.NO_GEARBOX for none).
     """
 
     steps_per_count: float
     gear: str
     mm_per_count: float
+    table: GearTable
 
     _started: bool = field(default=False, init=False)
     _t0: float = field(default=0.0, init=False)
@@ -225,12 +246,15 @@ class CouplingRatioCheck:
     _latched: Optional[Verdict] = field(default=None, init=False)
     _last: Verdict = field(default_factory=lambda: Verdict(UNKNOWN), init=False)
 
+    def __post_init__(self):
+        self.gear = self.table.resolve(self.gear)
+
     def start_pass(self, *, steps_per_count: Optional[float] = None,
                    gear: Optional[str] = None) -> None:
         if steps_per_count is not None:
             self.steps_per_count = steps_per_count
         if gear is not None:
-            self.gear = gear
+            self.gear = self.table.resolve(gear)
         self._started = False
         self._fit = _Fit()
         self._xs, self._ys = [], []
@@ -252,7 +276,7 @@ class CouplingRatioCheck:
         """|slope of counts on steps| -> absolute coupling, reference terms."""
         if slope is None:
             return None
-        return abs(slope) * self.steps_per_count * float(gear_factor(self.gear))
+        return abs(slope) * self.steps_per_count * float(self.table.factor(self.gear))
 
     def feed(self, *, t_ms: float, servo_steps: int, z_counts: int,
              cutting: bool, takeup_pending: bool, steps_to_go: int) -> Verdict:
@@ -291,11 +315,12 @@ class CouplingRatioCheck:
             return Verdict(kind, gear, r_all, r_trail, elapsed, travel, reason)
 
         # DECOUPLED first: it outranks everything, at any stage of the pass.
-        if r_trail is not None and r_trail < DECOUPLED_BELOW:
+        floor = decoupled_below(self.table)
+        if r_trail is not None and r_trail < floor:
             self._low_polls += 1
             if self._low_polls >= DECOUPLED_POLLS:
                 return self._latch(verdict(
-                    DECOUPLED, reason=f"trailing r {r_trail:.3f} < {DECOUPLED_BELOW}"))
+                    DECOUPLED, reason=f"trailing r {r_trail:.3f} < {floor:g}"))
         else:
             self._low_polls = 0
 
@@ -303,7 +328,7 @@ class CouplingRatioCheck:
             self._last = verdict(UNKNOWN)
             return self._last
 
-        gear, dev = nearest_gear(r_all)
+        gear, dev = self.table.nearest(r_all)
 
         past_deadline = (elapsed >= SETTLE_DEADLINE_MS
                          and travel >= SETTLE_DEADLINE_MM)
@@ -326,14 +351,14 @@ class CouplingRatioCheck:
             if abs(dev) > COARSE_TOL:
                 return self._latch(verdict(
                     RATIO_WRONG,
-                    reason=f"r {r_all:.3f} is {dev:+.1%} from {gear}, "
+                    reason=f"r {r_all:.3f} is {dev:+.1%} from {_where(gear)}, "
                            f"outside {COARSE_TOL:.0%} of every position"))
             self._candidate = gear
 
         if not self._settled:
             agrees = (gear == self._candidate and abs(dev) <= TIGHT_TOL
                       and r_trail is not None
-                      and abs(r_trail / float(gear_factor(gear)) - 1.0)
+                      and abs(r_trail / float(self.table.factor(gear)) - 1.0)
                       <= TRAILING_AGREE_TOL)
             self._settle_polls = self._settle_polls + 1 if agrees else 0
             if self._settle_polls >= SETTLE_POLLS:
@@ -341,14 +366,14 @@ class CouplingRatioCheck:
                 if gear != self.gear:
                     return self._latch(verdict(
                         GEAR_CHANGE, gear,
-                        reason=f"r {r_all:.3f} settled on {gear} ({dev:+.1%})"))
+                        reason=f"r {r_all:.3f} settled on {_where(gear)} ({dev:+.1%})"))
                 self._last = verdict(OK, gear)
                 return self._last
             if past_deadline:
                 return self._latch(verdict(
                     RATIO_WRONG,
                     reason=f"r {r_all:.3f} did not settle within "
-                           f"{TIGHT_TOL:.0%} of {self._candidate}"))
+                           f"{TIGHT_TOL:.0%} of {_where(self._candidate)}"))
             self._last = verdict(UNKNOWN, self._candidate)
             return self._last
 
@@ -370,8 +395,8 @@ class CouplingRatioCheck:
         # above the decoupled floor -- for PARTIAL_SLIP_POLLS (a steady
         # partial slip, which the since-start estimate converges on only
         # slowly). An opening half nut passes through that band far faster.
-        gf = float(gear_factor(self.gear))
-        trail_off = (r_trail is not None and r_trail >= DECOUPLED_BELOW
+        gf = float(self.table.factor(self.gear))
+        trail_off = (r_trail is not None and r_trail >= floor
                      and abs(r_trail / gf - 1.0) > TIGHT_TOL)
         self._trail_off_polls = self._trail_off_polls + 1 if trail_off else 0
         steady = (r_trail is not None
@@ -385,22 +410,22 @@ class CouplingRatioCheck:
             if self._drift_polls >= SETTLE_POLLS:
                 return self._latch(verdict(
                     RATIO_WRONG,
-                    reason=f"r {r_all:.3f} drifted to {dev:+.1%} from {gear}"))
+                    reason=f"r {r_all:.3f} drifted to {dev:+.1%} from {_where(gear)}"))
         self._last = verdict(OK, self.gear)
         return self._last
 
     def end_pass(self) -> Verdict:
         """The pass reached its stop. A steady reading on another position
         that ran out of pass before settling still counts as a gear change
-        (decided 2026-10-03): the positions are 2x apart, and failing every
-        retry on a short pass would be worse."""
+        (decided 2026-10-03): positions are at least els_gear.MIN_SEPARATION
+        apart, and failing every retry on a short pass would be worse."""
         if self._latched is not None:
             return self._latched
         v = self._last
         if (self._coarse_done and not self._settled
                 and self._candidate is not None and self._candidate != self.gear
                 and v.r_trailing is not None
-                and abs(v.r_trailing / float(gear_factor(self._candidate)) - 1.0)
+                and abs(v.r_trailing / float(self.table.factor(self._candidate)) - 1.0)
                 <= TRAILING_AGREE_TOL):
             return self._latch(Verdict(
                 GEAR_CHANGE, self._candidate, v.r_since_start, v.r_trailing,
@@ -426,6 +451,7 @@ class RatioWatch:
     fsm_state()         the domain FSM state ('cutting' is a pass)
     steps_per_count()   steps per Z count in the expected gear, or None
     gear()              the gearbox position the controller expects
+    gear_table()        the configured gearbox table, read at each pass start
     mm_per_count()      Z scale resolution, or None
     on_verdict(v)       called once per pass with a TERMINAL verdict
 
@@ -434,12 +460,13 @@ class RatioWatch:
     """
 
     def __init__(self, hal, board, *, fsm_state, steps_per_count, gear,
-                 mm_per_count, on_verdict, now_ms=None):
+                 gear_table, mm_per_count, on_verdict, now_ms=None):
         self._hal = hal
         self._board = board
         self._fsm_state = fsm_state
         self._steps_per_count = steps_per_count
         self._gear = gear
+        self._gear_table = gear_table
         self._mm_per_count = mm_per_count
         self._on_verdict = on_verdict
         self._now_ms = now_ms or (lambda: time.monotonic() * 1000.0)
@@ -465,7 +492,8 @@ class RatioWatch:
             return False
         self._check = CouplingRatioCheck(steps_per_count=float(k),
                                          gear=self._gear(),
-                                         mm_per_count=float(mm))
+                                         mm_per_count=float(mm),
+                                         table=self._gear_table())
         self._check.start_pass()
         self._servo_raw = None
         self._servo = 0
@@ -508,17 +536,22 @@ class RatioWatch:
 # Same contract as ELS_TAKEUP_MESSAGES in reflex/utils/devices.py, because the
 # strip sits in the same place: every text leads with "Cut aborted" (the state
 # first, then the cause) and fits 65 characters, or it lands on the status
-# chips under the translucent strip. test_els_ratio pins the length.
-
-_GEAR_NAMES = {"A": "A", "B": "B (fast)", "C": "C (slow)"}
-
-
-def gear_change_text(gear: str) -> str:
-    return (f"Cut aborted \u2014 gearbox looks like {_GEAR_NAMES.get(gear, gear)}. "
-            f"Cut again to use {gear}.")
+# chips under the translucent strip. test_els_ratio pins the length for the
+# longest names a table allows (els_gear.MAX_NAME_LEN).
+#
+# The names are the owner's own, so nothing here knows any of them; the
+# fast/slow hint comes from the factor (GearTable.describe). With no gearbox
+# nothing mentions gears at all.
 
 
-def abort_text(kind: str) -> str:
+def gear_change_text(gear: str, table: GearTable) -> str:
+    return (f"Cut aborted \u2014 gearbox looks like {table.describe(gear)}. "
+            f"Cut again to use it.")
+
+
+def abort_text(kind: str, table: GearTable) -> str:
     if kind == DECOUPLED:
         return "Cut aborted \u2014 carriage stopped moving. Is the half-nut open?"
-    return "Cut aborted \u2014 carriage rate fits no gear. Check the drivetrain."
+    if table.has_gearbox:
+        return "Cut aborted \u2014 carriage rate fits no gear. Check the drivetrain."
+    return "Cut aborted \u2014 carriage rate is wrong. Check the drivetrain."

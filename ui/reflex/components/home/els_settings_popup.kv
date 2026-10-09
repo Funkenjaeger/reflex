@@ -101,14 +101,26 @@
                 value: root.overshoot_margin_counts
                 on_value: root.overshoot_margin_counts = self.value
 
-            # ── Gearbox lever and the coupling check (default: log only) ──
+            # ── Gearbox and the coupling check (default: log only) ──
+            # The table: empty for no gearbox (the default), else
+            # name=factor entries, reference first (reflex/fsms/els_gear.py).
+            StringItem:
+                name: "Gearbox table"
+                help_file: "els_gearbox.md"
+                value: app.servo.gearbox_table
+                on_value: root.commit_gear_table(self)
+
+            # The owner's own position names. Absent with no gearbox: the
+            # row collapses to nothing rather than offering a position.
             DropDownItem:
-                height: 60
+                height: 60 if root.has_gearbox else 0
+                opacity: 1 if root.has_gearbox else 0
+                disabled: not root.has_gearbox
                 name: "Gearbox position"
                 help_file: "els_gearbox.md"
-                options: ["A", "B", "C"]
-                value: app.servo.gearbox_position
-                on_value: app.els_uic.select_gear(self.value) or setattr(self, "value", app.servo.gearbox_position)
+                options: root.gear_names
+                value: app.servo.gearbox_engaged
+                on_value: root.select_gear(self)
 
             BooleanItem:
                 name: "Coupling check acts (off = log only)"

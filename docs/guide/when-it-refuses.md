@@ -71,27 +71,31 @@ Conditions changed while the calibration was running — the ELS stop was engage
 
 > Calibration runs in gearbox position A; this is set for B.
 
-Calibration results are stored as measured in gearbox position A, so it only runs there. Move the lever to A, set **Gearbox position** to A in ELS settings, and calibrate.
+Only on a lathe with a gearbox table. Calibration results are stored as measured in the reference position (the first one in the table, A in this example), so it only runs there. Move the lever to it, set **Gearbox position** to it in ELS settings, and calibrate.
 
 ## Coupling check
 
-Shown across the status gutter when the coupling check stops a pass partway, and only when **Coupling check acts** is on in ELS settings (it is off by default, which only logs). The check compares how far the Z scale moved with how far the servo was told to move it. Red strips change nothing; the yellow ones name a gearbox position the next Cut or Retract adopts.
+Shown across the status gutter when the coupling check stops a pass partway, and only when **Coupling check acts** is on in ELS settings (it is off by default, which only logs). The check compares how far the Z scale moved with how far the servo was told to move it. Red strips change nothing. The yellow ones appear only on a lathe with a gearbox table, and name a position the next Cut or Retract adopts; they are shown here for the example table A=1, B=2, C=1/2, and use the names in your own table.
 
 > Cut aborted — carriage stopped moving. Is the half-nut open?
 
 The servo kept turning the leadscrew and the Z scale stopped moving partway through the pass. **Close the half nut and press Cut again.** If it was closed, look for a slipping coupling or a Z scale that stopped reading.
 
-> Cut aborted — gearbox looks like B (fast). Cut again to use B.
+> Cut aborted — gearbox looks like B (fast). Cut again to use it.
 
-The carriage moved twice as far per step as expected: the gearbox lever is in **B**. Nothing is wrong. **Press Cut (or Retract)** and the controller switches to B, with feeds and pitches right for it. If the lever was meant to be in A, move it back first; the next pass will notice and switch back.
+The carriage moved at the rate of another position in the gearbox table, here twice as far per step as expected: the lever is in **B**. Nothing is wrong. **Press Cut (or Retract)** and the controller switches to B, with feeds and pitches right for it. If the lever was meant to be where it was, move it back first; the next pass will notice and switch back. **(fast)** and **(slow)** come from the position's factor: above or below the reference.
 
-> Cut aborted — gearbox looks like C (slow). Cut again to use C.
+> Cut aborted — gearbox looks like C (slow). Cut again to use it.
 
-The carriage moved half as far per step as expected: the gearbox lever is in **C**. As for B: **press Cut (or Retract)** to switch to C, or move the lever back first.
+The same for a slower position, here half as far per step: the lever is in **C**. **Press Cut (or Retract)** to switch to it, or move the lever back first.
 
 > Cut aborted — carriage rate fits no gear. Check the drivetrain.
 
-The carriage moved at a rate that matches no gearbox position, so something in the drivetrain is not doing what it is told. Nothing is changed, and **pressing Cut again will fail the same way** until the cause is found: a slipping coupling, a half nut riding and skipping, a lever between positions, or wrong servo settings.
+The carriage moved at a rate that matches no position in the gearbox table, so something in the drivetrain is not doing what it is told. Nothing is changed, and **pressing Cut again will fail the same way** until the cause is found: a slipping coupling, a half nut riding and skipping, a lever between positions, a gearbox table that does not match the machine, or wrong servo settings.
+
+> Cut aborted — carriage rate is wrong. Check the drivetrain.
+
+The same check on a lathe with no gearbox table: the carriage did not move at the leadscrew's rate. Nothing is changed, and **pressing Cut again will fail the same way** until the cause is found: a slipping coupling, a half nut riding and skipping, or wrong servo settings. If the lathe does have a gearbox between the servo and the leadscrew, enter it as **Gearbox table** in ELS settings.
 
 ## Thread phase offset refusals
 

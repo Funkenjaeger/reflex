@@ -251,26 +251,80 @@ def test_sync_is_threading_rebinds_live_when_mode_name_changes(advbar_factory, r
 class _FakeServo(EventDispatcher):
     """Stands in for the servo dispatcher: a real StringProperty, so the
     bar's binding is a real Kivy binding."""
-    gearbox_position = StringProperty("A")
+    gearbox_engaged = StringProperty("A")
 
 
 def test_advbar_shows_the_active_gear_and_follows_changes(advbar_factory, running_app):
-    running_app.servo = _FakeServo(gearbox_position="B")
+    running_app.servo = _FakeServo(gearbox_engaged="B")
     bar = advbar_factory(els_bar=None)
     assert bar.gear_text == "Gear B"
 
     # Same path the coupling check takes when it adopts a new gear.
-    running_app.servo.gearbox_position = "C"
+    running_app.servo.gearbox_engaged = "C"
     assert bar.gear_text == "Gear C"
 
 
-def test_the_kv_gear_label_reads_the_live_text():
-    """The widget tree is never built in this suite, so pin the kv binding:
-    a label bound to a constant would pass the property test above."""
+@pytest.mark.parametrize("name", ["Lo", "Hi", "1", "Top"])
+def test_advbar_shows_owner_names_up_to_three_characters(advbar_factory, running_app, name):
+    running_app.servo = _FakeServo(gearbox_engaged=name)
+    bar = advbar_factory(els_bar=None)
+    assert bar.gear_text == f"Gear {name}"
+
+
+def test_advbar_shows_nothing_with_no_gearbox(advbar_factory, running_app):
+    """No gearbox: the servo's engaged position is "", and no gear is
+    implied -- not "Gear A", not "Gear "."""
+    running_app.servo = _FakeServo(gearbox_engaged="")
+    bar = advbar_factory(els_bar=None)
+    assert bar.gear_text == ""
+    # A table configured later shows up; cleared again, it goes away.
+    running_app.servo.gearbox_engaged = "Lo"
+    assert bar.gear_text == "Gear Lo"
+    running_app.servo.gearbox_engaged = ""
+    assert bar.gear_text == ""
+
+
+def _label_gear_block():
     from pathlib import Path
     import reflex.components.home.els_advbar as mod
 
     kv = (Path(mod.__file__).parent / "els_advbar.kv").read_text(encoding="utf-8")
     block = kv[kv.index("id: label_gear"):]
-    block = block[:block.index("\n\n")]
+    return kv, block[:block.index("\n\n")]
+
+
+def test_the_kv_gear_label_is_hidden_without_a_gearbox():
+    _kv, block = _label_gear_block()
+    assert "opacity: 1 if root.gear_text else 0" in block
+
+
+def test_the_gear_label_clears_the_reference_chip_in_every_theme():
+    """The label's left edge sits at a fixed dp offset in the status gutter;
+    the reference chip is pinned left and sized to its text. Measure the
+    chip's widest text in every theme's mono face (the chip's kv: 11 dp mono,
+    9 dp padding each side) and require a gap before the label. The label
+    grows rightwards, so a three-character name cannot close it; it must
+    also stay well left of the gutter's centred texts."""
+    import re
+    from pathlib import Path
+    from PIL import ImageFont
+    import reflex
+    from reflex.components.widgets.palettes import PALETTES
+
+    kv, block = _label_gear_block()
+    x = float(re.search(r"x: status_gutter\.x \+ dp\((\d+(?:\.\d+)?)\)", block).group(1))
+    root = Path(reflex.__file__).parent
+    for theme, palette in PALETTES.items():
+        mono = root / palette["font_mono"]
+        chip_font = ImageFont.truetype(str(mono), 11)
+        chip = max(chip_font.getlength(t) for t in ("NO REFERENCE", "REF LATCHED")) + 18
+        assert chip + 8 <= x, (theme, chip, x)
+        label = ImageFont.truetype(str(mono), 12).getlength("Gear WWW")
+        assert x + label <= 250, (theme, x + label)
+
+
+def test_the_kv_gear_label_reads_the_live_text():
+    """The widget tree is never built in this suite, so pin the kv binding:
+    a label bound to a constant would pass the property test above."""
+    _kv, block = _label_gear_block()
     assert "text: root.gear_text" in block

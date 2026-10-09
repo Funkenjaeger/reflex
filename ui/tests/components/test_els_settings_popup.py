@@ -81,3 +81,134 @@ def test_ratio_den_zero_yields_zero_without_crashing():
     assert popup._servo_mm_per_step() == 0.0
     assert popup._steps_to_mm(403) == 0.0
     assert popup._mm_to_steps(5.0) == 0
+
+
+# ── The gearbox rows ────────────────────────────────────────────────────
+
+from kivy.event import EventDispatcher  # noqa: E402
+from kivy.properties import (BooleanProperty, ListProperty,  # noqa: E402
+                             ObjectProperty, StringProperty)
+from unittest.mock import MagicMock  # noqa: E402
+
+from reflex.fsms.els_gear import NO_GEARBOX, GearTable  # noqa: E402
+
+
+class _GearServo(EventDispatcher):
+    """The servo surface the gearbox rows read: real Kivy properties, so the
+    popup's binding to gear_table is a real binding."""
+    gear_table = ObjectProperty(NO_GEARBOX)
+    gearbox_table = StringProperty("")
+    gearbox_position = StringProperty("")
+    gearbox_engaged = StringProperty("")
+    ratioNum = 127
+    ratioDen = 64000
+
+
+class _GearPopup(EventDispatcher):
+    """The real gearbox methods and properties, without Popup or kv."""
+    has_gearbox = BooleanProperty(False)
+    gear_names = ListProperty([])
+    _sync_gearbox = ElsSettingsPopup._sync_gearbox
+    commit_gear_table = ElsSettingsPopup.commit_gear_table
+    select_gear = ElsSettingsPopup.select_gear
+    _servo_mm_per_step = ElsSettingsPopup._servo_mm_per_step
+
+    def __init__(self, servo):
+        super().__init__()
+        self.app = SimpleNamespace(servo=servo, els_uic=MagicMock())
+        self._sync_gearbox()
+        servo.fbind("gear_table", self._sync_gearbox)
+
+
+def test_no_gearbox_hides_the_position_row():
+    popup = _GearPopup(_GearServo())
+    assert popup.has_gearbox is False
+    assert popup.gear_names == []
+
+
+def test_the_position_row_offers_the_owner_names_and_follows_the_table():
+    servo = _GearServo()
+    popup = _GearPopup(servo)
+    servo.gear_table = GearTable.parse("Lo=1, Hi=2, 3=1/2")
+    assert popup.has_gearbox is True
+    assert popup.gear_names == ["Lo", "Hi", "3"]
+    servo.gear_table = NO_GEARBOX
+    assert popup.has_gearbox is False and popup.gear_names == []
+
+
+def test_mm_per_step_divides_out_the_engaged_factor():
+    """The step-valued fields are entered in mm and stored in reference steps;
+    in a x2 position the servo ratio is doubled, and the mm must not be."""
+    servo = _GearServo(gear_table=GearTable.parse("A=1, B=2"),
+                       gearbox_position="B")
+    servo.ratioNum, servo.ratioDen = 127, 32000          # x2 folded in
+    popup = _GearPopup(servo)
+    assert popup._servo_mm_per_step() == pytest.approx(127 / 64000)
+
+
+def test_a_typed_table_goes_to_the_controller_and_shows_canonical():
+    servo = _GearServo(gearbox_table="")
+    popup = _GearPopup(servo)
+
+    def apply(text):
+        servo.gearbox_table = GearTable.parse(text).text()
+        return True
+    popup.app.els_uic.set_gear_table.side_effect = apply
+    item = SimpleNamespace(value="Lo=1 Hi=1.5")
+    popup.commit_gear_table(item)
+    popup.app.els_uic.set_gear_table.assert_called_once_with("Lo=1 Hi=1.5")
+    assert item.value == "Lo=1, Hi=3/2"
+
+
+def test_a_refused_table_snaps_the_row_back():
+    servo = _GearServo(gearbox_table="A=1, B=2")
+    popup = _GearPopup(servo)
+    popup.app.els_uic.set_gear_table.return_value = False
+    item = SimpleNamespace(value="A=1, B=1.1")
+    popup.commit_gear_table(item)
+    assert item.value == "A=1, B=2"
+
+
+def test_the_unchanged_table_is_not_resubmitted():
+    """The row's value is set from the servo when the popup is built; that
+    must not count as an edit."""
+    popup = _GearPopup(_GearServo(gearbox_table="A=1, B=2"))
+    popup.commit_gear_table(SimpleNamespace(value="A=1, B=2"))
+    popup.app.els_uic.set_gear_table.assert_not_called()
+
+
+def test_a_refused_position_snaps_back_to_the_engaged_one():
+    servo = _GearServo(gear_table=GearTable.parse("A=1, B=2"),
+                       gearbox_engaged="A")
+    popup = _GearPopup(servo)
+    popup.app.els_uic.select_gear.return_value = False
+    item = SimpleNamespace(value="B")
+    popup.select_gear(item)
+    popup.app.els_uic.select_gear.assert_called_once_with("B")
+    assert item.value == "A"
+
+
+def _kv_block(anchor):
+    from pathlib import Path
+    import reflex.components.home.els_settings_popup as mod
+    kv = (Path(mod.__file__).parent / "els_settings_popup.kv").read_text(
+        encoding="utf-8")
+    block = kv[kv.index(anchor):]
+    return kv, block[:block.index("\n\n")]
+
+
+def test_the_kv_rows_read_the_configured_table():
+    """The popup is never built in this suite, so pin the kv bindings: rows
+    bound to constants would pass every test above."""
+    kv, table_row = _kv_block('name: "Gearbox table"')
+    assert "value: app.servo.gearbox_table" in table_row
+    assert "on_value: root.commit_gear_table(self)" in table_row
+    _kv, pos_row = _kv_block('name: "Gearbox position"')
+    assert "options: root.gear_names" in pos_row
+    assert "value: app.servo.gearbox_engaged" in pos_row
+    assert "on_value: root.select_gear(self)" in pos_row
+    pos_rule = kv[kv.rindex("DropDownItem:", 0, kv.index('name: "Gearbox position"')):]
+    pos_rule = pos_rule[:pos_rule.index("\n\n")]
+    assert "height: 60 if root.has_gearbox else 0" in pos_rule
+    assert "opacity: 1 if root.has_gearbox else 0" in pos_rule
+    assert '["A", "B", "C"]' not in kv

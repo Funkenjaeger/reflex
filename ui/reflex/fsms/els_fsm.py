@@ -3,9 +3,7 @@ from transitions import Machine
 
 from reflex.dispatchers import els, board
 from reflex.fsms import els_adopt
-from reflex.fsms.els_gear import (
-    REFERENCE_GEAR, gear_factor, steps_in_gear, worst_case_travel_factor,
-)
+from reflex.fsms.els_gear import GearTable, table_of
 from reflex.fsms.els_mode_watch import mode_name
 from reflex.fsms.els_stop_registers import ElsStopRegisters
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
@@ -681,7 +679,8 @@ class ElsFsm:
             # Stored in the reference gear, like the take-up they are
             # compared against (els_gear.py).
             self.hal.set_cal_measured(
-                [steps_in_gear(v, self.engaged_gear()) for v in legs])
+                [self.gear_table().steps_in_gear(v, self.engaged_gear())
+                 for v in legs])
 
         # Sync ratios, every axis: the firmware registers are written only by
         # a property-CHANGE binding, so an unchanged UI setting is never
@@ -1237,7 +1236,7 @@ class ElsFsm:
             # gear: the historical stand-in for "a correction move", kept as
             # the floor.
             leadscrew_mm = float(Fraction(self.servo.leadScrewPitch)
-                                 * gear_factor(self.engaged_gear()))
+                                 * self.gear_table().factor(self.engaged_gear()))
             if self.servo.leadScrewPitchIn:
                 leadscrew_mm *= 25.4  # convert inches to mm
             # mm of carriage per motor step in the ENGAGED gear (the servo
@@ -1267,8 +1266,9 @@ class ElsFsm:
         # the correction run before the coupling check has a reading. Motion
         # already committed keeps going after the stop fires, so it is
         # budgeted as if every step moved the carriage the furthest any
-        # position can: 2x in A, 4x in C, 1x in B.
-        travel_factor = float(worst_case_travel_factor(self.engaged_gear()))
+        # position in the gearbox table can (els_gear.py); 1x with no gearbox.
+        travel_factor = float(
+            self.gear_table().worst_case_travel_factor(self.engaged_gear()))
         margin_mm = (correction_mm + backlash_mm) * travel_factor * 1.1
         # Convert mm to display units so comparison with scaledPosition is valid
         factor = self.board.formats.factor
@@ -1280,13 +1280,17 @@ class ElsFsm:
         )
         return margin_display
 
-    def engaged_gear(self) -> str:
-        """The gearbox position the controller currently believes is engaged.
+    def gear_table(self) -> GearTable:
+        """The configured gearbox table (els_gear.py); NO_GEARBOX for a servo
+        that carries none (a rotary configuration, or a test double)."""
+        return table_of(self.servo)
 
-        Read through getattr because a servo with no gearbox notion (a rotary
-        configuration, or a test double) is by definition in the reference gear.
-        """
-        return getattr(self.servo, "gearbox_position", REFERENCE_GEAR)
+    def engaged_gear(self) -> str:
+        """The gearbox position the controller currently believes is engaged:
+        the stored position if it is in the table, else the reference, and ""
+        with no gearbox (a stored position is then ignored)."""
+        return self.gear_table().resolve(
+            getattr(self.servo, "gearbox_position", ""))
 
     def z_mm_per_count(self):
         """Z scale resolution in mm per count, or None if unknown."""
@@ -1323,22 +1327,48 @@ class ElsFsm:
         """
         previous = self.engaged_gear()
         self.servo.gearbox_position = gear
+        self._reteach_gear()
+        log.warning(f"gearbox position adopted: {previous} -> {gear}")
+
+    def apply_gear_table(self, table: GearTable) -> None:
+        """Make `table` the configured gearbox table, and re-teach the
+        firmware every number that depends on the engaged position, as
+        adopt_gear does: a changed table can change the engaged position's
+        factor, or drop the stored position so the reference engages.
+
+        Persisted through the servo's gearbox_table setting, which re-derives
+        its mm-per-step. The stored gearbox_position is left as it is: a name
+        no longer in the table reads as the reference (els_gear.py).
+        """
+        previous = (self.gear_table().text(), self.engaged_gear())
+        self.servo.gearbox_table = table.text()
+        self._reteach_gear()
+        log.warning(f"gearbox table changed: {previous[0] or 'none'} "
+                    f"(engaged {previous[1] or '-'}) -> {table.text() or 'none'} "
+                    f"(engaged {self.engaged_gear() or '-'})")
+
+    def _reteach_gear(self) -> None:
+        """Push what the engaged position changes: the sync ratios (firmware
+        RAM written only on a property CHANGE) and the calibration legs in the
+        engaged position's steps, as on connect."""
         for axis in self.board.axes:
             axis.push_sync_ratio()
         legs = [int(v) for v in self.els.els_cal_measured_legs]
         if len(legs) == 3 and all(v > 0 for v in legs):
-            self.hal.set_cal_measured([steps_in_gear(v, gear) for v in legs])
-        log.warning(f"gearbox position adopted: {previous} -> {gear}")
+            table, gear = self.gear_table(), self.engaged_gear()
+            self.hal.set_cal_measured(
+                [table.steps_in_gear(v, gear) for v in legs])
 
     def engaged_backlash_steps(self) -> int:
         """The commanded take-up in the ENGAGED gear's motor steps.
 
         els_backlash_steps is stored in the reference gear; the play is on the
-        leadscrew side of the lever, so B needs half the steps and C twice as
-        many (els_gear.py). Every write of backlashSteps goes through here.
+        leadscrew side of the lever, so a x2 position needs half the steps and
+        a x1/2 one twice as many (els_gear.py). Every write of backlashSteps
+        goes through here.
         """
-        return steps_in_gear(int(self.els.els_backlash_steps or 0),
-                             self.engaged_gear())
+        return self.gear_table().steps_in_gear(
+            int(self.els.els_backlash_steps or 0), self.engaged_gear())
 
     # ——— Helpers ———
     def _scale_counts_to_steps(self, scale_counts : int) -> int:

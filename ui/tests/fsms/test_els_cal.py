@@ -817,12 +817,53 @@ def test_a_fabricated_mode_read_is_not_restored_over_the_real_mode():
 
 
 def test_refused_outside_the_reference_gear():
-    """Every step-valued result is stored in gearbox position A (els_gear.py);
-    measured in B or C it would be off by the gear's factor, so the run is
-    refused before anything reaches the firmware."""
+    """Every step-valued result is stored in the reference position
+    (els_gear.py); measured in another it would be off by that position's
+    factor, so the run is refused before anything reaches the firmware."""
+    from reflex.fsms.els_gear import GearTable
     hal = FakeHal()
-    cal = BacklashCalibration(hal, _els(), gear=lambda: "B")
+    cal = BacklashCalibration(hal, _els(), gear=lambda: "B",
+                              gear_table=lambda: GearTable.parse("A=1, B=2"))
     assert cal.start() is False
     assert cal.state == CalState.REFUSED
     assert "gearbox position A" in cal.message
     assert hal.cal_command == 0
+
+
+def test_refusal_names_the_owner_reference():
+    from reflex.fsms.els_gear import GearTable
+    hal = FakeHal()
+    cal = BacklashCalibration(hal, _els(), gear=lambda: "Hi",
+                              gear_table=lambda: GearTable.parse("Lo=1, Hi=3/2"))
+    assert cal.start() is False
+    assert cal.message == ("Calibration runs in gearbox position Lo; "
+                           "this is set for Hi.")
+
+
+def test_runs_in_the_reference_position():
+    from reflex.fsms.els_gear import GearTable
+    hal = FakeHal(ticks_to_finish=3, measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, _els(), gear=lambda: "Lo",
+                              gear_table=lambda: GearTable.parse("Lo=1, Hi=3/2"))
+    assert cal.start() is True
+    assert _run_to_completion(cal) == CalState.PASSED
+
+
+def test_a_stored_position_not_in_the_table_is_the_reference():
+    from reflex.fsms.els_gear import GearTable
+    hal = FakeHal(ticks_to_finish=3, measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, _els(), gear=lambda: "A",
+                              gear_table=lambda: GearTable.parse("Lo=1, Hi=3/2"))
+    assert cal.start() is True
+
+
+def test_with_no_gearbox_calibration_is_unrestricted():
+    """No gearbox: a stored position (even one a geared table would refuse)
+    is ignored and nothing mentions gears."""
+    from reflex.fsms.els_gear import NO_GEARBOX
+    hal = FakeHal(ticks_to_finish=3, measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, _els(), gear=lambda: "B",
+                              gear_table=lambda: NO_GEARBOX)
+    assert cal.start() is True
+    assert "gear" not in cal.message.lower()
+    assert _run_to_completion(cal) == CalState.PASSED
