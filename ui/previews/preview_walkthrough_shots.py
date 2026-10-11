@@ -344,7 +344,7 @@ def section_strip():
 
 # ── A. the settings popup, the entry point for both features ─────────
 def section_settings():
-    print("\n########## A. ELS Threading Settings popup ##########")
+    print("\n########## A. Advanced ELS Settings popup ##########")
     from reflex.components.home.els_settings_popup import ElsSettingsPopup
 
     pop = ElsSettingsPopup(bar=adv_bar())

@@ -17,6 +17,7 @@ from reflex.fsms.els_mode_watch import ElsModeWatch
 from reflex.fsms.els_overshoot import OffsetWriteLimiter, StopOffsetCorrector
 from reflex.fsms import els_ratio
 from reflex.fsms.els_ratio import RatioWatch
+from reflex.fsms.els_gear import GearTable, GearTableError
 from reflex.utils.devices import (takeup_failure_text,
                                   ELS_DIAG_SCHEMA_MODE_WATCH,
                                   ELS_DIAG_SCHEMA_MODE_WATCH_V2)
@@ -395,6 +396,7 @@ class ElsUiController(EventDispatcher):
             fsm_state=lambda: self._els_fsm.state,
             steps_per_count=lambda: self._els_fsm.steps_per_z_count(),
             gear=lambda: self._els_fsm.engaged_gear(),
+            gear_table=lambda: self._els_fsm.gear_table(),
             mm_per_count=lambda: self._els_fsm.z_mm_per_count(),
             on_verdict=self._on_ratio_verdict,
         )
@@ -1013,14 +1015,21 @@ class ElsUiController(EventDispatcher):
             return
         if self._els_fsm.state == "cutting":
             self._hal.set_active(True)
-        if v.kind == els_ratio.GEAR_CHANGE and v.gear:
+        table = self._els_fsm.gear_table()
+        # Only a position in the CONFIGURED table can be adopted. With no
+        # gearbox the check cannot name one, and a verdict naming a position
+        # the table no longer has (changed since the pass began) is treated
+        # like any other mismatch: red, nothing adopted.
+        if v.kind == els_ratio.GEAR_CHANGE and v.gear and v.gear in table.names:
             self._pending_gear = v.gear
             self.ratio_warning_yellow = True
             self.ratio_warning = els_ratio.gear_change_text(v.gear)
         else:
             self._pending_gear = None
             self.ratio_warning_yellow = False
-            self.ratio_warning = els_ratio.abort_text(v.kind)
+            kind = (els_ratio.RATIO_WRONG if v.kind == els_ratio.GEAR_CHANGE
+                    else v.kind)
+            self.ratio_warning = els_ratio.abort_text(kind)
 
     def select_gear(self, gear: str) -> bool:
         """The operator set the gearbox position by hand (ELS settings).
@@ -1031,6 +1040,10 @@ class ElsUiController(EventDispatcher):
         """
         if gear == self._els_fsm.engaged_gear():
             return True
+        if gear not in self._els_fsm.gear_table().names:
+            # Not a position of the configured table (or no gearbox at all):
+            # nothing to select. The selector snaps back.
+            return False
         if self._els_fsm.state in ("cutting", "retracting"):
             self.notify("Gearbox position can't change during a pass.",
                         NOTICE_WARNING)
@@ -1041,13 +1054,42 @@ class ElsUiController(EventDispatcher):
         self._els_fsm.adopt_gear(gear)
         return True
 
+    def set_gear_table(self, text: str) -> bool:
+        """The operator typed a gearbox table (ELS settings). Empty is no
+        gearbox; otherwise name=factor entries, reference first (els_gear.py).
+
+        Validated before anything changes: an invalid table is refused with
+        the reason on the status bar. Refused while the carriage is under ELS
+        motion, by the same rule as select_gear, because a new table can
+        change the engaged position's factor. Returns False when refused so
+        the field can snap back to the table in effect.
+        """
+        try:
+            table = GearTable.parse(text)
+        except GearTableError as e:
+            self.notify(f"Gearbox table not changed: {e}", NOTICE_WARNING)
+            return False
+        if table == self._els_fsm.gear_table():
+            return True
+        if self._els_fsm.state in ("cutting", "retracting"):
+            self.notify("Gearbox table can't change during a pass.",
+                        NOTICE_WARNING)
+            return False
+        # A pending gear-change adoption names a position of the OLD table.
+        self._pending_gear = None
+        self.ratio_warning = ""
+        self.ratio_warning_yellow = False
+        self._els_fsm.apply_gear_table(table)
+        return True
+
     def _adopt_pending_gear(self) -> None:
         """The operator acted after a yellow gear-change notice: that is the
         consent (decided 2026-10-03). Adopt before anything is pushed for the
         move, so the take-up, thread geometry and sync ratio are the new
         gear's."""
         gear, self._pending_gear = self._pending_gear, None
-        if gear and gear != self._els_fsm.engaged_gear():
+        if (gear and gear != self._els_fsm.engaged_gear()
+                and gear in self._els_fsm.gear_table().names):
             self._els_fsm.adopt_gear(gear)
         self.ratio_warning = ""
         self.ratio_warning_yellow = False

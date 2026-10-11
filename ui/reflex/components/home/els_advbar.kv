@@ -217,12 +217,17 @@
           lit: root.controller.is_threading
 
         # ── Active gearbox position: read-only, left of centre ────────────────
-        # Same source as the ELS settings dropdown (the servo's gearbox_position,
+        # Same source as the ELS settings dropdown (the servo's gearbox_engaged,
         # via root.gear_text). Lives in the gutter that already exists, clear of
-        # the reference chip, so the bar's height budget is untouched.
+        # the reference chip, so the bar's height budget is untouched. Its LEFT
+        # edge is fixed, so a longer name (up to 3 characters, els_gear.py)
+        # grows away from the chip; test_els_advbar measures the chip's widest
+        # text in every theme's mono face against this offset. Hidden with no
+        # gearbox (gear_text is then empty).
         Label:
           id: label_gear
           text: root.gear_text
+          opacity: 1 if root.gear_text else 0
           size_hint: None, None
           size: self.texture_size
           x: status_gutter.x + dp(130)

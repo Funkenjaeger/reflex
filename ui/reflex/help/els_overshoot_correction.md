@@ -25,9 +25,10 @@ against the DRO. It should stop at or a hair short of Stop Z, never past.
 The correction is a table measured on **this** machine with its current
 setup: the Z scale's resolution, the servo drive and its own settings, and
 the leadscrew. If any of those change, the table no longer describes the
-machine. Turn the correction off until it has been re-measured. Moving the
-gearbox lever is not such a change: the table was measured in all three
-positions and covers them. (The Setup → Servo speed and
+machine. Turn the correction off until it has been re-measured. On the
+development lathe, moving its gearbox lever is not such a change: the table
+was measured in all three of its positions and covers them. On another
+lathe, check it again after a gearbox change. (The Setup → Servo speed and
 acceleration settings do not affect it: the controller has stopped sending
 steps before the overshoot happens.)
 

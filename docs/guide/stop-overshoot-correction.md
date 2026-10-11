@@ -32,8 +32,8 @@ of just past it. Your Stop Z itself never changes.
 ## Where to find it
 
 Tap the **gear** on the advanced ELS bar, under the mode selector, to open
-**ELS Threading Settings**. The two settings are at the bottom, under
-**Advanced**:
+**Advanced ELS Settings**, or open it from **Setup → ELS → Advanced ELS
+Settings**. The two settings are at the bottom, under **Advanced**:
 
 | Setting | What it does |
 |---|---|
@@ -47,7 +47,8 @@ The correction is a table measured on the development lathe, with:
 - a Z scale of 5 µm per count (the table is kept in encoder counts);
 - that lathe's servo drive and the drive's own settings;
 - that lathe's leadscrew. (Its gearbox position does not matter: the
-  overshoot was measured in all three positions and one table covers them.)
+  overshoot was measured in all three of its positions and one table covers
+  them.)
 
 The overshoot is the drive carrying the carriage on after the stop fires: a
 few milliseconds at full speed, then a slow-down. The slow-down is set by the

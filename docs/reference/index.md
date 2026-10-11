@@ -19,6 +19,7 @@ no drift.
 - [ELS Axis Roles](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_axis_roles.md) &nbsp;`els_axis_roles`
 - [Backlash Calibration](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_backlash_cal.md) &nbsp;`els_backlash_cal`
 - [Backlash Takeup](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_backlash_takeup.md) &nbsp;`els_backlash_takeup`
+- [Gearbox Table, Gearbox Position and the Coupling Check](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_gearbox.md) &nbsp;`els_gearbox`
 - [Inner / Outer Thread](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_inner_thread.md) &nbsp;`els_inner_thread`
 - [ELS Mode](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_mode.md) &nbsp;`els_mode`
 - [Stop Overshoot Correction](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_overshoot_correction.md) &nbsp;`els_overshoot_correction`
@@ -70,4 +71,4 @@ no drift.
 
 ---
 
-39 topics.
+40 topics.

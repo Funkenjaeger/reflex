@@ -5,10 +5,12 @@ import time
 from fractions import Fraction
 
 from kivy.logger import Logger
-from kivy.properties import StringProperty, NumericProperty, BooleanProperty
+from kivy.properties import (
+    BooleanProperty, NumericProperty, ObjectProperty, StringProperty,
+)
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
-from reflex.fsms.els_gear import gear_factor
+from reflex.fsms.els_gear import NO_GEARBOX, GearTable, GearTableError
 from reflex.utils.ctype_calc import uint32_subtract_to_int32
 from reflex.utils.notices import NOTICE_WARNING
 from reflex.utils.operator_notice import notify_operator
@@ -43,11 +45,25 @@ class ServoDispatcher(SavingDispatcher):
     leadScrewPitch = NumericProperty(0.25)
     leadScrewPitchIn = BooleanProperty(True)
     leadScrewPitchSteps = NumericProperty(800)
-    #: The lathe gearbox lever position between servo and leadscrew (A/B/C,
-    #: reflex/fsms/els_gear.py). Lead Screw Pitch Steps is the REFERENCE
-    #: gear's; this scales the derived mm-per-step. Persisted, because the
-    #: lever stays where it was across a restart.
-    gearbox_position = StringProperty("A")
+    #: The gearbox between servo and leadscrew, in its text form
+    #: (reflex/fsms/els_gear.py): "" for none (the default), else e.g.
+    #: "A=1, B=2, C=1/2", reference first. Persisted here, beside the
+    #: position, so the settings snapshot and the commissioning ledger carry
+    #: it. Set through ElsUiController.set_gear_table, which validates it;
+    #: a stored text that does not parse runs as no gearbox, and says so in
+    #: the log.
+    gearbox_table = StringProperty("")
+    #: The lever position the controller believes is engaged. Lead Screw
+    #: Pitch Steps is the REFERENCE position's; this scales the derived
+    #: mm-per-step. Persisted, because the lever stays where it was across a
+    #: restart. A name not in the table reads as the reference; with no
+    #: gearbox it is ignored.
+    gearbox_position = StringProperty("")
+    #: Derived, not persisted: the parsed gearbox_table.
+    gear_table = ObjectProperty(NO_GEARBOX)
+    #: Derived, not persisted: the position in effect (gearbox_position
+    #: resolved against the table; "" with no gearbox). What the screens show.
+    gearbox_engaged = StringProperty("")
     reverse = BooleanProperty(False)
 
     position = NumericProperty(0)
@@ -71,12 +87,14 @@ class ServoDispatcher(SavingDispatcher):
         "disableControls",
         "speed",
         "stepsToGo",
+        "gearbox_engaged",
     ]
 
     def __init__(self, board, formats, **kv):
         self.board = board
         self.formats = formats
         super().__init__(**kv)
+        self._load_gear_table()
         self.configure_lead_screw_ratio(self, None)
 
         # Board event bindings
@@ -99,6 +117,8 @@ class ServoDispatcher(SavingDispatcher):
         self.bind(leadScrewPitch=self.configure_lead_screw_ratio)
         self.bind(leadScrewPitchIn=self.configure_lead_screw_ratio)
         self.bind(leadScrewPitchSteps=self.configure_lead_screw_ratio)
+        self.bind(gearbox_table=self._on_gearbox_table)
+        self.bind(gearbox_position=self._sync_gearbox_engaged)
         self.bind(gearbox_position=self.configure_lead_screw_ratio)
         self.bind(reverse=self._on_reverse_changed)
 
@@ -120,6 +140,25 @@ class ServoDispatcher(SavingDispatcher):
         self._divergence_polls = 0
         self.servoMode = 0
 
+    def _load_gear_table(self) -> None:
+        """Parse gearbox_table into gear_table. Never raises: a stored text
+        that does not parse (a hand edit) runs as no gearbox, logged, rather
+        than taking the app down at load."""
+        try:
+            self.gear_table = GearTable.parse(self.gearbox_table)
+        except GearTableError as e:
+            log.error(f"gearbox_table {self.gearbox_table!r} is not a valid "
+                      f"gearbox table ({e}); running with no gearbox")
+            self.gear_table = NO_GEARBOX
+        self._sync_gearbox_engaged()
+
+    def _sync_gearbox_engaged(self, *_args) -> None:
+        self.gearbox_engaged = self.gear_table.resolve(self.gearbox_position)
+
+    def _on_gearbox_table(self, *_args) -> None:
+        self._load_gear_table()
+        self.configure_lead_screw_ratio(self, None)
+
     def configure_lead_screw_ratio(self, instance, value):
         if self.elsMode is True:
             leadScrewPitch = Fraction(self.leadScrewPitch)
@@ -128,11 +167,12 @@ class ServoDispatcher(SavingDispatcher):
                 leadScrewPitch = leadScrewPitch * Fraction(254, 10)
 
             # mm of carriage per motor step in the ENGAGED gear: the reference
-            # gear's pitch/steps times the lever's factor. Every consumer of
-            # ratioNum/Den (sync ratio, thread geometry, retract, cut margin)
-            # then sees the real travel per step without knowing about gears.
+            # gear's pitch/steps times the lever's factor (1 with no gearbox).
+            # Every consumer of ratioNum/Den (sync ratio, thread geometry,
+            # retract, cut margin) then sees the real travel per step without
+            # knowing about gears.
             leadScrewRatio = (leadScrewPitch * Fraction(1, self.leadScrewPitchSteps)
-                              * gear_factor(self.gearbox_position))
+                              * self.gear_table.factor(self.gearbox_position))
             self.ratioNum = leadScrewRatio.numerator
             self.ratioDen = leadScrewRatio.denominator
 

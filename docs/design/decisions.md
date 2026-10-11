@@ -6,6 +6,8 @@ alternatives that were rejected.
 - [One repository for firmware and UI](#one-repository-for-firmware-and-ui)
 - [One register map for bootloader and application](#one-register-map-for-bootloader-and-application)
 - [Stop overshoot correction](#stop-overshoot-correction)
+- [Coupling-ratio check and gearbox position](#coupling-ratio-check-and-gearbox-position)
+- [The gearbox is a table the owner sets](#the-gearbox-is-a-table-the-owner-sets)
 - [PortOwner is the hardware seam](#portowner-is-the-hardware-seam)
 
 ## One repository for firmware and UI
@@ -99,10 +101,10 @@ Fire the stop early by the overshoot predicted for the current feed rate.
 ### Consequences and future work
 
 - The table describes one machine: its drive and drive settings, its scale
-  resolution, and its leadscrew. Its gearbox position does not matter: the
-  overshoot was measured in all three positions at matched carriage speed
-  and one table covers them, so the correction needs no knowledge of the
-  gearing.
+  resolution, and its leadscrew. That machine's gearbox position does not
+  matter: the overshoot was measured in all three of its positions at matched
+  carriage speed and one table covers them, so the correction needs no
+  knowledge of the gearing.
 - There is no calibration procedure an ordinary user can run. The table was
   built by hand from recorded passes. Generalizing it is future work: a way for
   anyone to characterize their own machine, and to decide whether it needs the
@@ -156,8 +158,9 @@ see, so a moved lever silently doubled or halved every feed and thread pitch.
 
 ### Consequences and future work
 
-- The gear positions and their factors are hard-coded for one lathe. Making
-  them configurable is future work.
+- The gear positions and their factors were hard-coded for one lathe. They
+  are now a table the owner sets, and the default is no gearbox: see
+  [The gearbox is a table the owner sets](#the-gearbox-is-a-table-the-owner-sets).
 - The thresholds come from replaying recorded passes in air, in all three
   positions, plus two real half-nut openings. No recording has a cutting load
   or a retract under the check, which is why it ships logging only.
@@ -165,6 +168,61 @@ see, so a moved lever silently doubled or halved every feed and thread pitch.
 - In thread mode the phase correction runs before the check can read, so the
   first pass after a lever move cuts briefly at the wrong pitch before the
   check stops it.
+
+## The gearbox is a table the owner sets
+
+### Context
+
+The coupling-ratio check and the gearbox position above were built for one
+lathe, with its three positions and their factors in the code. Most lathes
+have no gearbox between servo and leadscrew, and those that do name and gear
+their positions differently. With the table in the code, every installation
+inherited one lathe's lever: a position named A on the main screen, a
+cut-start margin sized for a x2 position that did not exist, and a refusal
+that blamed the gearbox on a lathe with none.
+
+### Decision
+
+- **No gearbox is the default.** Nothing on screen names a position, the
+  margin is not inflated, calibration is unrestricted, and the coupling check
+  expects the plain leadscrew ratio. A mismatch still stops the pass when the
+  check acts, with wording that does not mention gears, and nothing is ever
+  adopted.
+- **A gearbox is a table of 2 to 4 positions,** entered in Advanced ELS Settings
+  as text, for example `A=1, B=2, C=1/2` or `Lo=1, Hi=3/2`. Names are the
+  owner's, 1 to 3 characters, unique. The first position is the reference:
+  factor 1, every step-valued setting stored in it, calibration only there.
+- **Factors are typed,** as decimals or fractions relative to the reference,
+  between 1/8 and 8, and any two at least 1.2x apart.
+- **The table is persisted beside the position,** in the servo settings, so
+  the settings snapshot and the commissioning ledger capture it. A stored
+  position not in the table reads as the reference; with no gearbox it is
+  ignored. An existing install gets no migration: its table is entered by
+  hand.
+- **A position is shown by its name alone.** Names are unique, so the name
+  says which position. No fast or slow hint is added: it would depend on
+  which position is the reference, and several positions can share one.
+
+### Why
+
+- **Text is the simplest editor that fits the existing settings rows,** and
+  validation can say exactly what is wrong with an entry.
+- **1.2x apart** keeps the 5 % bands the check settles in from overlapping,
+  with margin for the 1 % scatter of a whole pass, so two positions cannot
+  both claim a reading.
+- **1/8 to 8** bounds the cut-start margin, which is sized for the fastest
+  position, and keeps the decoupled floor (half the slowest factor, at most
+  0.25) well above zero, the reading of an open half nut.
+
+### Consequences and future work
+
+- The check's thresholds were set on one lathe's positions, which were 2x
+  apart. Tables with positions closer than that, down to the 1.2x limit, have
+  not been run on a machine.
+- A table that does not parse, from a hand-edited settings file, runs as no
+  gearbox and is logged.
+- Changing the table is refused during a pass, like changing the position.
+- Factors are typed. Measuring one with a guided pass is future work.
 
 ## PortOwner is the hardware seam
 

@@ -57,6 +57,13 @@ class HomePage(Screen):
         self.app.bind(axes=self._on_axes_changed)
         self.change_mode(self, self.next_mode)
 
+    def els_advanced_bar(self):
+        """The one ElsAdvancedBar: the ELS layout's, built with the screen
+        whatever mode is showing. Setup's ELS settings entry opens the popup
+        on it (els_setup_screen.py), so both entry points edit one state."""
+        from reflex.app import MODE_ELS   # deferred: reflex.app imports screens
+        return self.mode_layouts[MODE_ELS].els_adv_bar
+
     def _on_axes_changed(self, instance, value):
         """Rebuild axis bars in all mode layouts when the axes list changes."""
         for layout in self.mode_layouts.values():

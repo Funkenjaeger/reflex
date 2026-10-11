@@ -486,10 +486,7 @@ def test_takeup_text_keeps_the_counts_OFF_the_screen():
     from reflex.utils.devices import (ELS_TAKEUP_ERR_UNCONFIRMED,
                                       takeup_failure_text)
     msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED, z_delta=5)
-    assert "half-nut" in msg.lower()
-    assert msg.lower().startswith("cut aborted"), (
-        "the message must lead with the machine's STATE -- an operator who is "
-        "only told the fault is left asking 'okay, what now?'")
+    assert "half nut" in msg.lower()
     assert "5" not in msg and "count" not in msg.lower(), (
         "raw Z-scale counts are for the log, not the screen: nothing else in "
         "this UI shows that unit, and the width is needed to keep the notice "
@@ -518,15 +515,15 @@ def test_takeup_text_degrades_without_a_delta():
     from reflex.utils.devices import (ELS_TAKEUP_ERR_UNCONFIRMED,
                                       takeup_failure_text)
     msg = takeup_failure_text(ELS_TAKEUP_ERR_UNCONFIRMED)
-    assert "half-nut" in msg.lower()
+    assert "half nut" in msg.lower()
     assert "wrong" not in msg.lower()
 
 
 def test_takeup_timeout_has_its_own_text():
     from reflex.utils.devices import ELS_TAKEUP_ERR_TIMEOUT, takeup_failure_text
     msg = takeup_failure_text(ELS_TAKEUP_ERR_TIMEOUT)
-    assert "half-nut" not in msg.lower(), "a timeout is not a half-nut diagnosis"
-    assert msg.lower().startswith("cut aborted")
+    assert "half nut" not in msg.lower(), "a timeout is not a half-nut diagnosis"
+    assert "take-up" in msg.lower()
 
 
 # The character budget is a PROXY for a pixel budget, and the proxy is
@@ -817,12 +814,53 @@ def test_a_fabricated_mode_read_is_not_restored_over_the_real_mode():
 
 
 def test_refused_outside_the_reference_gear():
-    """Every step-valued result is stored in gearbox position A (els_gear.py);
-    measured in B or C it would be off by the gear's factor, so the run is
-    refused before anything reaches the firmware."""
+    """Every step-valued result is stored in the reference position
+    (els_gear.py); measured in another it would be off by that position's
+    factor, so the run is refused before anything reaches the firmware."""
+    from reflex.fsms.els_gear import GearTable
     hal = FakeHal()
-    cal = BacklashCalibration(hal, _els(), gear=lambda: "B")
+    cal = BacklashCalibration(hal, _els(), gear=lambda: "B",
+                              gear_table=lambda: GearTable.parse("A=1, B=2"))
     assert cal.start() is False
     assert cal.state == CalState.REFUSED
     assert "gearbox position A" in cal.message
     assert hal.cal_command == 0
+
+
+def test_refusal_names_the_owner_reference():
+    from reflex.fsms.els_gear import GearTable
+    hal = FakeHal()
+    cal = BacklashCalibration(hal, _els(), gear=lambda: "Hi",
+                              gear_table=lambda: GearTable.parse("Lo=1, Hi=3/2"))
+    assert cal.start() is False
+    assert cal.message == ("Calibration runs in gearbox position Lo; "
+                           "this is set for Hi.")
+
+
+def test_runs_in_the_reference_position():
+    from reflex.fsms.els_gear import GearTable
+    hal = FakeHal(ticks_to_finish=3, measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, _els(), gear=lambda: "Lo",
+                              gear_table=lambda: GearTable.parse("Lo=1, Hi=3/2"))
+    assert cal.start() is True
+    assert _run_to_completion(cal) == CalState.PASSED
+
+
+def test_a_stored_position_not_in_the_table_is_the_reference():
+    from reflex.fsms.els_gear import GearTable
+    hal = FakeHal(ticks_to_finish=3, measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, _els(), gear=lambda: "A",
+                              gear_table=lambda: GearTable.parse("Lo=1, Hi=3/2"))
+    assert cal.start() is True
+
+
+def test_with_no_gearbox_calibration_is_unrestricted():
+    """No gearbox: a stored position (even one a geared table would refuse)
+    is ignored and nothing mentions gears."""
+    from reflex.fsms.els_gear import NO_GEARBOX
+    hal = FakeHal(ticks_to_finish=3, measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, _els(), gear=lambda: "B",
+                              gear_table=lambda: NO_GEARBOX)
+    assert cal.start() is True
+    assert "gear" not in cal.message.lower()
+    assert _run_to_completion(cal) == CalState.PASSED

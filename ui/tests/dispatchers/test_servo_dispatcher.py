@@ -151,6 +151,7 @@ class TestConfigureLeadScrewRatio:
         servo.leadScrewPitch = 0.125
         servo.leadScrewPitchIn = True
         servo.leadScrewPitchSteps = 1600
+        servo.gearbox_table = "A=1, B=2, C=1/2"
         servo.gearbox_position = gear
         servo.configure_lead_screw_ratio(servo, None)
         expected = Fraction(0.125) * Fraction(254, 10) * Fraction(1, 1600) * factor
@@ -161,11 +162,86 @@ class TestConfigureLeadScrewRatio:
         servo.leadScrewPitch = 0.125
         servo.leadScrewPitchIn = True
         servo.leadScrewPitchSteps = 1600
+        servo.gearbox_table = "A=1, B=2, C=1/2"
         servo.gearbox_position = "A"
         servo.configure_lead_screw_ratio(servo, None)
         a = Fraction(servo.ratioNum, servo.ratioDen)
         servo.gearbox_position = "B"          # the binding, not a direct call
         assert Fraction(servo.ratioNum, servo.ratioDen) == 2 * a
+
+    def test_changing_the_table_recomputes_the_ratio(self, servo):
+        servo.elsMode = True
+        servo.leadScrewPitch = 0.125
+        servo.leadScrewPitchIn = True
+        servo.leadScrewPitchSteps = 1600
+        servo.gearbox_position = "Hi"
+        servo.configure_lead_screw_ratio(servo, None)
+        plain = Fraction(servo.ratioNum, servo.ratioDen)
+        servo.gearbox_table = "Lo=1, Hi=3/2"  # the binding, not a direct call
+        assert Fraction(servo.ratioNum, servo.ratioDen) == Fraction(3, 2) * plain
+        assert servo.gearbox_engaged == "Hi"
+
+
+class TestGearbox:
+    def test_default_is_no_gearbox(self, servo):
+        from reflex.fsms.els_gear import NO_GEARBOX
+        assert servo.gearbox_table == ""
+        assert servo.gear_table is NO_GEARBOX
+        assert servo.gearbox_engaged == ""
+
+    def test_with_no_gearbox_a_stored_position_is_ignored(self, servo):
+        servo.elsMode = True
+        servo.leadScrewPitch = 2.0
+        servo.leadScrewPitchIn = False
+        servo.leadScrewPitchSteps = 800
+        servo.gearbox_position = "B"
+        servo.configure_lead_screw_ratio(servo, None)
+        assert Fraction(servo.ratioNum, servo.ratioDen) == Fraction(2, 800)
+        assert servo.gearbox_engaged == ""
+
+    def test_a_position_not_in_the_table_engages_the_reference(self, servo):
+        servo.gearbox_table = "1=1, 2=3/2, 3=4"
+        servo.gearbox_position = "B"
+        assert servo.gearbox_engaged == "1"
+        servo.gearbox_position = "3"
+        assert servo.gearbox_engaged == "3"
+
+    def test_round_trip_through_the_settings_file(self, board, formats, servo):
+        """The table and the position persist in ServoBar-0.yaml, the file
+        the settings snapshot and the commissioning ledger already cover."""
+        import yaml
+        servo.gearbox_table = "A=1, B=2, C=1/2"
+        servo.gearbox_position = "C"
+        stored = yaml.safe_load(servo.filename.read_text())
+        assert stored["gearbox_table"] == "A=1, B=2, C=1/2"
+        assert stored["gearbox_position"] == "C"
+        assert "gearbox_engaged" not in stored
+        assert "gear_table" not in stored
+
+        again = ServoDispatcher(board=board, formats=formats, id_override="0")
+        assert again.gearbox_table == "A=1, B=2, C=1/2"
+        assert again.gear_table.names == ("A", "B", "C")
+        assert again.gearbox_engaged == "C"
+
+    def test_a_table_change_reaches_the_commissioning_ledger(self, servo, monkeypatch):
+        from reflex.utils import commissioning_ledger
+        seen = []
+        monkeypatch.setattr(commissioning_ledger, "record",
+                            lambda file, prev, data, why: seen.append((why, data)))
+        servo.gearbox_table = "Lo=1, Hi=2"
+        assert seen and seen[-1][0] == "gearbox_table"
+        assert seen[-1][1]["gearbox_table"] == "Lo=1, Hi=2"
+
+    def test_a_stored_table_that_does_not_parse_runs_as_no_gearbox(
+            self, board, formats, servo):
+        import yaml
+        data = yaml.safe_load(servo.filename.read_text())
+        data["gearbox_table"] = "A=1, B=banana"
+        data["gearbox_position"] = "B"
+        servo.filename.write_text(yaml.dump(data))
+        again = ServoDispatcher(board=board, formats=formats, id_override="0")
+        assert not again.gear_table.has_gearbox
+        assert again.gearbox_engaged == ""
 
     def test_non_els_mode_skips(self, servo):
         servo.elsMode = False

@@ -2,6 +2,9 @@
 #: import DropDownItem reflex.components.widgets.dropdown_item
 #: import TitleItem reflex.components.widgets.title_item
 #: import BooleanItem reflex.components.widgets.boolean_item
+#: import ButtonItem reflex.components.widgets.button_item
+#: import MODE_ELS reflex.app.MODE_ELS
+#: import USE_CASE_MODES reflex.app.USE_CASE_MODES
 
 <ElsSetupScreen>:
   BoxLayout:
@@ -62,3 +65,20 @@
           opacity: 1 if root.has_x_axis else 0
           height: 60 if root.has_x_axis else 0
           disabled: not root.has_x_axis
+
+        # The popup the advanced ELS bar's settings button opens, on the same
+        # bar and the same live settings (els_setup_screen.open_els_settings).
+        # Hidden for a use case without ELS mode, like Setup's ELS button.
+        TitleItem:
+          name: "Advanced"
+          opacity: 1 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
+          height: 36 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
+        ButtonItem:
+          name: "Advanced ELS Settings"
+          # The advanced ELS bar's settings glyph (els_advbar.kv, btn_settings),
+          # so the two ways in look the same.
+          icon: "\uf013"
+          opacity: 1 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
+          height: 60 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
+          disabled: MODE_ELS not in USE_CASE_MODES.get(app.use_case, [])
+          on_release: root.open_els_settings()

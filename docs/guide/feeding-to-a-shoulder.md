@@ -63,7 +63,7 @@ Before the feed starts, the controller drives the leadscrew through its backlash
 and watches the Z scale to confirm the carriage actually moved. If it did not,
 the pass does not start:
 
-> Cut aborted — is the half-nut engaged?
+> Carriage did not move. Close the half nut.
 
 That is the fault the check exists to catch. Close the half nut and press Cut
 again. Every other refusal is catalogued in

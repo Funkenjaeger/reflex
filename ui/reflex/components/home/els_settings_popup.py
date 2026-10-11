@@ -1,9 +1,12 @@
 from kivy.logger import Logger
 from kivy.uix.popup import Popup
-from kivy.properties import ObjectProperty, NumericProperty
+from kivy.properties import (
+    BooleanProperty, ListProperty, NumericProperty, ObjectProperty,
+)
 
 from reflex.components.home.thread_type import ThreadType
-from reflex.fsms.els_gear import REFERENCE_GEAR, gear_factor
+from reflex.components.widgets.string_item import StringItem  # noqa: F401
+from reflex.fsms.els_gear import table_of
 from reflex.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
@@ -38,14 +41,48 @@ class ElsSettingsPopup(Popup):
     # one-line warning label that sat under the toggle was removed 2026-09-19.
     overshoot_margin_counts = NumericProperty(1)
 
+    # The gearbox (reflex/fsms/els_gear.py), mirrored from the servo's
+    # configured table: the Gearbox position row lists the table's own names
+    # and is absent with no gearbox. The table itself is edited in the
+    # Gearbox table row, through ElsUiController.set_gear_table.
+    has_gearbox = BooleanProperty(False)
+    gear_names = ListProperty([])
+
     def __init__(self, **kv):
-        super().__init__(**kv)
         from reflex.app import MainApp
+        # Before super().__init__: the kv rule's on_value handlers (the
+        # gearbox rows) run while it is applied, and they read self.app.
         self.app = MainApp.get_running_app()
+        super().__init__(**kv)
+        servo = self.app.servo
+        self._sync_gearbox()
+        if hasattr(servo, "fbind"):
+            servo.fbind("gear_table", self._sync_gearbox)
         self.backlash_mm = self._steps_to_mm(self.app.els.els_backlash_steps)
         self.cal_ceiling_mm = self._steps_to_mm(self.app.els.els_cal_ceiling_steps)
         self.cal_motion_thresh_counts = int(self.app.els.els_cal_motion_thresh_counts)
         self.overshoot_margin_counts = int(self.app.els.els_overshoot_margin_counts)
+
+    def _sync_gearbox(self, *_args) -> None:
+        table = table_of(self.app.servo)
+        self.has_gearbox = table.has_gearbox
+        self.gear_names = list(table.names)
+
+    def commit_gear_table(self, item) -> None:
+        """The Gearbox table row was edited. The controller validates and
+        applies it (refusing, with the reason on the status bar, an invalid
+        table or a change during a pass); either way the row then shows the
+        table in effect, in its canonical form."""
+        servo = self.app.servo
+        if item.value != servo.gearbox_table:
+            self.app.els_uic.set_gear_table(item.value)
+        item.value = servo.gearbox_table
+
+    def select_gear(self, item) -> None:
+        """The Gearbox position row was changed. Snaps back to the position
+        in effect when the controller refuses."""
+        if not self.app.els_uic.select_gear(item.value):
+            item.value = self.app.servo.gearbox_engaged
 
     def _servo_mm_per_step(self) -> float:
         """mm per step in the REFERENCE gear, which is what the step-valued
@@ -54,7 +91,7 @@ class ElsSettingsPopup(Popup):
         servo = self.app.servo
         if servo.ratioDen == 0:
             return 0.0
-        factor = gear_factor(getattr(servo, "gearbox_position", REFERENCE_GEAR))
+        factor = table_of(servo).factor(getattr(servo, "gearbox_position", ""))
         return float(servo.ratioNum) / float(servo.ratioDen) / float(factor)
 
     def _steps_to_mm(self, steps: int) -> float:
