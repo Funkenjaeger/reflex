@@ -1,27 +1,27 @@
 Spindle Mode
 ============
 
-When enabled, this axis is treated as a spindle (rotational speed
-source) rather than a positional axis.
+When this setting is on, the system treats this axis as a spindle (a
+rotational speed source), not as a positional axis.
 
 ## Behavior
 
-- **OFF (default):** The axis displays position values (mm, inches,
-  or degrees) and supports sync/goto operations.
-- **ON:** The axis displays rotational speed (RPM) instead of position.
-  This is used for spindle encoders on lathes or milling machines.
+- **OFF (default):** The axis shows position values (mm, inches, or
+  degrees). It supports sync and goto operations.
+- **ON:** The axis shows rotational speed (RPM), not position. Use
+  this for spindle encoders on lathes or milling machines.
 
 ## When to Enable
 
 - The axis is connected to a spindle encoder
-- You want to display RPM on the home screen
-- You are using ELS (Electronic Lead Screw) mode and need a spindle
+- You want to show RPM on the home screen
+- You use ELS (Electronic Lead Screw) mode and need a spindle
   reference signal
 
 ## Notes
 
-- A spindle-mode axis can still be assigned as the ELS spindle source
-  in the ELS Setup screen
-- Only one axis typically needs spindle mode enabled
-- Enabling spindle mode changes the display format to use the RPM
-  format settings from the Formats screen
+- You can still set a spindle-mode axis as the ELS spindle source in
+  the ELS Setup screen
+- Usually only one axis needs spindle mode on
+- When spindle mode is on, the display uses the RPM format settings
+  from the Formats screen

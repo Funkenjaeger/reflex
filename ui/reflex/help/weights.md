@@ -1,15 +1,15 @@
 Weight Numerator / Denominator
 ===============================
 
-The weight ratio is a multiplier applied to a scale input within
-a Scaling or Weighted Sum transform.
+The weight ratio is a multiplier. A Scaling or Weighted Sum transform
+applies it to a scale input.
 
     weighted_value = scale_input × (Weight Numerator / Weight Denominator)
 
 ## When Used
 
-- **Scaling transform:** A single weight ratio is applied to the
-  primary scale input.
+- **Scaling transform:** One weight ratio applies to the primary
+  scale input.
 - **Weighted Sum transform:** Each of the two scale inputs has its
   own independent weight ratio.
 
@@ -24,5 +24,5 @@ a Scaling or Weighted Sum transform.
 ## Notes
 
 - Both values must be positive integers
-- The weight is applied after the scale ratio conversion
-- Click "Apply Transform" to save changes
+- The system applies the weight after the scale ratio conversion
+- Press "Apply Transform" to save changes

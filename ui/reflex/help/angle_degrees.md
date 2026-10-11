@@ -8,9 +8,9 @@ The fixed angle used by the Angle Cos and Angle Sin transforms.
 
 ## Typical Use
 
-On a lathe with a compound slide set at an angle, a single linear
-encoder on the compound measures travel along the slide. To display
-the X and Z components separately:
+This applies to a lathe with the compound slide set at an angle. A
+single linear encoder on the compound measures travel along the
+slide. To show the X and Z components separately:
 
 1. Create an axis with **Angle Cos** transform → shows the
    longitudinal (Z) component
@@ -26,6 +26,6 @@ Compound slide set at 29.5°:
 
 ## Notes
 
-- The angle is specified in degrees (not radians)
-- Accepts decimal values (e.g., 29.5, 45.0, 60.25)
-- Click "Apply Transform" to save changes
+- Enter the angle in degrees (not radians)
+- The field accepts decimal values (e.g., 29.5, 45.0, 60.25)
+- Press "Apply Transform" to save changes

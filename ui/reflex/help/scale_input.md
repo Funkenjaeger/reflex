@@ -1,13 +1,14 @@
 Scale Input
 ===========
 
-Selects which hardware scale input feeds data into this axis.
+This setting selects the hardware scale input that supplies data to
+this axis.
 
 ## How It Works
 
 The DRO hardware has multiple scale input channels (Input 0, Input 1,
 etc.). Each channel reads from a physical encoder connected to the
-board. This dropdown maps a hardware input to this axis.
+board. This dropdown connects one hardware input to this axis.
 
 ## Multiple Axes, Same Input
 
@@ -15,13 +16,13 @@ Multiple axes can read from the same physical input. For example:
 - An "X" axis using Input 0 with identity transform
 - A "Compound X" axis using Input 0 with an Angle Cos transform
 
-This lets you derive multiple logical axes from a single encoder.
+Thus you can get multiple logical axes from a single encoder.
 
 ## Sync Conflict
 
-If two axes share the same physical scale input, they cannot both
-have sync mode enabled at the same time. The system will warn you
-if a conflict is detected.
+Two axes can share the same physical scale input. If they do, they
+cannot both have sync mode on at the same time. The system warns you
+when it detects a conflict.
 
 ## Notes
 

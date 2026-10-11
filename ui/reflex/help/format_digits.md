@@ -1,8 +1,8 @@
 Display Format Digits
 =====================
 
-Controls how many decimal places are shown for position and speed
-values on the DRO display.
+These settings set the number of decimal places for position and
+speed values on the DRO display.
 
 ## Settings
 
@@ -35,6 +35,6 @@ Decimal places for rotational speed values (RPM).
 ## Notes
 
 - All values must be positive integers
-- More digits = more precision displayed, but the actual resolution
-  is limited by your scale hardware
-- Very high digit counts may cause display overflow on small screens
+- More digits show more precision. Your scale hardware limits the
+  actual resolution
+- On small screens, very high digit counts can overflow the display

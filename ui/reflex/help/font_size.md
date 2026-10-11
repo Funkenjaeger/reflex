@@ -6,7 +6,8 @@ position readouts on the home screen.
 
 ## Guidelines
 
-- Adjust based on your screen size and how many axes you display
+- Set the size to suit your screen size and the number of axes you
+  show
 - Typical range: 10–20 px
 
 ## Recommendations
@@ -19,7 +20,7 @@ position readouts on the home screen.
 
 ## Notes
 
-- Value must be a positive integer
+- The value must be a positive integer
 - Changes take effect immediately on the home screen
 - The default value of 14 works well for a standard 7" Raspberry Pi
   touchscreen

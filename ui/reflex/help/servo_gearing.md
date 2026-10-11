@@ -1,14 +1,14 @@
 Servo Gearing Ratios
 ====================
 
-The servo gearing ratio defines the relationship between stepper
-motor steps and the output axis rotation in degrees.
+The servo gearing ratio sets the relation between stepper motor
+steps and the output axis rotation in degrees.
 
     output_degrees = motor_steps × (Numerator / Denominator)
 
-Numerator is typically 360 (degrees per full output revolution).
-Denominator is the total number of motor steps needed for one
-full revolution of the output (steps/rev × gear ratio).
+Numerator is usually 360 (degrees per full output revolution).
+Denominator is the total number of motor steps for one full
+revolution of the output (steps/rev × gear ratio).
 
 ## Examples
 
@@ -40,19 +40,19 @@ Smaller dividing head with 200-step motor.
 
 ## How to Calculate
 
-1. Find your motor's steps per revolution (typically 200 or 400)
-2. Find the gear/worm reduction ratio of your rotary table
+1. Find the motor steps per revolution (usually 200 or 400)
+2. Find the gear or worm reduction ratio of the rotary table
 3. Set Numerator = 360
 4. Set Denominator = steps_per_rev × gear_ratio
 
-If using microstepping on the driver (e.g., 1/4 step), multiply
-the motor steps accordingly:
+If the driver uses microstepping (for example 1/4 step), multiply
+the motor steps to match:
 - 200 step motor at 1/4 microstepping = 800 effective steps/rev
 - Denominator = 800 × gear_ratio
 
 ## Notes
 
 - Both values must be positive integers
-- This setting is disabled when ELS mode is active
-- If the table overshoots or undershoots commanded positions, verify
-  your steps/rev and gear ratio values
+- You cannot change this setting when ELS Mode is on
+- If the table moves past or stops short of commanded positions,
+  examine your steps/rev and gear ratio values
