@@ -342,7 +342,7 @@ def test_a_running_cycle_offers_no_disengage(rig):
     install(rig)
     [d] = rig.dialogs
     assert [b.text for b in d.buttons] == ["OK"]
-    assert "Stop the cycle" in d.body
+    assert "Press Stop" in d.body
     d.button("OK").press()
     assert rig.ctrl._els_fsm.state == "stopped"
     rig.do_install.assert_not_called()

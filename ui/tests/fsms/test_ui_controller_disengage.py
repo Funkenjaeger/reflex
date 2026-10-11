@@ -90,7 +90,7 @@ def test_sync_armed_with_the_spindle_turning_names_sync_enable(ctrl):
 def test_a_running_cycle_names_the_cycle(ctrl):
     in_a_cycle(ctrl)
     assert ctrl.disengage_refusal() == DISENGAGE_REFUSED_CYCLE
-    assert "Stop the cycle" in DISENGAGE_REFUSED_CYCLE
+    assert "Press Stop" in DISENGAGE_REFUSED_CYCLE
 
 
 # ─── disengage() obeys them, and toggle_engage goes through it ───────────────
@@ -124,7 +124,7 @@ def test_a_stale_disengage_tap_is_info(ctrl):
     ctrl._els_fsm = MagicMock()
     ctrl._els_fsm.may_disable.return_value = False
     ctrl._els_fsm.state = "disabled"
-    assert ctrl.disengage() == "Disengage ignored — ELS is disabled"
+    assert ctrl.disengage() == "ELS is disabled. Disengage ignored."
     ctrl._els_fsm.disable.assert_not_called()
     assert ctrl.notice_severity == NOTICE_INFO
 

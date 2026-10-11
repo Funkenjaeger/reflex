@@ -278,17 +278,18 @@ class UpdateScreen(Screen):
         refusal = uic.disengage_refusal()
         lead = (f"An ELS job is engaged.\n\n"
                 f"Installing {release.tag} reboots the controller, which ends "
-                f"the ELS job, so it has to be disengaged first.")
+                f"the ELS job. ELS must be disengaged first.")
         if refusal is None:
-            text = f"{lead}\n\nDisengage ELS and install {release.tag}?"
+            text = (f"{lead}\n\nPress Disengage and Install to disengage "
+                    f"ELS and install {release.tag}.")
         else:
             if refusal == DISENGAGE_REFUSED_SYNC:
-                reason = "The spindle is turning. Stop the spindle"
+                reason = "The spindle is turning. Stop the spindle."
             else:
                 reason = refusal
-            text = (f"{lead} It cannot be disengaged right now:\n\n"
-                    f"{reason}.\n\n"
-                    f"Then tap Install Selected Release again.")
+            text = (f"{lead} It cannot be disengaged now:\n\n"
+                    f"{reason}\n\n"
+                    f"Then press Install Selected Release again.")
         content = BoxLayout(orientation="vertical", spacing=10, padding=10)
         content.add_widget(Factory.ThemedLabel(
             text=text, halign="left", valign="top", text_size=(None, None)))
@@ -328,7 +329,7 @@ class UpdateScreen(Screen):
         refusal = uic.disengage()
         if refusal is not None:
             self.update_status(
-                f"Update not started: ELS was not disengaged. {refusal}.")
+                f"Update not started: ELS was not disengaged. {refusal}")
             return
         self.update_status("ELS disengaged. Waiting for the controller to "
                            "confirm the ELS job is released.")

@@ -366,10 +366,10 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         """
         if which in ("stop_z", "start_z"):
             axis = self.app.els.get_z_axis()
-            axis_label = "Saddle (Z)"
+            axis_label = "Saddle Axis (Z)"
         else:
             axis = self.app.els.get_x_axis()
-            axis_label = "Cross-slide (X)"
+            axis_label = "Cross Slide Axis (X)"
         if axis is None:
             # Same guard as the keypad-entry paths — and the same FEEDBACK.
             # Silently returning here left a long-press indistinguishable from
@@ -377,7 +377,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
                 title="Axis Not Configured",
-                message=f"{axis_label} axis is not set in ELS settings.",
+                message=f"{axis_label} is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
             return
@@ -404,7 +404,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
                 title="Axis Not Configured",
-                message="Saddle (Z) axis is not set in ELS settings.",
+                message="Saddle Axis (Z) is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
             return
@@ -448,7 +448,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
                 title="Axis Not Configured",
-                message="Saddle (Z) axis is not set in ELS settings.",
+                message="Saddle Axis (Z) is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
             return
@@ -489,7 +489,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
                 title="Axis Not Configured",
-                message="Cross-slide (X) axis is not set in ELS settings.",
+                message="Cross Slide Axis (X) is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
             return

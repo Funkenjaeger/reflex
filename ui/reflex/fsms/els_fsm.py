@@ -316,8 +316,7 @@ class ElsFsm:
     def _abort_arming(self):
         self.board.servo.stop_feed()
         bus.publish("alarm_raised",
-                    reason="ELS stop not confirmed — cut aborted. Check the "
-                           "controller connection and try again.")
+                    reason="Controller did not confirm the ELS stop")
 
     def on_enter_cutting(self):
         """The release. Everything that had to be acknowledged already was."""

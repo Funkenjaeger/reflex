@@ -28,11 +28,11 @@ log = Logger.getChild(__name__)
 
 UI_POLICY = {
     "idle":          {"action_button_text": "", "can_stop": True, "instruction_text": ""},
-    "set_stop_z":    {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to stop Z position and press Set"},
-    "set_retract_z": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to start Z position and press Set"},
-    "set_start_dia": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to start diameter and press Set"},
-    "set_stop_dia":  {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to or enter stop diameter and press Set"},
-    "confirm":       {"action_button_text": "Confirm", "can_stop": True, "instruction_text": "Confirm half nut is engaged"},
+    "set_stop_z":    {"action_button_text": "Set", "can_stop": True, "instruction_text": "Move to Stop Z position. Press Set."},
+    "set_retract_z": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Move to Start Z position. Press Set."},
+    "set_start_dia": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Move X to Major ø. Press Set."},
+    "set_stop_dia":  {"action_button_text": "Set", "can_stop": True, "instruction_text": "Move X to Minor ø. Press Set, or enter a value."},
+    "confirm":       {"action_button_text": "Confirm", "can_stop": True, "instruction_text": "Close the half nut. Press Confirm."},
     "in_cycle.waiting_to_cut":     {"action_button_text": "Cut", "can_stop": True, "instruction_text": "Ready to cut"},
     "in_cycle.cutting":            {"action_button_text": "", "can_stop": False, "instruction_text": "Cutting..."},
     "in_cycle.waiting_to_retract": {"action_button_text": "Retract", "can_stop": True, "instruction_text": "Ready to retract"},
@@ -59,8 +59,8 @@ NOTICE_SWEEP_SECONDS = 0.1
 # disengage_refusal). Module constants because two surfaces show them -- the
 # notice strip and the Update screen's "ELS job engaged" dialog -- and the
 # dialog's tests assert the instruction it names.
-DISENGAGE_REFUSED_SYNC = "Turn Sync Enable off before disengaging"
-DISENGAGE_REFUSED_CYCLE = "Stop the cycle before disengaging"
+DISENGAGE_REFUSED_SYNC = "Sync Enable is on. Turn it off to disengage."
+DISENGAGE_REFUSED_CYCLE = "Cycle is running. Press Stop to disengage."
 
 
 # ── Thread-phase offset readout ──────────────────────────────────────────────
@@ -188,8 +188,8 @@ class ElsUiController(EventDispatcher):
     # the reason (or a generic line when there is none) plus the way out. Set in
     # _on_alarm, cleared when the alarm clears (Disengage, or ack). Shown
     # whether or not the wizard is enabled, unlike label_instruction.
-    ALARM_STRIP_FALLBACK = "ELS fault — disengage to clear"
-    ALARM_STRIP_SUFFIX = " — Disengage to clear"
+    ALARM_STRIP_FALLBACK = "ELS fault. Disengage to clear."
+    ALARM_STRIP_SUFFIX = ". Disengage to clear."
     ALARM_STRIP_MAX = 65          # same text contract as the other strips
     alarm_strip         = StringProperty("")
 
@@ -1045,7 +1045,7 @@ class ElsUiController(EventDispatcher):
             # nothing to select. The selector snaps back.
             return False
         if self._els_fsm.state in ("cutting", "retracting"):
-            self.notify("Gearbox position can't change during a pass.",
+            self.notify("Gearbox position cannot change during a pass.",
                         NOTICE_WARNING)
             return False
         self._pending_gear = None
@@ -1072,7 +1072,7 @@ class ElsUiController(EventDispatcher):
         if table == self._els_fsm.gear_table():
             return True
         if self._els_fsm.state in ("cutting", "retracting"):
-            self.notify("Gearbox table can't change during a pass.",
+            self.notify("Gearbox table cannot change during a pass.",
                         NOTICE_WARNING)
             return False
         # A pending gear-change adoption names a position of the OLD table.
@@ -1287,10 +1287,10 @@ class ElsUiController(EventDispatcher):
             # operator clears it with Disengage (the domain FSM allows disable
             # from 'alarm' → 'disabled').
             allowed = False
-            text = self.alarm_text or "ELS fault — disengage to clear"
+            text = self.alarm_text or "ELS fault. Disengage to clear."
         elif not self.engaged:
             allowed = False
-            text = "Engage to begin"
+            text = "Press Engage to start."
         elif state == "in_cycle.waiting_to_cut":
             allowed = self.stop_z_valid
             if self.retract_enabled:
@@ -1318,17 +1318,17 @@ class ElsUiController(EventDispatcher):
                 if self.retract_enabled and not self.retract_z_valid:
                     missing.append("Start Z")
                 if missing:
-                    text = f"Enter {' and '.join(missing)} to begin cutting"
+                    text = f"Enter {' and '.join(missing)} to cut."
                 elif sync_off:
-                    text = "Turn Sync Enable on, then Cut"
+                    text = "Turn on Sync Enable. Then press Cut."
                 elif not self.retract_enabled and not allowed:
-                    text = "Move Z to safe side of stop position"
+                    text = "Move Z to the safe side of Stop Z."
         elif state == "in_cycle.waiting_to_retract":
             if not self.retract_z_valid:
                 allowed = False
-                text = "Enter Start Z to retract"
+                text = "Enter Start Z to retract."
             elif self.is_threading and not self._x_clear_of_start_dia():
-                text = "Move X clear of start diameter, then retract"
+                text = "Move X clear of Major ø. Then press Retract."
                 allowed = False
             elif not self.is_feeding:
                 # SYNC ON BEFORE RETRACT (2026-10-03), the twin of the Cut
@@ -1338,7 +1338,7 @@ class ElsUiController(EventDispatcher):
                 # next Sync Enable press re-issued the move and the carriage
                 # went (shadow bench, 2026-10-03, 21:14:52). An arm-only
                 # button must never start a move.
-                text = "Turn Sync Enable on, then retract"
+                text = "Turn on Sync Enable. Then press Retract."
                 allowed = False
         self.instruction_text = text
         self.action_allowed = allowed
@@ -1530,7 +1530,7 @@ class ElsUiController(EventDispatcher):
         if self.in_cycle:
             return DISENGAGE_REFUSED_CYCLE
         if not self._els_fsm.may_disable():
-            return f"Disengage ignored — ELS is {self._els_fsm.state}"
+            return f"ELS is {self._els_fsm.state}. Disengage ignored."
         return None
 
     def disengage(self) -> str | None:
@@ -1626,7 +1626,7 @@ class ElsUiController(EventDispatcher):
             # THE ONE THAT PROVES THE SURFACE. Reachable with the button fully
             # enabled, and before this the operator's entire feedback was a
             # press that did nothing. Names the fix, not the fault.
-            self.notify("No ELS Z axis assigned — map it in ELS settings",
+            self.notify("Saddle Axis (Z) is not set. Set it in Setup > ELS.",
                         NOTICE_WARNING)
         elif not self._els_z_is_single_input():
             # THE DRO AND THE FIRMWARE WOULD DISAGREE ABOUT WHERE THE CARRIAGE
@@ -1649,7 +1649,7 @@ class ElsUiController(EventDispatcher):
                 "the firmware can only track one scale",
                 self._els.get_z_axis().transform.transform_type,
                 len(self._els.get_z_axis().transform.contributions))
-            self.notify("ELS Z axis adds two scales — use a single input",
+            self.notify("Saddle Axis (Z) adds two scales. Use one input.",
                         NOTICE_WARNING)
         elif self._els_fsm.may_enable():
             self._els_fsm.enable()
@@ -1662,7 +1662,7 @@ class ElsUiController(EventDispatcher):
             )
             # INFO for the same reason as the disengage twin above: a stale or
             # doubled tap, not a machine problem.
-            self.notify(f"Engage ignored — ELS is {self._els_fsm.state}",
+            self.notify(f"ELS is {self._els_fsm.state}. Engage ignored.",
                         NOTICE_INFO)
 
     def commit_standalone_stop_z(self, stop_z_value: float):
@@ -1729,7 +1729,7 @@ class ElsUiController(EventDispatcher):
             axis = self._els.get_z_axis()
             if axis is None:
                 log.warning(f"action button: no Z (saddle) axis assigned in state '{state}'")
-                self.notify("No ELS Z axis assigned — map it in ELS settings",
+                self.notify("Saddle Axis (Z) is not set. Set it in Setup > ELS.",
                             NOTICE_WARNING)
                 return
             if state == "set_stop_z":
@@ -1745,8 +1745,8 @@ class ElsUiController(EventDispatcher):
                 # operator hunting through settings for which of the two this
                 # step wanted -- the Z message has the same problem solved the
                 # same way.
-                self.notify("No ELS X (cross-slide) axis assigned — map it in "
-                            "ELS settings", NOTICE_WARNING)
+                self.notify("Cross Slide Axis (X) is not set. Set it in "
+                            "Setup > ELS.", NOTICE_WARNING)
                 return
             if state == "set_start_dia":
                 self._commit_start_dia(axis.scaledPosition)
@@ -1906,7 +1906,7 @@ class ElsUiController(EventDispatcher):
         mode = self._reframe_notify_mode()
         if mode == "silent":
             return
-        self.reframe_message = "Stop/Start re-referenced after a zero/offset change"
+        self.reframe_message = "Zero or offset changed. Stop Z and Start Z are re-referenced."
         if mode == "confirm":
             self.reframe_confirm_pending = True
         else:  # warn
@@ -2036,12 +2036,12 @@ class ElsUiController(EventDispatcher):
         a committed stop is always armed, so only two honest causes remain."""
         if not self.engaged:
             return ("ELS is not engaged. The feed will run with no "
-                    "automatic stop.\n\nEnable feed anyway?")
+                    "automatic stop.\n\nPress Enable Feed to continue.")
         if self.stop_z_encoder is None:
             return ("No stop is set. The feed will run with no automatic "
-                    "stop.\n\nEnable feed anyway?")
+                    "stop.\n\nPress Enable Feed to continue.")
         return ("The ELS stop is not armed. The feed will run with no "
-                "automatic stop.\n\nEnable feed anyway?")
+                "automatic stop.\n\nPress Enable Feed to continue.")
 
     def _on_pass_interrupted(self):
         """Tell the operator we stopped a pass that the firmware was still running.
@@ -2075,10 +2075,10 @@ class ElsUiController(EventDispatcher):
                 message="\n\n".join([
                     "The controller was still driving the carriage when this app "
                     f"started ({armed}).",
-                    "That means the previous session ended mid-pass. Sync has been "
-                    "disabled and the ELS stop cleared, so the carriage was stopped "
-                    "HERE rather than at a shoulder.",
-                    "Check the workpiece and tool before continuing.",
+                    "The previous session stopped during a pass. Sync is now off "
+                    "and the ELS stop is clear. The carriage stopped HERE, not at "
+                    "a shoulder.",
+                    "Examine the workpiece and the tool before you continue.",
                 ]),
                 button_text="OK",
             ).open()
@@ -2152,7 +2152,7 @@ class ElsUiController(EventDispatcher):
             # clear.
             log.error("could not disengage after sync-off from "
                       f"'{self._els_fsm.state}' — ELS may still read as armed")
-        self.notify(f"{what.capitalize()} abandoned — ELS disengaged", NOTICE_INFO)
+        self.notify(f"{what.capitalize()} stopped. ELS is disengaged.", NOTICE_INFO)
 
     def request_feed_enable(self, confirmed: bool = False) -> bool:
         """Operator asked to toggle the sync/power feed (advanced ELS context).

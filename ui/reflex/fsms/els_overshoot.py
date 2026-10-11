@@ -150,8 +150,8 @@ RATE_MAX_GAP_S = 0.3
 FALL_HOLD_S = 1.0
 
 #: Operator notice when the live rate is past the table's top point.
-ABOVE_RANGE_NOTICE = ("Z rate above the calibrated range ({top} counts/s); "
-                      "correction held at its top value")
+ABOVE_RANGE_NOTICE = ("Z rate is above the calibrated range ({top} counts/s). "
+                      "Correction is held at its top value.")
 
 
 def _validate(table: Sequence[Tuple[int, int]]) -> None:
