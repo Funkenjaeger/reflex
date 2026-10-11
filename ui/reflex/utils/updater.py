@@ -448,8 +448,8 @@ def parse_protocol_version(map_source: str) -> int:
             "Could not read PROTOCOL_VERSION as a plain number from "
             "ui/reflex/utils/els_stop_map.py in the target release. Without "
             "it, the firmware cannot be checked, so the update is refused. "
-            "Nothing has been changed. You can continue to use the machine on "
-            "its current version. To update, use the command line. See the "
+            "Nothing has been changed. The machine is safe to use on its "
+            "current version. To update, use the command line. See the "
             "Installing page.")
     return int(m.group(1))
 

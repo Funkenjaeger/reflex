@@ -407,8 +407,8 @@ class ThreadResync:
                 # reference taken now would be worthless). Both present here as
                 # the same silence.
                 self._refuse(
-                    "The controller did not acknowledge the latch. The job "
-                    "disengaged or the servo drive is off. Make sure the ELS "
+                    "The controller did not acknowledge the latch. Either the "
+                    "job disengaged or the servo drive is off. Make sure the ELS "
                     "stop is still engaged and Sync Enable is on. Then retry."
                 )
             return
