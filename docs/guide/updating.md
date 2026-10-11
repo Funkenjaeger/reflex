@@ -46,8 +46,8 @@ What happens underneath, and the command-line route, are in
    a fault.
 
 6. **The UI restarts itself** on the new version. If the status box instead
-   ends with *"Update applied, but the UI did not restart. Tap Exit Application
-   ..."*, tap **Exit Application**. The UI comes back on the new version by
+   ends with *"Update applied, but the UI did not restart. Press Exit Application
+   to start ..."*, tap **Exit Application**. The UI comes back on the new version by
    itself.
 
 Drag the status box with a finger to scroll it. It is worth reading before
@@ -77,7 +77,7 @@ If the job cannot be disengaged right now, the dialog says why and offers only
 
 > The spindle is turning. Stop the spindle.
 
-or, with a cycle running, *"Stop the cycle before disengaging."* Do that, then
+or, with a cycle running, *"Cycle is running. Press Stop to disengage."* Do that, then
 tap **Install Selected Release** again.
 
 ## If an update fails

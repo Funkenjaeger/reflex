@@ -27,7 +27,7 @@ These are roles, not names. Calling an axis `Z` does not make the ELS use it —
 the roles are a separate setting, and until they are assigned the ELS refuses
 anything that needs them:
 
-> No ELS Z axis assigned — map it in ELS settings
+> Saddle Axis (Z) is not set. Set it in Setup > ELS.
 
 ## The fourth axis named `?`
 
