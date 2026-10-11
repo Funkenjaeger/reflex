@@ -75,7 +75,7 @@ Only on a lathe with a gearbox table. Calibration results are stored as measured
 
 ## Coupling check
 
-Shown across the status gutter when the coupling check stops a pass partway, and only when **Coupling check acts** is on in Advanced ELS Settings (it is off by default, which only logs). The check compares how far the Z scale moved with how far the servo was told to move it. Red strips change nothing. The yellow ones appear only on a lathe with a gearbox table, and name a position the next Cut or Retract adopts; they are shown here for the example table A=1, B=2, C=1/2, and use the names in your own table.
+Shown across the status gutter when the coupling check stops a pass partway, and only when **Coupling check acts** is on in Advanced ELS Settings (it is off by default, which only logs). The check compares how far the Z scale moved with how far the servo was told to move it. Red strips change nothing. The yellow ones appear only on a lathe with a gearbox table, and name a position the next Cut or Retract adopts; they are shown here for the development lathe's table, A=1, B=2, C=1/2, and use the names in your own table.
 
 > Carriage decoupled. Close the half nut or examine the drivetrain.
 

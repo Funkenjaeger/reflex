@@ -61,6 +61,8 @@ the reference position first, as `name=factor` entries:
 
     A=1, B=2, C=1/2
 
+That is the development lathe's gearbox, used as the example in these docs.
+
 - 2 to 4 positions, names of your choosing, 1 to 3 characters each, with no
   spaces, commas or `=`.
 - The first position is the **reference**: the servo settings above are for

@@ -197,7 +197,8 @@ SECTIONS = [
      "Red "
      "strips change nothing. The yellow ones appear only on a lathe with a "
      "gearbox table, and name a position the next Cut or Retract adopts; "
-     "they are shown here for the example table A=1, B=2, C=1/2, and use "
+     "they are shown here for the development lathe's table, A=1, B=2, C=1/2, "
+     "and use "
      "the names in your own table.",
      [("ratio.decoupled", els_ratio.abort_text(els_ratio.DECOUPLED)),
       ("ratio.gear_b", els_ratio.gear_change_text("B")),

@@ -16,6 +16,8 @@ first**, as `name=factor`, separated by commas:
 
     A=1, B=2, C=1/2
 
+That is the development lathe's gearbox, the example throughout this page.
+
 - **2 to 4 positions.**
 - **Names** are your own, 1 to 3 characters with no spaces, commas or
   `=`: `A`, `Lo`, `Hi`, `1`, `2`. Each name once.
