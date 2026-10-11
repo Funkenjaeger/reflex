@@ -14,7 +14,7 @@ worth having if each of them is right:
   * no answer at all          -> alarm on the timeout, same;
   * the operator leaves first -> the late result is ignored.
 
-The verdict covers EVERY write in the batch (Evan, 2026-10-04). Before, only
+The verdict covers EVERY write in the batch. Before, only
 stopPosition, scaleIndex and enable were checked, so a failed geometry or
 backlash write was masked by the later successful enable -- a cut with
 half-written thread geometry is not one to release.
