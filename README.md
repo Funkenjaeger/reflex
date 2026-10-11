@@ -17,6 +17,26 @@ talking RS-485 Modbus RTU. One system, one repository.
 
 [![Reflex UI demo video](https://img.youtube.com/vi/38qAaq2tOGU/maxresdefault.jpg)](https://www.youtube.com/watch?v=38qAaq2tOGU)
 
+## What it does
+
+* Multi-axis DRO with configurable axes, hardware scale inputs, and transforms
+* **Electronic leadscrew**: spindle-synchronized carriage feed for power feeding
+  and threading
+* **Automatic electronic stop** — feed or thread up to a shoulder, hands off
+* **Electronic retract**, and automatic **phase re-sync to thread pitch**
+  between passes (free use of the half nut between threading passes)
+* **Take-up confirmation** — checks the carriage really moved before every
+  pass, or refuses it
+* **Pick up an existing thread**, and **widen a groove** past the tool that
+  cuts it
+* **Updates itself** from the touchscreen, firmware and UI together, and backs
+  up its calibration to USB or a GitHub gist
+
+The firmware owns everything real-time (encoders, step generation, the stop);
+the UI owns operator workflow, configuration, and display. The wire between
+them is a generated, memory-mapped register contract guarded by
+`protocolVersion`.
+
 ## Project status
 
 Reflex is tested on one lathe and is not a certified safety system. A release
