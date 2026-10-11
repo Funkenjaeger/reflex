@@ -15,6 +15,8 @@ talking RS-485 Modbus RTU. One system, one repository.
 
 ![Home screen](docs/screenshots/home_els_dark.png)
 
+[![Reflex UI demo video](https://img.youtube.com/vi/38qAaq2tOGU/maxresdefault.jpg)](https://www.youtube.com/watch?v=38qAaq2tOGU)
+
 ## Project status
 
 Reflex is tested on one lathe and is not a certified safety system. A release
@@ -38,6 +40,103 @@ The electronic **stop** is optional; disengaged, Reflex is a traditional ELS.
 > to compare against.
 
 [The three stop modes, in full](https://funkenjaeger.github.io/reflex/guide/operator-modes/)
+
+## 🗺 Versions
+
+The living record: what shipped and what is planned, in one place so the two
+cannot drift apart. Entries move from **planned** through **release candidate**
+to **released** as tags are cut, and the plan is revised as often as reality
+requires.
+
+### 1.0.0 · released 2026-07-15
+
+The first release, as two separately versioned repositories (`reflex-fw` and
+`reflex-ui`). A working DRO with an electronic leadscrew behind it.
+
+- **Multi-axis DRO** — configurable axes over hardware scale inputs, with transforms and offsets.
+- **Electronic leadscrew** — spindle-synchronized carriage feed for power feed and threading.
+- **Electronic stop** — feed or thread up to a shoulder and stop, hands off.
+- **Electronic retract**, and the advanced ELS bar.
+- Jogging with a trapezoidal velocity profile.
+
+### 1.1.0 · released 2026-08-31
+
+The release where the controller stops trusting and starts **verifying**.
+
+- **Take-up confirmation** — checks the carriage really moved before every pass, or refuses it.
+- **Backlash calibration** — measures take-up on the machine instead of taking a guess.
+- **Thread phase re-sync from the Z scale** — open the half nut between passes.
+- **Pick up an existing thread** — latch a reference on work this job did not cut.
+- **Thread phase offset** — cut a groove wider than the tool, stepping phase between passes.
+- **Opt-in error reporting** — no built-in destination; set `REFLEX_SENTRY_DSN`, or leave it off.
+- **Half the interrupt budget back** — 50 kHz step generation, sustained ISR load 40% to 20%.
+- **One repository, one version** — `fw/` and `ui/` released together, history preserved.
+- **A user guide**, from installing on a Pi through to picking up an existing thread.
+- Improved status indication and operator-facing messages.
+- In-app update screen withdrawn; updating is a `git pull` and, when firmware moves, a flash.
+
+### 1.2.0 · released 2026-09-25
+
+The release where the machine **updates itself** from the touchscreen, and its
+calibration survives a dead SD card.
+
+- **In-app update, firmware and UI together** — protocol-checked, put back as it was if a step fails; offers to disengage an engaged ELS job first.
+- **Field bootloader** — firmware goes over the RS-485 link, no ST-Link after the first install; runs on the board's crystal since rc.6.
+- **Backup and restore** — every commissioning change recorded on the card; export to USB or sync to your own GitHub gist, and restore from either.
+- **Commissioning guard** — a card that was never commissioned shows **UNCOMMISSIONED** and saves nothing until a backup is restored or the warning dismissed.
+- **Generated register map** — one schema for both halves, with a protocol fingerprint; the controller is read at ~28 Hz, up from ~16.
+- **Flight recorder** — the UI's poll stream and the stop's trigger instant kept on the card, so a stop can be examined afterwards.
+- **Readability pass** — dimmed text meets 3:1 contrast, in both themes.
+- X DRO reads radius or diameter, scales entered as a resolution, and other operator fixes.
+- **Stop overshoot correction** (*experimental, off by default*) — latency in the servo drive carries the carriage past the stop; this fires the stop early by the measured overshoot. Calibrated on one lathe only.
+
+### 1.2.1 · released 2026-09-26 — **current**
+
+A new card's first minutes: the **UNCOMMISSIONED** dialog leads with setting up
+a new machine and restores a USB or gist backup in one tap, and the app
+restarts itself to load it. Firmware unchanged.
+
+### 1.2.2 · release candidate
+
+The machine knows what it is doing: the ELS checks the half nut and the gearbox
+lever against how the carriage actually moves, and says why when it stops.
+
+- **Coupling check** — a half nut that is not engaged, or a carriage rate that fits no gear, stops the pass (log-only until turned on).
+- **Gearbox table** — the main ELS screen shows the active lever position.
+- **ELS faults and refusals say why**, in short plain sentences with one thing to do.
+- **Settings snapshot before every update**, so a setting an older release resets can be put back.
+- Controller traffic moved off the screen's thread.
+
+### 1.3.0 · planned — auto-start and auto-advance
+
+Take the last button press, and then the depth of cut, out of your hands.
+Auto-start was planned for 1.2.0 and moved here unbuilt.
+
+- **Begin the pass when the half nut closes**, rather than on **Cut**.
+- **Sensorless** — infers engagement from motion already measured for the take-up.
+- **Advance thread phase from X depth** — a flank infeed with no compound set over: the virtual compound.
+- Threading illustrations re-tooled as programmatic SVG, regenerated like the screenshots.
+- Developed desk-first against the firmware emulator, with a machine window to verify.
+
+Everything in 1.x runs on the current controller board.
+
+### 2.0.0 · planned — the respin
+
+The first release that needs **new hardware**, which is why it is a major
+version rather than 1.4. Only work that cannot be done on the current board
+goes here.
+
+- **Control-board respin for differential encoder signalling.**
+- **Register-block integrity checksum** and **index-anchored phase correction**.
+- **A half-nut sensor input**, added to auto-start's sensorless detection.
+
+> [!NOTE]
+> **Multi-start is not supported, and is not yet scheduled.** It is a software
+> change (phase folded modulo the lead rather than the pitch, plus a starts
+> count) and does not wait for the respin. The phase offset is not a
+> substitute for it either: its correction folds within one pitch and biases
+> into the cutting direction, which is exactly wrong for indexing a second start.
+> See [Widening a groove](https://funkenjaeger.github.io/reflex/guide/widening-a-groove/).
 
 ## Hardware
 
