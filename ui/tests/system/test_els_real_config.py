@@ -235,7 +235,7 @@ def test_real_machine_config_wizard_threading_retract(harness):
     # X-clear gate below, which hit this race directly in development).
     # Sync is still off here, and since 2026-09-12 Cut is gated on it: the
     # bar names the missing step instead of offering the cut.
-    settled = h.wait_until(lambda: h.controller.instruction_text == "Turn Sync Enable on, then Cut",
+    settled = h.wait_until(lambda: h.controller.instruction_text == "Turn on Sync Enable. Then press Cut.",
                             timeout_s=3.0)
     assert settled, f"policy did not settle: instruction_text={h.controller.instruction_text!r}"
     assert h.controller.action_allowed is False
