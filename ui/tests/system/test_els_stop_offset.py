@@ -17,6 +17,9 @@ from fractions import Fraction
 
 import pytest
 
+from reflex.fsms import els_overshoot_table as tbl
+from reflex.fsms.els_overshoot import DEVELOPMENT_LATHE_TABLE
+
 # timing: these assert on the WRITE RATE the limiter allows over a real
 # interval (writes per second against t1 - t0). Under `-n auto` this one
 # failed its budget once on 2026-10-04 and passed alone and in four runs
@@ -35,6 +38,14 @@ def test_correction_on_fires_early_by_the_offset_it_wrote(harness):
     h.commission_geometry()
     h.set_feed(Fraction(254, 160))        # ~0.79 mm/s at EMU_RPM=30
 
+    # The table is a machine setting (1.2.2): store the development lathe's,
+    # bound to THIS machine's live settings, before switching it on. With no
+    # table stored the correction refuses to turn on.
+    binding = h.els_fsm.overshoot_binding()
+    assert binding is not None, "geometry not provisioned"
+    for k, v in tbl.persisted(tbl.from_counts(
+            DEVELOPMENT_LATHE_TABLE, binding, "measured for the test")).items():
+        setattr(h.els, k, v)
     h.els.els_overshoot_correction = True
     h.els.els_overshoot_margin_counts = 1
 
@@ -94,3 +105,12 @@ def test_correction_on_fires_early_by_the_offset_it_wrote(harness):
     assert len(in_pass) <= budget, (
         f"{len(in_pass)} stopOffset writes in {t1 - t0:.1f} s exceeds the "
         f"limiter's budget of {budget}: {in_pass}")
+
+    # D7: the readout. The emulator's carriage stops where the trigger fires
+    # (no drive lag), so a corrected stop lands short by about the offset.
+    shown = h.wait_until(
+        lambda: h.controller.notice_text.startswith("Stop landed"), timeout_s=5)
+    assert shown, f"no last-stop readout; notice is {h.controller.notice_text!r}"
+    assert h.controller.notice_text.endswith(" short."), h.controller.notice_text
+    assert h.els.els_overshoot_correction is True, (
+        "a stop that landed short turned the correction off")

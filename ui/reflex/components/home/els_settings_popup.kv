@@ -101,6 +101,14 @@
                 value: root.overshoot_margin_counts
                 on_value: root.overshoot_margin_counts = self.value
 
+            # This machine's table: measured here, stored as a machine setting
+            # (reflex/fsms/els_overshoot_table.py). Empty by default.
+            ButtonItem:
+                name: "Overshoot table"
+                value: "Measure"
+                help_file: "els_overshoot_measure.md"
+                on_release: root.open_overshoot_survey()
+
             # ── Gearbox and the coupling check (default: log only) ──
             # The table: empty for no gearbox (the default), else
             # name=factor entries, reference first (reflex/fsms/els_gear.py).

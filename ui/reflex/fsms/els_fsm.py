@@ -1298,6 +1298,32 @@ class ElsFsm:
             return None
         return float(Fraction(abs(saddle.ratioNum), abs(saddle.ratioDen)))
 
+    def overshoot_binding(self):
+        """What a stop-overshoot table measured NOW would be bound to
+        (els_overshoot_table.Binding), exactly, or None while the Z scale or
+        the leadscrew is not provisioned.
+
+        Fractions, not the floats z_mm_per_count() returns: the binding is
+        compared for equality, and two floats computed two ways can differ in
+        the last bit. The leadscrew is the REFERENCE position's mm per step,
+        so moving the gearbox lever does not change it.
+        """
+        from reflex.fsms.els_overshoot_table import Binding
+        saddle = self._saddle_input
+        servo = self.servo
+        try:
+            k = (abs(Fraction(str(float(saddle.ratioNum))))
+                 / abs(Fraction(str(float(saddle.ratioDen)))))
+            pitch = Fraction(str(float(servo.leadScrewPitch)))
+            if getattr(servo, "leadScrewPitchIn", False) is True:
+                pitch *= Fraction(254, 10)
+            step = pitch / int(servo.leadScrewPitchSteps)
+        except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+            return None
+        if k <= 0 or step <= 0:
+            return None
+        return Binding(k, step, self.gear_table().text())
+
     def steps_per_z_count(self):
         """Commanded steps per Z count in the ENGAGED gear, or None.
 

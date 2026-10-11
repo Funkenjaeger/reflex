@@ -6,6 +6,7 @@ alternatives that were rejected.
 - [One repository for firmware and UI](#one-repository-for-firmware-and-ui)
 - [One register map for bootloader and application](#one-register-map-for-bootloader-and-application)
 - [Stop overshoot correction](#stop-overshoot-correction)
+- [The overshoot table is a machine setting](#the-overshoot-table-is-a-machine-setting)
 - [Coupling-ratio check and gearbox position](#coupling-ratio-check-and-gearbox-position)
 - [The gearbox is a table the owner sets](#the-gearbox-is-a-table-the-owner-sets)
 - [PortOwner is the hardware seam](#portowner-is-the-hardware-seam)
@@ -105,12 +106,53 @@ Fire the stop early by the overshoot predicted for the current feed rate.
   matter: the overshoot was measured in all three of its positions at matched
   carriage speed and one table covers them, so the correction needs no
   knowledge of the gearing.
-- There is no calibration procedure an ordinary user can run. The table was
-  built by hand from recorded passes. Generalizing it is future work: a way for
-  anyone to characterize their own machine, and to decide whether it needs the
-  correction at all, from the controller alone.
-- Until then, leave it off on any other machine, or check it as described in
-  [the guide](../guide/stop-overshoot-correction.md).
+- The table was built by hand from recorded passes. It is now a setting each
+  machine measures for itself: see
+  [The overshoot table is a machine setting](#the-overshoot-table-is-a-machine-setting).
+
+## The overshoot table is a machine setting
+
+### Decision
+
+- Each machine stores its own overshoot table, in mm and mm/s, with its
+  settings. The default is no table, and with none the correction cannot turn
+  on.
+- A table records what it was measured under: the Z scale resolution, the
+  leadscrew's distance per step in the gearbox's reference position, and the
+  gearbox table. When any of them differs from the live settings the table is
+  stale: the correction turns off with a notice naming the change, and the
+  table is kept. The same check decides, after a restart, whether the table
+  applies.
+- A corrected stop that lands more than one count past its target turns the
+  correction off. Each corrected stop's landing is shown in counts and in
+  display units.
+- A guided measurement, run in air from the ELS bar with the correction held
+  off: a one-pass detection that answers yes, no or unknown, and a sweep of
+  four feeds with three passes each that refuses to fit when the repeats at
+  one feed disagree by more than three counts. The fit is the envelope, as
+  before.
+- A machine that ran with the correction on before tables were stored keeps
+  the built-in table as its own on the first start, but only at the geometry
+  it was measured under.
+
+### Why
+
+- **One table for every machine was a guess on every machine but one.**
+- **Bound to what can be read, watched for what cannot.** A changed scale or
+  leadscrew setting is visible, so it stales the table. A changed drive, drive
+  setting or controller board is not, so the outcome watch catches its effect:
+  a stop landing past the target.
+- **One count of tolerance** because the trigger and the settled reading are
+  each a whole count.
+- **Migrate rather than turn off**, because turning it off would silently bring
+  back the full overshoot into the next shoulder on the machine the table was
+  measured on.
+
+### Consequences and future work
+
+- The measurement has not yet been run on hardware.
+- Protocol 11 has no board identity register, so a new controller board does
+  not stale the table by itself.
 
 ## Coupling-ratio check and gearbox position
 
@@ -165,9 +207,13 @@ see, so a moved lever silently doubled or halved every feed and thread pitch.
   positions, plus two real half-nut openings. No recording has a cutting load
   or a retract under the check, which is why it ships logging only.
 - Backlash calibration only runs in the reference position.
-- In thread mode the phase correction runs before the check can read, so the
-  first pass after a lever move cuts briefly at the wrong pitch before the
-  check stops it.
+- In thread mode the check now listens from the end of the take-up, through
+  the phase correction, which the firmware always makes in the cutting
+  direction. Until then it waited about 0.4 s for the correction to drain, and
+  a pass after a lever move cut that long at the wrong pitch. The drive lags
+  the correction burst; the coarse check waits while the reading is still
+  changing, and whether that is always enough on hardware is still to be
+  confirmed.
 
 ## The gearbox is a table the owner sets
 
