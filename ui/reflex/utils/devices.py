@@ -257,17 +257,17 @@ ELS_CAL_MESSAGES = {
     # ROOM TO EXPLAIN, unlike the take-up twin: this renders as the modal's
     # body_text, not in the 435 px notice strip.
     ELS_CAL_ERR_ENABLED: (
-        "Disengage the ELS stop before calibrating.\n\n"
-        "Re-engaging afterwards starts a new job, which clears the thread "
-        "reference and any phase offset. Finish the thread first if you "
-        "still need them."
+        "ELS stop is engaged. Disengage it to calibrate.\n\n"
+        "When you engage again, a new job starts. This clears the thread "
+        "reference and any phase offset. If you need them, complete the "
+        "thread first."
     ),
     ELS_CAL_ERR_SERVOMODE: "Servo is not in sync/index mode.",
     ELS_CAL_ERR_CONFIG: "Calibration limits are not configured.",
     ELS_CAL_ERR_NO_MOTION: (
-        "Carriage did not move — is the half-nut engaged?"
+        "Carriage did not move. Close the half nut."
     ),
-    ELS_CAL_ERR_ABORTED: "Calibration aborted — conditions changed mid-run.",
+    ELS_CAL_ERR_ABORTED: "Calibration stopped. Conditions changed during the run.",
 }
 
 # EVERY CUT REFUSAL STANDS ALONE, in Simplified Technical English style:

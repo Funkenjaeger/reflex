@@ -173,9 +173,9 @@ class ThreadResync:
             # what to do. The refusal CONDITION is unchanged; only what the
             # operator is told about it.
             return (
-                "Not connected to the controller. The thread reference is "
-                "latched by the controller, so there is nothing here to latch "
-                "it in — reconnect and start the pick-up again."
+                "Controller is not connected. The controller latches the "
+                "thread reference, so nothing can latch it now. Reconnect. "
+                "Then start the pick-up again."
             )
 
         version = self._hal.read_protocol_version()
@@ -184,9 +184,9 @@ class ThreadResync:
             # latch registers the command write lands nowhere and the ack can
             # never come, which would misreport as a link problem.
             return (
-                f"Controller firmware does not support thread re-sync "
-                f"(reports register version {version}, this UI needs "
-                f"{ELS_PROTOCOL_VERSION}). Flash the firmware to match this UI."
+                f"Controller firmware does not support thread re-sync. "
+                f"It reports register version {version}, and this UI needs "
+                f"{ELS_PROTOCOL_VERSION}. Flash the firmware to match this UI."
             )
 
         if not self._is_threading():
@@ -202,15 +202,15 @@ class ThreadResync:
             # the same reason in the same words; until 2026-08-30 only one of
             # them declined at all.
             return (
-                "No thread pitch is set — turning has no thread phase to pick "
-                "up. Choose a threading mode and a pitch, then engage the ELS "
+                "No thread pitch is set. Turning has no thread phase to pick "
+                "up. Choose a threading mode and a pitch. Then engage the ELS "
                 "stop."
             )
 
         if not self._hal.read_enable():
             return (
-                "No threading job is armed. Engage the ELS stop first — the "
-                "reference belongs to a job and is cleared when one starts."
+                "No threading job is armed. The reference belongs to a job, "
+                "and a new job clears it. Engage the ELS stop first."
             )
 
         return None
@@ -234,10 +234,10 @@ class ThreadResync:
             # abort, not a maze. force=True is that answer coming back.
             self.state = ResyncState.CONFIRM_OVERWRITE
             self.message = (
-                "This job already has a thread reference. Overwriting it "
-                "re-anchors EVERY remaining pass to the new one — any pass "
-                "already cut with the old reference will not match. Overwrite "
-                "only if that is what you want."
+                "This job already has a thread reference. Overwrite moves "
+                "EVERY remaining pass to the new reference. A pass already cut "
+                "with the old reference will not match. Press Overwrite only "
+                "if you want this."
             )
             log.warning("els_resync: reference already latched, asking to overwrite")
             return False
@@ -286,9 +286,9 @@ class ThreadResync:
             f"baseline (tolerance ±{self.fmt_z(self.tolerance_counts, False)}). "
             "A re-seat "
             "against the drive flank must return the Z reading almost "
-            "exactly — missing it means the Z scale chain has lost custody "
-            "of the position, and the same fault would corrupt every ELS "
-            "operation. Do not cut. Check the Z scale, its wiring, and the "
+            "exactly. A miss means the Z scale chain lost custody of the "
+            "position, and the same fault would corrupt every ELS "
+            "operation. Do not cut. Examine the Z scale, its wiring and the "
             "carriage mechanics."
         )
         log.error("els_resync: RED FLAG — re-seat missed baseline by %+d counts",
@@ -390,9 +390,9 @@ class ThreadResync:
             self._latch_polls += 1
             if self._latch_polls >= self.LATCH_TIMEOUT_POLLS:
                 self._refuse(
-                    "Lost contact with the controller while waiting for the "
-                    "latch. Nothing was latched. Check the connection and "
-                    "retry."
+                    "Contact with the controller was lost during the wait for "
+                    "the latch. Nothing was latched. Examine the connection. "
+                    "Then retry."
                 )
             return
 
@@ -407,9 +407,9 @@ class ThreadResync:
                 # reference taken now would be worthless). Both present here as
                 # the same silence.
                 self._refuse(
-                    "The controller never acknowledged the latch. Either the "
-                    "job disengaged or the servo drive is off — check the ELS "
-                    "stop is still engaged and Sync Enable is on, then retry."
+                    "The controller did not acknowledge the latch. The job "
+                    "disengaged or the servo drive is off. Make sure the ELS "
+                    "stop is still engaged and Sync Enable is on. Then retry."
                 )
             return
 
@@ -423,7 +423,7 @@ class ThreadResync:
         self.latched_spindle = self._hal.read_latched_spindle()
         if not self._hal.read_reference_latched():
             self._refuse("The controller acknowledged the latch but reports no "
-                         "reference. Retry, and check the firmware version.")
+                         "reference. Examine the firmware version. Then retry.")
             return
         if not z_held(self.baseline_z, self.latched_z, self.tolerance_counts):
             self.state = ResyncState.RED_FLAG
@@ -431,9 +431,9 @@ class ThreadResync:
                 f"The controller latched the reference "
                 f"{self.fmt_z(self.latched_z - self.baseline_z)} from where "
                 f"this screen was watching (tolerance ±"
-                f"{self.fmt_z(self.tolerance_counts, False)}). The UI and "
+                f"{self.fmt_z(self.tolerance_counts, False)}). The UI and the "
                 "controller do not agree on the carriage position. Do not "
-                "cut. Check the Z scale connection and re-engage the ELS "
+                "cut. Examine the Z scale connection. Then re-engage the ELS "
                 "stop."
             )
             log.error("els_resync: RED FLAG — latched Z %d vs baseline %d",

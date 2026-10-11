@@ -201,9 +201,9 @@ class MainApp(App):
             log.warning(f"Sync Enable refused: {self.board.protocol_message}")
             CustomPopup(
                 title="Firmware / UI mismatch",
-                message=(f"{self.board.protocol_message}\n\nThe feed will not "
-                         f"engage until the firmware and the UI match. "
-                         f"Setup > Update."),
+                message=(f"{self.board.protocol_message}\n\nThe feed stays "
+                         f"off until the firmware and the UI match. Install "
+                         f"a matching release in Setup > Update."),
                 button_text="OK",
                 popup_size_hint=[0.7, 0.6],
             ).open()

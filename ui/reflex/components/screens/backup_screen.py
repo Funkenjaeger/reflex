@@ -146,7 +146,7 @@ class BackupScreen(Screen):
         try:
             path = usb.export_bundle(text, filename)
         except usb.NoRemovableMedia:
-            self._status("No USB stick found -- insert one and try again.")
+            self._status("No USB stick found. Insert one. Then try again.")
             return
         except OSError as e:
             log.error(f"backup screen: USB export failed ({e})")
@@ -185,10 +185,10 @@ class BackupScreen(Screen):
         message = (
             f"Machine: {meta.get('hostname') or 'unknown'}\n"
             f"Captured: {_local_time(meta.get('ts'))}\n"
-            f"Firmware: {meta.get('fw') or 'not recorded'}\n\n"
-            f"Apply this bundle from {path.name}?\n"
-            f"This overwrites the current commissioning configuration,\n"
-            f"then restarts the app to load it."
+            f"Firmware: {meta.get('fw') or 'not recorded'}\n"
+            f"File: {path.name}\n\n"
+            f"Apply overwrites the current commissioning configuration.\n"
+            f"Then it restarts the app to load it."
         )
         self.import_popup = CustomPopup(
             title="Import commissioning bundle",
@@ -254,8 +254,8 @@ class BackupScreen(Screen):
             updater.restart_ui_service()
         except updater.ServiceRestartFailed as e:
             log.error(f"backup screen: could not restart after the import ({e})")
-            self._status(f"{self._import_message}. Could not restart by itself: "
-                         f"restart the machine to load them.")
+            self._status(f"{self._import_message}. The app could not restart by itself. "
+                         f"Restart the machine to load them.")
         return False
 
     # ── gist sync: threading seams ───────────────────────────────────────
@@ -419,7 +419,7 @@ class BackupScreen(Screen):
                 self._dispatch_to_ui(self.refresh_gist_state)
                 self._post_status(
                     gist_sync.last_error
-                    or "Gist sync failed -- will retry at the next change.")
+                    or "Gist sync failed. It will retry at the next change.")
 
         self._run_async(work)
 

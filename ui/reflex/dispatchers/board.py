@@ -537,19 +537,19 @@ class Board(EventDispatcher):
 
         if version == 0:
             self.protocol_message = (
-                "Firmware predates the register protocol version field. "
+                "Firmware has no register protocol version. "
                 f"This UI expects version {ELS_PROTOCOL_VERSION}. "
                 "Update the firmware."
             )
         elif version < ELS_PROTOCOL_VERSION:
             self.protocol_message = (
-                f"Firmware register protocol is version {version}; this UI "
-                f"expects {ELS_PROTOCOL_VERSION}. Update the firmware."
+                f"Firmware register protocol is version {version}. This UI "
+                f"expects version {ELS_PROTOCOL_VERSION}. Update the firmware."
             )
         else:
             self.protocol_message = (
-                f"Firmware register protocol is version {version}; this UI "
-                f"only understands {ELS_PROTOCOL_VERSION}. Update the UI."
+                f"Firmware register protocol is version {version}. This UI "
+                f"knows only version {ELS_PROTOCOL_VERSION}. Update the UI."
             )
         log.error(self.protocol_message)
 
