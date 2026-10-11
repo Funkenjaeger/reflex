@@ -44,6 +44,7 @@ from types import SimpleNamespace
 import pytest
 
 from reflex.fsms.els_overshoot import (
+    DEVELOPMENT_LATHE_TABLE,
     OffsetWriteLimiter,
     StopOffsetCorrector,
     correction,
@@ -116,6 +117,7 @@ def _replay():
     hal = _Hal(board, clk)
     cor = StopOffsetCorrector(hal, board, enabled=lambda: True, margin=lambda: 1,
                               notify=lambda _m: None,
+                              table=lambda: DEVELOPMENT_LATHE_TABLE,
                               limiter=OffsetWriteLimiter(clock=clk))
     results = []
     for p in doc["passes"]:

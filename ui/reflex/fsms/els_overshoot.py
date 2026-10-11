@@ -46,9 +46,19 @@ import math
 import time
 from collections import deque
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Callable, Deque, Optional, Sequence, Tuple
 
-# ── The shipped table ────────────────────────────────────────────────────
+# ── The development lathe's table ────────────────────────────────────────
+# NOT WHAT RUNS. Since 1.2.2 the table is a machine setting, stored in mm and
+# mm/s and bound to what it was measured under (els_overshoot_table.py), and
+# StopOffsetCorrector has no default table: a machine with none stored gets
+# no correction. This table stays in the code for two jobs only: the one-time
+# migration of the development lathe, which ran with it switched on before the
+# table could be stored (DEVELOPMENT_LATHE_MM_PER_COUNT and _MM_PER_STEP below
+# are the geometry that migration requires), and as the known-good data the
+# pure functions below are tested against.
+#
 # (|Z rate| in counts/s, worst overshoot in counts). Z rate is the STREAM rate:
 # the Z scale POSITION delta over a short window divided by the time it took.
 # The live corrector measures its input the same way (ZRateWindow), so the
@@ -95,7 +105,7 @@ from typing import Callable, Deque, Optional, Sequence, Tuple
 # still queued, and the firmware has none queued at the trigger
 # (stopTriggerStepsToGo was 0 on every recorded stop), so nothing it sends
 # after the stop fires exists for them to shape.
-OVERSHOOT_TABLE: Tuple[Tuple[int, int], ...] = (
+DEVELOPMENT_LATHE_TABLE: Tuple[Tuple[int, int], ...] = (
     (0, 0),
     (280, 1),       # snapshot 300
     (583, 3),       # snapshot 596
@@ -106,6 +116,13 @@ OVERSHOOT_TABLE: Tuple[Tuple[int, int], ...] = (
     (2469, 32),     # snapshot 2507
     (3529, 43),     # snapshot 3567
 )
+
+#: The geometry DEVELOPMENT_LATHE_TABLE was measured under: a 5 um Z scale,
+#: and an 8 TPI leadscrew at 1600 steps per revolution (3.175 mm / 1600) in
+#: the gearbox's reference position. The migration stores the table only on a
+#: machine that matches both exactly.
+DEVELOPMENT_LATHE_MM_PER_COUNT = Fraction(1, 200)
+DEVELOPMENT_LATHE_MM_PER_STEP = Fraction(127, 64000)
 
 #: Counts added on top of the rounded-up envelope.
 DEFAULT_MARGIN_COUNTS = 1
@@ -164,7 +181,7 @@ def _validate(table: Sequence[Tuple[int, int]]) -> None:
             raise ValueError(f"table must be an envelope (non-decreasing): {v0} -> {v1}")
 
 
-_validate(OVERSHOOT_TABLE)
+_validate(DEVELOPMENT_LATHE_TABLE)
 
 
 @dataclass(frozen=True)
@@ -173,7 +190,7 @@ class Prediction:
     above_range: bool    # |rate| was past the top table point; counts is HELD
 
 
-def predicted(rate: float, table: Sequence[Tuple[int, int]] = OVERSHOOT_TABLE) -> Prediction:
+def predicted(rate: float, table: Sequence[Tuple[int, int]] = DEVELOPMENT_LATHE_TABLE) -> Prediction:
     """Predicted coast at a Z rate, by linear interpolation over |rate|.
 
     Below the lowest nonzero point it interpolates toward (0, 0), which is a
@@ -197,7 +214,7 @@ class Correction:
 
 
 def correction(rate: float, margin: int = DEFAULT_MARGIN_COUNTS,
-               table: Sequence[Tuple[int, int]] = OVERSHOOT_TABLE) -> Correction:
+               table: Sequence[Tuple[int, int]] = DEVELOPMENT_LATHE_TABLE) -> Correction:
     """offset = ceil(predicted(rate)) + margin, clamped to [0, ELS_STOP_OFFSET_MAX].
 
     The margin is floored at 0: a negative margin would put the offset below
@@ -274,7 +291,7 @@ class ZRateWindow:
     """Live Z rate from successive Z POSITIONS: the position delta across the
     newest ~RATE_WINDOW_S of samples over the time it spans (counts/s, signed).
 
-    The same method as the table's key (see OVERSHOOT_TABLE), and it replaces
+    The same method as the table's key (see DEVELOPMENT_LATHE_TABLE), and it replaces
     the single-tick `speed` register, whose wander made the offset dither.
     rate() is None until the samples span RATE_MIN_SPAN_S. clear() forgets
     everything; add() clears by itself across a gap of RATE_MAX_GAP_S.
@@ -374,14 +391,19 @@ class StopOffsetCorrector:
     `enabled()` and `margin()` read the operator settings; `notify(message)`
     posts an operator notice. Time is the limiter's clock.
 
+    `table()` returns the table in effect, in COUNTS (see
+    els_overshoot_table.StoredTable.in_counts), or None when this machine
+    has no usable one. There is no default: None means no correction, and
+    the stop fires at stopPosition exactly as with the setting off.
+
     NEVER writes stopPosition. It is the exact target and this class has no
     business with it; the correction lives entirely in stopOffset.
     """
 
     def __init__(self, hal, board, enabled: Callable[[], bool],
                  margin: Callable[[], int], notify: Callable[[str], object],
+                 table: Callable[[], Optional[Sequence[Tuple[float, float]]]],
                  limiter: Optional[OffsetWriteLimiter] = None,
-                 table: Sequence[Tuple[int, int]] = OVERSHOOT_TABLE,
                  window: Optional[ZRateWindow] = None,
                  hold: Optional[OffsetHold] = None):
         self._hal = hal
@@ -442,7 +464,8 @@ class StopOffsetCorrector:
         active = bool(self._hal.tick.active())
         self._sample(now, active)
         armed = self._hal.tick.enable()
-        if not self._enabled() or not armed:
+        table = self._table() if self._enabled() else None
+        if not table or not armed:
             self._notified_this_pass = False
             self.hold.reset()
             return self._write(self.limiter.force_zero(now))
@@ -471,11 +494,11 @@ class StopOffsetCorrector:
         self.last_rate = rate
         if rate is None:
             return None
-        c = correction(rate, self._margin(), self._table)
+        c = correction(rate, self._margin(), table)
         self.last_correction = c
         if c.above_range and not self._notified_this_pass:
             self._notified_this_pass = True
-            self._notify(ABOVE_RANGE_NOTICE.format(top=self._table[-1][0]))
+            self._notify(ABOVE_RANGE_NOTICE.format(top=round(float(table[-1][0]))))
         target = self.hold.update(c.offset, now)
         return self._write(self.limiter.update(target, now))
 

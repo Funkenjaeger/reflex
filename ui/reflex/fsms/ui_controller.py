@@ -15,6 +15,8 @@ from reflex.fsms.els_phase_recorder import (
     PhaseCorrectionRecorder, PhaseLiveTracker, SpindleCountWatch)
 from reflex.fsms.els_mode_watch import ElsModeWatch
 from reflex.fsms.els_overshoot import OffsetWriteLimiter, StopOffsetCorrector
+from reflex.fsms.els_overshoot_guard import OvershootGuard
+from reflex.fsms.els_stop_outcome import StopOutcomeWatch
 from reflex.fsms import els_ratio
 from reflex.fsms.els_ratio import RatioWatch
 from reflex.fsms.els_gear import GearTable, GearTableError
@@ -359,6 +361,16 @@ class ElsUiController(EventDispatcher):
         # a future reconcile-on-connect wants to say something.
         self._notices = NoticeCenter()
 
+        # The stop-overshoot table's rules: which table applies, the one-time
+        # migration, stale, the outcome watch and the guided measurement.
+        # Lambdas because _els_fsm is built below. See els_overshoot_guard.py.
+        self._overshoot = OvershootGuard(
+            els,
+            binding=lambda: self._els_fsm.overshoot_binding(),
+            notify=self.notify,
+            gear=lambda: self._els_fsm.engaged_gear(),
+        )
+
         # Stop-overshoot correction (protocolVersion 11). Opt-in, default off.
         # Each tick it turns the live Z rate into a stopOffset and writes it
         # through a rate limiter -- or writes 0 once when the correction is off
@@ -372,6 +384,9 @@ class ElsUiController(EventDispatcher):
             enabled=lambda: getattr(self._els, "els_overshoot_correction", False) is True,
             margin=lambda: int(getattr(self._els, "els_overshoot_margin_counts", 1)),
             notify=lambda message: self.notify(message, NOTICE_WARNING),
+            # This machine's stored table, in counts, or None: no table, a
+            # stale one, or a measurement running. None writes 0.
+            table=lambda: self._overshoot.table_in_counts(),
             # ON THE ACQUISITION TIMEBASE. One clock feeds the limiter, the
             # hold AND the Z-rate window (the corrector reads it once per tick
             # and passes it down), so this single substitution takes the rate
@@ -385,6 +400,12 @@ class ElsUiController(EventDispatcher):
                 clock=lambda: (board.t_acq if board.t_acq is not None
                                else time.monotonic())),
         )
+
+        # Where each stop landed, for the readout, the outcome watch and the
+        # measurement. Same clock as the corrector's rate window.
+        self._stop_outcome = StopOutcomeWatch(
+            board, clock=lambda: (board.t_acq if board.t_acq is not None
+                                  else time.monotonic()))
 
         # Coupling-ratio check: an open half nut, or the gearbox lever in a
         # position the controller does not expect. Always measures; acts
@@ -510,6 +531,8 @@ class ElsUiController(EventDispatcher):
         # The overshoot correction's writer. Bound BEFORE the flight recorder
         # so the offset the recorder files for this tick is the one in effect.
         self._board.bind(update_tick=self._poll_stop_offset)
+        # Where the last stop landed: the readout and the outcome watch.
+        self._board.bind(update_tick=self._poll_stop_outcome)
         # The coupling-ratio check. Before the flight recorder, so a verdict
         # reached on this tick is in the context the recorder files.
         self._board.bind(update_tick=self._poll_ratio_check)
@@ -591,6 +614,7 @@ class ElsUiController(EventDispatcher):
             # was last written went to a board that may since have rebooted (0)
             # or kept an older value. Forget it; the next tick re-sends.
             self._stop_offset.reset()
+            self._stop_outcome.reset()
             if value:
                 # A (re)connection means the firmware may hold elsStop state
                 # from a previous session (or have rebooted and lost ours) —
@@ -977,9 +1001,26 @@ class ElsUiController(EventDispatcher):
         whatever it holds, so the worst case is the previous correction.
         """
         try:
+            # The table's rules first, so a stale table or a refused switch-on
+            # is off before the corrector reads it on this same tick.
+            self._overshoot.check()
             self._stop_offset.poll()
         except Exception as e:
             log.warning(f"stop-offset correction tick failed: {e}")
+
+    def _poll_stop_outcome(self, *args):
+        """Measure where each stop landed; hand it to the overshoot guard.
+
+        Bound to update_tick, so it must never raise (see _poll_stop_offset).
+        """
+        try:
+            outcome = self._stop_outcome.poll()
+            if outcome is not None:
+                factor = float(getattr(getattr(self._board, "formats", None),
+                                       "factor", 1) or 1)
+                self._overshoot.on_outcome(outcome, factor)
+        except Exception as e:
+            log.warning(f"stop outcome tick failed: {e}")
 
     def _poll_ratio_check(self, *args):
         """Feed the coupling-ratio check this tick's snapshot.
@@ -1098,6 +1139,28 @@ class ElsUiController(EventDispatcher):
     def stop_offset_corrector(self):
         """Read-only access for the setup screen and tests."""
         return self._stop_offset
+
+    @property
+    def overshoot(self):
+        """The overshoot table's guard, for Advanced ELS Settings and tests."""
+        return self._overshoot
+
+    def start_overshoot_survey(self, kind: str) -> bool:
+        """Start the overshoot detection pass or sweep (Advanced ELS
+        Settings). Refused, with the reason on the status bar, while a pass
+        runs or in thread mode: the measurement is FEED passes to a stop."""
+        if self._els_fsm.state in ("cutting", "retracting"):
+            self.notify("Pass is running. Wait for the stop.", NOTICE_WARNING)
+            return False
+        if self.is_threading:
+            self.notify("Thread mode is on. Set Feed mode to measure.",
+                        NOTICE_WARNING)
+            return False
+        why = self._overshoot.start_survey(kind)
+        if why:
+            self.notify(why, NOTICE_WARNING)
+            return False
+        return True
 
     def _poll_flight_recorder(self, *args):
         """Persist this tick's poll stream while the machine is doing something.

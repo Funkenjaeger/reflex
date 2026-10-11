@@ -122,13 +122,23 @@ class ElsDispatcher(SavingDispatcher):
     # ── Stop-overshoot correction (protocolVersion 11) ────────────────
     # OPT-IN, DEFAULT OFF (2026-09-18). When on, the UI writes
     # elsStop.stopOffset live from the approach Z rate so the firmware fires
-    # the stop early by the measured coast; stopPosition is never changed. The
-    # table is this machine's and lives in reflex/fsms/els_overshoot.py, bound
-    # to the current Z scale and ServoBar motion settings -- verify at a
-    # shoulder before relying on it. The margin is counts added on top of the
-    # rounded-up envelope; 1 is the decided sizing.
+    # the stop early by the measured coast; stopPosition is never changed.
+    # The margin is counts added on top of the rounded-up envelope; 1 is the
+    # decided sizing.
     els_overshoot_correction = BooleanProperty(False)
     els_overshoot_margin_counts = NumericProperty(1)
+    # THE TABLE IS THIS MACHINE'S OWN (1.2.2), empty by default, so the
+    # correction cannot turn on without one. Points in mm/s:mm, and what they
+    # were measured under: the Z scale's mm per count, the leadscrew's mm per
+    # step in the gearbox's reference position, and the gearbox table text.
+    # A mismatch with the live settings makes the table stale and turns the
+    # correction off. Format, binding and rules: reflex/fsms/els_overshoot_table.py.
+    # Written by the sweep (or the one-time migration), never typed.
+    els_overshoot_table = StringProperty("")
+    els_overshoot_mm_per_count = StringProperty("")
+    els_overshoot_mm_per_step = StringProperty("")
+    els_overshoot_gearbox = StringProperty("")
+    els_overshoot_source = StringProperty("")
 
     # ── Coupling-ratio check (half nut, gearbox lever) ─────────────────
     # OFF = SHADOW (2026-10-03): the check runs on every pass and its verdicts
