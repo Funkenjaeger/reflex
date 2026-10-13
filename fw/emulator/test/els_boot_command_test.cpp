@@ -117,8 +117,10 @@ int main() {
     /* protocolVersion 11 (2026-09-18) filled two alignment pads with
      * stopOffset / stopTriggerOffset: bootCommand, bootSeq and the 492-byte
      * size above are deliberately UNCHANGED, which is why they are asserted
-     * with the same numbers and only the version moved. */
-    check(ELS_PROTOCOL_VERSION == 11, "ELS_PROTOCOL_VERSION is 11");
+     * with the same numbers and only the version moved. protocolVersion 12
+     * filled the last two pads with clearRefSeq / clearRefCommand, the same
+     * way and with the same result. */
+    check(ELS_PROTOCOL_VERSION == 12, "ELS_PROTOCOL_VERSION is 12");
     /* The no-phantom-register property, asserted against whatever ends the
      * struct TODAY. An implicit trailing pad would make a register reflex-ui
      * cannot mirror, and the contract test would report a size mismatch it
