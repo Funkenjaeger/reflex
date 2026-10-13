@@ -1354,6 +1354,7 @@ class ElsFsm:
         self.servo.gearbox_position = gear
         self._reteach_gear()
         log.warning(f"gearbox position adopted: {previous} -> {gear}")
+        self._clear_reference_for_gear_change()
 
     def apply_gear_table(self, table: GearTable) -> None:
         """Make `table` the configured gearbox table, and re-teach the
@@ -1366,11 +1367,31 @@ class ElsFsm:
         no longer in the table reads as the reference (els_gear.py).
         """
         previous = (self.gear_table().text(), self.engaged_gear())
+        factor_before = self.gear_table().factor(previous[1])
         self.servo.gearbox_table = table.text()
         self._reteach_gear()
         log.warning(f"gearbox table changed: {previous[0] or 'none'} "
                     f"(engaged {previous[1] or '-'}) -> {table.text() or 'none'} "
                     f"(engaged {self.engaged_gear() or '-'})")
+        if self.gear_table().factor(self.engaged_gear()) != factor_before:
+            self._clear_reference_for_gear_change()
+
+    def _clear_reference_for_gear_change(self) -> None:
+        """A thread reference measured in one gear is wrong in another, so a
+        change of the engaged factor clears it (the firmware's clearRefCommand).
+
+        Written only when a reference is latched, so an adoption with nothing
+        to lose stays quiet. Nothing moves: the drive keeps custody and the
+        job stays armed. The firmware latches a fresh reference at the next
+        stop trigger, and the pass after that latch makes no correction, as
+        the first pass of a new job does. The ELS bar announces the clear from
+        the latch poller (ElsUiController._poll_thread_ref_latched), which
+        sees every clear, whatever caused it.
+        """
+        if not self.hal.read_reference_latched():
+            return
+        self.hal.request_clear_reference()
+        log.warning("thread reference cleared for the gear change")
 
     def _reteach_gear(self) -> None:
         """Push what the engaged position changes: the sync ratios (firmware

@@ -186,6 +186,11 @@ class ElsUiController(EventDispatcher):
     ratio_warning       = StringProperty("")
     ratio_warning_yellow = BooleanProperty(False)
 
+    # The same yellow strip announces every clear of the thread reference
+    # (_poll_thread_ref_latched), whatever caused it, and hides it on the next
+    # latch. 54 characters, inside the strip's 65-character contract.
+    REF_CLEARED_STRIP = "Thread reference cleared. The next pass re-latches it."
+
     # Inline ELS alarm strip text. Non-empty exactly while the ELS is in alarm:
     # the reason (or a generic line when there is none) plus the way out. Set in
     # _on_alarm, cleared when the alarm clears (Disengage, or ack). Shown
@@ -412,6 +417,9 @@ class ElsUiController(EventDispatcher):
         # only when els_ratio_check is on (otherwise shadow: log and file).
         # Lambdas for the same reason as above -- _els_fsm is built below.
         self._pending_gear = None
+        # (referenceLatched, enable) from the last GOOD latch poll, for the
+        # ref-cleared announce; None until the first one.
+        self._ref_last_good = None
         self._ratio_watch = RatioWatch(
             self._hal, board,
             fsm_state=lambda: self._els_fsm.state,
@@ -923,6 +931,7 @@ class ElsUiController(EventDispatcher):
         """
         cm = self._board.connection_manager
         reads_baseline = cm.read_failures
+        read_ok = False
         try:
             latched = self._hal.tick.reference_latched()
             enabled = self._hal.tick.enable()
@@ -935,6 +944,11 @@ class ElsUiController(EventDispatcher):
                 # construction already; made explicit so this poller's
                 # hide-don't-hold policy survives a fallback-value change.
                 latched = enabled = False
+            else:
+                read_ok = True
+
+        if read_ok:
+            self._announce_ref_clear(bool(latched), bool(enabled))
 
         show = latched and enabled
         if show != self.thread_ref_latched:
@@ -946,6 +960,52 @@ class ElsUiController(EventDispatcher):
             # before one as a category.
             log.info("ELS thread-ref indicator %s -- latched=%s enable=%s",
                      "SHOWN" if show else "hidden", latched, enabled)
+
+    def _announce_ref_clear(self, latched: bool, enabled: bool) -> None:
+        """Show the yellow ref-cleared strip on a reference really dropped,
+        and hide it on the next latch.
+
+        The firmware owns the reference and clears it on its own -- sync off
+        (servoMode 0), the host clear on a gear adoption, a disengage (the
+        next enable edge clears it), a reboot -- so this poll is the one place
+        that sees every clear. Called only with a GOOD read: a dark link is
+        not a clear, and a failed read neither announces nor moves the
+        baseline, so the first good read after an outage compares against the
+        last good one before it.
+
+        Dropped means the previous good read had latched 1 under enable 1 and
+        this one has latched 0 with enable still 1, or enable fallen to 0. A
+        new job's enable edge clearing the OLD job's latch is not a drop: the
+        lamp was already dark.
+
+        The sync-off mid-cut notice (_abandon_cut_on_sync_off) reports the cut
+        stopping and the ELS disengaging and says nothing about the
+        reference, so this strip is the only message about the reference and
+        nothing is said twice.
+        """
+        prev, self._ref_last_good = self._ref_last_good, (latched, enabled)
+        if latched and enabled:
+            if self.ratio_warning == self.REF_CLEARED_STRIP:
+                self.ratio_warning = ""
+                self.ratio_warning_yellow = False
+            return
+        if prev != (True, True):
+            return
+        # From latched-under-enable, anything but latched-under-enable is a
+        # drop: latched 0 with enable 1, or enable 1 -> 0.
+        self.ratio_warning_yellow = True
+        self.ratio_warning = self.REF_CLEARED_STRIP
+        # No colon: Kivy's logger reads the text before one as a category.
+        log.info("ELS thread reference cleared -- latched=%s enable=%s",
+                 latched, enabled)
+
+    def _clear_ratio_strip(self) -> None:
+        """Clear a coupling-ratio message when the operator acts. The
+        ref-cleared message is left up: it goes on the next latch."""
+        if self.ratio_warning == self.REF_CLEARED_STRIP:
+            return
+        self.ratio_warning = ""
+        self.ratio_warning_yellow = False
 
     def _poll_diag_capture(self, *args):
         """Drain any completed firmware settle capture to disk.
@@ -1090,8 +1150,7 @@ class ElsUiController(EventDispatcher):
                         NOTICE_WARNING)
             return False
         self._pending_gear = None
-        self.ratio_warning = ""
-        self.ratio_warning_yellow = False
+        self._clear_ratio_strip()
         self._els_fsm.adopt_gear(gear)
         return True
 
@@ -1118,8 +1177,7 @@ class ElsUiController(EventDispatcher):
             return False
         # A pending gear-change adoption names a position of the OLD table.
         self._pending_gear = None
-        self.ratio_warning = ""
-        self.ratio_warning_yellow = False
+        self._clear_ratio_strip()
         self._els_fsm.apply_gear_table(table)
         return True
 
@@ -1132,8 +1190,7 @@ class ElsUiController(EventDispatcher):
         if (gear and gear != self._els_fsm.engaged_gear()
                 and gear in self._els_fsm.gear_table().names):
             self._els_fsm.adopt_gear(gear)
-        self.ratio_warning = ""
-        self.ratio_warning_yellow = False
+        self._clear_ratio_strip()
 
     @property
     def stop_offset_corrector(self):

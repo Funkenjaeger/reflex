@@ -7,13 +7,13 @@ emitted into the format strings below, which is the whole point.
 
 import struct
 
-PROTOCOL_VERSION = 11
+PROTOCOL_VERSION = 12
 ELS_STOP_BASE = 104
 TOTAL_REGISTERS = 142
 
 HOT_BASE = 0
 HOT_COUNT = 56
-HOT_FORMAT = "<HHihHfifIiiHHffffHHH2xiiIIHHHHiHhiiii"
+HOT_FORMAT = "<HHihHfifIiiHHffffHHHHiiIIHHHHiHhiiii"
 HOT_FIELDS = [
     "enable",
     "scaleIndex",
@@ -35,6 +35,7 @@ HOT_FIELDS = [
     "protocolVersion",
     "takeupSeq",
     "takeupResult",
+    "clearRefSeq",
     "lastTakeupZDelta",
     "takeupThreshCounts",
     "stepPulseMinCycles",
@@ -72,6 +73,7 @@ HOT_LAYOUT = [
     ("protocolVersion", 1),
     ("takeupSeq", 1),
     ("takeupResult", 1),
+    ("clearRefSeq", 1),
     ("lastTakeupZDelta", 1),
     ("takeupThreshCounts", 1),
     ("stepPulseMinCycles", 1),
@@ -91,7 +93,7 @@ HOT_LAYOUT = [
 
 COLD_BASE = 56
 COLD_COUNT = 86
-COLD_FORMAT = "<HHHHHhiHH3iiiIHHH2xii50hHH4H"
+COLD_FORMAT = "<HHHHHhiHH3iiiIHHHHii50hHH4H"
 COLD_FIELDS = [
     "calCommand",
     "calSeq",
@@ -109,6 +111,7 @@ COLD_FIELDS = [
     "diagSchema",
     "diagBucketTicks",
     "diagBucketCount",
+    "clearRefCommand",
     "diagSettleTicks",
     "diagNetCounts",
     "diagTrace",
@@ -133,6 +136,7 @@ COLD_LAYOUT = [
     ("diagSchema", 1),
     ("diagBucketTicks", 1),
     ("diagBucketCount", 1),
+    ("clearRefCommand", 1),
     ("diagSettleTicks", 1),
     ("diagNetCounts", 1),
     ("diagTrace", 50),
@@ -162,6 +166,7 @@ OFFSETS = {
     "protocolVersion": 28,
     "takeupSeq": 29,
     "takeupResult": 30,
+    "clearRefSeq": 31,
     "lastTakeupZDelta": 32,
     "takeupThreshCounts": 34,
     "stepPulseMinCycles": 36,
@@ -193,6 +198,7 @@ OFFSETS = {
     "diagSchema": 78,
     "diagBucketTicks": 79,
     "diagBucketCount": 80,
+    "clearRefCommand": 81,
     "diagSettleTicks": 82,
     "diagNetCounts": 84,
     "diagTrace": 86,
@@ -254,7 +260,7 @@ typedef struct {
   uint16_t protocolVersion;
   uint16_t takeupSeq;
   uint16_t takeupResult;
-  uint16_t _pad1;
+  uint16_t clearRefSeq;
   int32_t lastTakeupZDelta;
   int32_t takeupThreshCounts;
   uint32_t stepPulseMinCycles;
@@ -286,7 +292,7 @@ typedef struct {
   uint16_t diagSchema;
   uint16_t diagBucketTicks;
   uint16_t diagBucketCount;
-  uint16_t _pad2;
+  uint16_t clearRefCommand;
   int32_t diagSettleTicks;
   int32_t diagNetCounts;
   int16_t diagTrace[50];

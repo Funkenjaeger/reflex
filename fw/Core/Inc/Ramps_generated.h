@@ -238,7 +238,7 @@ static_assert(FAST_DATA_ALL_REG_COUNT <= 75, "all group exceeds its FC3 request 
 
 /* ======== elsStop_t -- from registers/els_stop.yaml ======== */
 
-#define ELS_STOP_PROTOCOL_VERSION 11u
+#define ELS_STOP_PROTOCOL_VERSION 12u
 #define ELS_STOP_TOTAL_REGS 142u
 #define ELS_STOP_HOT_REG_BASE 0u
 #define ELS_STOP_HOT_REG_COUNT 56u
@@ -348,7 +348,13 @@ typedef struct {
    * never moved" from "never reached target"
    */
   uint16_t takeupResult;
-  uint16_t _pad1;        /* generator-emitted alignment, before lastTakeupZDelta */
+
+  /* reg 31 READ-ONLY (firmware-owned): increments once per consumed
+   * clearRefCommand, in the same ISR pass that cleared the reference; the ack
+   * for clearRefCommand Monotonic ack; edge-detect it. Sits below everything
+   * it counts.
+   */
+  uint16_t clearRefSeq;
 
   /* reg 32 READ-ONLY (firmware-owned): signed Z counts moved across the last
    * take-up, projected onto the take-up direction. Negative means the
@@ -557,7 +563,15 @@ typedef struct {
    * same reason
    */
   uint16_t diagBucketCount;
-  uint16_t _pad2;        /* generator-emitted alignment, before diagSettleTicks */
+
+  /* reg 81 bidirectional: SW writes 1 to clear the thread reference:
+   * referenceLatched and phaseOffsetSteps go to 0, as the servoMode == 0 rule
+   * does, and nothing else changes (enable, servoMode and sync untouched).
+   * Always accepted; the next stop trigger latches a fresh reference. Written
+   * by reflex-ui when it adopts a gearbox position with a reference latched
+   * CLEARED BY FIRMWARE ON CONSUME -- poll clearRefSeq, never this.
+   */
+  uint16_t clearRefCommand;
 
   /* reg 82 READ-ONLY (firmware-owned): ticks from capture start to the last
    * tick that saw nonzero dZ: the measurement ELS_SLIP_SETTLE_TICKS
@@ -615,6 +629,7 @@ static_assert(offsetof(elsStop_t, lastCorrection) == 52, "lastCorrection moved: 
 static_assert(offsetof(elsStop_t, protocolVersion) == 56, "protocolVersion moved: schema says register 28");
 static_assert(offsetof(elsStop_t, takeupSeq) == 58, "takeupSeq moved: schema says register 29");
 static_assert(offsetof(elsStop_t, takeupResult) == 60, "takeupResult moved: schema says register 30");
+static_assert(offsetof(elsStop_t, clearRefSeq) == 62, "clearRefSeq moved: schema says register 31");
 static_assert(offsetof(elsStop_t, lastTakeupZDelta) == 64, "lastTakeupZDelta moved: schema says register 32");
 static_assert(offsetof(elsStop_t, takeupThreshCounts) == 68, "takeupThreshCounts moved: schema says register 34");
 static_assert(offsetof(elsStop_t, stepPulseMinCycles) == 72, "stepPulseMinCycles moved: schema says register 36");
@@ -646,6 +661,7 @@ static_assert(offsetof(elsStop_t, executionCyclesPeak) == 152, "executionCyclesP
 static_assert(offsetof(elsStop_t, diagSchema) == 156, "diagSchema moved: schema says register 78");
 static_assert(offsetof(elsStop_t, diagBucketTicks) == 158, "diagBucketTicks moved: schema says register 79");
 static_assert(offsetof(elsStop_t, diagBucketCount) == 160, "diagBucketCount moved: schema says register 80");
+static_assert(offsetof(elsStop_t, clearRefCommand) == 162, "clearRefCommand moved: schema says register 81");
 static_assert(offsetof(elsStop_t, diagSettleTicks) == 164, "diagSettleTicks moved: schema says register 82");
 static_assert(offsetof(elsStop_t, diagNetCounts) == 168, "diagNetCounts moved: schema says register 84");
 static_assert(offsetof(elsStop_t, diagTrace) == 172, "diagTrace moved: schema says register 86");

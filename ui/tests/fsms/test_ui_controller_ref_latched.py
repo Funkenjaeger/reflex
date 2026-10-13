@@ -138,3 +138,111 @@ def test_a_register_map_bug_hides_and_never_raises_into_dispatch(ctrl):
     _snapshot_poll(ctrl, enable=1)   # referenceLatched absent -> KeyError inside
 
     assert ctrl.thread_ref_latched is False
+
+
+# ─── every ref clear is announced on the ELS bar's yellow strip ───────────
+#
+# The firmware owns the reference and clears it on its own (sync off, the
+# enable edge, a host clear on a gear adoption, a reboot), so the poller is
+# the one place that sees every clear. It announces on the coupling-ratio
+# strip in yellow, and only for a clear it actually READ: a dark link is not
+# a clear.
+
+def _ref_strip_shown(ctrl):
+    return (ctrl.ratio_warning == ElsUiController.REF_CLEARED_STRIP
+            and ctrl.ratio_warning_yellow is True)
+
+
+def test_a_ref_cleared_under_an_engaged_els_shows_the_yellow_strip(ctrl):
+    """latched -> 0 on a good read with enable still 1: sync off, or the
+    host's clear on a gear adoption."""
+    _latched_and_enabled(ctrl)
+    _snapshot_poll(ctrl, referenceLatched=0, enable=1)
+    assert _ref_strip_shown(ctrl)
+
+
+def test_the_same_edge_on_a_failed_read_shows_nothing(ctrl):
+    """An empty snapshot reads as latched 0 / enable 0 by fallback. That is
+    the link going dark, not the reference going away."""
+    _latched_and_enabled(ctrl)
+    _snapshot_poll(ctrl)
+    assert ctrl.ratio_warning == ""
+    assert ctrl.ratio_warning_yellow is False
+
+
+def test_a_fabricated_unlatched_read_shows_nothing(ctrl):
+    """The guard is reads_failed_since, not the fallback value: a failed
+    read that happens to say "latched 0, enable 1" is still not a clear."""
+    _latched_and_enabled(ctrl)
+    cm = ctrl._board.connection_manager
+
+    def _fabricated(value):
+        def read(*_a):
+            cm.fail_read()
+            return value
+        return read
+
+    ctrl._hal.tick.reference_latched = _fabricated(False)
+    ctrl._hal.tick.enable = _fabricated(True)
+    ctrl._poll_thread_ref_latched()
+    assert ctrl.ratio_warning == ""
+
+
+def test_disengaging_with_a_ref_latched_shows_the_strip(ctrl):
+    """enable 1 -> 0 with latched 1: the reference is dead (the next enable
+    edge clears it), so it is announced now."""
+    _latched_and_enabled(ctrl)
+    _snapshot_poll(ctrl, referenceLatched=1, enable=0)
+    assert _ref_strip_shown(ctrl)
+
+
+def test_a_fresh_latch_hides_the_strip(ctrl):
+    _latched_and_enabled(ctrl)
+    _snapshot_poll(ctrl, referenceLatched=0, enable=1)
+    assert _ref_strip_shown(ctrl)
+    _snapshot_poll(ctrl, referenceLatched=1, enable=1)
+    assert ctrl.ratio_warning == ""
+    assert ctrl.ratio_warning_yellow is False
+
+
+def test_a_new_job_with_no_ref_is_not_a_clear(ctrl):
+    """The enable rising edge clears the OLD job's latch while the lamp was
+    already dark: nothing was shown, so nothing was lost."""
+    _snapshot_poll(ctrl, referenceLatched=1, enable=0)
+    _snapshot_poll(ctrl, referenceLatched=0, enable=1)
+    assert ctrl.ratio_warning == ""
+
+
+def test_a_clear_seen_across_an_outage_is_still_announced(ctrl):
+    """The outage itself announces nothing, but the first good read after it
+    that finds the reference gone (a board reboot) is a real clear."""
+    _latched_and_enabled(ctrl)
+    _snapshot_poll(ctrl)
+    assert ctrl.ratio_warning == ""
+    _snapshot_poll(ctrl, referenceLatched=0, enable=1)
+    assert _ref_strip_shown(ctrl)
+
+
+def test_the_strip_survives_the_next_cut_press_until_the_latch(ctrl):
+    """Cut clears the gear-change strip (_adopt_pending_gear); the ref strip
+    stays up through the pass and goes on the latch at its stop."""
+    _latched_and_enabled(ctrl)
+    _snapshot_poll(ctrl, referenceLatched=0, enable=1)
+    ctrl._adopt_pending_gear()
+    assert _ref_strip_shown(ctrl)
+
+
+def test_a_latch_leaves_a_coupling_ratio_message_alone(ctrl):
+    _latched_and_enabled(ctrl)
+    _snapshot_poll(ctrl, referenceLatched=0, enable=1)
+    ctrl.ratio_warning_yellow = False
+    ctrl.ratio_warning = "Carriage speed is incorrect. Examine the drivetrain."
+    _snapshot_poll(ctrl, referenceLatched=1, enable=1)
+    assert ctrl.ratio_warning == "Carriage speed is incorrect. Examine the drivetrain."
+
+
+def test_the_strip_text_fits_the_strip_contract():
+    """Same 65-character contract as the other ELS bar strips."""
+    text = ElsUiController.REF_CLEARED_STRIP
+    assert len(text) <= 65
+    assert "reference" in text.lower()

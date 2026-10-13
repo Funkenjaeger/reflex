@@ -37,7 +37,7 @@
 # =============================================================================
 
 schema_version: 1
-protocol_version: 11          # 10 -> 11: stopOffset + stopTriggerOffset (stop-overshoot correction). Bump on any layout change.
+protocol_version: 12          # 11 -> 12: clearRefCommand + clearRefSeq (host clear of the thread reference). Bump on any layout change.
                               # ENFORCED: genregs --check fails if the layout no longer matches
                               # registers/layout-fingerprints.json's pin for this version.
 
@@ -147,6 +147,10 @@ fields:
   # `invariants.seq_precedes_payload` makes it un-regressable.
   - {id: 22, name: takeupSeq,         type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [takeupResult, lastTakeupZDelta], doc: "READ-ONLY (firmware-owned): increments once per take-up outcome; lets SW tell completed-normally from host-cleared, which takeupPending alone cannot"}
   - {id: 23, name: takeupResult,      type: uint16, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): outcome of the last take-up. ELS_CAL_*/ELS_TAKEUP_* in els_backlash_cal.h; 0 = OK. Distinguishes \"carriage never moved\" from \"never reached target\""}
+  # protocolVersion 12: in the slot that was the generator's alignment pad
+  # before lastTakeupZDelta, so the hot group does not grow and nothing after
+  # it moves. Hot like latchSeq: the ack of a command, beside its peers.
+  - {id: 59, name: clearRefSeq,       type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [], doc: "READ-ONLY (firmware-owned): increments once per consumed clearRefCommand, in the same ISR pass that cleared the reference; the ack for clearRefCommand"}
   - {id: 24, name: lastTakeupZDelta,  type: int32,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): signed Z counts moved across the last take-up, projected onto the take-up direction. Negative means the carriage moved the wrong way, a distinct fault from \"didn't move\""}
 
   # --- PROMOTED BY THE READER AUDIT, 2026-09-07 -----------------------------
@@ -218,6 +222,13 @@ fields:
   - {id: 46, name: diagSchema,        type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): identifies the probe compiled into the block. 0 = none; do not interpret anything below it, and never assume a schema you did not read"}
   - {id: 48, name: diagBucketTicks,   type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ISR ticks summed into each diagTrace bucket. Published so the host never has to assume the ISR rate"}
   - {id: 49, name: diagBucketCount,   type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): populated diagTrace entries, for the same reason"}
+  # protocolVersion 12: NOT a diagnostic field. It sits in the slot that was
+  # the generator's alignment pad before diagSettleTicks, the only cold slot
+  # left that moves nothing (bootCommand keeps absolute register 168, and the
+  # block stays 142 registers). It reads zero except for the one ISR pass
+  # between the host's write and its consumption, so a release build's
+  # scratchpad still reads zero. No probe may use it.
+  - {id: 58, name: clearRefCommand,   type: uint16, access: bidirectional, group: cold, kind: command, ack: clearRefSeq, doc: "bidirectional: SW writes 1 to clear the thread reference: referenceLatched and phaseOffsetSteps go to 0, as the servoMode == 0 rule does, and nothing else changes (enable, servoMode and sync untouched). Always accepted; the next stop trigger latches a fresh reference. Written by reflex-ui when it adopts a gearbox position with a reference latched"}
   - {id: 50, name: diagSettleTicks,   type: int32,  access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ticks from capture start to the last tick that saw nonzero dZ: the measurement ELS_SLIP_SETTLE_TICKS estimates. Meaningful in v2, where the capture stops before the pass starts"}
   - {id: 51, name: diagNetCounts,     type: int32,  access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): signed Z counts summed across the capture"}
   - {id: 52, name: diagTrace,         type: int16, count: ELS_DIAG_TRACE_BUCKETS, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): per-bucket signed sum of dZ. Signed so encoder dither cancels and real motion does not, which is what a quiescence test needs"}
@@ -249,13 +260,19 @@ constants:
 #
 #   hot   56 registers  (elsStop 0..55)    -> ONE FC3 request  (budget 75)
 #   cold  86 registers  (elsStop 56..141)  -> fetched on demand
-#   total 142 registers (protocolVersion 9 was 140; 10 and 11 are both 142)
+#   total 142 registers (protocolVersion 9 was 140; 10, 11 and 12 are all 142)
+#
+# protocolVersion 12 FILLED the last two interior pads (clearRefSeq before
+# lastTakeupZDelta in hot, clearRefCommand before diagSettleTicks in cold), so
+# again no group grew and bootCommand stayed at absolute register 168. There
+# are now NO interior pads: the next field grows a group, and growing hot moves
+# every cold register including bootCommand.
 #
 # protocolVersion 11 FILLED two of the four interior pads protocolVersion 10
 # had (stopTriggerOffset before stopTriggerZ in hot, stopOffset before
 # phaseOffsetPending in cold), so no group grew and bootCommand stayed at
-# absolute register 168. Two generator-emitted interior pads remain: before
-# lastTakeupZDelta (hot) and before diagSettleTicks (cold). Under
+# absolute register 168. That left two generator-emitted interior pads:
+# before lastTakeupZDelta (hot) and before diagSettleTicks (cold). Under
 # protocolVersion 10 there were four. Under protocolVersion 9 the
 # padding was hand-placed fields named machineModeReserved and
 # stopTriggerReserved; it is now the generator's business and vanishes from

@@ -354,7 +354,13 @@ void RampsStart(rampsHandler_t *rampsData) {
    * each trigger used. Both sit in slots that were alignment pads under 10, so
    * nothing else moved -- bootCommand is still register 168. From here on the
    * version is bound to the layout by registers/layout-fingerprints.json, which
-   * genregs --check enforces. */
+   * genregs --check enforces.
+   *
+   * 12: clearRefCommand / clearRefSeq, the host's clear of the thread
+   * reference (reflex-ui writes it when it adopts a gearbox position with a
+   * reference latched). Both sit in slots that were alignment pads under 11:
+   * clearRefSeq in hot before lastTakeupZDelta, clearRefCommand in cold before
+   * diagSettleTicks. Nothing else moved; bootCommand is still register 168. */
   rampsData->shared.elsStop.protocolVersion = ELS_PROTOCOL_VERSION;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
@@ -375,6 +381,8 @@ void RampsStart(rampsHandler_t *rampsData) {
   rampsData->shared.elsStop.executionCyclesPeak = 0;
   rampsData->shared.elsStop.bootCommand = 0;
   rampsData->shared.elsStop.bootSeq     = 0;
+  rampsData->shared.elsStop.clearRefCommand = 0;
+  rampsData->shared.elsStop.clearRefSeq     = 0;
   rampsData->shared.elsStop.calResult    = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupResult = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupSeq    = 0;
@@ -918,6 +926,28 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   if (shared->fastData.servoMode == 0u && shared->elsStop.referenceLatched) {
     shared->elsStop.referenceLatched = 0;
     shared->elsStop.phaseOffsetSteps = 0;
+  }
+
+  /* Host clear of the thread reference. Does exactly what the custody rule
+   * above does -- referenceLatched and phaseOffsetSteps to 0 -- and nothing
+   * else: enable, servoMode and sync are untouched, so the drive keeps custody
+   * and the job stays armed. The host uses it when the reference stops being
+   * valid without custody being lost, which is a gearbox lever moved under a
+   * held leadscrew: the datum was measured in the old gear.
+   *
+   * Always accepted, so clearRefSeq acks every consumed command and there is
+   * no refusal channel. Safe at any point in a job because nothing moves: the
+   * stop-trigger block below re-latches at the next trigger while
+   * referenceLatched == 0, and the pass after that latch makes no correction,
+   * exactly like the first pass of a new job.
+   *
+   * Placed BEFORE the manual latch, so a latch requested in the same pass
+   * still lands. */
+  if (shared->elsStop.clearRefCommand != 0u) {
+    shared->elsStop.clearRefCommand  = 0u;
+    shared->elsStop.referenceLatched = 0;
+    shared->elsStop.phaseOffsetSteps = 0;
+    shared->elsStop.clearRefSeq++;
   }
 
   /* Manual reference latch (interactive re-sync to an existing thread). Same

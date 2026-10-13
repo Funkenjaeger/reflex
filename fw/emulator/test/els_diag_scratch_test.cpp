@@ -127,8 +127,10 @@ int main(void)
      * correction, placed in two of 10's alignment pads so nothing else moved.
      * A layout change all the same, and since this bump the version is bound
      * to the layout by registers/layout-fingerprints.json. */
-    check(data.shared.elsStop.protocolVersion == 11,
-          "protocolVersion is 11 (stopOffset / stopTriggerOffset)");
+    /* 11 -> 12: clearRefCommand / clearRefSeq, the host's clear of the thread
+     * reference, in the last two alignment pads. Nothing else moved. */
+    check(data.shared.elsStop.protocolVersion == 12,
+          "protocolVersion is 12 (clearRefCommand / clearRefSeq)");
     check(data.shared.elsStop.protocolVersion == ELS_PROTOCOL_VERSION,
           "RampsStart publishes the ELS_PROTOCOL_VERSION macro, not a drifting literal");
 

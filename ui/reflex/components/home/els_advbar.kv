@@ -577,6 +577,9 @@
       #    or the carriage rate fits no gearbox position. YELLOW: the lever is in
       #    another known position, which the next Cut or Retract adopts. Same
       #    65-character text contract as the take-up strip above.
+      #    Also YELLOW, whether or not that check is on: the thread reference
+      #    was cleared (sync off, a gear adoption, a disengage, or by the
+      #    firmware), shown until the next latch (controller.REF_CLEARED_STRIP).
       BoxLayout:
         id: ratio_notice
         orientation: 'horizontal'

@@ -690,3 +690,70 @@ def test_flight_recorder_files_the_verdict_and_the_gear():
     assert ctx[GEARBOX_KEY] == "A"
     broken = FlightRecorder(_Board(), ratio_check=lambda: 1 / 0)
     assert broken._context({})[RATIO_VERDICT_KEY] is None
+
+
+# ─── A gear adoption clears a latched thread reference ─────────────────
+#
+# The reference was measured in the old gear, so it is wrong in the new one.
+# The host writes the firmware's clearRefCommand on every adoption that
+# finds a reference latched, and writes nothing when none is.
+
+class _RecordingRegs(dict):
+    """The elsStop block as a dict that remembers every write."""
+
+    def __init__(self, **regs):
+        super().__init__(**regs)
+        self.writes = []
+
+    def __setitem__(self, key, value):
+        self.writes.append((key, value))
+        super().__setitem__(key, value)
+
+
+def _clear_writes(regs):
+    return [w for w in regs.writes if w[0] == "clearRefCommand"]
+
+
+def _wire(board, latched):
+    regs = _RecordingRegs(referenceLatched=1 if latched else 0)
+    board.device = {"elsStop": regs}
+    board.connected = True
+    return regs
+
+
+@pytest.mark.parametrize("adopt", ["select_gear", "pending_then_cut"])
+def test_a_gear_adoption_with_a_ref_latched_writes_the_clear_once(adopt):
+    ctrl, board, els = _controller()
+    regs = _wire(board, latched=True)
+    if adopt == "select_gear":
+        assert ctrl.select_gear("B") is True
+    else:
+        ctrl._pending_gear = "B"
+        ctrl._adopt_pending_gear()
+    assert board.servo.gearbox_position == "B"
+    assert _clear_writes(regs) == [("clearRefCommand", 1)]
+
+
+def test_a_gear_adoption_with_no_ref_latched_writes_nothing():
+    ctrl, board, els = _controller()
+    regs = _wire(board, latched=False)
+    assert ctrl.select_gear("B") is True
+    assert board.servo.gearbox_position == "B"
+    assert _clear_writes(regs) == []
+
+
+def test_a_table_change_that_moves_the_engaged_factor_clears_the_ref(_cfg):
+    ctrl, servo, notes = _real_servo_controller("A=1, B=2")
+    servo.gearbox_position = "B"
+    regs = _wire(ctrl._board, latched=True)
+    assert ctrl.set_gear_table("A=1, B=3") is True
+    assert _clear_writes(regs) == [("clearRefCommand", 1)]
+
+
+def test_a_table_change_that_keeps_the_engaged_factor_writes_nothing(_cfg):
+    """Engaged in the reference: its factor is 1 in both tables."""
+    ctrl, servo, notes = _real_servo_controller("A=1, B=2")
+    servo.gearbox_position = "A"
+    regs = _wire(ctrl._board, latched=True)
+    assert ctrl.set_gear_table("A=1, B=3") is True
+    assert _clear_writes(regs) == []
