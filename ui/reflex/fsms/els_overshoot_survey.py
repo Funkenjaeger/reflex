@@ -70,6 +70,18 @@ REFUSED = "refused"
 
 FINAL = frozenset({YES, NO, UNKNOWN, FITTED, REFUSED})
 
+# ── The cues (first run on the development lathe, 2026-10-11) ──────────────────────────
+# Shown on the ELS bar strip until the next pass starts. They name the
+# goal, not the button: after a stop the carriage needs a Retract before
+# the next Cut, and "Press Cut again." skipped that. After the last feed
+# the spindle speed has to rise instead, so the cue says "setting".
+NEXT_PASS = "Proceed with the next pass."
+NEXT_SETTING = "Proceed to the next faster setting."
+
+
+def _counts(n: int) -> str:
+    return f"{n} count" if n == 1 else f"{n} counts"
+
 
 @dataclass
 class Survey:
@@ -142,7 +154,7 @@ class Survey:
         c = o.overshoot
         border = abs(c - DETECT_THRESHOLD_COUNTS) <= DETECT_BORDER_COUNTS
         if len(self.stops) == 1 and border:
-            self.message = f"Coast {c} counts, near the limit. Press Cut again."
+            self.message = f"Coast {_counts(c)}, near the limit. {NEXT_PASS}"
             return
         verdicts = {s.overshoot > DETECT_THRESHOLD_COUNTS for s in self.stops}
         counts = ", ".join(str(s.overshoot) for s in self.stops)
@@ -168,20 +180,20 @@ class Survey:
         if not o.premise_ok or not o.rate:
             # No rate (the window had not filled) or a zero one: nothing to
             # key the coast on, and a zero would divide below.
-            self.message = f"Stop {n + 1} not counted. Press Cut again."
+            self.message = f"Pass {n + 1} not counted. {NEXT_PASS}"
             return
         group, k = divmod(n, SWEEP_REPEATS)
         if k:
             first = self.stops[group * SWEEP_REPEATS].rate
             if abs(o.rate / first - 1.0) > SAME_RATE_FRACTION:
-                self.message = (f"Feed changed. Stop {n + 1} not counted. "
-                                f"Press Cut at the same feed.")
+                self.message = (f"Speed changed. Pass {n + 1} not counted. "
+                                f"Repeat it at the same setting.")
                 return
         self.stops.append(o)
         n += 1
         if n % SWEEP_REPEATS:
-            self.message = (f"Stop {n} of {self.total}: coast {o.overshoot} "
-                            f"counts. Press Cut again.")
+            self.message = (f"Pass {n}/{self.total}: coast {_counts(o.overshoot)}. "
+                            f"{NEXT_PASS}")
             return
         g = self.stops[n - SWEEP_REPEATS:n]
         coasts = [s.overshoot for s in g]
@@ -195,8 +207,8 @@ class Survey:
                          f"The coast is not repeatable, so no table was made.")
             return
         if n < self.total:
-            self.message = (f"Stop {n} of {self.total}: coast {o.overshoot} "
-                            f"counts. Set a faster feed.")
+            self.message = (f"Pass {n}/{self.total}: coast {_counts(o.overshoot)}. "
+                            f"{NEXT_SETTING}")
             return
         self._fit()
 
@@ -220,5 +232,5 @@ class Survey:
             table.append((round(r, 1), float(top)))
         self.table = tuple(table)
         rows = ", ".join(f"{self._mm_s(r):.1f} mm/s: {int(c)}" for r, c in table[1:])
-        self._finish(FITTED, "Sweep done. Open Advanced ELS Settings to save.",
+        self._finish(FITTED, "Sweep done. Save or discard the new table.",
                      f"Worst coast per feed, in counts: {rows}.")

@@ -3,12 +3,16 @@
 Opened from Advanced ELS Settings. Unlike the backlash calibration, the
 controller does not move the carriage itself: the operator cuts air passes
 with the ELS bar as usual. So this popup only STARTS a measurement and then
-closes, to give the ELS bar back. Each stop's result shows in the status
-strip; open the popup again to see where the measurement is, stop it, or save
-a finished sweep. The rules are in reflex/fsms/els_overshoot_survey.py.
+closes, together with Advanced ELS Settings underneath it, to give the ELS
+bar back. Each stop's result shows in a strip on the ELS bar until the next
+pass starts; open the popup again to see where the measurement is or stop it.
+At the end of a sweep the controller opens it by itself, for Save or Discard.
+The prompt carries a link and a QR code to the step-by-step guide on the docs
+site (first run on the development lathe, 2026-10-11: more instructions, but not more UI). The
+rules are in reflex/fsms/els_overshoot_survey.py.
 """
 from kivy.logger import Logger
-from kivy.properties import StringProperty
+from kivy.properties import ObjectProperty, StringProperty
 from kivy.uix.popup import Popup
 
 from reflex.fsms import els_overshoot_survey as sv
@@ -23,12 +27,15 @@ PROMPT_TEXT = (
     "Measure how far the carriage coasts after the stop fires.\n\n"
     "Detect: 1 pass. Does this machine need the correction?\n"
     "Sweep: 3 passes at each of 4 feeds, about 5 minutes.\n\n"
-    "Set Feed mode and turn on the stop. Move the tool clear: all passes "
-    "are in air. Then cut each pass to the stop as usual."
+    "Feed mode, stop on, tool clear: every pass is in air."
 )
 
+#: The step-by-step guide on the docs site (docs/guide/measuring-stop-overshoot.md).
+GUIDE_URL = "https://funkenjaeger.github.io/reflex/guide/measuring-stop-overshoot/"
+GUIDE_TEXT = "Step-by-step guide:\nfunkenjaeger.github.io/reflex/guide/measuring-stop-overshoot"
+
 RUNNING_TEXT = (
-    "Cut each pass to the stop. The status strip shows each result.\n\n"
+    "Cut each pass to the stop. The strip on the ELS bar shows each result.\n\n"
     "Sweep: 3 passes at each feed, slowest feed first. The fastest feed is "
     "the top of the table."
 )
@@ -39,6 +46,12 @@ class OvershootSurveyPopup(Popup):
     state = StringProperty("prompt")
     body_text = StringProperty(PROMPT_TEXT)
     detail_text = StringProperty("")
+
+    #: The window this one was opened from (Advanced ELS Settings), closed
+    #: with it when a measurement starts. None when the controller opened it.
+    owner = ObjectProperty(None, allownone=True)
+    guide_url = StringProperty(GUIDE_URL)
+    guide_text = StringProperty(GUIDE_TEXT)
 
     def __init__(self, **kv):
         super().__init__(**kv)
@@ -54,6 +67,8 @@ class OvershootSurveyPopup(Popup):
     def start(self, kind: str):
         if self.app.els_uic.start_overshoot_survey(kind):
             self.dismiss()
+            if self.owner is not None:
+                self.owner.dismiss()
         else:
             self._refresh()
 
@@ -81,6 +96,8 @@ class OvershootSurveyPopup(Popup):
         g = self._guard
         s = g.survey
         status = f"Table: {g.status_text()}."
+        if g.last_landing:
+            status += f" Last corrected stop: {g.last_landing[len('Stop '):]}"
         if s is None:
             self.state = "prompt"
             self.title = "Measure stop overshoot"

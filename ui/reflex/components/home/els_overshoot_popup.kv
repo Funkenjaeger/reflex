@@ -1,8 +1,10 @@
+#: import QrCode reflex.components.widgets.qr_code.QrCode
+
 <OvershootSurveyPopup>:
     title: "Measure stop overshoot"
     size_hint_x: 0.8
     size_hint_y: None
-    height: 520
+    height: 560
     # Not auto-dismiss: a stray tap outside must not look like a choice.
     auto_dismiss: False
 
@@ -31,6 +33,26 @@
             opacity: 1 if root.detail_text else 0
             color: app.theme.text_dim if hasattr(app.theme, "text_dim") else app.theme.text
             font_size: app.formats.font_size
+
+        # The guide: a QR code and the address, on the prompt only. Without
+        # segno the QR draws nothing and the address is still there.
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(124) if root.state == "prompt" else 0
+            opacity: 1 if root.state == "prompt" else 0
+            spacing: dp(12)
+            QrCode:
+                data: root.guide_url if root.state == "prompt" else ""
+                size_hint_x: None
+                width: self.height
+            Label:
+                text: root.guide_text
+                halign: "left"
+                valign: "middle"
+                text_size: self.size
+                color: app.theme.text_dim if hasattr(app.theme, "text_dim") else app.theme.text
+                font_size: app.formats.font_size * 0.8
 
         Widget:
             # spacer so the buttons sit at the bottom regardless of text length

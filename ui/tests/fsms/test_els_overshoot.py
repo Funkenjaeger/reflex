@@ -833,3 +833,67 @@ def test_controller_migrates_the_built_in_table_on_the_first_tick():
     assert ctrl.notice_text == MIGRATED_NOTICE
     # ceil(17 + 12 x 721/751) + 1, as before the upgrade.
     assert rec.assignments[-1] == ("stopOffset", 30)
+
+
+
+class _CueOwner:
+    """Only what the cue and result wiring touch, so these tests build no
+    ElsUiController: a full controller subscribes to the global FSM event bus
+    and outlives its test, which lets one test's alarm land in another's."""
+
+    def __init__(self):
+        from reflex.fsms.ui_controller import ElsUiController as C
+        self.measure_cue = ""
+        self._set_measure_cue = C._set_measure_cue.__get__(self)
+        self._on_domain_state_changed = C._on_domain_state_changed.__get__(self)
+        self._open_overshoot_result = C._open_overshoot_result.__get__(self)
+
+    def _sync_engaged(self, _state):
+        pass
+
+
+def _pump_clock():
+    from kivy.clock import Clock
+    for _ in range(3):
+        Clock.tick()
+
+
+def test_the_measurement_cue_stays_until_the_next_pass_starts():
+    """First run on the development lathe, 2026-10-11: the cue cleared only on
+    a timeout, so the operator waited for it after every pass, and a
+    distracted operator would lose it. It is the ELS bar strip now, and the
+    next pass is what clears it."""
+    c = _CueOwner()
+    c._set_measure_cue("Pass 1/12: coast 3 counts. Proceed with the next pass.")
+    assert c.measure_cue.startswith("Pass 1/12")
+    c._on_domain_state_changed("stopped")
+    _pump_clock()
+    assert c.measure_cue.startswith("Pass 1/12"), "only a pass start clears it"
+    c._on_domain_state_changed("cutting")
+    _pump_clock()
+    assert c.measure_cue == ""
+
+
+def test_a_finished_sweep_opens_the_result_window(monkeypatch):
+    """First run on the development lathe, 2026-10-11: at the end of the sweep
+    the app opens the window itself."""
+    from reflex.components.home import els_overshoot_popup as pop
+    opened = []
+
+    class FakePopup:
+        def open(self):
+            opened.append(True)
+
+    monkeypatch.setattr(pop, "OvershootSurveyPopup", FakePopup)
+    _CueOwner()._open_overshoot_result()
+    assert opened == [True]
+
+
+def test_the_controller_wires_the_guard_to_the_cue_and_the_result():
+    """The guard's two callbacks reach the controller: read off its source,
+    so no controller has to be built (see _CueOwner)."""
+    import inspect
+    from reflex.fsms.ui_controller import ElsUiController
+    src = inspect.getsource(ElsUiController.__init__)
+    assert "cue=self._set_measure_cue" in src
+    assert "self._open_overshoot_result()" in src

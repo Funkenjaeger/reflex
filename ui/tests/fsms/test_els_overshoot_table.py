@@ -177,7 +177,7 @@ def test_status_stale_lowercases_the_reason():
 
 
 def test_status_migrated():
-    assert tbl.status_text(tbl.migration(DEV), None) == "Built-in table, up to 17.6 mm/s"
+    assert tbl.status_text(tbl.migration(DEV), None) == "Saved from the development lathe, up to 17.6 mm/s"
 
 
 def test_status_measured():

@@ -191,6 +191,13 @@ class ElsUiController(EventDispatcher):
     # latch. 54 characters, inside the strip's 65-character contract.
     REF_CLEARED_STRIP = "Thread reference cleared. The next pass re-latches it."
 
+    # The overshoot measurement's cue (els_overshoot_survey.py): its own
+    # strip on the ELS bar, in the stack with the ones above. It stays until
+    # the next pass starts, so a cue is never lost to a timeout and never
+    # waited out (first run on the development lathe, 2026-10-11). Empty when no measurement
+    # is running, and cleared when one is cancelled or saved.
+    measure_cue         = StringProperty("")
+
     # Inline ELS alarm strip text. Non-empty exactly while the ELS is in alarm:
     # the reason (or a generic line when there is none) plus the way out. Set in
     # _on_alarm, cleared when the alarm clears (Disengage, or ack). Shown
@@ -374,6 +381,9 @@ class ElsUiController(EventDispatcher):
             binding=lambda: self._els_fsm.overshoot_binding(),
             notify=self.notify,
             gear=lambda: self._els_fsm.engaged_gear(),
+            cue=self._set_measure_cue,
+            on_result=lambda _survey: Clock.schedule_once(
+                lambda _dt: self._open_overshoot_result(), 0),
         )
 
         # Stop-overshoot correction (protocolVersion 11). Opt-in, default off.
@@ -635,6 +645,25 @@ class ElsUiController(EventDispatcher):
     def _on_domain_state_changed(self, state):
         # Mirror domain FSM state into a Kivy property the widget can bind to.
         Clock.schedule_once(lambda _dt: self._sync_engaged(state), 0)
+        if state == "cutting":
+            # A pass started: the measurement cue it answered is done.
+            Clock.schedule_once(lambda _dt: self._set_measure_cue(""), 0)
+
+    def _set_measure_cue(self, text: str) -> None:
+        if text != self.measure_cue:
+            self.measure_cue = text
+
+    def _open_overshoot_result(self) -> None:
+        """A sweep ended: open its result for Save or Discard (first run on
+        the development lathe, 2026-10-11: the app should open the window
+        itself).
+        Imported here, as _on_pass_interrupted imports its popup: the
+        controller must stay importable without the widget tree."""
+        try:
+            from reflex.components.home.els_overshoot_popup import OvershootSurveyPopup
+            OvershootSurveyPopup().open()
+        except Exception as e:
+            log.warning(f"could not open the overshoot result window: {e}")
 
     def _sync_engaged(self, state):
         self.engaged = state != "disabled"

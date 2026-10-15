@@ -229,5 +229,8 @@ def status_text(table: Optional[StoredTable], reason: Optional[str]) -> str:
         return f"Stale: {reason[0].lower()}{reason[1:]}"
     top = float(table.top_rate_mm_s)
     if table.source == SOURCE_MIGRATED:
-        return f"Built-in table, up to {top:.1f} mm/s"
+        # Not "Built-in table": it reads as built into the software, when it
+        # is this machine's saved setting, seeded from the development lathe's
+        # values (first run on the development lathe, 2026-10-11).
+        return f"Saved from the development lathe, up to {top:.1f} mm/s"
     return f"{table.source[:1].upper()}{table.source[1:]}, up to {top:.1f} mm/s"

@@ -18,10 +18,14 @@ There are two measurements:
 3. **Move the tool clear** of the workpiece and the chuck. All passes are
    in air.
 
-Press **Detect** or **Sweep**. The window closes. Cut each pass to the
-stop. After each stop the status strip shows the result and the next step.
-Open **Overshoot table → Measure** again to see the progress, or to stop
-measuring.
+Press **Detect** or **Sweep**. Both windows close. Cut each pass to the
+stop. After each stop a strip on the ELS bar shows the result and the next
+step, and stays until the next pass starts. Between passes, press
+**Retract**, then **Cut**. Open **Overshoot table → Measure** again to see
+the progress, or to stop measuring.
+
+The **Measure** window has a QR code for the step-by-step guide on the
+docs site.
 
 ## Detect
 
