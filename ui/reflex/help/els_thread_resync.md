@@ -19,18 +19,18 @@ everything works the same as normal threading.
 2. **Engage the ELS stop.** The reference belongs to a threading job, so
    a job must be armed first. It must also be a *fresh* job. If a
    reference already exists, disengage and re-engage.
-3. Close the half nut. Keep the tool clear of the work in X.
 
 ## The Procedure
 
-**1. Jog in the cutting direction only.**
-Keep the tool clear in X. Jog the carriage in the cutting direction until
-the tool tip is over the threaded section. Then stop. A jog in the cutting
-direction loads the backlash on the side that a real pass starts from.
-That is the key to the procedure. Do **not** adjust the position by
-jogging. An adjustment reverses across the backlash, and that does not
-repeat. Later, it can also drive a tool that is down in a groove sideways
-into a flank.
+**1. Seat the half nut against the thread flank.**
+Keep the tool clear of the work in X. Move the carriage by hand until the
+tool tip is over the threaded section. Close the half nut. Pull the
+carriage back by hand in the anti-cutting direction (opposite the feed)
+until it seats firmly. Then stop. In a real pass the leadscrew pushes the
+half nut against one flank of the thread. The pull seats it on that same
+flank. Do **not** adjust the position afterward. An adjustment reverses
+across the backlash, and that does not repeat. Later, it can also drive a
+tool that is down in a groove sideways into a flank.
 
 **2. Move the tool into the groove without the carriage.**
 Turn the **spindle by hand**. Feed the **cross-slide** in until the tool
@@ -55,9 +55,10 @@ error cleans up over the first cutting passes.
 
 ## If It Says the Carriage Moved
 
-After the jog, all of the leadscrew free play is on one side. So the
-carriage can only creep further in the cutting direction. Push it back by
-hand until it seats against the leadscrew. Then press **Re-seated**.
+After the half nut seats, all of the leadscrew free play is on one side.
+So the carriage can only creep further in the feed direction. Push it back
+by hand in the anti-cutting direction, the same direction that you used to
+seat it. Stop when it seats firmly. Then press **Re-seated**.
 
 The re-seat pushes the carriage against a hard mechanical stop that it
 was already against. So the Z readout must return to within a couple of

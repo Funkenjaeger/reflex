@@ -111,7 +111,7 @@ advice. Size it from what the calibration actually reports.
 
 ## Notes
 
-- The stored take-up shows in **Backlash takeup (mm)** in Advanced ELS
+- The stored take-up shows in **Backlash take-up (mm)** in Advanced ELS
   Settings. You can still enter a value by hand. Calibration only fills
   it in for you.
 - When you run it again, it compares the result with the previous

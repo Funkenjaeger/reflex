@@ -34,7 +34,6 @@ no drift.
 
 ## Axes and scales
 
-- [Angle (degrees)](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/angle_degrees.md) &nbsp;`angle_degrees`
 - [Axis Name](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/axis_name.md) &nbsp;`axis_name`
 - [Position Tolerance (mm)](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/position_tolerance.md) &nbsp;`position_tolerance`
 - [Scale Input](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/scale_input.md) &nbsp;`scale_input`
@@ -50,7 +49,6 @@ no drift.
 - [Acceleration (Steps/s²)](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/servo_acceleration.md) &nbsp;`servo_acceleration`
 - [Servo Gearing Ratios](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/servo_gearing.md) &nbsp;`servo_gearing`
 - [Maximum Speed (Steps/s)](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/servo_max_speed.md) &nbsp;`servo_max_speed`
-- [Weight Numerator / Denominator](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/weights.md) &nbsp;`weights`
 
 ## Display
 
@@ -72,4 +70,4 @@ no drift.
 
 ---
 
-41 topics.
+39 topics.
