@@ -45,7 +45,8 @@ class _Bare:
     save = OvershootSurveyPopup.save
     close = OvershootSurveyPopup.close
 
-    def __init__(self):
+    def __init__(self, owner=None):
+        self.owner = owner
         self.els = SimpleNamespace(
             els_overshoot_correction=False, els_overshoot_table="",
             els_overshoot_mm_per_count="", els_overshoot_mm_per_step="",
@@ -89,6 +90,38 @@ def test_start_closes_the_popup_to_give_the_els_bar_back():
     p.start("sweep")
     assert p.dismissed == 1
     assert p.app.els_uic.overshoot.survey.kind == sv.SWEEP
+
+
+class _Owner:
+    def __init__(self):
+        self.dismissed = 0
+
+    def dismiss(self):
+        self.dismissed += 1
+
+
+def test_start_closes_advanced_els_settings_too():
+    """first run on the development lathe, 2026-10-11: Detect closed the Measure window but left
+    Advanced ELS Settings open on top of the ELS bar."""
+    owner = _Owner()
+    p = _Bare(owner=owner)
+    p.start("detect")
+    assert p.dismissed == 1 and owner.dismissed == 1
+
+
+def test_a_refused_start_leaves_advanced_els_settings_open():
+    owner = _Owner()
+    p = _Bare(owner=owner)
+    p.app.els_uic.refuse = True
+    p.start("sweep")
+    assert owner.dismissed == 0
+
+
+def test_the_prompt_shows_the_last_corrected_landing():
+    p = _Bare()
+    p.app.els_uic.overshoot.last_landing = "Stop landed 2 counts (0.010 mm) short."
+    p._refresh()
+    assert p.detail_text.endswith("Last corrected stop: landed 2 counts (0.010 mm) short.")
 
 
 def test_a_refused_start_keeps_the_popup_open():

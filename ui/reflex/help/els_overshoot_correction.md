@@ -52,10 +52,11 @@ lathe one table covers all three lever positions.
 
 ## After each corrected stop
 
-The status strip shows where the carriage landed, in Z counts and in
-display units, for example:
+A stop that lands short, the normal case, shows nothing on screen.
+**Overshoot table → Measure** shows where the last corrected stop landed,
+in Z counts and in display units, for example:
 
-> Stop landed 2 counts (0.010 mm) short.
+> Last corrected stop: landed 2 counts (0.010 mm) short.
 
 If the counts and the distance do not agree with your DRO, examine the
 Z scale settings.

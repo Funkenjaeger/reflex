@@ -47,6 +47,8 @@ Settings**. The settings are at the bottom, under **Advanced**:
 
 ## Measuring the table
 
+The step-by-step walkthrough is [Measuring the stop overshoot](measuring-stop-overshoot.md).
+
 The measurement is a set of air passes that you cut to the stop with the ELS
 bar, as usual, in **Feed** mode. The correction is held off while it runs, so
 every stop shows the whole coast. After each stop the status strip shows the
@@ -95,10 +97,10 @@ controller has already stopped sending steps.
 
 ## After each corrected stop
 
-The status strip shows where the carriage landed, in counts and in display
-units:
+A stop that lands short, the normal case, shows nothing on screen. **Measure**
+shows where the last corrected stop landed, in counts and in display units:
 
-> Stop landed 2 counts (0.010 mm) short.
+> Last corrected stop: landed 2 counts (0.010 mm) short.
 
 The two should agree with your DRO. If they do not, check the Z scale settings.
 

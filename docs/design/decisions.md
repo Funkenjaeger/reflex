@@ -124,8 +124,10 @@ Fire the stop early by the overshoot predicted for the current feed rate.
   table is kept. The same check decides, after a restart, whether the table
   applies.
 - A corrected stop that lands more than one count past its target turns the
-  correction off. Each corrected stop's landing is shown in counts and in
-  display units.
+  correction off, with a notice. A stop that lands short shows nothing; the
+  last corrected landing, in counts and in display units, is in the Measure
+  window. (Shown on every stop at first; on the machine that was a
+  distraction in normal use.)
 - A guided measurement, run in air from the ELS bar with the correction held
   off: a one-pass detection that answers yes, no or unknown, and a sweep of
   four feeds with three passes each that refuses to fit when the repeats at

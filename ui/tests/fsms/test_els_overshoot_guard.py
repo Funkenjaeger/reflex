@@ -43,10 +43,13 @@ class Rig:
                 setattr(self.els, k, v)
         self.live = [live]
         self.notices = []
+        self.cues = []
+        self.results = []
         self.gear_name = gear
         self.guard = g.OvershootGuard(
             self.els, lambda: self.live[0], self._notify,
-            gear=lambda: self.gear_name, today=lambda: TODAY)
+            gear=lambda: self.gear_name, today=lambda: TODAY,
+            cue=self.cues.append, on_result=self.results.append)
 
     def _notify(self, message, severity, seconds=None):
         self.notices.append((message, severity, seconds))
@@ -180,20 +183,23 @@ def test_corrected_stop_past_by_two_turns_the_correction_off():
     assert sev == NOTICE_WARNING and "past" in msg and secs == g.READOUT_SECONDS
 
 
-def test_corrected_stop_past_by_one_is_inside_tolerance():
+def test_corrected_stop_past_by_one_is_inside_tolerance_and_silent():
     r = watch_rig()
     r.guard.on_outcome(out(past=1), 1.0)
     assert r.els.els_overshoot_correction is True
-    (msg, sev, _), = r.notices
-    assert sev == NOTICE_INFO and "past" in msg
+    assert r.notices == []
+    assert "past" in r.guard.last_landing
 
 
-def test_corrected_stop_short_is_an_info_readout():
+def test_corrected_stop_short_shows_nothing_but_is_kept_for_measure():
+    """first run on the development lathe, 2026-10-11: a readout on every corrected stop is
+    distracting in normal use. A short landing is silent; the Measure window
+    shows the last one."""
     r = watch_rig()
     r.guard.on_outcome(out(past=-3), 1.0)
     assert r.els.els_overshoot_correction is True
-    (msg, sev, _), = r.notices
-    assert sev == NOTICE_INFO and "short" in msg
+    assert r.notices == [] and r.cues == []
+    assert r.guard.last_landing == "Stop landed 3 counts (0.015 mm) short."
 
 
 def test_uncorrected_stop_gives_no_notice():
@@ -211,7 +217,7 @@ def test_stop_with_steps_queued_is_not_judged():
 def test_readout_uses_the_display_factor():
     r = watch_rig()
     r.guard.on_outcome(out(past=-2), 10 / 254)
-    assert "in)" in r.notices[0][0]
+    assert "in)" in r.guard.last_landing
 
 
 # ─── the measurement ─────────────────────────────────────────────────────
@@ -234,25 +240,43 @@ def test_survey_holds_the_correction_off_until_cancelled():
     assert r.guard.table_in_counts() == DEVELOPMENT_LATHE_TABLE
 
 
-def test_outcomes_go_to_the_survey_not_the_watch():
+def test_outcomes_go_to_the_survey_cue_not_the_watch():
+    """Survey lines go to the ELS bar cue strip, not to a timed notice
+    (first run on the development lathe, 2026-10-11: a cue on a timer was waited out, or lost)."""
     r = Rig(True, table_from=DEV)
     r.guard.start_survey(sv.DETECT)
-    n = len(r.notices)
+    assert r.cues == [r.guard.survey.message]
     r.guard.on_outcome(out(past=5, coast=3), 1.0)        # borderline: asks again
     assert r.els.els_overshoot_correction is True
-    assert len(r.notices) == n + 1
-    msg, sev, secs = r.notices[-1]
-    assert msg == r.guard.survey.message and secs == g.READOUT_SECONDS
+    assert r.notices == []
+    assert r.cues[-1] == r.guard.survey.message
+    assert r.cues[-1].endswith("Proceed with the next pass.")
 
 
-def test_survey_notice_severity_follows_the_state():
+def test_cancel_and_save_clear_the_cue():
+    r = Rig(True, table_from=DEV)
+    r.guard.start_survey(sv.DETECT)
+    r.guard.cancel_survey()
+    assert r.cues[-1] == ""
+    r.guard.start_survey(sv.SWEEP)
+    feed_sweep(r)
+    assert r.guard.save_survey() is None
+    assert r.cues[-1] == ""
+
+
+def test_a_finished_sweep_opens_its_result_and_a_detection_does_not():
+    """first run on the development lathe, 2026-10-11: at the end of the sweep the app opens
+    the window itself."""
     r = Rig(True, table_from=DEV)
     r.guard.start_survey(sv.DETECT)
     r.guard.on_outcome(out(coast=9, offset=0), 1.0)
-    assert r.guard.survey.state == sv.YES and r.notices[-1][1] == NOTICE_INFO
-    r.guard.start_survey(sv.DETECT)
-    r.guard.on_outcome(out(coast=9, offset=0, steps=2), 1.0)
-    assert r.guard.survey.state == sv.UNKNOWN and r.notices[-1][1] == NOTICE_WARNING
+    assert r.guard.survey.state == sv.YES and r.results == []
+    r.guard.start_survey(sv.SWEEP)
+    feed_sweep(r)
+    assert r.guard.survey.state == sv.FITTED
+    assert r.results == [r.guard.survey]
+    r.guard.on_outcome(out(coast=9, offset=0), 1.0)      # after the end: nothing more
+    assert len(r.results) == 1
 
 
 def feed_sweep(r, coasts=((3, 3, 4), (9, 8, 9), (28, 29, 29), (42, 43, 41)),

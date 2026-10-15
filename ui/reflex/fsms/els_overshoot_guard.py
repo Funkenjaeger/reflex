@@ -17,12 +17,17 @@ tested directly (tests/fsms/test_els_overshoot_guard.py):
 - STALE (decided 2026-10-11): the binding differs from the live settings. The
   correction is set to off with one notice naming the change; the table is
   kept. This is the same check after a restart as at any other moment.
-- THE OUTCOME WATCH and THE READOUT (decided 2026-10-11): for each corrected
-  stop whose premise held, the landing is shown in counts and display units,
-  and a landing past the target by more than PAST_TOLERANCE_COUNTS sets the
-  correction to off.
+- THE OUTCOME WATCH and THE READOUT: a corrected stop landing past the
+  target by more than PAST_TOLERANCE_COUNTS sets the correction to off, with a
+  warning. A stop that lands short, the normal case, says nothing on screen
+  (first run on the development lathe, 2026-10-11: a readout on every stop is distracting in
+  normal use); its landing, in counts and display units, is kept as
+  `last_landing` for the Measure window and logged.
 - THE MEASUREMENT (els_overshoot_survey.py): while one runs the correction
-  is held off and each stop goes to it instead.
+  is held off and each stop goes to it instead. Its lines go to `cue()`, the
+  ELS bar strip that stays until the next pass starts, not to a notice that
+  times out (same visit: a cue on a timer was waited for, or lost). When a
+  sweep ends, `on_result(survey)` opens its result for Save or Discard.
 
 NEVER writes a register. It changes only ElsDispatcher settings and posts
 notices.
@@ -64,12 +69,18 @@ class OvershootGuard:
 
     def __init__(self, els, binding: Callable[[], Optional[tbl.Binding]],
                  notify: Callable[..., object], gear: Callable[[], str] = lambda: "",
-                 today: Callable[[], datetime.date] = datetime.date.today):
+                 today: Callable[[], datetime.date] = datetime.date.today,
+                 cue: Callable[[str], object] = lambda _text: None,
+                 on_result: Callable[[survey_mod.Survey], object] = lambda _s: None):
         self._els = els
         self._binding = binding
         self._notify = notify
         self._gear = gear
         self._today = today
+        self._cue = cue
+        self._on_result = on_result
+        #: The last corrected stop's landing, as the Measure window shows it.
+        self.last_landing: str = ""
         # The migration is for the setting as it was READ AT STARTUP.
         self._migrate = (getattr(els, "els_overshoot_correction", False) is True
                          and not getattr(els, "els_overshoot_table", ""))
@@ -167,10 +178,9 @@ class OvershootGuard:
                  f"past {o.past:+d}, coast {o.overshoot}, steps to go {o.steps_to_go}")
         s = self.survey
         if s is not None and not s.done:
-            msg = s.add(o)
-            sev = NOTICE_WARNING if s.state in (survey_mod.REFUSED,
-                                                survey_mod.UNKNOWN) else NOTICE_INFO
-            self._notify(msg, sev, seconds=READOUT_SECONDS)
+            self._cue(s.add(o))
+            if s.done and s.kind == survey_mod.SWEEP:
+                self._on_result(s)
             return
         if not o.corrected or not live:
             return
@@ -178,6 +188,7 @@ class OvershootGuard:
             log.warning(f"ELS stop #{o.seq} not judged: {o.steps_to_go} steps "
                         "were still queued at the trigger")
             return
+        self.last_landing = landed_text(o, k, factor)
         if o.past > PAST_TOLERANCE_COUNTS:
             if self._on():
                 self._set_off()
@@ -185,7 +196,8 @@ class OvershootGuard:
             log.warning(f"overshoot outcome watch: {text}")
             self._notify(text, NOTICE_WARNING, seconds=READOUT_SECONDS)
             return
-        self._notify(landed_text(o, k, factor), NOTICE_INFO, seconds=READOUT_SECONDS)
+        # Short, on target or within tolerance: nothing on screen.
+        log.info(f"ELS stop #{o.seq}: {self.last_landing}")
 
     # ── the measurement ─────────────────────────────────────────────────
 
@@ -198,7 +210,7 @@ class OvershootGuard:
         self.survey = survey_mod.Survey(kind, float(live.mm_per_count))
         self._survey_binding = live
         log.info(f"overshoot {kind} started")
-        self._notify(self.survey.message, NOTICE_INFO, seconds=READOUT_SECONDS)
+        self._cue(self.survey.message)
         return None
 
     def cancel_survey(self) -> None:
@@ -207,6 +219,7 @@ class OvershootGuard:
                      f"{len(self.survey.stops)} stops")
         self.survey = None
         self._survey_binding = None
+        self._cue("")
 
     def save_survey(self) -> Optional[str]:
         """Store a fitted sweep as this machine's table. Returns the reason it
@@ -226,4 +239,5 @@ class OvershootGuard:
         log.info(f"overshoot table saved ({source}): {tbl.format_points(table.points)}")
         self.survey = None
         self._survey_binding = None
+        self._cue("")
         return None

@@ -81,7 +81,7 @@ def test_no_coast_is_no_after_one_stop_and_never_claims_zero():
 def test_borderline_first_coast_asks_for_another_pass(first):
     s, msgs = detect(stop(first))
     assert s.state == RUNNING and not s.done
-    assert "again" in msgs[0]
+    assert msgs[0].endswith("Proceed with the next pass.")
 
 
 @pytest.mark.parametrize("first,second,state", [
@@ -149,10 +149,19 @@ def test_envelope_is_made_non_decreasing():
 def test_progress_lines_while_running():
     s = Survey(SWEEP, K)
     first = s.add(stop(3, rate=600.0))
-    assert s.state == RUNNING and "1 of 12" in first
+    assert s.state == RUNNING
+    # The cues name the goal, not a button (first run on the development lathe, 2026-10-11): after a
+    # stop the carriage needs a Retract before the next Cut, and after the last
+    # feed the spindle speed rises instead.
+    assert first == "Pass 1/12: coast 3 counts. Proceed with the next pass."
     s.add(stop(3, rate=600.0))
     last_of_group = s.add(stop(3, rate=600.0))
-    assert "faster" in last_of_group
+    assert last_of_group == "Pass 3/12: coast 3 counts. Proceed to the next faster setting."
+
+
+def test_a_coast_of_one_count_is_singular():
+    s = Survey(SWEEP, K)
+    assert s.add(stop(1, rate=600.0)) == "Pass 1/12: coast 1 count. Proceed with the next pass."
 
 
 def test_spread_beyond_the_limit_is_refused_and_named():

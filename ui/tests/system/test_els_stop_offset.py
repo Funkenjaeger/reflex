@@ -106,11 +106,17 @@ def test_correction_on_fires_early_by_the_offset_it_wrote(harness):
         f"{len(in_pass)} stopOffset writes in {t1 - t0:.1f} s exceeds the "
         f"limiter's budget of {budget}: {in_pass}")
 
-    # D7: the readout. The emulator's carriage stops where the trigger fires
-    # (no drive lag), so a corrected stop lands short by about the offset.
-    shown = h.wait_until(
-        lambda: h.controller.notice_text.startswith("Stop landed"), timeout_s=5)
-    assert shown, f"no last-stop readout; notice is {h.controller.notice_text!r}"
-    assert h.controller.notice_text.endswith(" short."), h.controller.notice_text
+    # The landing is measured and kept for the Measure window; a short
+    # landing shows nothing on screen (a readout on every stop was a
+    # distraction in normal use). The emulator's carriage stops where the
+    # trigger fires (no drive lag), so a corrected stop lands short by about
+    # the offset.
+    guard = h.controller.overshoot
+    kept = h.wait_until(lambda: guard.last_landing.startswith("Stop landed"),
+                        timeout_s=5)
+    assert kept, f"no landing kept; last_landing is {guard.last_landing!r}"
+    assert guard.last_landing.endswith(" short."), guard.last_landing
+    assert not h.controller.notice_text.startswith("Stop landed"), (
+        f"a short landing was put on screen: {h.controller.notice_text!r}")
     assert h.els.els_overshoot_correction is True, (
         "a stop that landed short turned the correction off")
