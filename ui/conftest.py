@@ -66,3 +66,37 @@ def _headless_window():
         from unittest.mock import MagicMock
         EventLoop.window = MagicMock()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_leftovers_between_tests():
+    """Cancel the Kivy clock events a test scheduled and left pending, and drop
+    the event-bus subscriptions it added.
+
+    WHY. One Kivy Clock and one ``fsm_event_bus`` serve every test in a worker
+    process. A test that leaves a timer pending hands it to whichever later test
+    next pumps the clock. On 2026-10-15,
+    ``test_els_arming.py::test_a_timeout_for_a_superseded_attempt_is_ignored``
+    left an ElsFsm in ``arming`` with its 1 s arm timeout pending; a later test
+    pumped the clock past it, the old FSM published ``els_alarm``, and the later
+    test's UI FSM (subscribed to the same bus) went to ``alarm`` before its first
+    line ran. Under ``-n auto`` that failed a test in ``test_ui_controller.py`` in
+    3 of 8 runs on a clean tree, and the runner's serial retry hid it. A probe
+    that tagged each ElsFsm with the test that built it traced every one of 4
+    failures to that single test.
+
+    Events and subscriptions that existed before the test started (session or
+    module fixtures, imports) are left alone.
+    """
+    from kivy.clock import Clock
+    from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
+
+    events_before = set(Clock.get_events())
+    subs_before = {event: list(handlers) for event, handlers in bus._subs.items()}
+    yield
+    for ev in Clock.get_events():
+        if ev not in events_before and ev.is_triggered:
+            ev.cancel()
+    bus._subs.clear()
+    for event, handlers in subs_before.items():
+        bus._subs[event] = handlers
