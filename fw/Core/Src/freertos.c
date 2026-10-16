@@ -114,11 +114,12 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
   /* CubeMX creates this task; the application does all its work elsewhere,
-   * so it only sleeps. It must not touch the user LED: userLedTask (Ramps.c)
-   * owns it, toggling every 500 ms from the same loop that refreshes the
-   * watchdog, so a steady 1 Hz blink means that loop is running. A second
-   * toggle here at 1 s canceled every other one of those, which made a
-   * healthy board blink exactly like one whose userLedTask had stopped. */
+   * so it only sleeps. It leaves the user LED alone, so that userLedTask
+   * (Ramps.c) is the LED's only writer. That loop also refreshes the
+   * watchdog. It toggles the LED every 500 ms, and on each Modbus frame it
+   * drives the pin low for 25 ms and back high. With the host polling, the
+   * LED follows the traffic; with the link quiet, it blinks at 1 Hz. Either
+   * pattern means the loop is running, and a frozen LED means it is not. */
   (void)argument;
   while (1) {
     osDelay(1000);
