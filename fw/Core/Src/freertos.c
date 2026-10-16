@@ -113,12 +113,12 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  /* Infinite loop */
-  for(;;)
-  {
+  /* Once a second, flip the user LED. userLedTask (Ramps.c) flips the same
+   * LED every 500 ms, so the visible blink is the two combined. */
+  (void)argument;
+  while (1) {
     osDelay(1000);
     HAL_GPIO_TogglePin(USR_LED_GPIO_Port, USR_LED_Pin);
-
   }
   /* USER CODE END StartDefaultTask */
 }

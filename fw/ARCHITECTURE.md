@@ -35,7 +35,7 @@ Full Modbus RTU slave implementation (address 17). The entire `rampsSharedData_t
 
 ### `Core/Src/Scales.c` — Encoder Initialization
 
-Configures TIM1–TIM4 in encoder mode (TI12, both channels). TIM2 is 32-bit for higher resolution; the rest are 16-bit.
+Configures TIM1–TIM4 in encoder mode (TI12, x4 counting on both channels, input filter 0xF). All four counters wrap at 16 bits, TIM2 included although it is a 32-bit timer: `RampsStart()` re-applies this configuration after the CubeMX init, and the ISR takes each tick's movement as a 16-bit difference.
 
 ### `Core/Src/tim.c`, `usart.c`, `gpio.c` — HAL Peripherals
 

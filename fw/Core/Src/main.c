@@ -45,7 +45,9 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-rampsHandler_t RampsData;
+/* The one motion-control instance. RampsStart() takes it from here, and the
+ * TIM9 vector in stm32f4xx_it.c hands it to the ISR. */
+rampsHandler_t rampsInstance;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -95,20 +97,21 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM9_Init();
   /* USER CODE BEGIN 2 */
-  // htim1 is used in encoder mode
-  // htim2 is used in encoder mode
-  // htim3 is used in encoder mode
-  // htim4 is used in encoder mode
-  // htim9 is used to generate the synchro motion
+  /* Peripheral roles: TIM1-TIM4 decode the four scales (Scales.c sets their
+   * mode), TIM9 paces the motion ISR, USART1 carries Modbus to the host. */
 
   TIM_HandleTypeDef *scale_htims[SCALES_COUNT] = { &htim1, &htim2, &htim3, &htim4 };
   for (int i = 0; i < SCALES_COUNT; i++) {
-    RampsData.shared.scales[i].timerHandleSlot = (uint32_t)i;
+    rampsInstance.shared.scales[i].timerHandleSlot = (uint32_t)i;
     ramps_timer_handles[i] = scale_htims[i];
   }
-  RampsData.synchroRefreshTimer = &htim9;
-  RampsData.modbusUart = &huart1;
-  RampsStart(&RampsData);
+  rampsInstance.modbusUart          = &huart1;
+  rampsInstance.synchroRefreshTimer = &htim9;
+
+  /* Starts the encoders, the Modbus slave and the TIM9 motion interrupt, and
+   * creates the application tasks. The interrupt runs from here on; the tasks
+   * only once osKernelStart() below hands over to the scheduler. */
+  RampsStart(&rampsInstance);
 
   /* USER CODE END 2 */
 
