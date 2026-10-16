@@ -113,12 +113,15 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  /* Once a second, flip the user LED. userLedTask (Ramps.c) flips the same
-   * LED every 500 ms, so the visible blink is the two combined. */
+  /* CubeMX creates this task; the application does all its work elsewhere,
+   * so it only sleeps. It must not touch the user LED: userLedTask (Ramps.c)
+   * owns it, toggling every 500 ms from the same loop that refreshes the
+   * watchdog, so a steady 1 Hz blink means that loop is running. A second
+   * toggle here at 1 s canceled every other one of those, which made a
+   * healthy board blink exactly like one whose userLedTask had stopped. */
   (void)argument;
   while (1) {
     osDelay(1000);
-    HAL_GPIO_TogglePin(USR_LED_GPIO_Port, USR_LED_Pin);
   }
   /* USER CODE END StartDefaultTask */
 }
