@@ -183,6 +183,13 @@ class Keypad(Popup):
     def confirm(self, *args, **kwargs):
         try:
             value = self.ids['value'].text
+            if type(value) is str and not value.strip():
+                # Nothing typed. That is "no value", not a malformed number:
+                # there is nothing to parse, so int("") must never be reached
+                # (it logged "invalid literal for int() with base 10: ''"
+                # for a confirm on an untouched field). Neither commit nor
+                # complain; the keypad stays up for the operator to type.
+                return
             if type(value) is str and "." in value:
                 value = float(value)
             else:

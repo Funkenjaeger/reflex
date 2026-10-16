@@ -102,3 +102,61 @@ def test_sign_key_still_toggles_where_negatives_are_legal():
 
     Keypad.sign_key(stub)
     assert stub.ids["value"].text == "12.5"
+
+
+# ── confirm on an empty field, tested UNBOUND ────────────────────────────
+# Confirming a keypad nothing was typed into used to reach int(""), which
+# logged "invalid literal for int() with base 10: ''" as an ERROR with no
+# traceback. An empty field is "no value": nothing to commit and nothing to
+# complain about. Same stand-in technique as the sign key above.
+from unittest.mock import MagicMock, patch  # noqa: E402
+
+
+def _confirm_stub(text, integer=False):
+    return SimpleNamespace(
+        ids={"value": SimpleNamespace(text=text)},
+        integer=integer,
+        callback_fn=MagicMock(),
+        container=None,
+        set_method=None,
+        _keyboard=MagicMock(),
+        dismiss=MagicMock(),
+    )
+
+
+@pytest.mark.parametrize("text", ["", "   "])
+def test_confirm_on_an_empty_field_is_no_value_and_logs_no_error(text):
+    stub = _confirm_stub(text)
+
+    with patch("reflex.components.popups.keypad.log") as log:
+        Keypad.confirm(stub)
+
+    log.error.assert_not_called()
+    stub.callback_fn.assert_not_called()
+    # Nothing was entered, so the keypad stays up for the operator to type.
+    stub.dismiss.assert_not_called()
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("5", 5),
+    ("-12", -12),
+    ("2.5", 2.5),
+])
+def test_confirm_with_a_number_still_commits_and_dismisses(text, expected):
+    stub = _confirm_stub(text)
+
+    Keypad.confirm(stub)
+
+    stub.callback_fn.assert_called_once_with(expected)
+    stub.dismiss.assert_called_once()
+
+
+def test_confirm_with_a_malformed_number_is_still_logged():
+    """The empty-field exemption must not become a blanket swallow."""
+    stub = _confirm_stub("-")
+
+    with patch("reflex.components.popups.keypad.log") as log:
+        Keypad.confirm(stub)
+
+    log.error.assert_called_once()
+    stub.callback_fn.assert_not_called()
