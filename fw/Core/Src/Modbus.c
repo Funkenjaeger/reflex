@@ -5,6 +5,17 @@
  *      Author: Alejandro Mera
  *      Adapted from https://github.com/smarmengol/Modbus-Master-Slave-for-Arduino
  */
+/*
+ * From Alejandro Mera's Modbus-STM32-HAL-FreeRTOS library
+ * (https://github.com/alejoseb/Modbus-STM32-HAL-FreeRTOS), itself adapted from
+ * https://github.com/smarmengol/Modbus-Master-Slave-for-Arduino. Both are
+ * licensed under the GNU Lesser General Public License version 2.1, and so is
+ * this file; the full text is fw/Modbus-LGPL-2.1.txt. The rest of the firmware
+ * is MIT (fw/LICENSE).
+ *
+ * Modified from upstream's Modbus.c in rotary-controller-f4 (2022) and Reflex (2026).
+ * The git history of this repository records each change and its date.
+ */
 
 #include "FreeRTOS.h"
 #include "cmsis_os.h"

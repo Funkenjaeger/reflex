@@ -205,6 +205,9 @@ with no upstream tracking: [what Reflex changes](https://funkenjaeger.github.io/
 MIT; see `LICENSE` (and `fw/LICENSE`, `ui/LICENSE` for each half). Reflex is a fork of
 Stefano Bertelli's rotary-controller projects, and those files carry his copyright line.
 Bundled third-party code keeps its own license: the STM32 drivers and CMSIS
-(`fw/Drivers/`), FreeRTOS (`fw/Middlewares/`), and the UI fonts (SIL Open Font
-License 1.1, one `*-OFL.txt` per family in `ui/reflex/fonts/`). Issues and pull
+(`fw/Drivers/`), FreeRTOS (`fw/Middlewares/`), the firmware's Modbus RTU library
+(Alejandro Mera's Modbus-STM32-HAL-FreeRTOS, LGPL-2.1: `Modbus.c`, `Modbus.h`,
+`UARTCallback.c` and `ModbusConfig.h` under `fw/Core/`, text in
+`fw/Modbus-LGPL-2.1.txt`), and the UI fonts (SIL Open Font License 1.1, one
+`*-OFL.txt` per family in `ui/reflex/fonts/`). Issues and pull
 requests are welcome.

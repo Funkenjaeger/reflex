@@ -161,4 +161,9 @@ recovery path.
 ## License
 
 MIT — see `LICENSE`. The STM32 drivers and CMSIS under `Drivers/` and FreeRTOS
-under `Middlewares/` keep their own licenses, in those directories.
+under `Middlewares/` keep their own licenses, in those directories. The Modbus
+RTU library (`Core/Src/Modbus.c`, `Core/Inc/Modbus.h`, `Core/Src/UARTCallback.c`,
+`Core/Inc/ModbusConfig.h`) is Alejandro Mera's Modbus-STM32-HAL-FreeRTOS,
+modified, under the GNU LGPL 2.1; its text is `Modbus-LGPL-2.1.txt`. The whole
+firmware source is published here, so anyone can rebuild and relink it with a
+changed copy of the library.
