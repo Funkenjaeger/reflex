@@ -3,9 +3,12 @@ state it shows, and what each button does to the measurement.
 
 The same approach as test_els_settings_popup.py: the real methods are bound
 onto a bare stand-in that carries `.app`, so no Popup or kv tree is built. The
-guard behind it is the real OvershootGuard over plain settings.
+guard behind it is the real OvershootGuard over plain settings, and the
+refusals come from the real ElsUiController.start_overshoot_survey, called
+unbound against the same kind of stand-in.
 """
 import datetime
+import logging
 from fractions import Fraction
 from types import SimpleNamespace
 
@@ -15,6 +18,7 @@ from reflex.components.home.els_overshoot_popup import (
     OvershootSurveyPopup,
 )
 from reflex.fsms import els_overshoot_survey as sv
+from reflex.fsms.ui_controller import ElsUiController
 from reflex.fsms.els_overshoot_guard import OvershootGuard
 from reflex.fsms.els_overshoot_table import Binding
 from reflex.fsms.els_stop_outcome import StopOutcome
@@ -23,18 +27,17 @@ DEV = Binding(Fraction(1, 200), Fraction(127, 64000), "")
 
 
 class _Uic:
+    start_overshoot_survey = ElsUiController.start_overshoot_survey
+
     def __init__(self, guard):
         self.overshoot = guard
+        self._overshoot = guard
         self.notices = []
-        self.refuse = False
+        self.is_threading = False
+        self._els_fsm = SimpleNamespace(state="idle")
 
     def notify(self, message, *_a, **_k):
         self.notices.append(message)
-
-    def start_overshoot_survey(self, kind):
-        if self.refuse:
-            return False
-        return self.overshoot.start_survey(kind) is None
 
 
 class _Bare:
@@ -57,6 +60,7 @@ class _Bare:
         self.app = SimpleNamespace(els_uic=_Uic(guard))
         self.dismissed = 0
         self.state = self.title = self.body_text = self.detail_text = ""
+        self.refusal = ""
         self._refresh()
 
     def dismiss(self):
@@ -112,7 +116,7 @@ def test_start_closes_advanced_els_settings_too():
 def test_a_refused_start_leaves_advanced_els_settings_open():
     owner = _Owner()
     p = _Bare(owner=owner)
-    p.app.els_uic.refuse = True
+    p.app.els_uic.is_threading = True
     p.start("sweep")
     assert owner.dismissed == 0
 
@@ -126,9 +130,77 @@ def test_the_prompt_shows_the_last_corrected_landing():
 
 def test_a_refused_start_keeps_the_popup_open():
     p = _Bare()
-    p.app.els_uic.refuse = True
+    p.app.els_uic.is_threading = True
     p.start("detect")
     assert p.dismissed == 0 and p.state == "prompt"
+
+
+THREAD_MODE = "Thread mode is on. Set Feed mode to measure."
+
+
+def test_a_refusal_in_thread_mode_is_shown_in_the_window_and_logged(caplog):
+    """The status bar notice is covered by this window and by Advanced ELS
+    Settings, so the refusal has to be readable in the window itself."""
+    p = _Bare()
+    p.app.els_uic.is_threading = True
+    with caplog.at_level(logging.WARNING):
+        p.start("detect")
+    assert p.detail_text.splitlines()[0] == THREAD_MODE
+    assert "Table: None stored." in p.detail_text
+    assert p.state == "prompt" and p.dismissed == 0
+    assert any("overshoot measurement refused: " + THREAD_MODE
+               in r.getMessage() and r.levelno == logging.WARNING
+               for r in caplog.records)
+    assert p.app.els_uic.notices == [THREAD_MODE]
+
+
+def test_a_refusal_while_a_pass_runs_shows_its_reason():
+    p = _Bare()
+    p.app.els_uic._els_fsm.state = "cutting"
+    p.start("sweep")
+    assert p.detail_text.splitlines()[0] == "Pass is running. Wait for the stop."
+    assert p.dismissed == 0
+
+
+def test_a_refusal_from_the_guard_shows_its_reason():
+    p = _Bare()
+    p.app.els_uic.overshoot._binding = lambda: None
+    p.start("detect")
+    assert p.detail_text.splitlines()[0] == "Set the Z scale and the leadscrew first."
+
+
+def test_the_refusal_stays_until_the_next_press_then_goes():
+    p = _Bare()
+    uic = p.app.els_uic
+    uic.is_threading = True
+    p.start("detect")
+    p._refresh()
+    assert p.detail_text.startswith(THREAD_MODE)
+    uic.is_threading = False
+    p.start("detect")
+    assert p.refusal == ""
+    assert p.dismissed == 1
+
+
+def test_stop_clears_the_refusal():
+    p = _Bare()
+    p.app.els_uic.is_threading = True
+    p.start("detect")
+    p.stop()
+    assert p.refusal == "" and THREAD_MODE not in p.detail_text
+
+
+def test_a_refused_save_is_shown_in_the_window():
+    p = _Bare()
+    p.start("sweep")
+    g = p.app.els_uic.overshoot
+    _full_sweep(g.survey)
+    p._refresh()
+    g._binding = lambda: Binding(Fraction(1, 100), Fraction(127, 64000), "")
+    p.save()
+    why = "Settings changed during the sweep. Run it again."
+    assert p.state == "fitted" and p.detail_text.splitlines()[0] == why
+    assert p.dismissed == 1
 
 
 def test_reopened_during_a_sweep_shows_progress_and_stop_cancels_it():

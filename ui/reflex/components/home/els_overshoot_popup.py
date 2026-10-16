@@ -46,6 +46,11 @@ class OvershootSurveyPopup(Popup):
     state = StringProperty("prompt")
     body_text = StringProperty(PROMPT_TEXT)
     detail_text = StringProperty("")
+    #: Why the last Detect, Sweep or Save press was refused. Shown on a line of
+    #: its own at the top of the detail text until the next press or Stop. The
+    #: top status bar carries the same notice, but this window and Advanced ELS
+    #: Settings both cover that bar.
+    refusal = StringProperty("")
 
     #: The window this one was opened from (Advanced ELS Settings), closed
     #: with it when a measurement starts. None when the controller opened it.
@@ -65,21 +70,27 @@ class OvershootSurveyPopup(Popup):
 
     # ── actions ──────────────────────────────────────────────────────
     def start(self, kind: str):
-        if self.app.els_uic.start_overshoot_survey(kind):
+        self.refusal = ""
+        why = self.app.els_uic.start_overshoot_survey(kind)
+        if why is None:
             self.dismiss()
             if self.owner is not None:
                 self.owner.dismiss()
         else:
+            self.refusal = why
             self._refresh()
 
     def stop(self):
+        self.refusal = ""
         self._guard.cancel_survey()
         self._refresh()
 
     def save(self):
+        self.refusal = ""
         why = self._guard.save_survey()
         if why:
             self.app.els_uic.notify(why)
+            self.refusal = why
             self._refresh()
             return
         self.app.els_uic.notify("Overshoot table saved. Set the correction to on to use it.")
@@ -120,3 +131,5 @@ class OvershootSurveyPopup(Popup):
             self.title = "Overshoot measurement"
             self.body_text = s.detail
             self.detail_text = status
+        if self.refusal:
+            self.detail_text = f"{self.refusal}\n{self.detail_text}"

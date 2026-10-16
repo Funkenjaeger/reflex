@@ -1231,22 +1231,26 @@ class ElsUiController(EventDispatcher):
         """The overshoot table's guard, for Advanced ELS Settings and tests."""
         return self._overshoot
 
-    def start_overshoot_survey(self, kind: str) -> bool:
+    def start_overshoot_survey(self, kind: str) -> str | None:
         """Start the overshoot detection pass or sweep (Advanced ELS
-        Settings). Refused, with the reason on the status bar, while a pass
-        runs or in thread mode: the measurement is FEED passes to a stop."""
+        Settings). Returns None when it started, else the reason it did not:
+        a pass is running, or thread mode is on (the measurement is FEED
+        passes to a stop), or the overshoot guard's own reason.
+
+        The reason is logged and put on the status bar, but the status bar is
+        covered by the Measure window and by Advanced ELS Settings, so the
+        caller shows the returned reason in its own window."""
         if self._els_fsm.state in ("cutting", "retracting"):
-            self.notify("Pass is running. Wait for the stop.", NOTICE_WARNING)
-            return False
-        if self.is_threading:
-            self.notify("Thread mode is on. Set Feed mode to measure.",
-                        NOTICE_WARNING)
-            return False
-        why = self._overshoot.start_survey(kind)
+            why = "Pass is running. Wait for the stop."
+        elif self.is_threading:
+            why = "Thread mode is on. Set Feed mode to measure."
+        else:
+            why = self._overshoot.start_survey(kind)
         if why:
+            log.warning(f"overshoot measurement refused: {why}")
             self.notify(why, NOTICE_WARNING)
-            return False
-        return True
+            return why
+        return None
 
     def _poll_flight_recorder(self, *args):
         """Persist this tick's poll stream while the machine is doing something.
