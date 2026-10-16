@@ -15,7 +15,7 @@ the cut.
 
 This matters during threading. The controller does not start a Z-axis
 retract while the tool is still at depth, because the retract would drag
-the cutter along the threads. The Inner Thread setting tells the
+the cutter along the threads. The Inner thread setting tells the
 controller which direction is "out of the cut".
 
 ## When to Set

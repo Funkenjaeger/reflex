@@ -16,12 +16,12 @@ no drift.
 
 ## Electronic leadscrew
 
-- [ELS Axis Roles](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_axis_roles.md) &nbsp;`els_axis_roles`
+- [ELS axis roles](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_axis_roles.md) &nbsp;`els_axis_roles`
 - [Backlash Calibration](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_backlash_cal.md) &nbsp;`els_backlash_cal`
 - [Backlash Takeup](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_backlash_takeup.md) &nbsp;`els_backlash_takeup`
 - [Gearbox Table, Gearbox Position and the Coupling Check](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_gearbox.md) &nbsp;`els_gearbox`
 - [Inner / Outer Thread](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_inner_thread.md) &nbsp;`els_inner_thread`
-- [ELS Mode](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_mode.md) &nbsp;`els_mode`
+- [ELS mode](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_mode.md) &nbsp;`els_mode`
 - [Stop Overshoot Correction](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_overshoot_correction.md) &nbsp;`els_overshoot_correction`
 - [Measure the Stop Overshoot](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_overshoot_measure.md) &nbsp;`els_overshoot_measure`
 - [Thread Phase Offset (Widening a Groove)](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/els_phase_offset.md) &nbsp;`els_phase_offset`
@@ -34,38 +34,38 @@ no drift.
 
 ## Axes and scales
 
-- [Axis Name](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/axis_name.md) &nbsp;`axis_name`
-- [Position Tolerance (mm)](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/position_tolerance.md) &nbsp;`position_tolerance`
-- [Scale Input](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/scale_input.md) &nbsp;`scale_input`
+- [Axis name](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/axis_name.md) &nbsp;`axis_name`
+- [Position tolerance (mm)](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/position_tolerance.md) &nbsp;`position_tolerance`
+- [Scale input](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/scale_input.md) &nbsp;`scale_input`
 - [Scale Ratio Configuration](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/scales.md) &nbsp;`scales`
-- [Spindle Mode](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/spindle_mode.md) &nbsp;`spindle_mode`
-- [Sync Ratio](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/sync_ratio.md) &nbsp;`sync_ratio`
-- [Transform Type](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/transform_type.md) &nbsp;`transform_type`
-- [Units Per Turn](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/units_per_turn.md) &nbsp;`units_per_turn`
+- [Spindle mode](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/spindle_mode.md) &nbsp;`spindle_mode`
+- [Sync ratio](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/sync_ratio.md) &nbsp;`sync_ratio`
+- [Transform type](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/transform_type.md) &nbsp;`transform_type`
+- [Units per turn](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/units_per_turn.md) &nbsp;`units_per_turn`
 
 ## Servo and leadscrew
 
-- [Lead Screw Pitch](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/lead_screw_pitch.md) &nbsp;`lead_screw_pitch`
+- [Lead screw pitch](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/lead_screw_pitch.md) &nbsp;`lead_screw_pitch`
 - [Acceleration (Steps/s²)](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/servo_acceleration.md) &nbsp;`servo_acceleration`
-- [Servo Gearing Ratios](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/servo_gearing.md) &nbsp;`servo_gearing`
-- [Maximum Speed (Steps/s)](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/servo_max_speed.md) &nbsp;`servo_max_speed`
+- [Servo gearing ratios](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/servo_gearing.md) &nbsp;`servo_gearing`
+- [Maximum speed (Steps/s)](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/servo_max_speed.md) &nbsp;`servo_max_speed`
 
 ## Display
 
 - [Color Settings](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/colors.md) &nbsp;`colors`
-- [Display Font](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/display_font.md) &nbsp;`display_font`
-- [Default Font Size](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/font_size.md) &nbsp;`font_size`
+- [Display font](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/display_font.md) &nbsp;`display_font`
+- [Default font size](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/font_size.md) &nbsp;`font_size`
 - [Display Format Digits](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/format_digits.md) &nbsp;`format_digits`
 - [Hide mouse cursor](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/hide_mouse_cursor.md) &nbsp;`hide_mouse_cursor`
-- [UI Theme](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/ui_theme.md) &nbsp;`ui_theme`
+- [UI theme](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/ui_theme.md) &nbsp;`ui_theme`
 - [Sound Volume](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/volume.md) &nbsp;`volume`
 
 ## System
 
 - [Enable Wifi](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/enable_wifi.md) &nbsp;`enable_wifi`
-- [Disable Error Reporting](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/error_reporting.md) &nbsp;`error_reporting`
+- [Error reporting](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/error_reporting.md) &nbsp;`error_reporting`
 - [Network Connection](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/network_connection.md) &nbsp;`network_connection`
-- [Software Update](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/software_update.md) &nbsp;`software_update`
+- [Software update](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/software_update.md) &nbsp;`software_update`
 - [System Storage](https://github.com/Funkenjaeger/reflex/blob/main/ui/reflex/help/system_storage.md) &nbsp;`system_storage`
 
 ---

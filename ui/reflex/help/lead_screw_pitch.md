@@ -1,11 +1,11 @@
-Lead Screw Pitch
+Lead screw pitch
 ================
 
 These settings describe the physical lead screw on your lathe.
 The ELS uses them to calculate the correct servo speed for each
 thread pitch or feed rate.
 
-## Lead Screw Pitch (in MM or IN)
+## Lead screw pitch (in MM or IN)
 
 The linear distance the carriage moves for each revolution of the
 lead screw. Set the value and the unit (mm or inch) to match your
@@ -13,7 +13,7 @@ machine.
 
 ### Common Values
 
-| Machine Type          | Pitch     | Unit  |
+| Machine type          | Pitch     | Unit  |
 |-----------------------|-----------|-------|
 | Metric lathe (2mm)    | 2.0       | MM    |
 | Metric lathe (3mm)    | 3.0       | MM    |
@@ -24,13 +24,13 @@ machine.
 - 8 TPI → 1/8 = 0.125"
 - 12 TPI → 1/12 ≈ 0.0833"
 
-## Pitch in Inch
+## Pitch in inch
 
 Sets the unit of the lead screw pitch value: inches or millimeters.
 Turn it on if the lead screw is specified in TPI or inches. Turn it
 off for a metric lead screw.
 
-## Lead Screw Pitch Steps
+## Lead screw pitch steps
 
 The number of stepper motor steps for one full revolution of the
 lead screw. This value depends on the motor step angle and the
@@ -52,5 +52,5 @@ screw, multiply the steps by the gear ratio.
 ## Notes
 
 - Set all three parameters correctly for accurate threading
-- You can edit these fields only when ELS Mode is on
+- You can edit these fields only when ELS mode is on
 - Incorrect values cause incorrect thread pitches

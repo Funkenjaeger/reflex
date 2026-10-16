@@ -40,7 +40,7 @@ one disturbs the anchor. Do not move the carriage. The wizard monitors the
 Z scale all the time and tells you if the carriage moves.
 
 **3. Confirm.**
-The **Confirm — latch here** button becomes active when the carriage has
+The **Confirm** button becomes active when the carriage has
 held its position and the spindle has been still for a moment. Press it.
 The controller captures the spindle position and the carriage position
 together, in one instant. That pair is the thread anchor for the rest of

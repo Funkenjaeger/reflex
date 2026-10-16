@@ -1,16 +1,17 @@
-Disable Error Reporting
-=======================
+Error reporting
+===============
 
 This setting controls whether this machine uploads crash reports and
 performance traces to a Sentry project.
 
-**Default: ON. Nothing is sent.** Reporting is opt-in. If you set this
-switch OFF, nothing is sent until a destination is configured (below).
+**Default: OFF. Nothing is sent.** Reporting is opt-in. If you turn
+this switch ON, nothing is sent until a destination is configured
+(below).
 
 ## Behavior
 
-- **ON (default):** No data leaves the machine.
-- **OFF:** The machine sends reports *only if* `REFLEX_SENTRY_DSN`
+- **OFF (default):** No data leaves the machine.
+- **ON:** The machine sends reports *only if* `REFLEX_SENTRY_DSN`
   names a Sentry project. With no DSN set, this switch has no effect.
   The log shows this at startup.
 
@@ -26,7 +27,7 @@ Set the environment variable in `deploy/start.sh`:
 
     export REFLEX_SENTRY_DSN="https://...@...ingest.sentry.io/..."
 
-Then set this switch OFF. The startup log shows where reports go, by
+Then turn this switch ON. The startup log shows where reports go, by
 host and project. It never shows the DSN itself, because the DSN
 contains a key.
 
@@ -48,4 +49,4 @@ It does NOT include:
 
 - Reports upload when they occur. If the machine has no network
   route, the log records a failed send. The application does not crash
-- In an air-gapped or secure environment, leave this ON
+- In an air-gapped or secure environment, leave this OFF

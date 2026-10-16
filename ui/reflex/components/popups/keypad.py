@@ -28,7 +28,7 @@ class Keypad(Popup):
         from reflex.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
         super().__init__(**kwargs)
-        self.title = f"Old Value: {self.current_value}"
+        self.title = f"Old value: {self.current_value}"
         self.size_hint = (0.8, 0.8)
         self.auto_dismiss = False
 
@@ -109,7 +109,7 @@ class Keypad(Popup):
         self.use_current_fn = None
 
     def on_current_value(self, instance, value):
-        self.title = f"Old Value: {value}"
+        self.title = f"Old value: {value}"
 
     def _keyboard_closed(self):
         self._keyboard.unbind(on_key_down=self._on_keyboard_down)

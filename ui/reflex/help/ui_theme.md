@@ -1,4 +1,4 @@
-UI Theme
+UI theme
 ========
 
 This setting selects the color theme of the user interface.
@@ -12,8 +12,8 @@ When you change the theme, the entire UI changes color immediately.
 
 ## Notes
 
-- A theme change also resets Home Screen Digits, Indicators On Color
-  and Indicators Off Color. They go to the recommended values for that
+- A theme change also resets Home screen digits, Indicators on color
+  and Indicators off color. They go to the recommended values for that
   theme. You can then change those colors in this menu. Your choices
   stay until the next theme change.
 - Each theme is a simple text file in `reflex/themes/`. To add or

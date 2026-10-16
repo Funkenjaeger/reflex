@@ -17,10 +17,10 @@ at that instant. From then on every pass follows the existing groove.
 ## Where to find it
 
 Both advanced features live behind the **gear** on the advanced ELS bar, at the
-bottom of **Advanced ELS Settings**. The same settings also open from **Setup →
-ELS → Advanced ELS Settings**:
+bottom of **Advanced ELS settings**. The same settings also open from **Setup →
+ELS → Advanced ELS settings**:
 
-![The Advanced ELS Settings popup](../screenshots/flow/wt_settings_popup.png)
+![The Advanced ELS settings popup](../screenshots/flow/wt_settings_popup.png)
 
 ## 1 — Seat the carriage
 

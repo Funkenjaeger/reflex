@@ -8,11 +8,11 @@
 
 <ServoScreen>:
   BoxLayout:
-    title: "Servo Settings"
+    title: "Servo settings"
     orientation: "vertical"
     padding: 10
     ScreenHeader:
-      text: "Servo Settings"
+      text: "Servo settings"
 
     ScrollView:
       do_scroll_x: False
@@ -25,17 +25,17 @@
         height: self.minimum_height
 
         TitleItem:
-          name: "Gearing Ratios"
+          name: "Gearing ratios"
         NumberItem:
           disabled: root.servo.elsMode
-          name: "Ratio Numerator"
+          name: "Ratio numerator"
           value: root.servo.ratioNum
           integer: True
           help_file: "servo_gearing.md"
           on_value: root.servo.ratioNum = int(self.value)
         NumberItem:
           disabled: root.servo.elsMode
-          name: "Ratio Denominator"
+          name: "Ratio denominator"
           value: root.servo.ratioDen
           integer: True
           help_file: "servo_gearing.md"
@@ -44,7 +44,7 @@
         TitleItem:
           name: "Speeds"
         NumberItem:
-          name: "Maximum Speed (Steps/s)"
+          name: "Maximum speed (Steps/s)"
           value: root.servo.maxSpeed
           integer: True
           help_file: "servo_max_speed.md"
@@ -63,10 +63,10 @@
         # a lathe never sees that mode, so the header names what the row
         # does instead. Same gating pattern as the ELS button in setup_screen.kv.
         TitleItem:
-          name: "Rotary Table Mode Settings" if MODE_INDEX in USE_CASE_MODES.get(app.use_case, []) else "Angular Mode Settings (used when ELS Mode is off)"
+          name: "Rotary table mode settings" if MODE_INDEX in USE_CASE_MODES.get(app.use_case, []) else "Angular mode settings (used when ELS mode is off)"
         NumberItem:
           disabled: root.servo.elsMode
-          name: "Units per 1 turn of the axis [360]"
+          name: "Units per turn [360]"
           value: root.servo.unitsPerTurn
           integer: True
           help_file: "units_per_turn.md"
@@ -74,9 +74,9 @@
 
 
         TitleItem:
-          name: "ELS Mode Settings"
+          name: "ELS mode settings"
         BooleanItem:
-          name: "ELS Mode"
+          name: "ELS mode"
           value: root.servo.elsMode
           help_file: "els_mode.md"
           on_value: root.servo.elsMode = self.value
@@ -86,19 +86,19 @@
           on_value: root.servo.reverse = self.value
         NumberItem:
           disabled: not root.servo.elsMode
-          name: "Lead Screw Pitch in IN" if root.servo.leadScrewPitchIn else "Lead Screw Pitch in MM"
+          name: "Lead screw pitch in IN" if root.servo.leadScrewPitchIn else "Lead screw pitch in MM"
           value: root.servo.leadScrewPitch
           help_file: "lead_screw_pitch.md"
           on_value: root.servo.leadScrewPitch = self.value
         BooleanItem:
           disabled: not root.servo.elsMode
-          name: "Pitch in Inch"
+          name: "Pitch in inch"
           value: root.servo.leadScrewPitchIn
           help_file: "lead_screw_pitch.md"
           on_value: root.servo.leadScrewPitchIn = self.value
         NumberItem:
           disabled: not root.servo.elsMode
-          name: "Lead Screw Pitch Steps"
+          name: "Lead screw pitch steps"
           value: root.servo.leadScrewPitchSteps
           integer: True
           help_file: "lead_screw_pitch.md"

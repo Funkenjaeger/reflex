@@ -1,34 +1,34 @@
 Network Connection
 ==================
 
-Configure the WiFi connection for the Raspberry Pi.
+Configure the Wifi connection for the Raspberry Pi.
 
 ## Fields
 
-### Network Interface
-The WiFi hardware adapter that the system detected. If there is more
-than one adapter, select the one to configure. The Hardware Address
+### Network interface
+The Wifi hardware adapter that the system detected. If there is more
+than one adapter, select the one to configure. The Hardware address
 and State fields below it are read-only.
 
 ### Network (SSID)
-Press this field to open a popup. The popup lists the WiFi networks
+Press this field to open a popup. The popup lists the Wifi networks
 that a scan found. Select the network to connect to.
 
-### Wifi Password
+### Wifi password
 Enter the password for the selected network. For an open network,
 leave this field blank.
 
-### Apply Configuration
+### Apply configuration
 This button saves the network and password, then tries to connect.
 The status area at the bottom shows connection progress and any
 errors.
 
-## IP Properties
+## IP properties
 
 After the connection is made, these read-only fields show:
-- **IP Address** — assigned by DHCP or static configuration
-- **DNS Server** — the DNS resolver in use
-- **Default Gateway** — the network gateway
+- **IP address** — assigned by DHCP or static configuration
+- **DNS server** — the DNS resolver in use
+- **Default gateway** — the network gateway
 
 ## Notes
 

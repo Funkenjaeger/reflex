@@ -1,4 +1,4 @@
-Default Font Size
+Default font size
 =================
 
 The font size (in pixels) used for the DRO text fields and

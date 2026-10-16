@@ -22,12 +22,12 @@
         height: self.minimum_height
 
         StringItem:
-          name: "Axis Name"
+          name: "Axis name"
           value: root.axis.axis_name if root.axis else "?"
           help_file: "axis_name.md"
           on_value: root.axis.axis_name = self.value
         BooleanItem:
-          name: "Spindle Mode"
+          name: "Spindle mode"
           value: root.axis.spindleMode if root.axis else False
           help_file: "spindle_mode.md"
           on_value: root.axis.spindleMode = self.value
@@ -47,24 +47,24 @@
           height: 60 if (root.axis and root.axis.diameter_mode) else 0
 
         TitleItem:
-          name: "Sync Ratio"
+          name: "Sync ratio"
         NumberItem:
-          name: "Sync Ratio Numerator"
+          name: "Sync ratio numerator"
           value: root.axis.syncRatioNum if root.axis else 360
           integer: True
           help_file: "sync_ratio.md"
           on_value: root.axis.syncRatioNum = int(self.value)
         NumberItem:
-          name: "Sync Ratio Denominator"
+          name: "Sync ratio denominator"
           value: root.axis.syncRatioDen if root.axis else 100
           integer: True
           help_file: "sync_ratio.md"
           on_value: root.axis.syncRatioDen = int(self.value)
 
         TitleItem:
-          name: "Transform Configuration"
+          name: "Transform configuration"
         DropDownItem:
-          name: "Transform Type"
+          name: "Transform type"
           value: root.transform_type_label
           options: ["Identity", "Sum"]
           help_file: "transform_type.md"
@@ -72,7 +72,7 @@
           disabled: root.axis.spindleMode if root.axis else False
 
         DropDownItem:
-          name: "Scale Input"
+          name: "Scale input"
           options: root.input_0_options
           value: root.input_0
           help_file: "scale_input.md"
@@ -80,7 +80,7 @@
 
         DropDownItem:
           disabled: root.transform_type_label != "Sum" or (root.axis.spindleMode if root.axis else False)
-          name: "Second Scale Input"
+          name: "Second scale input"
           options: root.input_1_options
           value: root.input_1
           help_file: "scale_input.md"
@@ -93,13 +93,13 @@
       spacing: 10
       padding: [36, 0, 36, 10]
       Button:
-        text: "Apply Transform"
+        text: "Apply transform"
         font_size: app.formats.font_size
         background_color: app.theme.success
         on_press: app.beep()
         on_release: root.apply_transform()
       Button:
-        text: "Remove Axis"
+        text: "Remove axis"
         font_size: app.formats.font_size
         background_color: app.theme.danger
         on_press: app.beep()

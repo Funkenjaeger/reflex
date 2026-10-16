@@ -191,7 +191,7 @@ def test_engaging_without_a_z_axis_tells_the_operator_why(ctrl_no_z):
 
     assert ctrl_no_z.engaged is False, "precondition: the engage was refused"
     assert ctrl_no_z.notice_severity == NOTICE_WARNING
-    assert "Saddle Axis (Z)" in ctrl_no_z.notice_text
+    assert "Saddle axis (Z)" in ctrl_no_z.notice_text
     assert "Setup > ELS" in ctrl_no_z.notice_text
 
 
@@ -231,7 +231,7 @@ def test_the_wizard_says_why_a_stop_z_tap_did_nothing(ctrl_no_z):
     ctrl_no_z.on_action_button_clicked()
 
     assert ctrl_no_z.notice_severity == NOTICE_WARNING
-    assert "Saddle Axis (Z)" in ctrl_no_z.notice_text
+    assert "Saddle axis (Z)" in ctrl_no_z.notice_text
     assert "Setup > ELS" in ctrl_no_z.notice_text
 
 
@@ -243,7 +243,7 @@ def test_the_wizard_says_why_a_retract_z_tap_did_nothing(ctrl_no_z):
     ctrl_no_z.on_action_button_clicked()
 
     assert ctrl_no_z.notice_severity == NOTICE_WARNING
-    assert "Saddle Axis (Z)" in ctrl_no_z.notice_text
+    assert "Saddle axis (Z)" in ctrl_no_z.notice_text
 
 
 def test_the_x_message_names_the_cross_slide_not_just_x(clock):
@@ -255,7 +255,7 @@ def test_the_x_message_names_the_cross_slide_not_just_x(clock):
     ctrl.on_action_button_clicked()
 
     assert ctrl.notice_severity == NOTICE_WARNING
-    assert "Cross Slide Axis (X)" in ctrl.notice_text
+    assert "Cross slide axis (X)" in ctrl.notice_text
     assert "Setup > ELS" in ctrl.notice_text
 
 

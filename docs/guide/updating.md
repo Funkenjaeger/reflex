@@ -19,7 +19,7 @@ What happens underneath, and the command-line route, are in
 ## Steps
 
 1. **Open Setup → Update** (Setup is the gear in the sidebar). The screen is
-   titled **Software Update**, and it fetches the list of releases when it
+   titled **Software update**, and it fetches the list of releases when it
    opens.
 
 2. **Look at the top two rows.** **Currently installed release** is the
@@ -33,21 +33,21 @@ What happens underneath, and the command-line route, are in
    **Offer integration builds (bench only)**, which adds `-rc.N.dev.M` builds;
    other machines do not show that row.
 
-4. **Tap Install Selected Release.** A release candidate asks first, in a
+4. **Tap Install selected release.** A release candidate asks first, in a
    **Pre-release** dialog (an integration build in an **Integration build**
-   dialog): **Install Anyway** or **Cancel**. If an ELS job is
+   dialog): **Install anyway** or **Cancel**. If an ELS job is
    engaged you are asked about that next. See [ELS job engaged](#els-job-engaged).
 
 5. **Leave it alone until it finishes.** The button reads **Updating...**, a
-   warning under it says not to power off, and the **Update Status** box scrolls
+   warning under it says not to power off, and the **Update status** box scrolls
    into view and logs each step. The firmware half takes about fifteen seconds.
    During it the DRO stops and **Controller firmware** reads
    `link released for update`. That is the update holding the serial link, not
    a fault.
 
 6. **The UI restarts itself** on the new version. If the status box instead
-   ends with *"Update applied, but the UI did not restart. Press Exit Application
-   to start ..."*, tap **Exit Application**. The UI comes back on the new version by
+   ends with *"Update applied, but the UI did not restart. Press Exit application
+   to start ..."*, tap **Exit application**. The UI comes back on the new version by
    itself.
 
 Drag the status box with a finger to scroll it. It is worth reading before
@@ -62,7 +62,7 @@ you leave the screen.
 
 The controller will not reboot into its bootloader while an ELS job is
 engaged, because a reboot would drop the servo mid-job. So when a job is
-engaged, **Install Selected Release** opens an **ELS job engaged** dialog that
+engaged, **Install selected release** opens an **ELS job engaged** dialog that
 ends:
 
 > Disengage ELS and install v1.2.0?
@@ -78,7 +78,7 @@ If the job cannot be disengaged right now, the dialog says why and offers only
 > The spindle is turning. Stop the spindle.
 
 or, with a cycle running, *"Cycle is running. Press Stop to disengage."* Do that, then
-tap **Install Selected Release** again.
+tap **Install selected release** again.
 
 ## If an update fails
 
@@ -99,7 +99,7 @@ command-line route to see why.
 > The update did not start: the controller REFUSED to reboot into its
 > bootloader because an ELS job is engaged. ...
 
-Disengage and install again. **Install Selected Release** offers to disengage
+Disengage and install again. **Install selected release** offers to disengage
 for you.
 
 > REFUSED: the v... firmware speaks register protocol version ..., so the two

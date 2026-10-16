@@ -33,8 +33,8 @@ tells you once.
 ## When the table goes stale
 
 The table is correct only for the setup it was measured with: the Z scale
-resolution, the leadscrew (**Lead Screw Pitch** and **Lead Screw Pitch
-Steps**) and the **Gearbox table**. If one of them changes, the table is
+resolution, the leadscrew (**Lead screw pitch** and **Lead screw pitch
+steps**) and the **Gearbox table**. If one of them changes, the table is
 **stale**. The correction goes to off, and a notice names the change. The
 table is kept: put the setting back and the table is correct again. Or
 measure the table again.

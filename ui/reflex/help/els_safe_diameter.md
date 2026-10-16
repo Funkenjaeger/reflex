@@ -45,5 +45,5 @@ gate trustworthy, so the value comes first.
   Here it has a different name because its job is the clearance gate,
   not the thread's dimension.
 - Stop-only mode never shows it, because that mode has no Retract.
-- The **Inner Thread** setting decides which direction counts as clear:
+- The **Inner thread** setting decides which direction counts as clear:
   outward for OD work, inward for ID.

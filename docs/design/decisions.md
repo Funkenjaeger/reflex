@@ -236,7 +236,7 @@ that blamed the gearbox on a lathe with none.
   expects the plain leadscrew ratio. A mismatch still stops the pass when the
   check acts, with wording that does not mention gears, and nothing is ever
   adopted.
-- **A gearbox is a table of 2 to 4 positions,** entered in Advanced ELS Settings
+- **A gearbox is a table of 2 to 4 positions,** entered in Advanced ELS settings
   as text, for example `A=1, B=2, C=1/2` or `Lo=1, Hi=3/2`. Names are the
   owner's, 1 to 3 characters, unique. The first position is the reference:
   factor 1, every step-valued setting stored in it, calibration only there.

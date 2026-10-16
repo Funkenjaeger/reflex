@@ -1,4 +1,4 @@
-Sync Ratio
+Sync ratio
 ==========
 
 The sync ratio sets how many units the servo moves for each unit of

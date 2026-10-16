@@ -1779,7 +1779,7 @@ class ElsUiController(EventDispatcher):
             # THE ONE THAT PROVES THE SURFACE. Reachable with the button fully
             # enabled, and before this the operator's entire feedback was a
             # press that did nothing. Names the fix, not the fault.
-            self.notify("Saddle Axis (Z) is not set. Set it in Setup > ELS.",
+            self.notify("Saddle axis (Z) is not set. Set it in Setup > ELS.",
                         NOTICE_WARNING)
         elif not self._els_z_is_single_input():
             # THE DRO AND THE FIRMWARE WOULD DISAGREE ABOUT WHERE THE CARRIAGE
@@ -1802,7 +1802,7 @@ class ElsUiController(EventDispatcher):
                 "the firmware can only track one scale",
                 self._els.get_z_axis().transform.transform_type,
                 len(self._els.get_z_axis().transform.contributions))
-            self.notify("Saddle Axis (Z) adds two scales. Use one input.",
+            self.notify("Saddle axis (Z) adds two scales. Use one input.",
                         NOTICE_WARNING)
         elif self._els_fsm.may_enable():
             self._els_fsm.enable()
@@ -1882,7 +1882,7 @@ class ElsUiController(EventDispatcher):
             axis = self._els.get_z_axis()
             if axis is None:
                 log.warning(f"action button: no Z (saddle) axis assigned in state '{state}'")
-                self.notify("Saddle Axis (Z) is not set. Set it in Setup > ELS.",
+                self.notify("Saddle axis (Z) is not set. Set it in Setup > ELS.",
                             NOTICE_WARNING)
                 return
             if state == "set_stop_z":
@@ -1898,7 +1898,7 @@ class ElsUiController(EventDispatcher):
                 # operator hunting through settings for which of the two this
                 # step wanted -- the Z message has the same problem solved the
                 # same way.
-                self.notify("Cross Slide Axis (X) is not set. Set it in "
+                self.notify("Cross slide axis (X) is not set. Set it in "
                             "Setup > ELS.", NOTICE_WARNING)
                 return
             if state == "set_start_dia":
@@ -2189,12 +2189,12 @@ class ElsUiController(EventDispatcher):
         a committed stop is always armed, so only two honest causes remain."""
         if not self.engaged:
             return ("ELS is not engaged. The feed will run with no "
-                    "automatic stop.\n\nPress Enable Feed to continue.")
+                    "automatic stop.\n\nPress Enable feed to continue.")
         if self.stop_z_encoder is None:
             return ("No stop is set. The feed will run with no automatic "
-                    "stop.\n\nPress Enable Feed to continue.")
+                    "stop.\n\nPress Enable feed to continue.")
         return ("The ELS stop is not armed. The feed will run with no "
-                "automatic stop.\n\nPress Enable Feed to continue.")
+                "automatic stop.\n\nPress Enable feed to continue.")
 
     def _on_pass_interrupted(self):
         """Tell the operator we stopped a pass that the firmware was still running.
@@ -2224,7 +2224,7 @@ class ElsUiController(EventDispatcher):
         try:
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
-                title="Feed Stopped On Startup",
+                title="Feed stopped on startup",
                 message="\n\n".join([
                     "The controller was still driving the carriage when this app "
                     f"started ({armed}).",

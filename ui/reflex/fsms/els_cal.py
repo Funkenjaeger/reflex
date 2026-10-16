@@ -221,7 +221,7 @@ class BacklashCalibration:
         if z_input is None:
             self._fail(
                 ELS_CAL_ERR_CONFIG,
-                "Saddle Axis (Z) is not set, so no scale can monitor the "
+                "Saddle axis (Z) is not set, so no scale can monitor the "
                 "carriage. Set it in Setup > ELS. Then calibrate.",
             )
             return False

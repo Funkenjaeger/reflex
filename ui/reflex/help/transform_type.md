@@ -1,4 +1,4 @@
-Transform Type
+Transform type
 ==============
 
 Sets how this axis changes the raw scale input(s) into its displayed
@@ -14,16 +14,16 @@ The axis shows the one scale input, with no change.
 Use this for a simple axis with one scale (the most usual case).
 
 ### Sum
-The axis shows scale input 0 plus the Second Scale Input.
+The axis shows scale input 0 plus the Second scale input.
 
     axis_value = input_0 + input_1
 
-The Second Scale Input is enabled only for this type. Use this for an axis
+The Second scale input is enabled only for this type. Use this for an axis
 that adds two scales, for example two linear encoders.
 
 ## Notes
 
 - A change to the transform type shows or hides the related
   parameter fields below it
-- To save changes, press "Apply Transform" at the bottom of the
+- To save changes, press "Apply transform" at the bottom of the
   screen

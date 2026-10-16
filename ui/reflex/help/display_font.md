@@ -1,11 +1,11 @@
-Display Font
+Display font
 ============
 
 The font used for the DRO position readouts on the home screen.
 
 ## Selection
 
-Press to open the Font Picker. It shows all available monospace
+Press to open the Font picker. It shows all available monospace
 fonts, each with a preview of how numbers look (+123.456).
 
 ## Recommendations

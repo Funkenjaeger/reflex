@@ -190,7 +190,7 @@ def test_the_choice_sits_under_the_cross_slide_dropdown():
     import reflex.components.screens.els_setup_screen as mod
 
     kv = (Path(mod.__file__).parent / "els_setup_screen.kv").read_text(encoding="utf-8")
-    x_at = kv.index("Cross Slide Axis (X)")
+    x_at = kv.index("Cross slide axis (X)")
     row_at = kv.index("x_dro_reads_dropdown")
     assert row_at > x_at, "the row is not under the X dropdown"
 

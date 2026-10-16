@@ -56,7 +56,7 @@ Most lathes need nothing here: the default is **no gearbox**, and the screens
 then never mention one.
 
 If a lever or gearbox between the servo and the leadscrew changes how far the
-carriage moves per motor step, enter it in **Advanced ELS Settings → Gearbox table**,
+carriage moves per motor step, enter it in **Advanced ELS settings → Gearbox table**,
 the reference position first, as `name=factor` entries:
 
     A=1, B=2, C=1/2

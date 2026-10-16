@@ -71,11 +71,11 @@ Conditions changed while the calibration was running — the ELS stop was engage
 
 > Gearbox position is B. Calibration runs only in gearbox position A.
 
-Only on a lathe with a gearbox table. Calibration results are stored as measured in the reference position (the first one in the table, A in this example), so it only runs there. Move the lever to it, set **Gearbox position** to it in Advanced ELS Settings, and calibrate.
+Only on a lathe with a gearbox table. Calibration results are stored as measured in the reference position (the first one in the table, A in this example), so it only runs there. Move the lever to it, set **Gearbox position** to it in Advanced ELS settings, and calibrate.
 
 ## Coupling check
 
-Shown across the status gutter when the coupling check stops a pass partway, and only when **Coupling check acts** is on in Advanced ELS Settings (it is off by default, which only logs). The check compares how far the Z scale moved with how far the servo was told to move it. Red strips change nothing. The yellow ones appear only on a lathe with a gearbox table, and name a position the next Cut or Retract adopts; they are shown here for the development lathe's table, A=1, B=2, C=1/2, and use the names in your own table.
+Shown across the status gutter when the coupling check stops a pass partway, and only when **Coupling check acts** is on in Advanced ELS settings (it is off by default, which only logs). The check compares how far the Z scale moved with how far the servo was told to move it. Red strips change nothing. The yellow ones appear only on a lathe with a gearbox table, and name a position the next Cut or Retract adopts; they are shown here for the development lathe's table, A=1, B=2, C=1/2, and use the names in your own table.
 
 > Carriage decoupled. Close the half nut or examine the drivetrain.
 
@@ -91,7 +91,7 @@ The same for a slower position, here half as far per step: the lever is in **C**
 
 > Carriage speed is incorrect. Examine the drivetrain.
 
-The carriage moved at a rate that matches no position in the gearbox table or, on a lathe with no gearbox table, not at the leadscrew's rate. Something in the drivetrain is not doing what it is told. Nothing is changed, and **pressing Cut again will fail the same way** until the cause is found: a slipping coupling, a half nut riding and skipping, a lever between positions, a gearbox table that does not match the machine, or wrong servo settings. If the lathe has a gearbox between the servo and the leadscrew and no table, enter it as **Gearbox table** in Advanced ELS Settings.
+The carriage moved at a rate that matches no position in the gearbox table or, on a lathe with no gearbox table, not at the leadscrew's rate. Something in the drivetrain is not doing what it is told. Nothing is changed, and **pressing Cut again will fail the same way** until the cause is found: a slipping coupling, a half nut riding and skipping, a lever between positions, a gearbox table that does not match the machine, or wrong servo settings. If the lathe has a gearbox between the servo and the leadscrew and no table, enter it as **Gearbox table** in Advanced ELS settings.
 
 ## Thread phase offset refusals
 

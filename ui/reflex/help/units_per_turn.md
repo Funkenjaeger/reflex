@@ -1,4 +1,4 @@
-Units Per Turn
+Units per turn
 ==============
 
 The number of display units for one full revolution of the output
@@ -6,7 +6,7 @@ axis (after gearing). The default is 360, for degrees.
 
 ## Common Values
 
-| Application           | Units per Turn | Meaning               |
+| Application           | Units per turn | Meaning               |
 |-----------------------|----------------|-----------------------|
 | Rotary table (degrees)| 360            | 360° per revolution   |
 | Rotary table (grads)  | 400            | 400 grads per rev     |
@@ -30,6 +30,6 @@ Each unit is 3.6° of physical rotation.
 ## Notes
 
 - Must be a positive integer
-- You cannot change this setting when ELS Mode is on
+- You cannot change this setting when ELS mode is on
 - A change to this value changes how positions are displayed. It
   does not change the physical motion

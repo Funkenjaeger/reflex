@@ -75,7 +75,7 @@ class ProfilingPanel(BoxLayout):
         self._profiler = cProfile.Profile()
         self._profiler.enable()
         self.is_profiling = True
-        self.status_text = "Profiling is active. Reproduce the slowdown. Then press Stop Profiling."
+        self.status_text = "Profiling is active. Reproduce the slowdown. Then press Stop profiling."
         self.profile_results = ""
         log.info("cProfile started")
 

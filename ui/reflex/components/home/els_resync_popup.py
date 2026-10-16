@@ -70,7 +70,7 @@ DRIFTED_TEXT = (
     "you used to seat it. Stop when it seats firmly. Press Re-seated."
 )
 
-NO_AXES_TEXT = ("Saddle Axis (Z) or Spindle Axis is not set. Set both in "
+NO_AXES_TEXT = ("Saddle axis (Z) or Spindle axis is not set. Set both in "
                 "Setup > ELS. Then connect the controller.")
 
 HELP_TITLE = "Picking up an existing thread"

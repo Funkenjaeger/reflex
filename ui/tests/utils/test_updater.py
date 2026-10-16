@@ -1427,7 +1427,7 @@ def test_a_failed_restart_keeps_the_update_and_says_exit_application(tmp_path):
     assert r.flashed and not r.reverted, "the new firmware stays"
     assert _restored_checkout(r) == [], "the checkout stays on the release"
     said = "\n".join(lines)
-    assert "Exit Application" in said and RELEASE.tag in said
+    assert "Exit application" in said and RELEASE.tag in said
 
 
 def test_a_granted_restart_is_reported_as_restarting(tmp_path):

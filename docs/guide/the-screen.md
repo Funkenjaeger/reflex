@@ -34,7 +34,7 @@ screen:
 !!! note "No pattern wand on a lathe"
     A wand above ELS/DRO opens the pattern screen — hole circles, lines,
     rectangles — which lays holes out on a face. That is a rotary-table job, so
-    **a lathe does not offer it at all**, whatever the *Show Patterns* setting
+    **a lathe does not offer it at all**, whatever the *Show patterns* setting
     says. You will see the button on a rotary table, and the setting alongside
     it:
 
@@ -65,7 +65,7 @@ feed mode — the chip dims rather than disappearing, because the reference is
 still there and still usable.
 
 **Beside it — the gearbox position.** `Gear` and the name of the position in
-effect, only on a lathe with a gearbox table (Advanced ELS Settings). Absent with no
+effect, only on a lathe with a gearbox table (Advanced ELS settings). Absent with no
 gearbox. A position the coupling check adopts shows here at once.
 
 **Right — the phase offset.** Present only when a thread-phase offset is set,

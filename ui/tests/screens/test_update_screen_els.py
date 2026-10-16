@@ -355,7 +355,7 @@ def test_the_pre_release_question_comes_first_and_disengages_nothing(rig):
     install(rig, RC)
     [pre] = rig.dialogs
     assert pre.title == "Pre-release"
-    pre.button("Install Anyway").press()
+    pre.button("Install anyway").press()
     assert rig.ctrl._els_fsm.state == "stopped", "nothing disengaged yet"
     assert [d.title for d in rig.dialogs] == ["Pre-release", "ELS job engaged"]
     rig.do_install.assert_not_called()

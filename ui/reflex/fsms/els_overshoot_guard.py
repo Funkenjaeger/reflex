@@ -53,7 +53,7 @@ log = Logger.getChild(__name__)
 
 # ── What the operator reads (65 characters at most, state then action) ───
 MIGRATED_NOTICE = "Overshoot table is now saved as a machine setting."
-NO_TABLE_NOTICE = "No overshoot table. Measure it in Advanced ELS Settings."
+NO_TABLE_NOTICE = "No overshoot table. Measure it in Advanced ELS settings."
 NOT_THIS_MACHINE_NOTICE = "No overshoot table for this machine. Correction is off."
 STALE_NOTICE = "{reason}. Overshoot correction is off."
 

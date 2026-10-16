@@ -217,7 +217,7 @@
                 on_release: root.cancel()
 
             FormValueButton:
-                text: "Confirm — latch here"
+                text: "Confirm"
                 opacity: 1 if root.state == "align" else 0
                 disabled: root.state != "align" or not root.confirm_enabled
                 size_hint_x: 1 if root.state == "align" else None

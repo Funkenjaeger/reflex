@@ -1436,7 +1436,7 @@ class UpdateSession:
                 f"The UI could not restart itself: {e}\n"
                 f"The update IS installed. The controller firmware and the UI "
                 f"are both {prepared.release.tag}, but this screen is still the "
-                f"old UI. Press Exit Application. The UI then comes back on "
+                f"old UI. Press Exit application. The UI then comes back on "
                 f"{prepared.release.tag} by itself.")
             return False
         return True

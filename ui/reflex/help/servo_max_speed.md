@@ -1,4 +1,4 @@
-Maximum Speed (Steps/s)
+Maximum speed (Steps/s)
 =======================
 
 The maximum speed that the stepper or servo motor can reach, in steps

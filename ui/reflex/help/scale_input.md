@@ -1,4 +1,4 @@
-Scale Input
+Scale input
 ===========
 
 This setting selects the hardware scale input that supplies data to
@@ -15,9 +15,9 @@ board. This dropdown connects one hardware input to this axis.
 Multiple axes can read from the same physical input. For example:
 - An "X" axis using Input 0 with the Identity transform
 - A "Total" axis using Input 0 with the Sum transform, with Input 1 as
-  its Second Scale Input
+  its Second scale input
 
-The **Second Scale Input** is enabled only when the Transform Type is Sum.
+The **Second scale input** is enabled only when the Transform type is Sum.
 
 Thus you can get multiple logical axes from a single encoder.
 

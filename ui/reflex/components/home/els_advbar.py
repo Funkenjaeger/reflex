@@ -366,17 +366,17 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         """
         if which in ("stop_z", "start_z"):
             axis = self.app.els.get_z_axis()
-            axis_label = "Saddle Axis (Z)"
+            axis_label = "Saddle axis (Z)"
         else:
             axis = self.app.els.get_x_axis()
-            axis_label = "Cross Slide Axis (X)"
+            axis_label = "Cross slide axis (X)"
         if axis is None:
             # Same guard as the keypad-entry paths — and the same FEEDBACK.
             # Silently returning here left a long-press indistinguishable from
             # a dead button when the axis wasn't mapped in ELS settings.
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
-                title="Axis Not Configured",
+                title="Axis not configured",
                 message=f"{axis_label} is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
@@ -403,15 +403,15 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         if z_axis is None:
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
-                title="Axis Not Configured",
-                message="Saddle Axis (Z) is not set. Set it in Setup > ELS.",
+                title="Axis not configured",
+                message="Saddle axis (Z) is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
             return
 
         is_metric = self.app.formats.current_format == "MM"
         keypad = Keypad(
-            title="Enter Stop Z Position (" + ("mm" if is_metric else "in") + ")"
+            title="Enter stop Z position (" + ("mm" if is_metric else "in") + ")"
         )
         keypad.integer = False
 
@@ -447,15 +447,15 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         if z_axis is None:
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
-                title="Axis Not Configured",
-                message="Saddle Axis (Z) is not set. Set it in Setup > ELS.",
+                title="Axis not configured",
+                message="Saddle axis (Z) is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
             return
 
         is_metric = self.app.formats.current_format == "MM"
         keypad = Keypad(
-            title="Enter Start Z Position (" + ("mm" if is_metric else "in") + ")"
+            title="Enter start Z position (" + ("mm" if is_metric else "in") + ")"
         )
         keypad.integer = False
 
@@ -488,8 +488,8 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         if self.app.els.get_x_axis() is None:
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
-                title="Axis Not Configured",
-                message="Cross Slide Axis (X) is not set. Set it in Setup > ELS.",
+                title="Axis not configured",
+                message="Cross slide axis (X) is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
             return

@@ -289,7 +289,7 @@ class UpdateScreen(Screen):
                 reason = refusal
             text = (f"{lead} It cannot be disengaged now:\n\n"
                     f"{reason}\n\n"
-                    f"Then press Install Selected Release again.")
+                    f"Then press Install selected release again.")
         content = BoxLayout(orientation="vertical", spacing=10, padding=10)
         content.add_widget(Factory.ThemedLabel(
             text=text, halign="left", valign="top", text_size=(None, None)))
@@ -423,7 +423,7 @@ class UpdateScreen(Screen):
         buttons = BoxLayout(orientation="horizontal", spacing=10,
                             size_hint_y=None, height=60)
         btn_cancel = Factory.SetupButton(text="Cancel", font_size=22)
-        btn_confirm = Factory.SetupButton(text="Install Anyway", font_size=22)
+        btn_confirm = Factory.SetupButton(text="Install anyway", font_size=22)
         buttons.add_widget(btn_cancel)
         buttons.add_widget(btn_confirm)
         content.add_widget(buttons)

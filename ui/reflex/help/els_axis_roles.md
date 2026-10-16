@@ -1,23 +1,23 @@
-ELS Axis Roles
+ELS axis roles
 ==============
 
 Sets which configured axes act as the spindle, the saddle (Z) and the
 cross slide (X) for Electronic Lead Screw operation.
 
-## Axis Roles
+## Axis roles
 
-### Spindle Axis
+### Spindle axis
 The rotational reference input. This axis must connect to a spindle
-encoder, and it should have Spindle Mode turned on. The ELS system reads
+encoder, and it should have Spindle mode turned on. The ELS system reads
 the spindle speed and position from this axis to synchronize the servo
 feeds.
 
-### Saddle Axis (Z)
+### Saddle axis (Z)
 The longitudinal axis, usually the carriage/saddle on a lathe. When ELS
 is active, this axis follows the spindle at the selected thread pitch or
 feed rate, for longitudinal cuts and threading.
 
-### Cross Slide Axis (X)
+### Cross slide axis (X)
 The transverse axis, usually the cross slide on a lathe. When ELS is
 active, this axis can be synchronized for facing operations or taper
 turning.

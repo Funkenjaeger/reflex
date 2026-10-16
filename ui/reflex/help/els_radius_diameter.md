@@ -11,7 +11,7 @@ it moves with the slide.
 
 ## Where it applies
 
-This applies only to the axis assigned as **Cross Slide Axis (X)**. It is
+This applies only to the axis assigned as **Cross slide axis (X)**. It is
 on this screen, under that assignment, because it is a fact about that
 role. A saddle or a spindle has no diameter, so the setting is not offered
 for them at all.
@@ -51,5 +51,5 @@ Enter the resolution printed on the scale. Set this to **Diameter**.
   resolution to get a diameter readout. If so, correct the resolution
   **and** change this to Diameter at the same time. If you do only one of
   the two, the readout is halved or doubled.
-- **Inner Thread** sets which direction counts as clear of the work. It is
+- **Inner thread** sets which direction counts as clear of the work. It is
   independent of this setting.

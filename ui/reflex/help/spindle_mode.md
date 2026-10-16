@@ -1,4 +1,4 @@
-Spindle Mode
+Spindle mode
 ============
 
 When this setting is on, the system treats this axis as a spindle (a
@@ -21,7 +21,7 @@ rotational speed source), not as a positional axis.
 ## Notes
 
 - You can still set a spindle-mode axis as the ELS spindle source in
-  the ELS Setup screen
+  the ELS setup screen
 - Usually only one axis needs spindle mode on
 - When spindle mode is on, the display uses the RPM format settings
   from the Formats screen

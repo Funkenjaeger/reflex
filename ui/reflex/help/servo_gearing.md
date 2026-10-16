@@ -1,4 +1,4 @@
-Servo Gearing Ratios
+Servo gearing ratios
 ====================
 
 The servo gearing ratio sets the relation between stepper motor
@@ -53,6 +53,6 @@ the motor steps to match:
 ## Notes
 
 - Both values must be positive integers
-- You cannot change this setting when ELS Mode is on
+- You cannot change this setting when ELS mode is on
 - If the table moves past or stops short of commanded positions,
   examine your steps/rev and gear ratio values

@@ -216,13 +216,13 @@ class MainApp(App):
         # Refused: no armed stop. Confirm to override.
         from reflex.components.popups.custom_popup import CustomPopup
         CustomPopup(
-            title="No ELS Stop Armed",
+            title="No ELS stop armed",
             # Cause-specific: "no stop set", "not engaged", and "set but not
             # armed (Z at/past it)" are different operator problems with
             # different remedies, and the old one-size text claimed the first
             # in all three cases (round-2 finding, 2026-08-17).
             message=self.els_uic.unarmed_stop_message(),
-            button_text="Enable Feed",
+            button_text="Enable feed",
             cancel_text="Cancel",
             confirm_callback=lambda: self.els_uic.request_feed_enable(confirmed=True),
         ).open()

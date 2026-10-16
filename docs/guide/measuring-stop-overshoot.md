@@ -1,6 +1,6 @@
 # Measuring the stop overshoot
 
-This is the walkthrough for **Advanced ELS Settings → Overshoot table → Measure**.
+This is the walkthrough for **Advanced ELS settings → Overshoot table → Measure**.
 The Measure window shows a QR code that opens this page, so you can follow it on a
 phone at the machine.
 
@@ -26,7 +26,7 @@ There are two measurements:
 3. **Tool clear** of the work and the chuck. Every pass is in air.
 4. **Engage** and turn on **Sync Enable**.
 
-Open **Advanced ELS Settings**, **Overshoot table**, **Measure**, and press
+Open **Advanced ELS settings**, **Overshoot table**, **Measure**, and press
 **Detect** or **Sweep**. Both windows close and the ELS bar is yours again.
 
 ## The cue strip
@@ -82,7 +82,7 @@ When the last pass is done, the **Measure** window opens by itself with the wors
 coast at each setting:
 
 - **Save** makes it this machine's overshoot table. Saving does not turn the
-  correction on: turn it on in **Advanced ELS Settings**, then check it at a
+  correction on: turn it on in **Advanced ELS settings**, then check it at a
   shoulder.
 - **Discard** keeps the table you had.
 

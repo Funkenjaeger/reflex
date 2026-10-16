@@ -1,4 +1,4 @@
-Axis Name
+Axis name
 =========
 
 A human-readable label for this axis. It shows on the home screen DRO

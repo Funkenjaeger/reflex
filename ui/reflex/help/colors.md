@@ -2,29 +2,29 @@ Color Settings
 ==============
 
 These settings set the colors of the DRO interface. Press a color
-swatch to open the Color Picker.
+swatch to open the Color picker.
 
 ## Color Roles
 
-### Home Screen Digits
+### Home screen digits
 The color of the position readout numbers on the home screen.
 Choose a color with high contrast against the dark background.
 Then the digits are easy to read in workshop lighting.
 
-### Accept Color
+### Accept color
 The color of confirmation buttons and positive actions (for example,
 "Apply" and "OK"). Typically green.
 
-### Cancel Color
+### Cancel color
 The color of cancel and back buttons and of destructive actions (for
 example, "Cancel"). Typically red.
 
-### Indicators On Color
+### Indicators on color
 The color of status indicators when they are active or enabled (for
 example, sync active or servo enabled). Use a bright color that
 attracts attention.
 
-### Indicators Off Color
+### Indicators off color
 The color of status indicators when they are inactive or disabled.
 Use a dim or muted color that contrasts with the "on" state.
 

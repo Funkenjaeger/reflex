@@ -1,4 +1,4 @@
-ELS Mode
+ELS mode
 ========
 
 Electronic Lead Screw (ELS) mode synchronizes the servo motor to a
@@ -22,7 +22,7 @@ lathe.
 
 ## Requirements
 
-- A spindle axis must be configured and assigned in ELS Setup
+- A spindle axis must be configured and assigned in ELS setup
 - The lead screw pitch must be correctly set for your machine
 - At least one saddle (Z) or cross slide (X) axis must be assigned
 
@@ -30,5 +30,5 @@ lathe.
 
 - When ELS mode is on, the gearing ratio and units-per-turn fields on
   this screen are disabled. The ELS system controls them.
-- Set the ELS axis assignments in the ELS Setup screen.
+- Set the ELS axis assignments in the ELS setup screen.
 - Select the feed and thread from the home screen toolbar.

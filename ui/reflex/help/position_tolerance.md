@@ -1,4 +1,4 @@
-Position Tolerance (mm)
+Position tolerance (mm)
 =======================
 
 The acceptable position error, in millimeters. When the current

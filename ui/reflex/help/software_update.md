@@ -1,4 +1,4 @@
-Software Update
+Software update
 ===============
 
 Install a release from the machine. A Reflex release is **one version covering
@@ -7,20 +7,20 @@ both halves or neither.
 
 ## Fields
 
-### Currently Installed Release
+### Currently installed release
 The version that runs now. Read-only.
 
-### Controller Firmware
+### Controller firmware
 What the controller reports: its register protocol version, and whether that
 version matches this UI. During an update it reads *link released for update*.
 This means the update stopped the DRO on purpose. Nothing is broken.
 
-### Refresh Available Releases
+### Refresh available releases
 Gets the release list from GitHub. An internet connection is necessary.
 Releases published before the field bootloader existed have no firmware image.
 They cannot supply both halves, so the list does not offer them.
 
-### Offer Pre-releases (experimental)
+### Offer pre-releases (experimental)
 When this is on, release candidates appear in the list with the final releases.
 
 - **OFF (default):** final releases only.
@@ -30,7 +30,7 @@ When this is on, release candidates appear in the list with the final releases.
 There is no longer a "dev" entry. It followed a branch, and no firmware image
 is built for a branch. So it could only update half the machine.
 
-### Offer Integration Builds (bench only)
+### Offer integration builds (bench only)
 This row appears only on a machine set up with an integration build source.
 When this is on, integration builds (`vX.Y.Z-rc.N.dev.M`, a build on the way
 to release candidate N) appear in the list. They are built the same way and
@@ -41,17 +41,17 @@ Before each update, the settings are saved to the commissioning snapshots. An
 older release does not know the settings that a newer release added. It sets
 them to their defaults the first time it saves. Use the snapshot to recover one.
 
-### Available Releases
+### Available releases
 Select the version to install.
 
-### Install Selected Release
+### Install selected release
 Runs the full update. At the end, the service restarts itself.
 
 If an ELS job is engaged, the screen asks you first. The update reboots the
 controller, which ends the job, so the job must be disengaged. **Disengage and
 Install** disengages it. The update starts when the controller confirms that
 the job is released. If the spindle turns or a cycle runs, the screen tells
-you. Stop it, then press Install Selected Release again.
+you. Stop it, then press Install selected release again.
 
 ## What happens when you press Install
 

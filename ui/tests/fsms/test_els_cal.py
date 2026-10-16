@@ -632,7 +632,7 @@ def test_no_z_axis_refuses_before_anything_is_written():
 
     assert cal.start() is False
     assert cal.state == CalState.REFUSED
-    assert "Saddle Axis (Z)" in cal.message
+    assert "Saddle axis (Z)" in cal.message
     assert hal.scale_index_written is None
     assert hal.limits is None
     assert hal.cal_command == 0 or hal._running == 0

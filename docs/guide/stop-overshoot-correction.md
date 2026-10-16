@@ -36,7 +36,7 @@ turn on.
 ## Where to find it
 
 Tap the **gear** on the advanced ELS bar, under the mode selector, to open
-**Advanced ELS Settings**, or open it from **Setup → ELS → Advanced ELS
+**Advanced ELS settings**, or open it from **Setup → ELS → Advanced ELS
 Settings**. The settings are at the bottom, under **Advanced**:
 
 | Setting | What it does |
@@ -77,7 +77,7 @@ A table is correct only for the setup it was measured with, and it records
 that setup:
 
 - the Z scale resolution;
-- the leadscrew: **Lead Screw Pitch** and **Lead Screw Pitch Steps**;
+- the leadscrew: **Lead screw pitch** and **Lead screw pitch steps**;
 - the **Gearbox table**.
 
 Change any of them and the table is **stale**: the correction goes to off with
