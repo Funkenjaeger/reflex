@@ -493,7 +493,7 @@
       orientation: 'vertical'
       size_hint_x: 1
       size_hint_y: None
-      height: (status_gutter.height if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (status_gutter.height if root.controller.takeup_warning else 0) + (status_gutter.height if root.controller.ratio_warning else 0) + (status_gutter.height if root.controller.alarm_strip else 0)
+      height: (status_gutter.height if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (status_gutter.height if root.controller.takeup_warning else 0) + (status_gutter.height if root.controller.ratio_warning else 0) + (status_gutter.height if root.controller.measure_cue else 0) + (status_gutter.height if root.controller.alarm_strip else 0)
       pos_hint: {'x': 0, 'top': 1}
 
 
@@ -577,6 +577,9 @@
       #    or the carriage rate fits no gearbox position. YELLOW: the lever is in
       #    another known position, which the next Cut or Retract adopts. Same
       #    65-character text contract as the take-up strip above.
+      #    Also YELLOW, whether or not that check is on: the thread reference
+      #    was cleared (sync off, a gear adoption, a disengage, or by the
+      #    firmware), shown until the next latch (controller.REF_CLEARED_STRIP).
       BoxLayout:
         id: ratio_notice
         orientation: 'horizontal'
@@ -594,6 +597,35 @@
             size: self.size
         Label:
           text: root.controller.ratio_warning
+          text_size: self.size
+          halign: 'center'
+          valign: 'middle'
+          font_name: app.theme.font_bold
+          font_size: dp(13)
+          color: app.theme.text
+
+      # ── Overshoot measurement cue ──────────────────────────────────────────
+      #    The next step of a Detect or Sweep (fsms/els_overshoot_survey.py),
+      #    driven by controller.measure_cue. Shown until the next pass starts,
+      #    not on a timer; accent tint, because it is guidance, not a warning.
+      #    Same 65-character text contract as the strips above.
+      BoxLayout:
+        id: measure_cue
+        orientation: 'horizontal'
+        size_hint_y: None
+        spacing: dp(8)
+        padding: dp(8), 0
+        height: status_gutter.height if root.controller.measure_cue else 0
+        opacity: 1 if self.height else 0
+        disabled: not self.height
+        canvas.before:
+          Color:
+            rgba: app.theme.accent_bg
+          Rectangle:
+            pos: self.pos
+            size: self.size
+        Label:
+          text: root.controller.measure_cue
           text_size: self.size
           halign: 'center'
           valign: 'middle'

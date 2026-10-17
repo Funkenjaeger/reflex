@@ -67,7 +67,7 @@ What you should find on a freshly written image:
 Everything from here on is run **on the Pi**, over SSH. You need three things
 first, and none of them are Reflex-specific:
 
-- The Pi on your network. Ethernet needs nothing. For WiFi, the easiest
+- The Pi on your network. Ethernet needs nothing. For Wifi, the easiest
   route is to set it when you write the card — Raspberry Pi Imager's advanced
   options will preseed the network, the hostname and SSH into the image.
 - SSH enabled. If it is not, an empty file named `ssh` in the boot

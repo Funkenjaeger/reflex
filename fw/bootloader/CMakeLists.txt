@@ -8,8 +8,9 @@
 # (16 KB). The link FAILS if the image does not fit; that is the budget.
 #
 # Bare metal: no HAL, no FreeRTOS, soft float (the FPU is off at reset and
-# this program never turns it on). Shares with the app exactly two headers,
-# Core/Inc/els_identity.h and Core/Inc/modbus_window.h, plus the CMSIS
+# this program never turns it on). Shares with the app two headers,
+# Core/Inc/els_identity.h and Core/Inc/modbus_window.h, the Modbus RTU core
+# in modbus_rtu/ (bound to this image by core/mb_rtu_port.h), plus the CMSIS
 # device headers and the startup file.
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_VERSION 1)
@@ -45,6 +46,7 @@ add_definitions(-DSTM32F411xE -DBL_TARGET=1)
 include_directories(
     ${CMAKE_SOURCE_DIR}/core
     ${CMAKE_SOURCE_DIR}/src
+    ${FW_DIR}/modbus_rtu
     ${FW_DIR}/Core/Inc
     ${FW_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Include
     ${FW_DIR}/Drivers/CMSIS/Include
@@ -72,7 +74,7 @@ add_executable(${PROJECT_NAME}.elf
     core/bl_core.c
     core/bl_image.c
     core/bl_state.c
-    core/bl_modbus.c
+    ${FW_DIR}/modbus_rtu/mb_rtu.c
     core/bl_rxring.c
     ${FW_DIR}/Core/Startup/startup_stm32f411ceux.s
     ${LINKER_SCRIPT})

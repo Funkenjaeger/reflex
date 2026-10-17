@@ -139,13 +139,13 @@ STATE_NAMES = {0: "IDLE", 1: "BACKUP", 2: "COPY", 3: "TRIAL", 4: "REVERT", 5: "R
 # 11 (2026-09-18) keeps 168: stopOffset and stopTriggerOffset were placed in two
 # of protocolVersion 10's alignment pads, so no group grew and nothing moved.
 # Listed separately for the whitelist reason above; genregs --check verifies it.
-APP_BOOT_COMMAND_REG = {8: 232, 9: 232, 10: 168, 11: 168}
+APP_BOOT_COMMAND_REG = {8: 232, 9: 232, 10: 168, 11: 168, 12: 168}
 # bootSeq, the firmware's ack of an ACCEPTED boot command, is the uint16 right
 # behind bootCommand in every layout above (Ramps.h: the two were appended as a
 # pair in protocolVersion 8 and moved together in 10). A table of its own, not
 # "bootCommand + 1", for the whitelist reason above; genregs --check verifies
 # it against registers/offsets.json exactly as it does APP_BOOT_COMMAND_REG.
-APP_BOOT_SEQ_REG = {8: 233, 9: 233, 10: 169, 11: 169}
+APP_BOOT_SEQ_REG = {8: 233, 9: 233, 10: 169, 11: 169, 12: 169}
 BOOT_CMD_BOOTLOADER = 1
 # How many polls must see the refusal signature (bootCommand 0, bootSeq
 # unmoved, idStage still the application) before the flasher believes it. Two,

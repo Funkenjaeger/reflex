@@ -278,17 +278,18 @@ class UpdateScreen(Screen):
         refusal = uic.disengage_refusal()
         lead = (f"An ELS job is engaged.\n\n"
                 f"Installing {release.tag} reboots the controller, which ends "
-                f"the ELS job, so it has to be disengaged first.")
+                f"the ELS job. ELS must be disengaged first.")
         if refusal is None:
-            text = f"{lead}\n\nDisengage ELS and install {release.tag}?"
+            text = (f"{lead}\n\nPress Disengage and Install to disengage "
+                    f"ELS and install {release.tag}.")
         else:
             if refusal == DISENGAGE_REFUSED_SYNC:
-                reason = "The spindle is turning. Stop the spindle"
+                reason = "The spindle is turning. Stop the spindle."
             else:
                 reason = refusal
-            text = (f"{lead} It cannot be disengaged right now:\n\n"
-                    f"{reason}.\n\n"
-                    f"Then tap Install Selected Release again.")
+            text = (f"{lead} It cannot be disengaged now:\n\n"
+                    f"{reason}\n\n"
+                    f"Then press Install selected release again.")
         content = BoxLayout(orientation="vertical", spacing=10, padding=10)
         content.add_widget(Factory.ThemedLabel(
             text=text, halign="left", valign="top", text_size=(None, None)))
@@ -328,7 +329,7 @@ class UpdateScreen(Screen):
         refusal = uic.disengage()
         if refusal is not None:
             self.update_status(
-                f"Update not started: ELS was not disengaged. {refusal}.")
+                f"Update not started: ELS was not disengaged. {refusal}")
             return
         self.update_status("ELS disengaged. Waiting for the controller to "
                            "confirm the ELS job is released.")
@@ -345,10 +346,10 @@ class UpdateScreen(Screen):
         if not released:
             self.update_status(
                 f"Update not started: the controller did not confirm the ELS "
-                f"job released within {ELS_RELEASE_TIMEOUT_S:.0f} s of "
-                f"disengaging, so it would refuse to reboot. ELS is disengaged "
-                f"here; the controller firmware and this UI are unchanged. "
-                f"Check the controller connection and try again.")
+                f"job released within {ELS_RELEASE_TIMEOUT_S:.0f} s of the "
+                f"disengage, so it would refuse to reboot. ELS is disengaged "
+                f"here. The controller firmware and this UI did not change. "
+                f"Examine the controller connection. Then try again.")
             log.error("update not started: firmware elsStop.enable not seen "
                       "cleared after disengage")
             self.on_selected_release(self, self.selected_release)
@@ -412,9 +413,9 @@ class UpdateScreen(Screen):
         content.add_widget(Factory.ThemedLabel(
             text=(
                 f"{release.tag} is {what}.\n\n"
-                "- It may be unstable or incomplete\n"
-                "- Both the controller firmware and this UI will be updated\n"
-                "- The machine must not be powered off during the update"
+                "- It can be unstable or incomplete\n"
+                "- The update replaces the controller firmware and this UI\n"
+                "- Do not power off the machine during the update"
             ),
             halign="left", valign="top", text_size=(None, None),
         ))
@@ -422,7 +423,7 @@ class UpdateScreen(Screen):
         buttons = BoxLayout(orientation="horizontal", spacing=10,
                             size_hint_y=None, height=60)
         btn_cancel = Factory.SetupButton(text="Cancel", font_size=22)
-        btn_confirm = Factory.SetupButton(text="Install Anyway", font_size=22)
+        btn_confirm = Factory.SetupButton(text="Install anyway", font_size=22)
         buttons.add_widget(btn_cancel)
         buttons.add_widget(btn_confirm)
         content.add_widget(buttons)
@@ -463,7 +464,7 @@ class UpdateScreen(Screen):
         """
         self.update_status(
             f"Updating {self.current_release} -> {release.tag}. "
-            "Both the controller firmware and this UI will be replaced.")
+            "The update replaces the controller firmware and this UI.")
         try:
             restarting = await asyncio.get_running_loop().run_in_executor(
                 None, self._install_blocking, release)
@@ -478,7 +479,7 @@ class UpdateScreen(Screen):
                 self.update_status("Update applied. Restarting.")
             else:
                 self.update_status(
-                    f"Update applied, but the UI did not restart. Tap Exit "
+                    f"Update applied, but the UI did not restart. Press Exit "
                     f"Application to start {release.tag}.")
         finally:
             self.busy = False

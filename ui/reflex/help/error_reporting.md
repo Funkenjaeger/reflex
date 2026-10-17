@@ -1,33 +1,35 @@
-Disable Error Reporting
-=======================
+Error reporting
+===============
 
-Controls whether this machine uploads crash reports and performance
-traces to a Sentry project.
+This setting controls whether this machine uploads crash reports and
+performance traces to a Sentry project.
 
-**Default: ON — nothing is sent.** Reporting is opt-in, and even
-switching it off here sends nothing until a destination is configured
+**Default: OFF. Nothing is sent.** Reporting is opt-in. If you turn
+this switch ON, nothing is sent until a destination is configured
 (below).
 
 ## Behavior
 
-- **ON (default):** No data leaves the machine.
-- **OFF:** Reports are sent, *but only if* `REFLEX_SENTRY_DSN` names a
-  Sentry project. With no DSN set, this switch does nothing and the log
-  says so at startup.
+- **OFF (default):** No data leaves the machine.
+- **ON:** The machine sends reports *only if* `REFLEX_SENTRY_DSN`
+  names a Sentry project. With no DSN set, this switch has no effect.
+  The log shows this at startup.
 
 ## Configuring a destination
 
-There is deliberately no built-in destination. A DSN identifies an
-account, so a built-in one would always be somebody else's — which is
-exactly what this setting used to do, reporting to the upstream
-project's account rather than yours.
+The application has no built-in destination. This is intentional. A
+DSN identifies an account, so a built-in DSN would always be the
+account of somebody else. Earlier versions of this setting did exactly
+that. They sent reports to the account of the upstream project, not to
+yours.
 
 Set the environment variable in `deploy/start.sh`:
 
     export REFLEX_SENTRY_DSN="https://...@...ingest.sentry.io/..."
 
-Then switch this setting OFF. The startup log states where reports go,
-by host and project — never the DSN itself, which contains a key.
+Then turn this switch ON. The startup log shows where reports go, by
+host and project. It never shows the DSN itself, because the DSN
+contains a key.
 
 ## What Is Collected
 
@@ -45,6 +47,6 @@ It does NOT include:
 
 ## Notes
 
-- Reports are uploaded when they occur, so a machine with no network
-  route logs a failed send rather than crashing
-- In an air-gapped or secure environment, leave this ON
+- Reports upload when they occur. If the machine has no network
+  route, the log records a failed send. The application does not crash
+- In an air-gapped or secure environment, leave this OFF

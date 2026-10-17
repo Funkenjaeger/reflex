@@ -384,9 +384,9 @@ def parse_identity(text: str) -> Identity:
     m = _IDENTITY_RE.search(text)
     if not m:
         raise UpdateRefused(
-            "Could not read the controller's identity window. The board did "
-            "not answer in a form this UI recognises, so its firmware version "
-            "is UNKNOWN -- refusing rather than guessing.\n"
+            "Could not read the identity window of the controller. The board "
+            "did not answer in a form this UI recognizes, so its firmware "
+            "version is UNKNOWN. The update is refused.\n"
             f"Output was: {text.strip()[:400]}")
     return Identity(stage=m.group("stage"), build_rev=m.group("rev"),
                     app_protocol=int(m.group("protocol")))
@@ -412,7 +412,7 @@ def parse_image_info(text: str) -> ImageInfo:
     if not m:
         raise UpdateRefused(
             "The downloaded firmware image did not describe itself in a form "
-            "this UI recognises; refusing to flash it.\n"
+            "this UI recognizes. The image is not flashed.\n"
             f"Output was: {text.strip()[:400]}")
     return ImageInfo(rev=m.group("rev"), length=int(m.group("len")))
 
@@ -445,12 +445,12 @@ def parse_protocol_version(map_source: str) -> int:
     m = _PROTOCOL_RE.search(map_source)
     if not m:
         raise UpdateRefused(
-            "Could not read PROTOCOL_VERSION as a plain number from the target "
-            "release's ui/reflex/utils/els_stop_map.py. Without it there is "
-            "nothing to check the firmware against, so the update is refused "
-            "and nothing has been changed. The machine is safe to keep using "
-            "on the version it is running; update from the command line "
-            "instead -- see the Installing page.")
+            "Could not read PROTOCOL_VERSION as a plain number from "
+            "ui/reflex/utils/els_stop_map.py in the target release. Without "
+            "it, the firmware cannot be checked, so the update is refused. "
+            "Nothing has been changed. The machine is safe to use on its "
+            "current version. To update, use the command line. See the "
+            "Installing page.")
     return int(m.group(1))
 
 
@@ -580,9 +580,9 @@ def resolve_checkout(start: Path | None = None) -> Path:
         raise UpdateRefused(
             f"This UI is not running from a reflex monorepo git checkout "
             f"({root} is missing {', '.join(missing)}). In-app update needs "
-            f"one for both halves: the git tag for the UI and fw/scripts for "
-            f"the firmware. Update from the command line instead -- see the "
-            f"Installing page.")
+            f"this checkout for both halves: the git tag for the UI, and "
+            f"fw/scripts for the firmware. Update from the command line. See "
+            f"the Installing page.")
     return root
 
 
@@ -636,9 +636,9 @@ def find_uv(env_path: str | None = None) -> str:
         if os.access(candidate, os.X_OK):
             return candidate
     raise UpdateRefused(
-        "uv was not found, and the UI half of an update cannot be installed "
-        "without it. Install uv (or put it on the service's PATH) and try "
-        "again -- nothing has been changed.")
+        "uv was not found. The UI half of an update cannot be installed "
+        "without it. Nothing has been changed. Install uv, or put it on the "
+        "PATH of the service. Then try again.")
 
 
 def manifest_path_for(checkout: Path) -> Path:
@@ -1009,8 +1009,8 @@ class UpdateSession:
                                        headers=home.auth_headers_for(home.releases_url))
             found = select_releases(payload, allow_prerelease=True, source="home")
         except Exception as e:      # noqa: BLE001 - any failure: public only
-            self.emit(f"Integration builds could not be listed ({e}); "
-                      f"showing public releases only.")
+            self.emit(f"Integration builds could not be listed ({e}). "
+                      f"Only public releases are shown.")
             return public
         seen = {r.tag for r in public}
         merged = public + [r for r in found if r.tag not in seen]
@@ -1243,8 +1243,8 @@ class UpdateSession:
                     f"reboot into its bootloader because an ELS job is "
                     f"engaged. Nothing changed: the controller is confirmed "
                     f"running its previous firmware ({before.build_rev}), and "
-                    f"the UI was not changed. Disengage ELS and install again "
-                    f"-- Install offers to disengage it for you.\n{failed}") from failed
+                    f"the UI was not changed. Disengage ELS and install again. "
+                    f"Install offers to disengage it for you.\n{failed}") from failed
             raise UpdateRefused(
                 f"The firmware transfer FAILED and nothing changed: the "
                 f"controller is confirmed running its previous firmware "
@@ -1434,9 +1434,9 @@ class UpdateSession:
         except ServiceRestartFailed as e:
             self.emit(
                 f"The UI could not restart itself: {e}\n"
-                f"The update IS installed -- controller firmware and UI are both "
-                f"{prepared.release.tag} -- but this screen is still the old UI. "
-                f"Tap Exit Application: the UI comes back on "
+                f"The update IS installed. The controller firmware and the UI "
+                f"are both {prepared.release.tag}, but this screen is still the "
+                f"old UI. Press Exit application. The UI then comes back on "
                 f"{prepared.release.tag} by itself.")
             return False
         return True
@@ -1489,8 +1489,8 @@ class UpdateSession:
         try:
             path = self._snapshot(f"pre-update-{release.tag}")
         except Exception as e:      # noqa: BLE001 - never blocks the update
-            self.emit(f"Settings snapshot before the update could not be written ({e}); "
-                      f"continuing without it.")
+            self.emit(f"The settings snapshot before the update could not be "
+                      f"written ({e}). The update continues without it.")
             return
         self.emit(f"Settings saved before the update: {path}")
 

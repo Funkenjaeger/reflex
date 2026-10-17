@@ -308,8 +308,8 @@ def test_no_message_outgrows_the_space_the_screen_can_give_it(name, text):
         f"below the fold -- and the tail is the instruction.")
 
 
-ACTION_WORDS = ("enter", "engage", "check", "choose", "reconnect", "press",
-                "flash", "clear", "try again")
+ACTION_WORDS = ("enter", "engage", "check", "examine", "choose", "reconnect",
+                "press", "flash", "clear", "try again")
 
 
 @pytest.mark.parametrize("code", _refusal_codes())

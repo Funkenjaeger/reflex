@@ -15,6 +15,8 @@ from reflex.fsms.els_phase_recorder import (
     PhaseCorrectionRecorder, PhaseLiveTracker, SpindleCountWatch)
 from reflex.fsms.els_mode_watch import ElsModeWatch
 from reflex.fsms.els_overshoot import OffsetWriteLimiter, StopOffsetCorrector
+from reflex.fsms.els_overshoot_guard import OvershootGuard
+from reflex.fsms.els_stop_outcome import StopOutcomeWatch
 from reflex.fsms import els_ratio
 from reflex.fsms.els_ratio import RatioWatch
 from reflex.fsms.els_gear import GearTable, GearTableError
@@ -28,11 +30,11 @@ log = Logger.getChild(__name__)
 
 UI_POLICY = {
     "idle":          {"action_button_text": "", "can_stop": True, "instruction_text": ""},
-    "set_stop_z":    {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to stop Z position and press Set"},
-    "set_retract_z": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to start Z position and press Set"},
-    "set_start_dia": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to start diameter and press Set"},
-    "set_stop_dia":  {"action_button_text": "Set", "can_stop": True, "instruction_text": "Go to or enter stop diameter and press Set"},
-    "confirm":       {"action_button_text": "Confirm", "can_stop": True, "instruction_text": "Confirm half nut is engaged"},
+    "set_stop_z":    {"action_button_text": "Set", "can_stop": True, "instruction_text": "Move to Stop Z position. Press Set."},
+    "set_retract_z": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Move to Start Z position. Press Set."},
+    "set_start_dia": {"action_button_text": "Set", "can_stop": True, "instruction_text": "Move X to Major ø. Press Set."},
+    "set_stop_dia":  {"action_button_text": "Set", "can_stop": True, "instruction_text": "Move X to Minor ø. Press Set, or enter a value."},
+    "confirm":       {"action_button_text": "Confirm", "can_stop": True, "instruction_text": "Close the half nut. Press Confirm."},
     "in_cycle.waiting_to_cut":     {"action_button_text": "Cut", "can_stop": True, "instruction_text": "Ready to cut"},
     "in_cycle.cutting":            {"action_button_text": "", "can_stop": False, "instruction_text": "Cutting..."},
     "in_cycle.waiting_to_retract": {"action_button_text": "Retract", "can_stop": True, "instruction_text": "Ready to retract"},
@@ -59,8 +61,8 @@ NOTICE_SWEEP_SECONDS = 0.1
 # disengage_refusal). Module constants because two surfaces show them -- the
 # notice strip and the Update screen's "ELS job engaged" dialog -- and the
 # dialog's tests assert the instruction it names.
-DISENGAGE_REFUSED_SYNC = "Turn Sync Enable off before disengaging"
-DISENGAGE_REFUSED_CYCLE = "Stop the cycle before disengaging"
+DISENGAGE_REFUSED_SYNC = "Sync Enable is on. Turn it off to disengage."
+DISENGAGE_REFUSED_CYCLE = "Cycle is running. Press Stop to disengage."
 
 
 # ── Thread-phase offset readout ──────────────────────────────────────────────
@@ -184,12 +186,24 @@ class ElsUiController(EventDispatcher):
     ratio_warning       = StringProperty("")
     ratio_warning_yellow = BooleanProperty(False)
 
+    # The same yellow strip announces every clear of the thread reference
+    # (_poll_thread_ref_latched), whatever caused it, and hides it on the next
+    # latch. 54 characters, inside the strip's 65-character contract.
+    REF_CLEARED_STRIP = "Thread reference cleared. The next pass re-latches it."
+
+    # The overshoot measurement's cue (els_overshoot_survey.py): its own
+    # strip on the ELS bar, in the stack with the ones above. It stays until
+    # the next pass starts, so a cue is never lost to a timeout and never
+    # waited out (first run on the development lathe, 2026-10-11). Empty when no measurement
+    # is running, and cleared when one is cancelled or saved.
+    measure_cue         = StringProperty("")
+
     # Inline ELS alarm strip text. Non-empty exactly while the ELS is in alarm:
     # the reason (or a generic line when there is none) plus the way out. Set in
     # _on_alarm, cleared when the alarm clears (Disengage, or ack). Shown
     # whether or not the wizard is enabled, unlike label_instruction.
-    ALARM_STRIP_FALLBACK = "ELS fault — disengage to clear"
-    ALARM_STRIP_SUFFIX = " — Disengage to clear"
+    ALARM_STRIP_FALLBACK = "ELS fault. Disengage to clear."
+    ALARM_STRIP_SUFFIX = ". Disengage to clear."
     ALARM_STRIP_MAX = 65          # same text contract as the other strips
     alarm_strip         = StringProperty("")
 
@@ -359,6 +373,19 @@ class ElsUiController(EventDispatcher):
         # a future reconcile-on-connect wants to say something.
         self._notices = NoticeCenter()
 
+        # The stop-overshoot table's rules: which table applies, the one-time
+        # migration, stale, the outcome watch and the guided measurement.
+        # Lambdas because _els_fsm is built below. See els_overshoot_guard.py.
+        self._overshoot = OvershootGuard(
+            els,
+            binding=lambda: self._els_fsm.overshoot_binding(),
+            notify=self.notify,
+            gear=lambda: self._els_fsm.engaged_gear(),
+            cue=self._set_measure_cue,
+            on_result=lambda _survey: Clock.schedule_once(
+                lambda _dt: self._open_overshoot_result(), 0),
+        )
+
         # Stop-overshoot correction (protocolVersion 11). Opt-in, default off.
         # Each tick it turns the live Z rate into a stopOffset and writes it
         # through a rate limiter -- or writes 0 once when the correction is off
@@ -372,6 +399,9 @@ class ElsUiController(EventDispatcher):
             enabled=lambda: getattr(self._els, "els_overshoot_correction", False) is True,
             margin=lambda: int(getattr(self._els, "els_overshoot_margin_counts", 1)),
             notify=lambda message: self.notify(message, NOTICE_WARNING),
+            # This machine's stored table, in counts, or None: no table, a
+            # stale one, or a measurement running. None writes 0.
+            table=lambda: self._overshoot.table_in_counts(),
             # ON THE ACQUISITION TIMEBASE. One clock feeds the limiter, the
             # hold AND the Z-rate window (the corrector reads it once per tick
             # and passes it down), so this single substitution takes the rate
@@ -386,11 +416,20 @@ class ElsUiController(EventDispatcher):
                                else time.monotonic())),
         )
 
+        # Where each stop landed, for the readout, the outcome watch and the
+        # measurement. Same clock as the corrector's rate window.
+        self._stop_outcome = StopOutcomeWatch(
+            board, clock=lambda: (board.t_acq if board.t_acq is not None
+                                  else time.monotonic()))
+
         # Coupling-ratio check: an open half nut, or the gearbox lever in a
         # position the controller does not expect. Always measures; acts
         # only when els_ratio_check is on (otherwise shadow: log and file).
         # Lambdas for the same reason as above -- _els_fsm is built below.
         self._pending_gear = None
+        # (referenceLatched, enable) from the last GOOD latch poll, for the
+        # ref-cleared announce; None until the first one.
+        self._ref_last_good = None
         self._ratio_watch = RatioWatch(
             self._hal, board,
             fsm_state=lambda: self._els_fsm.state,
@@ -510,6 +549,8 @@ class ElsUiController(EventDispatcher):
         # The overshoot correction's writer. Bound BEFORE the flight recorder
         # so the offset the recorder files for this tick is the one in effect.
         self._board.bind(update_tick=self._poll_stop_offset)
+        # Where the last stop landed: the readout and the outcome watch.
+        self._board.bind(update_tick=self._poll_stop_outcome)
         # The coupling-ratio check. Before the flight recorder, so a verdict
         # reached on this tick is in the context the recorder files.
         self._board.bind(update_tick=self._poll_ratio_check)
@@ -591,6 +632,7 @@ class ElsUiController(EventDispatcher):
             # was last written went to a board that may since have rebooted (0)
             # or kept an older value. Forget it; the next tick re-sends.
             self._stop_offset.reset()
+            self._stop_outcome.reset()
             if value:
                 # A (re)connection means the firmware may hold elsStop state
                 # from a previous session (or have rebooted and lost ours) —
@@ -603,6 +645,25 @@ class ElsUiController(EventDispatcher):
     def _on_domain_state_changed(self, state):
         # Mirror domain FSM state into a Kivy property the widget can bind to.
         Clock.schedule_once(lambda _dt: self._sync_engaged(state), 0)
+        if state == "cutting":
+            # A pass started: the measurement cue it answered is done.
+            Clock.schedule_once(lambda _dt: self._set_measure_cue(""), 0)
+
+    def _set_measure_cue(self, text: str) -> None:
+        if text != self.measure_cue:
+            self.measure_cue = text
+
+    def _open_overshoot_result(self) -> None:
+        """A sweep ended: open its result for Save or Discard (first run on
+        the development lathe, 2026-10-11: the app should open the window
+        itself).
+        Imported here, as _on_pass_interrupted imports its popup: the
+        controller must stay importable without the widget tree."""
+        try:
+            from reflex.components.home.els_overshoot_popup import OvershootSurveyPopup
+            OvershootSurveyPopup().open()
+        except Exception as e:
+            log.warning(f"could not open the overshoot result window: {e}")
 
     def _sync_engaged(self, state):
         self.engaged = state != "disabled"
@@ -899,6 +960,7 @@ class ElsUiController(EventDispatcher):
         """
         cm = self._board.connection_manager
         reads_baseline = cm.read_failures
+        read_ok = False
         try:
             latched = self._hal.tick.reference_latched()
             enabled = self._hal.tick.enable()
@@ -911,6 +973,11 @@ class ElsUiController(EventDispatcher):
                 # construction already; made explicit so this poller's
                 # hide-don't-hold policy survives a fallback-value change.
                 latched = enabled = False
+            else:
+                read_ok = True
+
+        if read_ok:
+            self._announce_ref_clear(bool(latched), bool(enabled))
 
         show = latched and enabled
         if show != self.thread_ref_latched:
@@ -922,6 +989,52 @@ class ElsUiController(EventDispatcher):
             # before one as a category.
             log.info("ELS thread-ref indicator %s -- latched=%s enable=%s",
                      "SHOWN" if show else "hidden", latched, enabled)
+
+    def _announce_ref_clear(self, latched: bool, enabled: bool) -> None:
+        """Show the yellow ref-cleared strip on a reference really dropped,
+        and hide it on the next latch.
+
+        The firmware owns the reference and clears it on its own -- sync off
+        (servoMode 0), the host clear on a gear adoption, a disengage (the
+        next enable edge clears it), a reboot -- so this poll is the one place
+        that sees every clear. Called only with a GOOD read: a dark link is
+        not a clear, and a failed read neither announces nor moves the
+        baseline, so the first good read after an outage compares against the
+        last good one before it.
+
+        Dropped means the previous good read had latched 1 under enable 1 and
+        this one has latched 0 with enable still 1, or enable fallen to 0. A
+        new job's enable edge clearing the OLD job's latch is not a drop: the
+        lamp was already dark.
+
+        The sync-off mid-cut notice (_abandon_cut_on_sync_off) reports the cut
+        stopping and the ELS disengaging and says nothing about the
+        reference, so this strip is the only message about the reference and
+        nothing is said twice.
+        """
+        prev, self._ref_last_good = self._ref_last_good, (latched, enabled)
+        if latched and enabled:
+            if self.ratio_warning == self.REF_CLEARED_STRIP:
+                self.ratio_warning = ""
+                self.ratio_warning_yellow = False
+            return
+        if prev != (True, True):
+            return
+        # From latched-under-enable, anything but latched-under-enable is a
+        # drop: latched 0 with enable 1, or enable 1 -> 0.
+        self.ratio_warning_yellow = True
+        self.ratio_warning = self.REF_CLEARED_STRIP
+        # No colon: Kivy's logger reads the text before one as a category.
+        log.info("ELS thread reference cleared -- latched=%s enable=%s",
+                 latched, enabled)
+
+    def _clear_ratio_strip(self) -> None:
+        """Clear a coupling-ratio message when the operator acts. The
+        ref-cleared message is left up: it goes on the next latch."""
+        if self.ratio_warning == self.REF_CLEARED_STRIP:
+            return
+        self.ratio_warning = ""
+        self.ratio_warning_yellow = False
 
     def _poll_diag_capture(self, *args):
         """Drain any completed firmware settle capture to disk.
@@ -977,9 +1090,26 @@ class ElsUiController(EventDispatcher):
         whatever it holds, so the worst case is the previous correction.
         """
         try:
+            # The table's rules first, so a stale table or a refused switch-on
+            # is off before the corrector reads it on this same tick.
+            self._overshoot.check()
             self._stop_offset.poll()
         except Exception as e:
             log.warning(f"stop-offset correction tick failed: {e}")
+
+    def _poll_stop_outcome(self, *args):
+        """Measure where each stop landed; hand it to the overshoot guard.
+
+        Bound to update_tick, so it must never raise (see _poll_stop_offset).
+        """
+        try:
+            outcome = self._stop_outcome.poll()
+            if outcome is not None:
+                factor = float(getattr(getattr(self._board, "formats", None),
+                                       "factor", 1) or 1)
+                self._overshoot.on_outcome(outcome, factor)
+        except Exception as e:
+            log.warning(f"stop outcome tick failed: {e}")
 
     def _poll_ratio_check(self, *args):
         """Feed the coupling-ratio check this tick's snapshot.
@@ -1045,12 +1175,11 @@ class ElsUiController(EventDispatcher):
             # nothing to select. The selector snaps back.
             return False
         if self._els_fsm.state in ("cutting", "retracting"):
-            self.notify("Gearbox position can't change during a pass.",
+            self.notify("Gearbox position cannot change during a pass.",
                         NOTICE_WARNING)
             return False
         self._pending_gear = None
-        self.ratio_warning = ""
-        self.ratio_warning_yellow = False
+        self._clear_ratio_strip()
         self._els_fsm.adopt_gear(gear)
         return True
 
@@ -1072,13 +1201,12 @@ class ElsUiController(EventDispatcher):
         if table == self._els_fsm.gear_table():
             return True
         if self._els_fsm.state in ("cutting", "retracting"):
-            self.notify("Gearbox table can't change during a pass.",
+            self.notify("Gearbox table cannot change during a pass.",
                         NOTICE_WARNING)
             return False
         # A pending gear-change adoption names a position of the OLD table.
         self._pending_gear = None
-        self.ratio_warning = ""
-        self.ratio_warning_yellow = False
+        self._clear_ratio_strip()
         self._els_fsm.apply_gear_table(table)
         return True
 
@@ -1091,13 +1219,38 @@ class ElsUiController(EventDispatcher):
         if (gear and gear != self._els_fsm.engaged_gear()
                 and gear in self._els_fsm.gear_table().names):
             self._els_fsm.adopt_gear(gear)
-        self.ratio_warning = ""
-        self.ratio_warning_yellow = False
+        self._clear_ratio_strip()
 
     @property
     def stop_offset_corrector(self):
         """Read-only access for the setup screen and tests."""
         return self._stop_offset
+
+    @property
+    def overshoot(self):
+        """The overshoot table's guard, for Advanced ELS Settings and tests."""
+        return self._overshoot
+
+    def start_overshoot_survey(self, kind: str) -> str | None:
+        """Start the overshoot detection pass or sweep (Advanced ELS
+        Settings). Returns None when it started, else the reason it did not:
+        a pass is running, or thread mode is on (the measurement is FEED
+        passes to a stop), or the overshoot guard's own reason.
+
+        The reason is logged and put on the status bar, but the status bar is
+        covered by the Measure window and by Advanced ELS Settings, so the
+        caller shows the returned reason in its own window."""
+        if self._els_fsm.state in ("cutting", "retracting"):
+            why = "Pass is running. Wait for the stop."
+        elif self.is_threading:
+            why = "Thread mode is on. Set Feed mode to measure."
+        else:
+            why = self._overshoot.start_survey(kind)
+        if why:
+            log.warning(f"overshoot measurement refused: {why}")
+            self.notify(why, NOTICE_WARNING)
+            return why
+        return None
 
     def _poll_flight_recorder(self, *args):
         """Persist this tick's poll stream while the machine is doing something.
@@ -1287,10 +1440,10 @@ class ElsUiController(EventDispatcher):
             # operator clears it with Disengage (the domain FSM allows disable
             # from 'alarm' → 'disabled').
             allowed = False
-            text = self.alarm_text or "ELS fault — disengage to clear"
+            text = self.alarm_text or "ELS fault. Disengage to clear."
         elif not self.engaged:
             allowed = False
-            text = "Engage to begin"
+            text = "Press Engage to start."
         elif state == "in_cycle.waiting_to_cut":
             allowed = self.stop_z_valid
             if self.retract_enabled:
@@ -1318,17 +1471,17 @@ class ElsUiController(EventDispatcher):
                 if self.retract_enabled and not self.retract_z_valid:
                     missing.append("Start Z")
                 if missing:
-                    text = f"Enter {' and '.join(missing)} to begin cutting"
+                    text = f"Enter {' and '.join(missing)} to cut."
                 elif sync_off:
-                    text = "Turn Sync Enable on, then Cut"
+                    text = "Turn on Sync Enable. Then press Cut."
                 elif not self.retract_enabled and not allowed:
-                    text = "Move Z to safe side of stop position"
+                    text = "Move Z to the safe side of Stop Z."
         elif state == "in_cycle.waiting_to_retract":
             if not self.retract_z_valid:
                 allowed = False
-                text = "Enter Start Z to retract"
+                text = "Enter Start Z to retract."
             elif self.is_threading and not self._x_clear_of_start_dia():
-                text = "Move X clear of start diameter, then retract"
+                text = "Move X clear of Major ø. Then press Retract."
                 allowed = False
             elif not self.is_feeding:
                 # SYNC ON BEFORE RETRACT (2026-10-03), the twin of the Cut
@@ -1338,7 +1491,7 @@ class ElsUiController(EventDispatcher):
                 # next Sync Enable press re-issued the move and the carriage
                 # went (shadow bench, 2026-10-03, 21:14:52). An arm-only
                 # button must never start a move.
-                text = "Turn Sync Enable on, then retract"
+                text = "Turn on Sync Enable. Then press Retract."
                 allowed = False
         self.instruction_text = text
         self.action_allowed = allowed
@@ -1530,7 +1683,7 @@ class ElsUiController(EventDispatcher):
         if self.in_cycle:
             return DISENGAGE_REFUSED_CYCLE
         if not self._els_fsm.may_disable():
-            return f"Disengage ignored — ELS is {self._els_fsm.state}"
+            return f"ELS is {self._els_fsm.state}. Disengage ignored."
         return None
 
     def disengage(self) -> str | None:
@@ -1626,7 +1779,7 @@ class ElsUiController(EventDispatcher):
             # THE ONE THAT PROVES THE SURFACE. Reachable with the button fully
             # enabled, and before this the operator's entire feedback was a
             # press that did nothing. Names the fix, not the fault.
-            self.notify("No ELS Z axis assigned — map it in ELS settings",
+            self.notify("Saddle axis (Z) is not set. Set it in Setup > ELS.",
                         NOTICE_WARNING)
         elif not self._els_z_is_single_input():
             # THE DRO AND THE FIRMWARE WOULD DISAGREE ABOUT WHERE THE CARRIAGE
@@ -1649,7 +1802,7 @@ class ElsUiController(EventDispatcher):
                 "the firmware can only track one scale",
                 self._els.get_z_axis().transform.transform_type,
                 len(self._els.get_z_axis().transform.contributions))
-            self.notify("ELS Z axis adds two scales — use a single input",
+            self.notify("Saddle axis (Z) adds two scales. Use one input.",
                         NOTICE_WARNING)
         elif self._els_fsm.may_enable():
             self._els_fsm.enable()
@@ -1662,7 +1815,7 @@ class ElsUiController(EventDispatcher):
             )
             # INFO for the same reason as the disengage twin above: a stale or
             # doubled tap, not a machine problem.
-            self.notify(f"Engage ignored — ELS is {self._els_fsm.state}",
+            self.notify(f"ELS is {self._els_fsm.state}. Engage ignored.",
                         NOTICE_INFO)
 
     def commit_standalone_stop_z(self, stop_z_value: float):
@@ -1729,7 +1882,7 @@ class ElsUiController(EventDispatcher):
             axis = self._els.get_z_axis()
             if axis is None:
                 log.warning(f"action button: no Z (saddle) axis assigned in state '{state}'")
-                self.notify("No ELS Z axis assigned — map it in ELS settings",
+                self.notify("Saddle axis (Z) is not set. Set it in Setup > ELS.",
                             NOTICE_WARNING)
                 return
             if state == "set_stop_z":
@@ -1745,8 +1898,8 @@ class ElsUiController(EventDispatcher):
                 # operator hunting through settings for which of the two this
                 # step wanted -- the Z message has the same problem solved the
                 # same way.
-                self.notify("No ELS X (cross-slide) axis assigned — map it in "
-                            "ELS settings", NOTICE_WARNING)
+                self.notify("Cross slide axis (X) is not set. Set it in "
+                            "Setup > ELS.", NOTICE_WARNING)
                 return
             if state == "set_start_dia":
                 self._commit_start_dia(axis.scaledPosition)
@@ -1906,7 +2059,7 @@ class ElsUiController(EventDispatcher):
         mode = self._reframe_notify_mode()
         if mode == "silent":
             return
-        self.reframe_message = "Stop/Start re-referenced after a zero/offset change"
+        self.reframe_message = "Zero or offset changed. Stop Z and Start Z are re-referenced."
         if mode == "confirm":
             self.reframe_confirm_pending = True
         else:  # warn
@@ -2036,12 +2189,12 @@ class ElsUiController(EventDispatcher):
         a committed stop is always armed, so only two honest causes remain."""
         if not self.engaged:
             return ("ELS is not engaged. The feed will run with no "
-                    "automatic stop.\n\nEnable feed anyway?")
+                    "automatic stop.\n\nPress Enable feed to continue.")
         if self.stop_z_encoder is None:
             return ("No stop is set. The feed will run with no automatic "
-                    "stop.\n\nEnable feed anyway?")
+                    "stop.\n\nPress Enable feed to continue.")
         return ("The ELS stop is not armed. The feed will run with no "
-                "automatic stop.\n\nEnable feed anyway?")
+                "automatic stop.\n\nPress Enable feed to continue.")
 
     def _on_pass_interrupted(self):
         """Tell the operator we stopped a pass that the firmware was still running.
@@ -2071,14 +2224,14 @@ class ElsUiController(EventDispatcher):
         try:
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
-                title="Feed Stopped On Startup",
+                title="Feed stopped on startup",
                 message="\n\n".join([
                     "The controller was still driving the carriage when this app "
                     f"started ({armed}).",
-                    "That means the previous session ended mid-pass. Sync has been "
-                    "disabled and the ELS stop cleared, so the carriage was stopped "
-                    "HERE rather than at a shoulder.",
-                    "Check the workpiece and tool before continuing.",
+                    "The previous session stopped during a pass. Sync is now off "
+                    "and the ELS stop is clear. The carriage stopped HERE, not at "
+                    "a shoulder.",
+                    "Examine the workpiece and the tool before you continue.",
                 ]),
                 button_text="OK",
             ).open()
@@ -2152,7 +2305,7 @@ class ElsUiController(EventDispatcher):
             # clear.
             log.error("could not disengage after sync-off from "
                       f"'{self._els_fsm.state}' — ELS may still read as armed")
-        self.notify(f"{what.capitalize()} abandoned — ELS disengaged", NOTICE_INFO)
+        self.notify(f"{what.capitalize()} stopped. ELS is disengaged.", NOTICE_INFO)
 
     def request_feed_enable(self, confirmed: bool = False) -> bool:
         """Operator asked to toggle the sync/power feed (advanced ELS context).

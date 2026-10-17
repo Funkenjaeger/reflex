@@ -225,6 +225,7 @@ ELS_DIAG_SCHEMA_MODE_WATCH = 4         # RETIRED: counted every latch refusal, i
 ELS_DIAG_SCHEMA_MODE_WATCH_V2 = 5      # same, but net_counts ticks only when the refusal would have STARTED the feed
 ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3 = 6   # same capture, but the firmware HOLDS the take-up gate open for the whole window, so END_WINDOW is now the complete measurement rather than a floor
 ELS_DIAG_SCHEMA_STOP_OVERSHOOT = 7   # what the carriage does AFTER the ELS stop fires: post-trigger Z travel in diagNetCounts, and the servo steps the firmware emitted after the trigger packed into diagReserved[0..1] -- the discriminator between a commanded overshoot and one that happened downstream of the pulse train
+ELS_DIAG_SCHEMA_ISR_GAP = 8          # the motion ISR's worst tick-to-tick gap over a host-resettable window, a late-tick distribution, and the machine state at the worst gap; diagEndReason is the host's RESET REQUEST here, not an end reason
 
 # elsStop.diagEndReason. A window-full capture did not finish measuring: its
 # last bucket is a floor, not a result, and it must not be read as one.
@@ -257,17 +258,17 @@ ELS_CAL_MESSAGES = {
     # ROOM TO EXPLAIN, unlike the take-up twin: this renders as the modal's
     # body_text, not in the 435 px notice strip.
     ELS_CAL_ERR_ENABLED: (
-        "Disengage the ELS stop before calibrating.\n\n"
-        "Re-engaging afterwards starts a new job, which clears the thread "
-        "reference and any phase offset. Finish the thread first if you "
-        "still need them."
+        "ELS stop is engaged. Disengage it to calibrate.\n\n"
+        "When you engage again, a new job starts. This clears the thread "
+        "reference and any phase offset. If you need them, complete the "
+        "thread first."
     ),
     ELS_CAL_ERR_SERVOMODE: "Servo is not in sync/index mode.",
     ELS_CAL_ERR_CONFIG: "Calibration limits are not configured.",
     ELS_CAL_ERR_NO_MOTION: (
-        "Carriage did not move — is the half-nut engaged?"
+        "Carriage did not move. Close the half nut."
     ),
-    ELS_CAL_ERR_ABORTED: "Calibration aborted — conditions changed mid-run.",
+    ELS_CAL_ERR_ABORTED: "Calibration stopped. Conditions changed during the run.",
 }
 
 # EVERY CUT REFUSAL STANDS ALONE, in Simplified Technical English style:

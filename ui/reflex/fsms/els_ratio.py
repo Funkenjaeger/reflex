@@ -53,11 +53,27 @@ difference of two endpoints, which the 2026-09-20 analysis found 2-5x tighter.
 The recorder's commanded-step reading can be a poll stale against Z, which is
 what spreads a short window by ~1/W (RATIO.md section 3, in the analysis folder).
 
-WHEN IT LISTENS. Only while cutting, after the take-up has finished
-(takeupPending clear) and, when threading, after the phase correction has
-drained (stepsToGo back to 0): both are moves on top of sync, and the
-correction is a burst the drive lags (09-07 threading set, first window as low
-as 0.82). It never runs on a retract. It stops at the end of the pass, so the
+WHEN IT LISTENS. Only while cutting, from the moment the take-up has
+finished (takeupPending clear). The take-up is not listened to: its steps
+walk the nut through the lash, so the carriage moves 39 to 196 counts in
+gear A depending on where in the lash it starts (10-07), which says nothing
+about the gearing.
+
+THE PHASE CORRECTION IS LISTENED TO (decided 2026-10-11). Until then the
+check also waited for it to drain (stepsToGo back to 0), about 0.4 s into a
+thread pass, and a pass in the wrong gear cut that long at the wrong pitch
+before the check could start. Once the lash is taken, correction steps move
+the carriage like any other steps; the firmware folds the correction into
+half a pitch and then biases it into the cutting direction
+(fw/Core/Inc/els_phase.h), so it is never a reverse move. What remains is
+that the drive lags the burst (09-07 threading set, first windows as low as
+0.82). The stage-1 rule already waits while the trailing window disagrees
+with the since-start estimate, and 0.82 is far above the decoupled floor,
+so a lagging burst delays a verdict rather than producing a wrong one. That
+is shown in the emulator (tests/system/test_els_ratio_thread_window.py),
+which has no drive lag; on the lathe it is still to be confirmed.
+
+It never runs on a retract. It stops at the end of the pass, so the
 deceleration into the stop -- a genuine look-alike, r ~0.74 (RATIO.md section
 4d) -- is never seen.
 
@@ -287,7 +303,9 @@ class CouplingRatioCheck:
         if not cutting:
             return self._last
         if not self._started:
-            if takeup_pending or steps_to_go != 0:
+            # The take-up only. A phase correction still draining
+            # (steps_to_go != 0) is listened to: see WHEN IT LISTENS.
+            if takeup_pending:
                 return self._last
             self._started = True
             self._t0, self._s0, self._z0 = t_ms, servo_steps, z_counts

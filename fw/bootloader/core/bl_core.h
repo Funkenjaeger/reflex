@@ -1,7 +1,8 @@
 /*
  * bl_core.h -- the bootloader's decision logic and command handler, with no
  * chip in it. Everything that touches hardware goes through bl_port.h; the
- * Modbus byte layer (bl_modbus.c) and the hardware main (src/main.c) sit on
+ * Modbus byte layer (the shared core, modbus_rtu/mb_rtu.c, bound by
+ * mb_rtu_port.h) and the hardware main (src/main.c) sit on
  * top of this. The boot decision, the copy/swap state machine, the strike
  * counter and the command semantics are all here, which is what lets the
  * native tests run them through a power-loss injector.

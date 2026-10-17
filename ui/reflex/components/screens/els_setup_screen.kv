@@ -11,7 +11,7 @@
     orientation: "vertical"
     padding: 10
     ScreenHeader:
-      text: "ELS Setup"
+      text: "ELS setup"
 
     ScrollView:
       do_scroll_x: False
@@ -23,20 +23,20 @@
         height: self.minimum_height
 
         TitleItem:
-          name: "Axis Roles"
+          name: "Axis roles"
         DropDownItem:
           id: spindle_dropdown
-          name: "Spindle Axis"
+          name: "Spindle axis"
           help_file: "els_axis_roles.md"
           on_value: root.on_spindle_selected(self, self.value)
         DropDownItem:
           id: z_dropdown
-          name: "Saddle Axis (Z)"
+          name: "Saddle axis (Z)"
           help_file: "els_axis_roles.md"
           on_value: root.on_z_selected(self, self.value)
         DropDownItem:
           id: x_dropdown
-          name: "Cross Slide Axis (X)"
+          name: "Cross slide axis (X)"
           help_file: "els_axis_roles.md"
           on_value: root.on_x_selected(self, self.value)
         # THE ONLY PLACE THIS IS EDITABLE. Radius/diameter is a property of the
@@ -74,7 +74,7 @@
           opacity: 1 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
           height: 36 if MODE_ELS in USE_CASE_MODES.get(app.use_case, []) else 0
         ButtonItem:
-          name: "Advanced ELS Settings"
+          name: "Advanced ELS settings"
           # The advanced ELS bar's settings glyph (els_advbar.kv, btn_settings),
           # so the two ways in look the same.
           icon: "\uf013"

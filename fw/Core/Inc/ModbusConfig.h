@@ -7,6 +7,18 @@
  *  This is a template for the Modbus library configuration.
  *  Every project needs a tailored copy of this file renamed to ModbusConfig.h, and added to the include path.
  */
+/*
+ * From Alejandro Mera's Modbus-STM32-HAL-FreeRTOS library
+ * (https://github.com/alejoseb/Modbus-STM32-HAL-FreeRTOS), itself adapted from
+ * https://github.com/smarmengol/Modbus-Master-Slave-for-Arduino. Both are
+ * licensed under the GNU Lesser General Public License version 2.1, and so is
+ * this file; the full text is fw/Modbus-LGPL-2.1.txt. The rest of the firmware
+ * is MIT (fw/LICENSE).
+ *
+ * Tailored from upstream's ModbusConfigTemplate.h in rotary-controller-f4 (2022-2024)
+ * and Reflex (2026).
+ * The git history of this repository records each change and its date.
+ */
 
 #ifndef THIRD_PARTY_MODBUS_LIB_CONFIG_MODBUSCONFIG_H_
 #define THIRD_PARTY_MODBUS_LIB_CONFIG_MODBUSCONFIG_H_

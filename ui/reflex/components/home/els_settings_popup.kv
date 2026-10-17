@@ -1,5 +1,5 @@
 <ElsSettingsPopup>:
-    title: "Advanced ELS Settings"
+    title: "Advanced ELS settings"
     size_hint_x: 0.8
     size_hint_y: None
     height: 450
@@ -18,14 +18,14 @@
             DropDownItem:
                 id: thread_type_dropdown
                 height: 60
-                name: "Thread Type"
+                name: "Thread type"
                 help_file: "els_thread_pitch.md"
                 options: root.get_thread_types()
                 value: root.bar.thread_profile_type
                 on_value: root.on_thread_type_selected(self.value)
 
             BooleanItem:
-                name: "Inner Thread"
+                name: "Inner thread"
                 help_file: "els_inner_thread.md"
                 value: root.bar.inner_thread
                 on_value: root.bar.inner_thread = self.value
@@ -41,7 +41,7 @@
                 on_value: root.bar.enable_safe_dia = self.value
 
             NumberItem:
-                name: "Backlash takeup (mm)"
+                name: "Backlash take-up (mm)"
                 help_file: "els_backlash_takeup.md"
                 value: root.backlash_mm
                 on_value: root.backlash_mm = self.value
@@ -100,6 +100,14 @@
                 help_file: "els_overshoot_correction.md"
                 value: root.overshoot_margin_counts
                 on_value: root.overshoot_margin_counts = self.value
+
+            # This machine's table: measured here, stored as a machine setting
+            # (reflex/fsms/els_overshoot_table.py). Empty by default.
+            ButtonItem:
+                name: "Overshoot table"
+                value: "Measure"
+                help_file: "els_overshoot_measure.md"
+                on_release: root.open_overshoot_survey()
 
             # ── Gearbox and the coupling check (default: log only) ──
             # The table: empty for no gearbox (the default), else

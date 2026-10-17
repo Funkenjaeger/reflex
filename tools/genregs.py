@@ -62,6 +62,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 REGISTERS = ROOT / "registers"
 C_HEADER_OUT = "fw/Core/Inc/Ramps_generated.h"
+ACCESS_OUT = "fw/Core/Inc/Ramps_access_generated.h"
 JSON_OUT = "registers/offsets.json"
 MD_OUT = "docs/reference/register-map.md"
 
@@ -908,8 +909,56 @@ def emit_md(schemas):
     return "\n".join(L)
 
 
+def ro_firmware_ranges(schemas):
+    """(first register, register count, name) of every ro_firmware field, in
+    parent registers, each element of an array member listed on its own."""
+    out = []
+    for s in schemas:
+        for k in range(s.parent_count):
+            base = s.base + k * s.total
+            elem = f"[{k}]" if s.parent_count > 1 else ""
+            for i in s.items:
+                if i["pad"] or i.get("access") != "ro_firmware":
+                    continue
+                out.append((base + i["byte_off"] // 2, i["bytes"] // 2,
+                            f"{s.meta['parent_member']}{elem}.{i['name']}"))
+    return out
+
+
+def emit_access(schemas):
+    """The ro_firmware table the Modbus RTU core checks writes against
+    (fw/modbus_rtu/mb_rtu.h, mbRtuAccess_t)."""
+    parent = schemas[0].meta["parent"]
+    end = max(s.end for s in schemas)
+    bits = bytearray((end + 7) // 8)
+    ranges = ro_firmware_ranges(schemas)
+    for first, n, _ in ranges:
+        for r in range(first, first + n):
+            bits[r >> 3] |= 1 << (r & 7)
+    first_described = min(s.base for s in schemas)
+    L = [BANNER.split("\n *\n * The static_asserts")[0] + "\n */",
+         "#ifndef RAMPS_ACCESS_GENERATED_H", "#define RAMPS_ACCESS_GENERATED_H", "",
+         f"/* Which registers of {parent} a host may not write: bit r, LSB first",
+         " * within each byte, is set when register r belongs to a field whose schema",
+         " * says `access: ro_firmware`. For mbRtuAccess_t (fw/modbus_rtu/mb_rtu.h):",
+         " *",
+         f" *   static const uint8_t roBits[] = RAMPS_RO_FIRMWARE_BITS_INIT;",
+         " *   mbRtuAccess_t acc = { 0, RAMPS_ACCESS_REGISTERS, roBits };",
+         " *",
+         f" * Registers 0..{first_described - 1}, the head of {parent} that no schema describes,",
+         " * have no bit set. Interior and tail pads have none either. */",
+         f"#define RAMPS_ACCESS_REGISTERS {end}u", "",
+         "#define RAMPS_RO_FIRMWARE_BITS_INIT { \\"]
+    rows = [", ".join(f"0x{b:02x}" for b in bits[i:i + 12]) for i in range(0, len(bits), 12)]
+    L += [f"  {r}{',' if n < len(rows) - 1 else ''} \\" for n, r in enumerate(rows)]
+    L += ["}", "", "/* The set bits, field by field:"]
+    L += [f" *   {first:3d}..{first + n - 1:<3d} {name}" for first, n, name in ranges]
+    L += [" */", "", "#endif /* RAMPS_ACCESS_GENERATED_H */", ""]
+    return "\n".join(L)
+
+
 def render(schemas):
-    out = {C_HEADER_OUT: emit_c(schemas)}
+    out = {C_HEADER_OUT: emit_c(schemas), ACCESS_OUT: emit_access(schemas)}
     for s in schemas:
         rel = s.meta["py_out"]
         if rel in out:

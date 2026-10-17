@@ -113,12 +113,16 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  /* Infinite loop */
-  for(;;)
-  {
+  /* CubeMX creates this task; the application does all its work elsewhere,
+   * so it only sleeps. It leaves the user LED alone, so that userLedTask
+   * (Ramps.c) is the LED's only writer. That loop also refreshes the
+   * watchdog. It toggles the LED every 500 ms, and on each Modbus frame it
+   * drives the pin low for 25 ms and back high. With the host polling, the
+   * LED follows the traffic; with the link quiet, it blinks at 1 Hz. Either
+   * pattern means the loop is running, and a frozen LED means it is not. */
+  (void)argument;
+  while (1) {
     osDelay(1000);
-    HAL_GPIO_TogglePin(USR_LED_GPIO_Port, USR_LED_Pin);
-
   }
   /* USER CODE END StartDefaultTask */
 }

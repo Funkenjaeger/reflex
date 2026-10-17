@@ -11,7 +11,7 @@
     orientation: "vertical"
     padding: 10
     ScreenHeader:
-      text: "Format Settings"
+      text: "Format settings"
 
     ScrollView:
       do_scroll_x: False
@@ -24,65 +24,65 @@
         height: self.minimum_height
 
         TitleItem:
-          name: "Format Settings"
+          name: "Format settings"
         DropDownItem:
-          name: "UI Theme"
+          name: "UI theme"
           help_file: "ui_theme.md"
           options: app.theme.available_themes()
           value: root.formats.theme
           on_value: root.formats.theme = self.value
         NumberItem:
-          name: "Metric Position Digits"
+          name: "Metric position digits"
           value: int(root.formats.metric_position.replace("{:+0.", "").replace("f}", ""))
           integer: True
           help_file: "format_digits.md"
           on_value: root.formats.metric_position = "{:+0." + str(self.value) + "f}"
         NumberItem:
-          name: "Metric Speed Digits"
+          name: "Metric speed digits"
           value: int(root.formats.metric_speed.replace("{:+0.", "").replace("f}", ""))
           integer: True
           help_file: "format_digits.md"
           on_value: root.formats.metric_speed = "{:+0." + str(self.value) + "f}"
         NumberItem:
-          name: "Imperial Position Digits"
+          name: "Imperial position digits"
           value: int(root.formats.imperial_position.replace("{:+0.", "").replace("f}", ""))
           integer: True
           help_file: "format_digits.md"
           on_value: root.formats.imperial_position = "{:+0." + str(self.value) + "f}"
         NumberItem:
-          name: "Imperial Speed Digits"
+          name: "Imperial speed digits"
           value: int(root.formats.imperial_speed.replace("{:+0.", "").replace("f}", ""))
           integer: True
           help_file: "format_digits.md"
           on_value: root.formats.imperial_speed = "{:+0." + str(self.value) + "f}"
         NumberItem:
-          name: "Angle Format Digits"
+          name: "Angle format digits"
           value: int(root.formats.angle_format.replace("{:+0.", "").replace("f}", ""))
           integer: True
           help_file: "format_digits.md"
           on_value: root.formats.angle_format = "{:+0." + str(self.value) + "f}"
         NumberItem:
-          name: "Angle Speed (RPM) Format Digits"
+          name: "Angle speed (RPM) format digits"
           value: int(root.formats.angle_speed_format.replace("{:+0.", "").replace("f}", ""))
           integer: True
           help_file: "format_digits.md"
           on_value: root.formats.angle_speed_format = "{:+0." + str(self.value) + "f}"
 
         NumberItem:
-          name: "Default Font Size"
+          name: "Default font size"
           value: int(root.formats.font_size)
           integer: True
           help_file: "font_size.md"
           on_value: root.formats.font_size = int(self.value)
 
         FontItem:
-          name: "Display Font"
+          name: "Display font"
           font_path: app.formats.font_name
           help_file: "display_font.md"
           on_font_path: app.formats.font_name = self.font_path
 
         NumberItem:
-          name: "Position Tolerance (mm)"
+          name: "Position tolerance (mm)"
           value: root.formats.position_tolerance
           help_file: "position_tolerance.md"
           on_value: root.formats.position_tolerance = self.value
@@ -90,7 +90,7 @@
         TitleItem:
           name: "Display"
         BooleanItem:
-          name: "Hide Mouse Cursor"
+          name: "Hide mouse cursor"
           value: root.formats.hide_mouse_cursor
           help_file: "hide_mouse_cursor.md"
           on_value: root.formats.hide_mouse_cursor = self.value
@@ -99,7 +99,7 @@
           value: root.formats.max_row_height
           on_value: root.formats.max_row_height = self.value
         BooleanItem:
-          name: "Show Speeds"
+          name: "Show speeds"
           value: root.formats.show_speeds
           on_value: root.formats.show_speeds = self.value
         # Collapsed where the use case has no pattern screen: a toggle that
@@ -110,7 +110,7 @@
         # Only the label changes: "Show Wizard" reads as the ELS wizard stop
         # mode, which is a different thing entirely.
         BooleanItem:
-          name: "Show Patterns"
+          name: "Show patterns"
           value: root.formats.show_wizard
           on_value: root.formats.show_wizard = self.value
           height: 60 if app.patterns_available else 0
@@ -118,7 +118,7 @@
           disabled: not app.patterns_available
 
         TitleItem:
-          name: "Sound Settings"
+          name: "Sound settings"
         BoxLayout:
           size_hint_y: None
           height: 32
@@ -143,31 +143,31 @@
           name: "Colors"
 
         ColorItem:
-          name: "Home Screen Digits"
+          name: "Home screen digits"
           color: root.formats.display_color
           help_file: "colors.md"
           on_color: root.formats.display_color = self.color
 
         ColorItem:
-          name: "Accept Color"
+          name: "Accept color"
           color: root.formats.accept_color
           help_file: "colors.md"
           on_color: root.formats.accept_color = self.color
 
         ColorItem:
-          name: "Cancel Color"
+          name: "Cancel color"
           color: root.formats.cancel_color
           help_file: "colors.md"
           on_color: root.formats.cancel_color = self.color
 
         ColorItem:
-          name: "Indicators On Color"
+          name: "Indicators on color"
           color: root.formats.color_on
           help_file: "colors.md"
           on_color: root.formats.color_on = self.color
 
         ColorItem:
-          name: "Indicators Off Color"
+          name: "Indicators off color"
           color: root.formats.color_off
           help_file: "colors.md"
           on_color: root.formats.color_off = self.color

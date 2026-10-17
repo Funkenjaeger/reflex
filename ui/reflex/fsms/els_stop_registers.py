@@ -613,6 +613,24 @@ class ElsStopRegisters:
             return self._no_link(0)
         return int(self._board.device['elsStop']['latchSeq'])
 
+    # ── host clear of the thread reference (protocolVersion 12) ───────
+    # clearRefCommand clears referenceLatched and phaseOffsetSteps, exactly as
+    # the firmware's servoMode == 0 custody rule does, and touches nothing else:
+    # enable, servoMode and sync stay as they are. Always accepted; clearRefSeq
+    # acks every consumed command. The next stop trigger latches a fresh
+    # reference, and the pass after it makes no correction, like a new job.
+
+    def request_clear_reference(self) -> None:
+        if not self._board.connected:
+            return
+        self._board.device['elsStop']['clearRefCommand'] = 1
+
+    def read_clear_ref_seq(self) -> int:
+        """Monotonic counter, incremented once per consumed clearRefCommand."""
+        if not self._board.connected:
+            return self._no_link(0)
+        return int(self._board.device['elsStop']['clearRefSeq'])
+
     # ── ISR headroom ──────────────────────────────────────────────────
     # The worst SynchroRefreshTimerIsr duration seen, in CPU cycles, against a
     # budget of 1000 (100 MHz core, 10 us tick). Everything else on the chip --

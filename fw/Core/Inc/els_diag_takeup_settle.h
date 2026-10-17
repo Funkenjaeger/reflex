@@ -364,4 +364,9 @@ static inline void elsDiagTaskTick(elsDiagCtx_t *ctx, rampsSharedData_t *shared,
   (void)ctx; (void)shared; (void)calRunning;
 }
 
+/* ISR-tail hook (every tick, schema 8+) -- not this probe's concern. */
+static inline void elsDiagTickTail(elsDiagCtx_t *ctx, rampsSharedData_t *shared) {
+  (void)ctx; (void)shared;
+}
+
 #endif /* ELS_DIAG_TAKEUP_SETTLE_H */

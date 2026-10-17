@@ -316,8 +316,7 @@ class ElsFsm:
     def _abort_arming(self):
         self.board.servo.stop_feed()
         bus.publish("alarm_raised",
-                    reason="ELS stop not confirmed — cut aborted. Check the "
-                           "controller connection and try again.")
+                    reason="Controller did not confirm the ELS stop")
 
     def on_enter_cutting(self):
         """The release. Everything that had to be acknowledged already was."""
@@ -1299,6 +1298,32 @@ class ElsFsm:
             return None
         return float(Fraction(abs(saddle.ratioNum), abs(saddle.ratioDen)))
 
+    def overshoot_binding(self):
+        """What a stop-overshoot table measured NOW would be bound to
+        (els_overshoot_table.Binding), exactly, or None while the Z scale or
+        the leadscrew is not provisioned.
+
+        Fractions, not the floats z_mm_per_count() returns: the binding is
+        compared for equality, and two floats computed two ways can differ in
+        the last bit. The leadscrew is the REFERENCE position's mm per step,
+        so moving the gearbox lever does not change it.
+        """
+        from reflex.fsms.els_overshoot_table import Binding
+        saddle = self._saddle_input
+        servo = self.servo
+        try:
+            k = (abs(Fraction(str(float(saddle.ratioNum))))
+                 / abs(Fraction(str(float(saddle.ratioDen)))))
+            pitch = Fraction(str(float(servo.leadScrewPitch)))
+            if getattr(servo, "leadScrewPitchIn", False) is True:
+                pitch *= Fraction(254, 10)
+            step = pitch / int(servo.leadScrewPitchSteps)
+        except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+            return None
+        if k <= 0 or step <= 0:
+            return None
+        return Binding(k, step, self.gear_table().text())
+
     def steps_per_z_count(self):
         """Commanded steps per Z count in the ENGAGED gear, or None.
 
@@ -1329,6 +1354,7 @@ class ElsFsm:
         self.servo.gearbox_position = gear
         self._reteach_gear()
         log.warning(f"gearbox position adopted: {previous} -> {gear}")
+        self._clear_reference_for_gear_change()
 
     def apply_gear_table(self, table: GearTable) -> None:
         """Make `table` the configured gearbox table, and re-teach the
@@ -1341,11 +1367,31 @@ class ElsFsm:
         no longer in the table reads as the reference (els_gear.py).
         """
         previous = (self.gear_table().text(), self.engaged_gear())
+        factor_before = self.gear_table().factor(previous[1])
         self.servo.gearbox_table = table.text()
         self._reteach_gear()
         log.warning(f"gearbox table changed: {previous[0] or 'none'} "
                     f"(engaged {previous[1] or '-'}) -> {table.text() or 'none'} "
                     f"(engaged {self.engaged_gear() or '-'})")
+        if self.gear_table().factor(self.engaged_gear()) != factor_before:
+            self._clear_reference_for_gear_change()
+
+    def _clear_reference_for_gear_change(self) -> None:
+        """A thread reference measured in one gear is wrong in another, so a
+        change of the engaged factor clears it (the firmware's clearRefCommand).
+
+        Written only when a reference is latched, so an adoption with nothing
+        to lose stays quiet. Nothing moves: the drive keeps custody and the
+        job stays armed. The firmware latches a fresh reference at the next
+        stop trigger, and the pass after that latch makes no correction, as
+        the first pass of a new job does. The ELS bar announces the clear from
+        the latch poller (ElsUiController._poll_thread_ref_latched), which
+        sees every clear, whatever caused it.
+        """
+        if not self.hal.read_reference_latched():
+            return
+        self.hal.request_clear_reference()
+        log.warning("thread reference cleared for the gear change")
 
     def _reteach_gear(self) -> None:
         """Push what the engaged position changes: the sync ratios (firmware

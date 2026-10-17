@@ -34,9 +34,9 @@ def popup_factory():
 def test_primary_button_runs_the_confirm_callback(popup_factory):
     fired = []
     popup = popup_factory(
-        title="No ELS Stop Armed",
+        title="No ELS stop armed",
         message="Enable feed anyway?",
-        button_text="Enable Feed",
+        button_text="Enable feed",
         cancel_text="Cancel",
         confirm_callback=lambda: fired.append(True),
     )
@@ -50,7 +50,7 @@ def test_primary_button_runs_the_confirm_callback(popup_factory):
 def test_cancel_button_does_not_run_the_confirm_callback(popup_factory):
     fired = []
     popup = popup_factory(
-        button_text="Enable Feed",
+        button_text="Enable feed",
         cancel_text="Cancel",
         confirm_callback=lambda: fired.append(True),
     )
@@ -99,7 +99,7 @@ def test_kivy_swallows_on_prefixed_kwargs():
 
 
 def test_single_button_dialog_without_a_callback_still_dismisses(popup_factory):
-    popup = popup_factory(title="Axis Not Configured", button_text="OK")
+    popup = popup_factory(title="Axis not configured", button_text="OK")
     with patch.object(popup, "dismiss") as dismiss:
         popup.on_button_press()
     dismiss.assert_called_once()

@@ -56,49 +56,49 @@ JOG_TEXT = (
 )
 
 ALIGN_TEXT = (
-    "Ease the tool into the groove — no jogging:\n\n"
-    "  1.  Rotate the SPINDLE by hand.\n"
-    "  2.  Feed the CROSS-SLIDE in until the tool tip nests in the "
+    "Move the tool into the groove slowly. Do not jog.\n\n"
+    "  1.  Turn the SPINDLE by hand.\n"
+    "  2.  Feed the CROSS-SLIDE in until the tool tip sits in the "
     "groove.\n"
     "  3.  Leave the carriage alone.\n\n"
-    "Confirm arms when Z holds and the spindle is still."
+    "Confirm becomes active when Z holds and the spindle is stopped."
 )
 
 DRIFTED_TEXT = (
-    "The carriage has crept off its seated position.\n\n"
-    "Nudge it BACK by hand — the ANTI-CUTTING direction, the same way you "
-    "seated it — until it seats firmly, then press Re-seated."
+    "The carriage moved off its seated position.\n\n"
+    "Push it BACK by hand in the ANTI-CUTTING direction, the same direction "
+    "you used to seat it. Stop when it seats firmly. Press Re-seated."
 )
 
-NO_AXES_TEXT = ("No Z or spindle axis is assigned — map them in setup and "
-                "connect the controller first.")
+NO_AXES_TEXT = ("Saddle axis (Z) or Spindle axis is not set. Set both in "
+                "Setup > ELS. Then connect the controller.")
 
 HELP_TITLE = "Picking up an existing thread"
 
 HELP_TEXT = (
-    "Use this on a thread this job did not cut — a re-chucked part, a "
-    "thread cut elsewhere, a damaged thread being chased. Once the "
-    "reference is latched, every pass follows the existing groove.\n\n"
+    "Use this on a thread that this job did not cut: a re-chucked part, a "
+    "thread cut on a different machine, or a damaged thread that you "
+    "chase. After the reference is latched, every pass follows the "
+    "existing groove.\n\n"
     "Why pull back in the ANTI-CUTTING direction: the half nut sits on the "
-    "leadscrew with free play (backlash). Pulling against the feed seats "
-    "the carriage on the flank the leadscrew pushes from during a pass, so "
-    "the reference is taken with that play already used up. Seated the "
-    "other way, the first pass starts by falling through the free play, and "
-    "the reference is off by the whole clearance. The same free play is "
-    "what lets a seated carriage creep toward the cut — which is why the "
-    "wizard may ask you to re-seat it.\n\n"
-    "Why the tool must be clear in X: the software cannot know the major "
-    "diameter, so nothing can stop the tool touching the work while the "
-    "carriage is moved by hand.\n\n"
-    "Why Z is watched: from the seat onward, the carriage position IS the "
-    "reference. A re-seat presses against the same mechanical stop, so the "
-    "Z readout must return to almost exactly the same count — landing "
-    "anywhere else means the Z scale cannot be trusted, and the wizard "
-    "says so.\n\n"
-    "After latching, run an AIR PASS before cutting metal: back the tool "
-    "clear in X, run one pass, and watch the tip track the existing "
-    "groove. Software cannot detect a tool confirmed in the wrong place — "
-    "the air pass is what catches it."
+    "leadscrew with free play (backlash). A pull against the feed seats "
+    "the carriage on the flank that the leadscrew pushes during a pass, so "
+    "the reference is taken with no free play left. If the carriage is "
+    "seated the other way, the first pass starts with a fall through the "
+    "free play, and the reference is wrong by the full clearance. The same "
+    "free play lets a seated carriage creep toward the cut. This is why "
+    "the wizard can ask you to re-seat it.\n\n"
+    "Why the tool must be clear in X: the software does not know the major "
+    "diameter. Nothing can stop the tool from touching the work while you "
+    "move the carriage by hand.\n\n"
+    "Why Z is monitored: after the seat, the carriage position IS the "
+    "reference. A re-seat pushes against the same mechanical stop, so the "
+    "Z readout must return to almost the same count. Any other count means "
+    "the Z scale is not reliable, and the wizard tells you.\n\n"
+    "After the latch, run an AIR PASS before you cut metal. Move the tool "
+    "clear in X, run one pass, and make sure the tip follows the existing "
+    "groove. The software cannot detect a tool confirmed in the wrong "
+    "place. The air pass shows it."
 )
 
 # ── HOW LONG A WALKTHROUGH BODY MAY BE ───────────────────────────────
@@ -116,10 +116,11 @@ BODY_WRAP_CHARS = 52
 BODY_LINE_BUDGETS = {"jog": 12, "align": 9, "drifted": 8}
 
 AIR_PASS_TEXT = (
-    "\n\nBefore cutting metal: run an AIR PASS. Back the tool slightly clear "
-    "of the thread in X, run one pass, and watch the tip track the existing "
-    "groove. Software cannot detect a tool confirmed in the wrong place — "
-    "the air pass is what catches it. If it tracks, feed in and cut."
+    "\n\nBefore you cut metal, run an AIR PASS. Move the tool slightly "
+    "clear of the thread in X. Run one pass and make sure the tip follows "
+    "the existing groove. The software cannot detect a tool confirmed in "
+    "the wrong place. The air pass shows it. If the tip follows the groove, "
+    "feed in and cut."
 )
 
 

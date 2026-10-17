@@ -127,8 +127,10 @@ int main(void)
      * correction, placed in two of 10's alignment pads so nothing else moved.
      * A layout change all the same, and since this bump the version is bound
      * to the layout by registers/layout-fingerprints.json. */
-    check(data.shared.elsStop.protocolVersion == 11,
-          "protocolVersion is 11 (stopOffset / stopTriggerOffset)");
+    /* 11 -> 12: clearRefCommand / clearRefSeq, the host's clear of the thread
+     * reference, in the last two alignment pads. Nothing else moved. */
+    check(data.shared.elsStop.protocolVersion == 12,
+          "protocolVersion is 12 (clearRefCommand / clearRefSeq)");
     check(data.shared.elsStop.protocolVersion == ELS_PROTOCOL_VERSION,
           "RampsStart publishes the ELS_PROTOCOL_VERSION macro, not a drifting literal");
 
@@ -223,6 +225,20 @@ int main(void)
      * the only one that exercises behavior, so restore what the suppression
      * wrote before falling through to it. */
     data.shared.elsStop.diagEndReason = 0;
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_ISR_GAP
+    check(data.shared.elsStop.diagSchema == 8,
+          "isr gap publishes wire schema 8");
+    check(data.shared.elsStop.diagBucketCount == ELS_DIAG_GAP_WORDS,
+          "isr gap publishes its trace word count");
+    check((uint16_t)data.shared.elsStop.diagTrace[ELS_DIAG_GAP_W_NOMINAL]
+              == ELS_ISR_CYCLE_BUDGET,
+          "isr gap publishes the nominal tick, so no reader assumes the rate");
+    /* RampsStart must leave a clean window over the 0xA5 poison: diagEndReason
+     * is this probe's reset request, and a stale nonzero one would wipe the
+     * first tick's window. */
+    check(data.shared.elsStop.diagSettleTicks == 0
+              && data.shared.elsStop.diagNetCounts == 0,
+          "isr gap starts with no worst gap and no ticks");
 #else
 #error "this probe has no assertions in els_diag_scratch_test.cpp -- add an arm above"
 #endif

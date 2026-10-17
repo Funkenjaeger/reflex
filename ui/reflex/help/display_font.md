@@ -1,18 +1,19 @@
-Display Font
+Display font
 ============
 
 The font used for the DRO position readouts on the home screen.
 
 ## Selection
 
-Tap to open the font picker, which shows all available monospace
-fonts with a preview of how numbers will look (+123.456).
+Press to open the Font picker. It shows all available monospace
+fonts, each with a preview of how numbers look (+123.456).
 
 ## Recommendations
 
-- Choose a monospace font so digits don't shift as values change
-- Fonts with clear distinction between similar characters
-  (0/O, 1/l/I) are best for workshop readability
+- Choose a monospace font, so that digits do not shift when values
+  change
+- Fonts that clearly show the difference between similar characters
+  (0/O, 1/l/I) are easiest to read in the workshop
 - The default Iosevka font is optimized for numeric display
 
 ## Notes

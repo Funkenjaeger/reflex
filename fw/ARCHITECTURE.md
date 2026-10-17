@@ -11,7 +11,7 @@ Modbus Master (Raspberry Pi)
         ↓ USART1 @ 115200 baud
 FreeRTOS Tasks (application)
         ↓
-SynchroRefreshTimerIsr (TIM9 ISR — bare-metal, high priority)
+SynchroRefreshTimerIsr (TIM9 ISR, NVIC priority 5)
         ↓
 STM32 HAL + CMSIS
         ↓
@@ -24,7 +24,7 @@ STM32F411 hardware
 
 ### `Core/Src/Ramps.c` — Core Motion Control
 
-- **`SynchroRefreshTimerIsr()`** — high-priority TIM9 ISR running every 20 µs (50 kHz; the rate and every tick constant derived from it are declared in `Core/Inc/els_isr_rate.h`). Reads all 4 encoder counters, computes deltas with fractional error tracking, applies sync ratios, and generates step/direction pulses on PA0/PB14. Uses the Cortex-M4 DWT cycle counter to measure its own execution time.
+- **`SynchroRefreshTimerIsr()`** — TIM9 ISR (NVIC priority 5; see [Concurrency Model](#concurrency-model)) running every 20 µs (50 kHz; the rate and every tick constant derived from it are declared in `Core/Inc/els_isr_rate.h`). Reads all 4 encoder counters, computes deltas with fractional error tracking, applies sync ratios, and generates step/direction pulses on PA0/PB14. Uses the Cortex-M4 DWT cycle counter to measure its own execution time.
 - **`updateIndexingPosition()`** — trapezoidal ramp (accel/cruise/decel) for indexed moves.
 - **`updateJogPosition()`** — continuous speed control for jogging.
 - Three FreeRTOS tasks: `userLedTask`, `updateSpeedTask`, `servoEnableTask`.
@@ -33,9 +33,13 @@ STM32F411 hardware
 
 Full Modbus RTU slave implementation (address 17). The entire `rampsSharedData_t` struct is memory-mapped directly to Modbus holding registers — no translation layer. A master can read/write servo state (mode, target steps, speed, sync ratios) directly via FC3/FC6/FC16.
 
+Receive is interrupt-per-byte. The library runs in its `USART_HW` mode (`Core/Src/Ramps.c`), so the USART1 interrupt, at NVIC priority 15 (`Core/Src/usart.c`), takes each byte with `HAL_UART_Receive_IT(…, 1)` and restarts the T3.5 frame timer with `xTimerResetFromISR` (`Core/Src/UARTCallback.c`). When that timer expires, the frame has ended and `TaskModbusSlave` is notified.
+
+The field bootloader (`bootloader/`) has its own slave and receives differently: USART1 RX goes to DMA2 in circular mode, and the end of a frame is found by polling the USART's latched IDLE flag, with no interrupts at all (`bootloader/src/bl_hw.c`, `bootloader/core/bl_rxring.c`).
+
 ### `Core/Src/Scales.c` — Encoder Initialization
 
-Configures TIM1–TIM4 in encoder mode (TI12, both channels). TIM2 is 32-bit for higher resolution; the rest are 16-bit.
+Configures TIM1–TIM4 in encoder mode (TI12, x4 counting on both channels, input filter 0xF). All four counters wrap at 16 bits, TIM2 included although it is a 32-bit timer: `RampsStart()` re-applies this configuration after the CubeMX init, and the ISR takes each tick's movement as a 16-bit difference.
 
 ### `Core/Src/tim.c`, `usart.c`, `gpio.c` — HAL Peripherals
 
@@ -66,7 +70,7 @@ STM32CubeMX-generated peripheral initialization code.
 
 Hybrid bare-metal + FreeRTOS:
 
-- The **TIM9 ISR** handles all timing-critical motion control outside the RTOS scheduler.
+- The **TIM9 ISR** handles all timing-critical motion control. It is not a task, so the scheduler never preempts it, but FreeRTOS can still delay it. Its NVIC priority, 5 (`Core/Src/tim.c`), equals `configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY` (`Core/Inc/FreeRTOSConfig.h`). A FreeRTOS critical section raises BASEPRI to that level, which masks priority 5 as well, so a tick that falls due inside one waits for it to end. That includes the critical sections a task enters and those inside the `FromISR` calls other interrupts make, such as the `xTimerResetFromISR` the USART1 interrupt issues on every Modbus byte.
 - **FreeRTOS tasks** handle everything millisecond-tolerant: Modbus parsing, speed updates, motor enable/disable, and LED status.
 - `rampsSharedData_t` is the shared state between the ISR and tasks. The ISR reads servo commands from it; Modbus tasks write to it.
 

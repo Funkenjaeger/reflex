@@ -42,8 +42,8 @@ def gearbox_refusal_text(gear: str, reference: str) -> str:
     """Why a calibration will not run with `gear` set when the table's
     reference is `reference` (docs/guide/when-it-refuses.md is generated from
     this). Only ever shown with a gearbox configured."""
-    return (f"Calibration runs in gearbox position {reference}; "
-            f"this is set for {gear}.")
+    return (f"Gearbox position is {gear}. Calibration runs only in "
+            f"gearbox position {reference}.")
 
 
 # ── Pure policy ──────────────────────────────────────────────────────
@@ -175,9 +175,9 @@ class BacklashCalibration:
         if version != ELS_PROTOCOL_VERSION:
             self._fail(
                 ELS_CAL_ERR_CONFIG,
-                f"Controller firmware does not support backlash calibration "
-                f"(reports register version {version}, this UI needs "
-                f"{ELS_PROTOCOL_VERSION}). Flash the firmware to match this UI.",
+                f"Controller firmware does not support backlash calibration. "
+                f"It reports register version {version}, and this UI needs "
+                f"{ELS_PROTOCOL_VERSION}. Flash the firmware to match this UI.",
             )
             return False
 
@@ -221,8 +221,8 @@ class BacklashCalibration:
         if z_input is None:
             self._fail(
                 ELS_CAL_ERR_CONFIG,
-                "No Z axis is assigned, so there is no scale to watch the "
-                "carriage with. Map the Z axis in setup, then calibrate.",
+                "Saddle axis (Z) is not set, so no scale can monitor the "
+                "carriage. Set it in Setup > ELS. Then calibrate.",
             )
             return False
         self._hal.set_scale_index(z_input.inputIndex)
@@ -335,9 +335,9 @@ class BacklashCalibration:
                 # timeout here is a genuine stall rather than a version problem.
                 self._fail(
                     ELS_CAL_ERR_CONFIG,
-                    "The controller accepted the calibration but never reported "
-                    "a result. Check the servo is enabled and in sync/index "
-                    "mode, then retry.",
+                    "The controller accepted the calibration but did not report "
+                    "a result. Make sure the servo is enabled and in sync/index "
+                    "mode. Then try again.",
                 )
                 # A stalled run that eventually finishes will overwrite this;
                 # reconcile at the next connect is the backstop for that race.
@@ -371,10 +371,11 @@ class BacklashCalibration:
             spread = cal_spread(self.measured)
             self.state = CalState.INCONSISTENT
             self.message = (
-                f"Measurements disagree ({self._fmt_measured()}; spread "
+                f"Measurements do not agree ({self._fmt_measured()}; spread "
                 f"{spread} steps, limit {int(self._els.els_cal_max_spread_steps)}). "
-                "Not accepted. Check for a loose leadscrew coupling, a slipping "
-                "half-nut, or a Z scale problem before retrying."
+                "Result not accepted. Examine the drivetrain for a loose "
+                "leadscrew coupling, a slipping half nut or a Z scale problem. "
+                "Then try again."
             )
             log.warning("els_cal: inconsistent %s spread=%d",
                         self.measured, spread)
@@ -502,7 +503,7 @@ class BacklashCalibration:
             # gate genuinely sits at its floor, and silently is the one way
             # that must not happen.
             self.message += (
-                " Note: the take-up confirmation gate is at its minimum "
+                " The take-up confirmation gate stays at its minimum "
                 "threshold until a calibration passes."
             )
             log.warning(

@@ -11,7 +11,7 @@
     # go to the Axes screen to find out what they are editing. Read-only; see
     # reflex/utils/input_axis_map.py.
     ScreenHeader:
-      text: "Scale Input {}{}".format(root.input.inputIndex, "  →  " + root.axis_label if root.axis_label else "")
+      text: "Scale input {}{}".format(root.input.inputIndex, "  →  " + root.axis_label if root.axis_label else "")
 
     ScrollView:
       do_scroll_x: False
@@ -24,7 +24,7 @@
         height: self.minimum_height
 
         BooleanItem:
-          name: "Spindle Mode"
+          name: "Spindle mode"
           value: root.input.spindleMode
           help_file: "spindle_mode.md"
           on_value: root.input.spindleMode = self.value
@@ -90,7 +90,7 @@
           height: 60 if root.input.spindleMode else 0
           disabled: not root.input.spindleMode
         NumberItem:
-          name: "Gear Ratio Num"
+          name: "Gear ratio num"
           value: root.input.gear_ratio_num
           integer: True
           help_file: "spindle_mode.md"
@@ -99,7 +99,7 @@
           height: 60 if root.input.spindleMode else 0
           disabled: not root.input.spindleMode
         NumberItem:
-          name: "Gear Ratio Den"
+          name: "Gear ratio den"
           value: root.input.gear_ratio_den
           integer: True
           help_file: "spindle_mode.md"

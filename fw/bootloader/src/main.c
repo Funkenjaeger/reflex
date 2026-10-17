@@ -69,7 +69,7 @@ int main(void)
     uint32_t n = blHwUartPoll(reqBuf, &core.regs[ELS_BL_DIAG]);
     blPortWatchdogKick();
     if (n == 0u) continue;
-    uint32_t m = blModbusHandle(&core, blIdentityWindow, reqBuf, n, respBuf);
+    uint32_t m = mbRtuHandle(&core, blIdentityWindow, reqBuf, n, respBuf);
     if (m != 0u) blHwUartSend(respBuf, m);
     if (core.jumpPending) {
       jumpNow();

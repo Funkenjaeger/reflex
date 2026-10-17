@@ -358,7 +358,7 @@ def test_open_half_nut_names_the_half_nut():
     cal = BacklashCalibration(hal, _els())
     cal.start()
     _run_to_completion(cal)
-    assert "half-nut" in cal.message.lower()
+    assert "half nut" in cal.message.lower()
 
 
 def test_inconsistent_run_is_refused_and_says_why():
@@ -404,7 +404,7 @@ def test_timeout_when_ack_never_arrives():
     # The message must NOT blame the link: start() already proved the firmware
     # has these registers, so a stall here is a machine-state problem and the
     # text should point the operator at the servo.
-    assert "never reported a result" in cal.message.lower()
+    assert "did not report a result" in cal.message.lower()
     assert "servo" in cal.message.lower()
 
 
@@ -632,7 +632,7 @@ def test_no_z_axis_refuses_before_anything_is_written():
 
     assert cal.start() is False
     assert cal.state == CalState.REFUSED
-    assert "Z axis" in cal.message
+    assert "Saddle axis (Z)" in cal.message
     assert hal.scale_index_written is None
     assert hal.limits is None
     assert hal.cal_command == 0 or hal._running == 0
@@ -833,8 +833,8 @@ def test_refusal_names_the_owner_reference():
     cal = BacklashCalibration(hal, _els(), gear=lambda: "Hi",
                               gear_table=lambda: GearTable.parse("Lo=1, Hi=3/2"))
     assert cal.start() is False
-    assert cal.message == ("Calibration runs in gearbox position Lo; "
-                           "this is set for Hi.")
+    assert cal.message == ("Gearbox position is Hi. Calibration runs only "
+                           "in gearbox position Lo.")
 
 
 def test_runs_in_the_reference_position():

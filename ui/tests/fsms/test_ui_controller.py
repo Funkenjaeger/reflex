@@ -1009,7 +1009,7 @@ def test_threading_retract_gate_ignores_uncommitted_start_dia():
     c.commit_standalone_start_dia(10.0)
     c._apply_policy()
     assert c.action_allowed is False           # X=-2.5 not clear of 10.0 (OD)
-    assert "clear of start diameter" in c.instruction_text
+    assert "clear of Major ø" in c.instruction_text
 
 
 def test_depth_latch_ignores_uncommitted_stop_dia():
@@ -1418,7 +1418,7 @@ def _waiting_to_retract_rig(ctrl, *, sync_on):
 def test_retract_is_greyed_with_sync_off(ctrl):
     c = _waiting_to_retract_rig(ctrl, sync_on=False)
     assert c.action_allowed is False
-    assert c.instruction_text == "Turn Sync Enable on, then retract"
+    assert c.instruction_text == "Turn on Sync Enable. Then press Retract."
 
 
 def test_retract_is_allowed_with_sync_on(ctrl):
@@ -1452,7 +1452,7 @@ def test_sync_off_mid_retract_abandons_it_and_disengages(ctrl):
 
     assert c._els_fsm.state == "disabled"
     assert c.in_cycle is False
-    assert any("Retract abandoned" in m for m in seen), seen
+    assert any("Retract stopped" in m for m in seen), seen
 
 
 # ─── Flight recorder wiring ────────────────────────────────────────────────

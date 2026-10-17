@@ -1,18 +1,17 @@
-ELS Mode
+ELS mode
 ========
 
-Electronic Lead Screw (ELS) mode synchronizes the servo motor to
-a spindle encoder, enabling electronic threading and feeding on
-a manual lathe.
+Electronic Lead Screw (ELS) mode synchronizes the servo motor to a
+spindle encoder. This gives electronic threading and feeding on a manual
+lathe.
 
 ## Behavior
 
-- **OFF (default):** The servo operates in positioning mode — it
-  moves to commanded positions (goto, jog, sync ratio).
-- **ON:** The servo locks to the spindle encoder and follows it at
-  a ratio determined by the selected feed/thread pitch. The gearing
-  ratios and units-per-turn settings are overridden by the ELS
-  configuration.
+- **OFF (default):** The servo operates in positioning mode. It moves to
+  commanded positions (goto, jog, sync ratio).
+- **ON:** The servo locks to the spindle encoder. It follows the spindle
+  at a ratio set by the selected feed or thread pitch. The ELS
+  configuration overrides the gearing ratios and units-per-turn settings.
 
 ## When to Enable
 
@@ -23,13 +22,13 @@ a manual lathe.
 
 ## Requirements
 
-- A spindle axis must be configured and assigned in ELS Setup
+- A spindle axis must be configured and assigned in ELS setup
 - The lead screw pitch must be correctly set for your machine
 - At least one saddle (Z) or cross slide (X) axis must be assigned
 
 ## Notes
 
-- Enabling ELS mode disables the gearing ratio and units-per-turn
-  fields on this screen (they are controlled by the ELS system)
-- The ELS axis assignments are configured in the ELS Setup screen
-- Feed and thread selections are made from the home screen toolbar
+- When ELS mode is on, the gearing ratio and units-per-turn fields on
+  this screen are disabled. The ELS system controls them.
+- Set the ELS axis assignments in the ELS setup screen.
+- Select the feed and thread from the home screen toolbar.

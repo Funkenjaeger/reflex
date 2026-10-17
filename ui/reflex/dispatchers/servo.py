@@ -286,8 +286,8 @@ class ServoDispatcher(SavingDispatcher):
 
     # The exact words the operator sees. A constant so the test asserts on the
     # string that ships rather than on a paraphrase of it.
-    DIVERGENCE_NOTICE = ("Controller did not stop when asked — the carriage "
-                         "may still be driven")
+    DIVERGENCE_NOTICE = ("Controller did not stop the servo. Carriage can "
+                         "still move.")
 
     def _check_servo_mode_divergence(self, observed):
         """Watchdog: did the machine keep feeding after we said stop?

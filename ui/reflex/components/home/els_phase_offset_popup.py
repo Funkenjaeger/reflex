@@ -84,7 +84,7 @@ load_kv(__file__)
 # this screen, always the instruction — below the fold.
 
 INTRO_TEXT = (
-    "Enter the WHOLE offset from the original groove and press Apply. It "
+    "Enter the WHOLE offset from the original groove. Press Apply. It "
     "takes effect where the tool next re-enters the thread."
 )
 
@@ -97,41 +97,44 @@ HELP_TITLE = "Widening a groove"
 # renders in the HelpButton's own scrollable popup, never in the message
 # viewport the budget protects.
 HELP_TEXT = (
-    "This screen cuts a thread groove WIDER than the tool that cuts it: cut, "
-    "apply a small offset, cut again, until the groove is wide enough. The "
-    "workpiece is never touched and the datum is never re-established.\n\n"
-    "The entry is the WHOLE offset from the original groove — Apply SETS the "
-    "offset, it does not add to it. The box opens holding the current offset, "
-    "so applying without editing changes nothing.\n\n"
-    "There are no preset step-overs because the right step depends on the "
-    "width of the cutter in the toolpost, which nothing here knows.\n\n"
-    "Applying moves nothing by itself. The shift takes effect where the tool "
-    "next re-enters the thread — run an air pass before cutting metal.\n\n"
-    "There is no minus because widening runs one way, away from the groove "
-    "cut first. The firmware's forward bias would turn a negative into a "
-    "forward move of nearly a whole pitch — a real cut, on the flank you "
-    "were not opening.\n\n"
-    "The dim line under the total is the safety bound: offsets alias at one "
-    "full pitch, so it shows how much of that budget the total has used. On "
-    "a widening job it stays small — a fraction climbing toward one means "
+    "This screen cuts a thread groove WIDER than the tool that cuts it. Cut, "
+    "apply a small offset and cut again, until the groove is wide enough. "
+    "You do not touch the workpiece, and you do not set the datum "
+    "again.\n\n"
+    "The entry is the WHOLE offset from the original groove. Apply SETS the "
+    "offset. It does not add to it. The box opens with the current offset, "
+    "so Apply without an edit changes nothing.\n\n"
+    "There are no preset step-overs, because the correct step depends on the "
+    "width of the cutter in the toolpost. This screen does not know that "
+    "width.\n\n"
+    "Apply does not move anything. The shift takes effect where the tool "
+    "next re-enters the thread. Run an air pass before you cut metal.\n\n"
+    "There is no minus, because widening goes in one direction: away from the "
+    "groove cut first. The firmware's forward bias changes a negative value "
+    "into a forward move of almost a full pitch. That is a real cut, on the "
+    "flank you did not mean to open.\n\n"
+    "The dim line under the total is the safety limit. Offsets alias at one "
+    "full pitch, so the line shows how much of that pitch the total uses. On "
+    "a widening job it stays small. If the fraction increases toward one, "
     "the entries are not what you think they are."
 )
 
 APPLIED_TEXT = (
-    "Applied. The offset is shown above; it takes effect where the tool next "
-    "re-enters the thread. Run an air pass before cutting metal."
+    "Applied. The offset shows above. It takes effect where the tool next "
+    "re-enters the thread. Run an air pass before you cut metal."
 )
 
 CLEARED_TEXT = (
-    "Offset cleared. The controller is back on the groove it began the job on."
+    "Offset cleared. The controller is back on the groove where the job "
+    "started."
 )
 
 WAITING_TEXT = "Waiting for the controller to acknowledge…"
 
 NO_ACK_TEXT = (
-    "The controller never acknowledged the offset, so it was NOT applied — "
-    "usually the job disengaged mid-write. Check the ELS stop is still "
-    "engaged and try again."
+    "The controller did not acknowledge the offset, so it was NOT applied. "
+    "Usually, the job disengaged during the write. Make sure the ELS stop is "
+    "still engaged. Then try again."
 )
 
 # ── HOW LONG A MESSAGE MAY BE, AND WHY THERE IS A NUMBER FOR IT ──────
@@ -165,29 +168,29 @@ MESSAGE_CHAR_BUDGET = MESSAGE_WRAP_CHARS * MESSAGE_LINE_BUDGET
 # is the property the tests hold them to.
 REFUSAL_TEXT = {
     ElsFsm.PHASE_OFFSET_OFFLINE: (
-        "Not connected to the controller, so there is nothing to apply the "
-        "offset to. Reconnect and try again."
+        "Controller is not connected, so no offset can be applied. "
+        "Reconnect. Then try again."
     ),
     ElsFsm.PHASE_OFFSET_NO_JOB: (
-        "No threading job is engaged, and the controller discards the offset "
-        "when one starts. Engage the ELS stop first."
+        "No threading job is engaged. When a job starts, the controller "
+        "deletes the offset. Engage the ELS stop first."
     ),
     ElsFsm.PHASE_OFFSET_NO_PITCH: (
-        "No thread pitch is set — turning has no thread phase to shift. "
+        "No thread pitch is set. Turning has no thread phase to shift. "
         "Choose a threading mode and a pitch first."
     ),
     ElsFsm.PHASE_OFFSET_NO_GEOMETRY: (
-        "The machine geometry that turns a distance into leadscrew steps is "
-        "missing or zero. Check the servo gearing in setup."
+        "The machine geometry that changes a distance into leadscrew steps "
+        "is missing or zero. Examine the servo gearing in Setup > Servo."
     ),
     ElsFsm.PHASE_OFFSET_NEGATIVE: (
-        "A minus sign does not back the phase up — it becomes a forward move "
+        "A minus sign does not move the phase back. It becomes a forward move "
         "that opens the wrong side of the groove. Enter the distance without "
         "the sign, or press Clear."
     ),
     ElsFsm.PHASE_OFFSET_AT_PITCH: (
-        "That is a full pitch or more, which lands back in the groove you "
-        "started at. Type a smaller offset, or press Clear."
+        "This is one full pitch or more. It puts the tool back in the groove "
+        "you started at. Enter a smaller offset, or press Clear."
     ),
 }
 
@@ -321,8 +324,8 @@ class PhaseOffsetPopup(Popup):
         except Exception:
             log.exception("phase offset: command failed")
             self._show(
-                "The controller could not be reached to apply the offset. "
-                "Nothing was applied — check the connection and try again.",
+                "Cannot reach the controller. Nothing was applied. "
+                "Examine the connection. Then try again.",
                 state="refused")
             return
 
@@ -462,8 +465,8 @@ class PhaseOffsetPopup(Popup):
         # distance it had just accepted, three lines above "Applied."
         share = phase_offset_fraction_text(fraction)
         if fraction >= self.APPROACHING_PITCH:
-            self.fraction_text = (f"{share} x pitch — nearly a full one, "
-                                  f"where it is refused")
+            self.fraction_text = (f"{share} x pitch, near the 1 x pitch "
+                                  f"limit")
         else:
             self.fraction_text = f"{share} x pitch"
 
@@ -475,9 +478,9 @@ class PhaseOffsetPopup(Popup):
         # older than the FSM driving it, and the only honest thing left to say
         # is that nothing was applied.
         log.error("phase offset: unrecognised outcome code %r", code)
-        return (f"The controller refused the offset for a reason this screen "
-                f"does not recognise (it reported '{code}'). Nothing was "
-                f"applied — the total above is unchanged.")
+        return (f"The controller refused the offset with an unknown code "
+                f"('{code}'). Nothing was applied. The total above did not "
+                f"change.")
 
     def _show(self, message: str, state: str):
         self.state = state

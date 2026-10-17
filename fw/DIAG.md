@@ -79,6 +79,7 @@ probe-agnostic:
 | `elsDiagTick(ctx, stop, dZ, dServo)` | once per ISR tick while capturing |
 | `elsDiagServoGate(ctx, stop, mode)` | `servoEnableTask`, at the re-assert decision; `true` suppresses it (schema 3+) |
 | `elsDiagTaskTick(ctx, shared, cal)` | once per `servoEnableTask` iteration (~100 ms), after the re-assert (schema 4+) |
+| `elsDiagTickTail(ctx, shared)` | every ISR tick, unconditionally, after the tick's work and before `executionCycles` is taken (schema 8+) |
 
 **`elsDiagCapturing` must stay trivial, and the ISR must call it before computing
 `elsDiagTick`'s arguments.** Without the guard every tick pays for `dZ` and
@@ -86,6 +87,10 @@ probe-agnostic:
 tick measures something else, so placement belongs to `Ramps.c`, not the probe.
 In a release build the entry points compile to nothing; `.bss` grows 8 bytes for `elsDiagCtx_t`, which
 sits last in `rampsHandler_t` so no field above it moves.
+
+`elsDiagTickTail` has no capture guard, so it must be an empty inline in every
+build that does not use it. A release image is byte-identical with or without it,
+apart from the build-identity stamp.
 
 ## Registry
 
@@ -211,6 +216,113 @@ separates the two.
 `elsDiagCapturing()` returns true on every tick, because there is no
 stop-trigger hook, so the `dZ`/`dServo` arithmetic always runs, against a
 2000-cycle budget.
+
+### `isr-gap` (schema 8)
+
+How late the motion ISR starts. TIM9 runs at NVIC priority 5, equal to
+`configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY`, so FreeRTOS critical sections
+and same-priority interrupts (the Modbus UART among them) can hold a tick back.
+`executionCyclesPeak` measures only how long the ISR runs.
+This probe peak-holds the gap between ISR entries (`executionInterval`, DWT
+cycles) over a window.
+
+The window opens at boot (the boot tick is skipped: its interval is not a gap)
+and again on every host reset. The hook is `elsDiagTickTail`, every tick.
+
+| Field | Meaning (check `diagSchema` first) |
+|---|---|
+| `diagSettleTicks` | **worst gap**, CPU cycles |
+| `diagNetCounts` | ticks measured in the window (uint32; wraps after ~23.8 h at 50 kHz) |
+| `diagCaptureTicks` | longest ISR run in the window, cycles, saturating at 65535. Window-scoped, unlike `executionCyclesPeak` |
+| `diagEndReason` | **reset request**, written by the host: `1` starts a fresh window; the ISR writes `0` back as the acknowledgement |
+| `diagBucketTicks` / `diagBucketCount` | 0 / 24: no time buckets; 24 `diagTrace` words in use |
+| `diagTrace[0..1]` | shortest gap, uint32 |
+| `diagTrace[2..9]` | late-tick counts, four uint32s: gaps strictly above +5%, +25%, +50% and 2x nominal, cumulative |
+| `diagTrace[10..13]` | those four thresholds, cycles |
+| `diagTrace[14]` | nominal tick, cycles (2000 at 50 kHz) |
+| `diagTrace[15..16]` | window tick of the worst gap, uint32 |
+| `diagTrace[17]` | cycles the tick **before** the worst gap ran |
+| `diagTrace[18..22]` | at the worst gap: `machineMode`, `servoMode`, `enable`, `active`, `takeupPending` |
+| `diagTrace[23]` | window number: 0 at boot, +1 per reset |
+| `diagSeq` | bumps when the worst gap grows, on a reset, and once a minute |
+
+A uint32 is two words, low first. The word map is `ELS_DIAG_GAP_W_*` in
+`Core/Inc/els_diag_isr_gap.h`, mirrored by `scripts/isr-gap.py` and reflex-ui;
+`scripts/lib/isr-gap-test.py` and `ui/tests/test_registry_contract.py` fail if
+either drifts.
+
+**Reading it.** A tick held back by D cycles shows as one gap of nominal + D and
+then one of nominal - D, because the timer keeps its own time and only the
+entry moves. A gap of 2x nominal or more means an update was lost: TIM9's
+pending flag holds one update, not two. `diagTrace[17]`, the tick before the
+worst gap, names the cause: near or above nominal, the ISR overran its
+own budget; normal, something outside the ISR held the entry back. The mode
+fields tell idle from a cut start (`takeupPending`, `active`, `machineMode`).
+
+**Torn reads.** The ISR writes the block while the host reads it, so a 32-bit
+counter can be read across its carry. `isr-gap.py` reads twice and requires
+the worst-gap fields and `diagSeq` to agree.
+
+**The UI records it.** reflex-ui recognizes schema 8 and, on each `diagSeq`
+edge, appends the block to the diagnostic capture file with an `isr_gap`
+object holding the decoded window and a UTC timestamp. Each new worst gap is
+timestamped, and the distribution is at most a minute old at session end.
+The cost is one 64-register read (about 12 ms at 115200 baud) per edge. The UI
+never writes the reset request.
+
+**Cost.** The hook runs before `executionCycles` is taken, so its cost is
+inside `executionCycles` and `executionCyclesPeak` on the machine. Statically,
+the common path (no reset pending, gap within +5%, no new extreme, no
+heartbeat) is 30 instructions: 9 loads, 13 single-cycle ALU and store
+instructions, 2 untaken branches and 6 taken ones. That is about 45 cycles
+with warm prefetch and about 75 with every taken branch refilling from flash,
+2 to 4% of the 2000-cycle budget. A late tick adds about 30 cycles, a new worst
+gap about 20, and the reset tick clears the block once, about 300.
+`scripts/check-isr-cost.sh` finds no double-precision, 64-bit divide or new
+libm calls. On the machine, compare idle `fastData.cycles` under this probe
+and under release.
+
+**Bench procedure.** On the probe host, in `fw/` of a checkout carrying the
+probe:
+
+```bash
+# 1. Build for the RUN slot.
+cmake -S . -B build-slot-diag-isr-gap -DCMAKE_BUILD_TYPE=Release \
+    -DREFLEX_APP_BASE=0x08020000 \
+    -DCMAKE_C_FLAGS=-DELS_DIAG_PROBE=ELS_DIAG_SCHEMA_ISR_GAP
+cmake --build build-slot-diag-isr-gap
+
+# 2. Flash over the wire, UI stopped. Note the rev it replaces (the identity
+#    window, printed first) for step 6.
+sudo systemctl stop reflex-ui.service
+python3 scripts/modbus-flash.py --identity --port /dev/serial0
+python3 scripts/modbus-flash.py build-slot-diag-isr-gap/reflex-fw.bin \
+    --port /dev/serial0 --record-variant diagnostic
+
+# 3. Open a known window, still with the UI stopped.
+python3 scripts/isr-gap.py --port /dev/serial0 --reset
+
+# 4. Start the UI and run the session to be measured.
+sudo systemctl start reflex-ui.service
+
+# 5. Stop the UI and read the window.
+sudo systemctl stop reflex-ui.service
+python3 scripts/isr-gap.py --port /dev/serial0
+python3 scripts/isr-gap.py --port /dev/serial0 --json > isr-gap-$(date +%F-%H%M).json
+
+# 6. Return to release: put back the image step 2 displaced, and check that
+#    the board comes back on the rev noted there.
+python3 scripts/modbus-flash.py --revert --expect-rev <rev from step 2> \
+    --port /dev/serial0
+python3 scripts/isr-gap.py --port /dev/serial0   # must refuse: diagSchema is 0
+sudo systemctl start reflex-ui.service
+```
+
+Repeat steps 3 to 5 for each window to be measured separately (idle, jog,
+threading passes); a reset is the boundary. `--revert` goes back one step
+only; if it refuses, flash the release RUN-slot image instead
+(`build-slot/reflex-fw.bin` built from the release commit, or the release's
+own `reflex-fw.bin`).
 
 ### Retired ids
 

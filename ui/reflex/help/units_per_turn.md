@@ -1,13 +1,12 @@
-Units Per Turn
+Units per turn
 ==============
 
-The number of display units that correspond to one full revolution
-of the output axis (after gearing). The default is 360, representing
-degrees.
+The number of display units for one full revolution of the output
+axis (after gearing). The default is 360, for degrees.
 
 ## Common Values
 
-| Application           | Units per Turn | Meaning               |
+| Application           | Units per turn | Meaning               |
 |-----------------------|----------------|-----------------------|
 | Rotary table (degrees)| 360            | 360° per revolution   |
 | Rotary table (grads)  | 400            | 400 grads per rev     |
@@ -15,22 +14,22 @@ degrees.
 
 ## How It Works
 
-This value tells the DRO how to interpret one full rotation of the
-output shaft. Combined with the gearing ratio, it determines the
-relationship between motor steps and displayed position.
+This value tells the DRO how to show one full rotation of the
+output shaft. With the gearing ratio, it sets the relation between
+motor steps and the displayed position.
 
 ## Examples
 
 **Standard rotary table:**
-Set to 360. The DRO displays position in degrees (0–360).
+Set to 360. The DRO shows the position in degrees (0–360).
 
 **100-division indexing:**
-Set to 100. The DRO displays position as division numbers (0–100),
-where each unit represents 3.6° of physical rotation.
+Set to 100. The DRO shows the position as division numbers (0–100).
+Each unit is 3.6° of physical rotation.
 
 ## Notes
 
 - Must be a positive integer
-- This setting is disabled when ELS mode is active
-- Changing this value affects how positions are displayed but does
-  not change the physical motion
+- You cannot change this setting when ELS mode is on
+- A change to this value changes how positions are displayed. It
+  does not change the physical motion

@@ -191,8 +191,8 @@ def test_engaging_without_a_z_axis_tells_the_operator_why(ctrl_no_z):
 
     assert ctrl_no_z.engaged is False, "precondition: the engage was refused"
     assert ctrl_no_z.notice_severity == NOTICE_WARNING
-    assert "Z axis" in ctrl_no_z.notice_text
-    assert "ELS settings" in ctrl_no_z.notice_text
+    assert "Saddle axis (Z)" in ctrl_no_z.notice_text
+    assert "Setup > ELS" in ctrl_no_z.notice_text
 
 
 def test_a_stale_engage_tap_is_reported_as_info_not_as_a_warning(ctrl):
@@ -231,8 +231,8 @@ def test_the_wizard_says_why_a_stop_z_tap_did_nothing(ctrl_no_z):
     ctrl_no_z.on_action_button_clicked()
 
     assert ctrl_no_z.notice_severity == NOTICE_WARNING
-    assert "Z axis" in ctrl_no_z.notice_text
-    assert "ELS settings" in ctrl_no_z.notice_text
+    assert "Saddle axis (Z)" in ctrl_no_z.notice_text
+    assert "Setup > ELS" in ctrl_no_z.notice_text
 
 
 def test_the_wizard_says_why_a_retract_z_tap_did_nothing(ctrl_no_z):
@@ -243,7 +243,7 @@ def test_the_wizard_says_why_a_retract_z_tap_did_nothing(ctrl_no_z):
     ctrl_no_z.on_action_button_clicked()
 
     assert ctrl_no_z.notice_severity == NOTICE_WARNING
-    assert "Z axis" in ctrl_no_z.notice_text
+    assert "Saddle axis (Z)" in ctrl_no_z.notice_text
 
 
 def test_the_x_message_names_the_cross_slide_not_just_x(clock):
@@ -255,8 +255,8 @@ def test_the_x_message_names_the_cross_slide_not_just_x(clock):
     ctrl.on_action_button_clicked()
 
     assert ctrl.notice_severity == NOTICE_WARNING
-    assert "cross-slide" in ctrl.notice_text
-    assert "ELS settings" in ctrl.notice_text
+    assert "Cross slide axis (X)" in ctrl.notice_text
+    assert "Setup > ELS" in ctrl.notice_text
 
 
 def test_a_wizard_tap_that_works_says_nothing(ctrl):
@@ -287,14 +287,14 @@ def test_alarm_strip_falls_back_when_there_is_no_reason(ctrl):
     ctrl.enable_wizard = False
     ctrl._on_alarm("")
     _pump()
-    assert ctrl.alarm_strip == "ELS fault — disengage to clear"
+    assert ctrl.alarm_strip == "ELS fault. Disengage to clear."
 
 
 def test_alarm_strip_clips_a_long_reason_to_the_text_contract(ctrl):
     ctrl._on_alarm("x" * 200)
     _pump()
     assert len(ctrl.alarm_strip) <= 65
-    assert ctrl.alarm_strip.endswith("Disengage to clear")
+    assert ctrl.alarm_strip.endswith("Disengage to clear.")
 
 
 def test_alarm_strip_hides_when_the_alarm_clears(ctrl):

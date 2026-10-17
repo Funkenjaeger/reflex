@@ -1,22 +1,23 @@
-UI Theme
+UI theme
 ========
 
-Selects the overall color theme for the user interface.
+This setting selects the color theme of the user interface.
 
 ## Options
 
 - **dark** — Dark steel background with cyan accents (default).
 - **light** — Light brushed-aluminum background with amber accents.
 
-Switching the theme recolors the entire UI immediately.
+When you change the theme, the entire UI changes color immediately.
 
 ## Notes
 
-- Changing the theme also resets the DRO digit color and the indicator
-  on/off lamp colors to that theme's recommended values. You can still
-  override those afterwards in this menu; your choices persist until the
-  next time you switch themes.
-- Themes are defined by simple text files, one per theme, in
-  `reflex/themes/`. To add or tweak a theme, copy one of those files into
-  `~/.config/reflex/themes/`, edit the colors in a text editor, and restart
-  the application — the new theme appears in this list automatically.
+- A theme change also resets Home screen digits, Indicators on color
+  and Indicators off color. They go to the recommended values for that
+  theme. You can then change those colors in this menu. Your choices
+  stay until the next theme change.
+- Each theme is a simple text file in `reflex/themes/`. To add or
+  change a theme, copy one of those files into
+  `~/.config/reflex/themes/`. Edit the colors in a text editor. Then
+  restart the application. The new theme appears in this list
+  automatically.

@@ -103,7 +103,7 @@ def test_on_value_long_press_with_no_axis_shows_popup_and_does_not_commit(
         bar.on_value_long_press(which)  # must not raise
 
     assert popup_cls.call_count == 1
-    assert "Axis Not Configured" in popup_cls.call_args.kwargs.get("title", "")
+    assert "Axis not configured" in popup_cls.call_args.kwargs.get("title", "")
     popup_cls.return_value.open.assert_called_once()
     for commit_attr in {c for _, c, _ in LONG_PRESS_CASES}:
         getattr(bar.controller, commit_attr).assert_not_called()
@@ -213,7 +213,7 @@ def test_axis_not_configured_opens_custom_popup_and_never_builds_keypad(
     mock_popup_cls.assert_called_once()
     mock_popup_cls.return_value.open.assert_called_once()
     # Sanity: the dialog actually explains what's wrong, not a blank/default title.
-    assert "Axis Not Configured" in mock_popup_cls.call_args.kwargs.get("title", "")
+    assert "Axis not configured" in mock_popup_cls.call_args.kwargs.get("title", "")
 
 
 # ── 5. _sync_is_threading ────────────────────────────────────────────────────

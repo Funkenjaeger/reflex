@@ -1,29 +1,29 @@
 Scale Ratio Configuration
 =========================
 
-Each scale input reads raw encoder counts. The setting converts these
-counts into millimeters for display:
+Each scale input reads raw encoder counts. This setting changes the counts
+into millimeters for the display:
 
     position_mm = raw_counts × (Numerator / Denominator)
 
 ## Two ways to enter it
 
-**Scale entry** chooses which form you type. Both write the same
-setting, so use whichever matches the number you actually have.
+**Scale entry** sets the form that you type. Both forms write the same
+setting. Use the form that matches the number you have.
 
-- **Resolution** — microns per count, the number printed on the scale
-  itself ("1um", "5um"). Use this for an ordinary linear scale.
-- **Ratio** — the numerator and denominator above, in millimetres over
-  counts. Use this when the number you were given *is* a ratio, such
-  as a drive ratio through gearing.
+- **Resolution**: microns per count, the number printed on the scale
+  ("1um", "5um"). Use this form for a usual linear scale.
+- **Ratio**: the numerator and denominator above, in millimeters over
+  counts. Use this form when the number you have *is* a ratio, for
+  example a drive ratio through gearing.
 
-The screen opens on whichever form can express what is already stored.
-If it opens on Ratio for a scale you expected to see as a resolution,
-that means the stored value cannot be written exactly as a decimal —
-changing it to Resolution would alter the setting.
+The screen opens on a form that can show the stored value. Sometimes
+it opens on Ratio for a scale that you expected as a resolution. Then
+the stored value has no exact decimal form. A change to Resolution
+would change the setting.
 
-Nothing is lost by switching between them: the value is stored as an
-exact fraction either way.
+A switch between the two forms loses nothing. The value is stored as
+an exact fraction in both forms.
 
 ## Common Scale Configurations
 
@@ -48,12 +48,12 @@ Each tick = 0.0254 mm = 127/5000. Set Numerator=127, Denominator=5000.
 ## Tips
 
 - Both ratio values must be positive integers
-- If your DRO readings are exactly half or double the expected value,
-  your ratio is likely off by a factor of 2
-- Check your scale's datasheet for the exact resolution per count
-- Trust the sticker only as far as a measurement confirms it. On this
-  machine the X scale was provisioned at 2.5 µm against a sticker
-  reading 1 µm, and the DRO read 2.5× the true travel for months. A
-  dial indicator over a known move settles it in ten minutes.
-- Direction belongs to **Reverse**, not to the ratio. A negative scale
-  value is never the answer.
+- If the DRO reads exactly half or double the expected value,
+  the ratio is probably wrong by a factor of 2
+- Examine the scale datasheet for the exact resolution per count
+- Do not trust the sticker until a measurement confirms it. On this
+  machine the X scale was set at 2.5 µm, but the sticker said 1 µm.
+  For months the DRO read 2.5× the true travel. A dial indicator
+  over a known move finds the correct value in ten minutes.
+- Direction belongs to **Reverse**, not to the ratio. Never use a
+  negative scale value.

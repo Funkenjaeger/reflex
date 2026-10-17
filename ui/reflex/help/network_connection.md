@@ -1,36 +1,37 @@
 Network Connection
 ==================
 
-Configure the WiFi connection for the Raspberry Pi.
+Configure the Wifi connection for the Raspberry Pi.
 
 ## Fields
 
-### Network Interface
-The detected WiFi hardware adapter. If multiple adapters are
-present, select the one you want to configure. The hardware
-address and current state are shown below as read-only fields.
+### Network interface
+The Wifi hardware adapter that the system detected. If there is more
+than one adapter, select the one to configure. The Hardware address
+and State fields below it are read-only.
 
 ### Network (SSID)
-Tap to open a popup listing available WiFi networks detected
-by scanning. Select the network you want to connect to.
+Press this field to open a popup. The popup lists the Wifi networks
+that a scan found. Select the network to connect to.
 
-### Wifi Password
-Enter the password for the selected network. For open networks,
-leave this blank.
+### Wifi password
+Enter the password for the selected network. For an open network,
+leave this field blank.
 
-### Apply Configuration
-Saves the network and password and attempts to connect. The
-status area at the bottom shows connection progress and any errors.
+### Apply configuration
+This button saves the network and password, then tries to connect.
+The status area at the bottom shows connection progress and any
+errors.
 
-## IP Properties
+## IP properties
 
-Once connected, the following are displayed (read-only):
-- **IP Address** — assigned by DHCP or static configuration
-- **DNS Server** — the DNS resolver in use
-- **Default Gateway** — the network gateway
+After the connection is made, these read-only fields show:
+- **IP address** — assigned by DHCP or static configuration
+- **DNS server** — the DNS resolver in use
+- **Default gateway** — the network gateway
 
 ## Notes
 
-- Network operations may take several seconds
-- If connection fails, verify the password and try again
-- Only WPA/WPA2/WPA3 personal networks are supported via this UI
+- Network operations can take several seconds
+- If the connection fails, examine the password and try again
+- This screen supports only WPA/WPA2/WPA3 personal networks

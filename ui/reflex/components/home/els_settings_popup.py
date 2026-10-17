@@ -159,6 +159,11 @@ class ElsSettingsPopup(Popup):
             int(self.app.els.els_cal_motion_thresh_counts),
         )
 
+    def open_overshoot_survey(self):
+        """Open the stop overshoot measurement (detection pass or sweep)."""
+        from reflex.components.home.els_overshoot_popup import OvershootSurveyPopup
+        OvershootSurveyPopup(owner=self).open()
+
     def open_backlash_calibration(self):
         """Open the closed-loop backlash calibration wizard.
 

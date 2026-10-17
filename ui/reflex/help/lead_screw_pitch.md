@@ -1,19 +1,19 @@
-Lead Screw Pitch
+Lead screw pitch
 ================
 
 These settings describe the physical lead screw on your lathe.
-The ELS system needs this information to calculate the correct
-servo speed for each thread pitch or feed rate.
+The ELS uses them to calculate the correct servo speed for each
+thread pitch or feed rate.
 
-## Lead Screw Pitch (in MM or IN)
+## Lead screw pitch (in MM or IN)
 
-The linear distance the carriage travels per revolution of the
-lead screw. Set the value and unit (mm or inch) to match your
+The linear distance the carriage moves for each revolution of the
+lead screw. Set the value and the unit (mm or inch) to match your
 machine.
 
 ### Common Values
 
-| Machine Type          | Pitch     | Unit  |
+| Machine type          | Pitch     | Unit  |
 |-----------------------|-----------|-------|
 | Metric lathe (2mm)    | 2.0       | MM    |
 | Metric lathe (3mm)    | 3.0       | MM    |
@@ -24,17 +24,17 @@ machine.
 - 8 TPI → 1/8 = 0.125"
 - 12 TPI → 1/12 ≈ 0.0833"
 
-## Pitch in Inch
+## Pitch in inch
 
-Toggle whether the lead screw pitch value is in inches or
-millimeters. Enable this if your lead screw is specified in TPI
-or inches. Disable for metric lead screws.
+Sets the unit of the lead screw pitch value: inches or millimeters.
+Turn it on if the lead screw is specified in TPI or inches. Turn it
+off for a metric lead screw.
 
-## Lead Screw Pitch Steps
+## Lead screw pitch steps
 
-The number of stepper motor steps required for one full revolution
-of the lead screw. This depends on your motor's step angle and
-any microstepping configuration.
+The number of stepper motor steps for one full revolution of the
+lead screw. This value depends on the motor step angle and the
+microstepping configuration.
 
 ### Examples
 
@@ -46,11 +46,11 @@ any microstepping configuration.
 | 1.8° stepper  | 1/16 step     | 3200      |
 | 0.9° stepper  | Full step     | 400       |
 
-If there is a gear or belt reduction between the motor and lead
+If a gear or belt reduction is between the motor and the lead
 screw, multiply the steps by the gear ratio.
 
 ## Notes
 
-- All three parameters must be set correctly for accurate threading
-- These fields are only editable when ELS mode is enabled
-- Incorrect values result in wrong thread pitches
+- Set all three parameters correctly for accurate threading
+- You can edit these fields only when ELS mode is on
+- Incorrect values cause incorrect thread pitches
