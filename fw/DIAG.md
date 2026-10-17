@@ -89,7 +89,7 @@ In a release build the entry points compile to nothing; `.bss` grows 8 bytes for
 sits last in `rampsHandler_t` so no field above it moves.
 
 `elsDiagTickTail` has no capture guard, so it must be an empty inline in every
-build that does not use it. Adding it left the release image byte-identical
+build that does not use it. A release image is byte-identical with or without it,
 apart from the build-identity stamp.
 
 ## Registry
@@ -217,15 +217,14 @@ separates the two.
 stop-trigger hook, so the `dZ`/`dServo` arithmetic always runs, against a
 2000-cycle budget.
 
-### `isr-gap` (schema 8, baseline)
+### `isr-gap` (schema 8)
 
 How late the motion ISR starts. TIM9 runs at NVIC priority 5, equal to
 `configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY`, so FreeRTOS critical sections
 and same-priority interrupts (the Modbus UART among them) can hold a tick back.
-`executionCyclesPeak` measures how long the ISR runs, not how late it starts.
+`executionCyclesPeak` measures only how long the ISR runs.
 This probe peak-holds the gap between ISR entries (`executionInterval`, DWT
-cycles) over a window, so the late ticks of the current Modbus stack are on
-record before that stack is replaced.
+cycles) over a window.
 
 The window opens at boot (the boot tick is skipped: its interval is not a gap)
 and again on every host reset. The hook is `elsDiagTickTail`, every tick.
@@ -255,8 +254,8 @@ either drifts.
 **Reading it.** A tick held back by D cycles shows as one gap of nominal + D and
 then one of nominal - D, because the timer keeps its own time and only the
 entry moves. A gap of 2x nominal or more means an update was lost: TIM9's
-pending flag holds one update, not two. The duration of the tick before the
-worst gap separates the two causes: near or above nominal, the ISR overran its
+pending flag holds one update, not two. `diagTrace[17]`, the tick before the
+worst gap, names the cause: near or above nominal, the ISR overran its
 own budget; normal, something outside the ISR held the entry back. The mode
 fields tell idle from a cut start (`takeupPending`, `active`, `machineMode`).
 
@@ -267,8 +266,7 @@ the worst-gap fields and `diagSeq` to agree.
 **The UI records it.** reflex-ui recognizes schema 8 and, on each `diagSeq`
 edge, appends the block to the diagnostic capture file with an `isr_gap`
 object holding the decoded window and a UTC timestamp. Each new worst gap is
-therefore on record with the time it happened, and the distribution is at most
-a minute old when the session ends, even if nobody stops the UI to read it.
+timestamped, and the distribution is at most a minute old at session end.
 The cost is one 64-register read (about 12 ms at 115200 baud) per edge. The UI
 never writes the reset request.
 
@@ -281,8 +279,8 @@ with warm prefetch and about 75 with every taken branch refilling from flash,
 2 to 4% of the 2000-cycle budget. A late tick adds about 30 cycles, a new worst
 gap about 20, and the reset tick clears the block once, about 300.
 `scripts/check-isr-cost.sh` finds no double-precision, 64-bit divide or new
-libm calls. The machine's own number is `fastData.cycles` under this probe
-against release on an idle machine.
+libm calls. On the machine, compare idle `fastData.cycles` under this probe
+and under release.
 
 **Bench procedure.** On the probe host, in `fw/` of a checkout carrying the
 probe:

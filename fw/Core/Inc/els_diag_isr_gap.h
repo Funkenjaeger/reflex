@@ -6,23 +6,13 @@
  * ---- WHY ---------------------------------------------------------------------
  * TIM9 sits at NVIC priority 5, equal to configLIBRARY_MAX_SYSCALL_INTERRUPT_
  * PRIORITY, so every FreeRTOS critical section and every same-priority
- * interrupt can hold a tick back. executionCyclesPeak measures how long the ISR
- * RUNS; nothing measured how late it STARTS. The ISR already computes the gap
- * between entries every tick (shared->executionInterval, DWT cycles), and this
- * probe peak-holds it over a window the host can reset, so the late ticks the
- * current Modbus stack causes are on record before that stack is replaced.
+ * interrupt can hold a tick back. executionCyclesPeak measures only how long
+ * the ISR RUNS. The ISR already computes the gap between entries every tick
+ * (shared->executionInterval, DWT cycles), and this probe peak-holds it over a
+ * window the host can reset.
  *
  * ---- READING IT ----------------------------------------------------------------
- * A tick delayed by D cycles shows as one gap of nominal + D followed by one of
- * nominal - D: the timer keeps its own time, so only the ENTRY moves. A gap of
- * 2x nominal or more means a whole update was lost (TIM9's pending flag holds
- * one update, not two). The worst gap's snapshot says what the machine was
- * doing, and the duration of the tick BEFORE it separates the two causes:
- *
- *   prev-tick cycles near or above nominal -> the ISR overran its own budget;
- *   prev-tick cycles normal               -> something outside the ISR held
- *                                            the entry back (a critical
- *                                            section, a same-priority IRQ).
+ * fw/DIAG.md, isr-gap, "Reading it".
  *
  * ---- REGISTERS (meaningful only when diagSchema == 8) --------------------------
  *   diagSettleTicks   worst gap, CPU cycles

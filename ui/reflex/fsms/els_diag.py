@@ -95,12 +95,12 @@ KNOWN_SCHEMAS = frozenset({
     # because every line carries its own schema and the analysis separates them
     # -- takeup_settle.jsonl is a misnomer now, not a routing decision.
     ELS_DIAG_SCHEMA_STOP_OVERSHOOT,
-    # Schema 8 is not a capture either. It peak-holds the ISR's tick-to-tick
+    # Schema 8 peak-holds the ISR's tick-to-tick
     # gap over a window, and bumps diagSeq when the worst gap grows and once a
     # minute, so each recorded line is a timestamped snapshot of the window:
     # the moments the worst gap grew, plus a distribution at most a minute
     # old when the session ends. A 64-register read on those edges costs the
-    # link about 12 ms a minute. decode_isr_gap() adds the decoded window to
+    # link about 12 ms per edge. decode_isr_gap() adds the decoded window to
     # the line. The UI never resets the window: that is the bench reader's
     # job (fw/scripts/isr-gap.py), with the UI stopped.
     ELS_DIAG_SCHEMA_ISR_GAP,
@@ -125,7 +125,7 @@ SCHEMAS_WITH_END_REASON = frozenset({
     ELS_DIAG_SCHEMA_STOP_OVERSHOOT,
 })
 
-# Schema 8 is deliberately absent above: its diagEndReason is the host's reset
+# Schema 8 is absent above: its diagEndReason is the host's reset
 # request, which reads 0 whenever no reset is pending, so the end-reason gate
 # would drop every line.
 

@@ -191,7 +191,15 @@ def main() -> int:
 
         if args.reset:
             before = bus.read(REG_BLOCK + B_TRACE + W_WINDOW, 1)[0]
-            bus.write_one(REG_RESET, RESET_REQ)
+            try:
+                bus.write_one(REG_RESET, RESET_REQ)
+            except mf.ExceptionResponse as e:
+                # diagEndReason is classed ro_firmware in the register schema;
+                # firmware that enforces access classes refuses the write. A
+                # power cycle also opens a window (the probe starts one at boot).
+                print(f"isr-gap: the board refused the reset write ({e}); "
+                      f"power-cycle to open a window instead", file=sys.stderr)
+                return 1
             deadline = time.monotonic() + 2.0
             while bus.read(REG_RESET, 1)[0] != 0:
                 if time.monotonic() > deadline:

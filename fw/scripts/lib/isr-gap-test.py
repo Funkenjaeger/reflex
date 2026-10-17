@@ -5,7 +5,7 @@ Stdlib only. Four things, each of which would otherwise fail silently on the
 lathe as a plausible wrong number:
 
   1. the script's diagTrace word map equals ELS_DIAG_GAP_W_* in the probe
-     header (a drifted index reads a neighbour's value);
+     header (a drifted index reads a neighbor's value);
   2. its absolute register addresses equal docs/reference/register-map.md;
   3. decode() of a known block;
   4. the read/reset flow against a fake board: refusals, the reset handshake.
@@ -59,11 +59,16 @@ def regmap_abs(name: str) -> int:
     raise KeyError(name)
 
 
+class FakeExceptionResponse(Exception):
+    pass
+
+
 class FakeBoard:
     """The application's holding registers, with the ISR's reset handshake."""
 
-    def __init__(self, gs, schema=8, protocol=12, stage=2, ack=True):
+    def __init__(self, gs, schema=8, protocol=12, stage=2, ack=True, refuse=False):
         self.gs = gs
+        self.refuse = refuse
         self.regs = {}
         self.ack = ack
         self.writes = []
@@ -81,6 +86,8 @@ class FakeBoard:
     def write_one(self, addr, value, **_):
         self.writes.append((addr, value))
         gs = self.gs
+        if self.refuse:
+            raise FakeExceptionResponse("exception 2 on FC6")
         if addr == gs.REG_RESET and self.ack:
             # The ISR's next tick: clear, bump the window, acknowledge.
             for i in range(gs.BLOCK_REGS):
@@ -100,7 +107,7 @@ def run_main(gs, board, argv):
     fake = types.SimpleNamespace(
         Rtu=lambda *a, **k: board,
         read_identity=lambda bus: board.ident,
-        ID_MAGIC=0x454C, ID_STAGE_APP=2)
+        ID_MAGIC=0x454C, ID_STAGE_APP=2, ExceptionResponse=FakeExceptionResponse)
     gs._load_flash_module = lambda: fake
     gs.time.sleep = lambda s: None
     old = sys.argv
@@ -190,6 +197,9 @@ def main() -> int:
           "reset waits for the acknowledgement and prints the fresh window")
     rc, out, err = run_main(gs, FakeBoard(gs, ack=False), ["--reset"])
     check(rc == 1 and "not acknowledged" in err, "an unacknowledged reset is a failure")
+    rc, out, err = run_main(gs, FakeBoard(gs, refuse=True), ["--reset"])
+    check(rc == 1 and "refused the reset write" in err and "Traceback" not in err,
+          "a refused reset write is reported, not a traceback")
     b = FakeBoard(gs, schema=0)
     rc, out, err = run_main(gs, b, ["--reset"])
     check(rc == 2 and b.writes == [] and "release build" in err,
