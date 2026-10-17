@@ -1,8 +1,9 @@
 /* Diagnostic probe dispatch.
  *
- * Ramps.c calls five entry points -- elsDiagInit, elsDiagArm,
- * elsDiagCaptureStart, elsDiagCapturing, elsDiagTick -- UNCONDITIONALLY, with no #ifdef at any
- * call site. This header decides what they are:
+ * Ramps.c calls its entry points -- elsDiagInit, elsDiagArm,
+ * elsDiagCaptureStart, elsDiagCapturing, elsDiagTick, elsDiagTickTail and the
+ * task-side ones -- UNCONDITIONALLY, with no #ifdef at any call site. This
+ * header decides what they are:
  *
  *   - probe selected  -> the probe's own header supplies them
  *   - no probe        -> empty inlines here, plus the one thing a release build
@@ -56,6 +57,8 @@
 #include "els_diag_mode_watch.h"
 #elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_STOP_OVERSHOOT
 #include "els_diag_stop_overshoot.h"
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_ISR_GAP
+#include "els_diag_isr_gap.h"
 #else
 /* Unreachable: Ramps.h rejects an unrecognised probe long before here. Kept so
  * that a probe registered in Ramps.h but never dispatched fails LOUDLY, rather
@@ -126,6 +129,15 @@ static inline bool elsDiagServoGate(elsDiagCtx_t *ctx, elsStop_t *stop,
 static inline void elsDiagTaskTick(elsDiagCtx_t *ctx, rampsSharedData_t *shared,
                                    uint16_t calRunning) {
   (void)ctx; (void)shared; (void)calRunning;
+}
+
+/* Once per ISR tick, unconditionally, at the tail of the tick just before
+ * executionCycles is taken (schema 8+). The isr-gap probe reads the tick-to-tick
+ * gap here; every other configuration does nothing, and in a release build the
+ * call compiles to nothing. Unlike elsDiagTick it has no capture guard, so it
+ * must stay free in every build that does not use it. */
+static inline void elsDiagTickTail(elsDiagCtx_t *ctx, rampsSharedData_t *shared) {
+  (void)ctx; (void)shared;
 }
 
 #endif /* ELS_DIAG_PROBE */

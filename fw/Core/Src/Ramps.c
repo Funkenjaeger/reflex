@@ -1728,6 +1728,13 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   }
 #endif
 
+  /* Diagnostic ISR-tail hook, every tick. THIS placement: after all of the
+   * tick's work, so a probe here sees the tick complete, and BEFORE
+   * executionCycles is taken, so shared->executionCycles still holds the
+   * PREVIOUS tick's duration and the probe's own cost lands in this tick's
+   * executionCycles, where executionCyclesPeak can see it on the machine. */
+  elsDiagTickTail(&data->diag, shared);
+
   shared->executionCycles = DWT->CYCCNT - start;
   /* Peak-hold. Three instructions, and the only reason the cut-start spike is
    * visible at all -- see the executionCyclesPeak comment in Ramps.h. */

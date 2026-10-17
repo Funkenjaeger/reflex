@@ -225,6 +225,20 @@ int main(void)
      * the only one that exercises behavior, so restore what the suppression
      * wrote before falling through to it. */
     data.shared.elsStop.diagEndReason = 0;
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_ISR_GAP
+    check(data.shared.elsStop.diagSchema == 8,
+          "isr gap publishes wire schema 8");
+    check(data.shared.elsStop.diagBucketCount == ELS_DIAG_GAP_WORDS,
+          "isr gap publishes its trace word count");
+    check((uint16_t)data.shared.elsStop.diagTrace[ELS_DIAG_GAP_W_NOMINAL]
+              == ELS_ISR_CYCLE_BUDGET,
+          "isr gap publishes the nominal tick, so no reader assumes the rate");
+    /* RampsStart must leave a clean window over the 0xA5 poison: diagEndReason
+     * is this probe's reset request, and a stale nonzero one would wipe the
+     * first tick's window. */
+    check(data.shared.elsStop.diagSettleTicks == 0
+              && data.shared.elsStop.diagNetCounts == 0,
+          "isr gap starts with no worst gap and no ticks");
 #else
 #error "this probe has no assertions in els_diag_scratch_test.cpp -- add an arm above"
 #endif

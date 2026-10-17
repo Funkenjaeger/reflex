@@ -135,6 +135,13 @@ jobs:
         working-directory: fw
         run: python3 scripts/lib/flash-manifest-test.py
 
+      # The isr-gap probe's bench reader: its word map against the probe
+      # header, its addresses against the register map, and its reset
+      # handshake against a fake board. Stdlib only.
+      - name: isr-gap reader
+        working-directory: fw
+        run: python3 scripts/lib/isr-gap-test.py
+
       # The flasher's answer to a link that fails mid-transfer (after
       # 2026-09-19 on the lathe: one chunk lost four
       # times, exit 1, board left in the bootloader). The REAL flash() against

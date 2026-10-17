@@ -54,6 +54,7 @@ from reflex.utils.devices import (
     ELS_DIAG_SCHEMA_MODE_WATCH_V2,
     ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3,
     ELS_DIAG_SCHEMA_STOP_OVERSHOOT,
+    ELS_DIAG_SCHEMA_ISR_GAP,
 )
 from reflex.utils.paths import diag_dir
 
@@ -94,6 +95,15 @@ KNOWN_SCHEMAS = frozenset({
     # because every line carries its own schema and the analysis separates them
     # -- takeup_settle.jsonl is a misnomer now, not a routing decision.
     ELS_DIAG_SCHEMA_STOP_OVERSHOOT,
+    # Schema 8 is not a capture either. It peak-holds the ISR's tick-to-tick
+    # gap over a window, and bumps diagSeq when the worst gap grows and once a
+    # minute, so each recorded line is a timestamped snapshot of the window:
+    # the moments the worst gap grew, plus a distribution at most a minute
+    # old when the session ends. A 64-register read on those edges costs the
+    # link about 12 ms a minute. decode_isr_gap() adds the decoded window to
+    # the line. The UI never resets the window: that is the bench reader's
+    # job (fw/scripts/isr-gap.py), with the UI stopped.
+    ELS_DIAG_SCHEMA_ISR_GAP,
 })
 
 # Schemas that publish diagEndReason. Only these can be checked for "did a
@@ -114,6 +124,62 @@ SCHEMAS_WITH_END_REASON = frozenset({
     # without checking the schema it came from.
     ELS_DIAG_SCHEMA_STOP_OVERSHOOT,
 })
+
+# Schema 8 is deliberately absent above: its diagEndReason is the host's reset
+# request, which reads 0 whenever no reset is pending, so the end-reason gate
+# would drop every line.
+
+# Schema 8's diagTrace word map: ELS_DIAG_GAP_W_* in
+# fw/Core/Inc/els_diag_isr_gap.h. A uint32 is two words, low first; the
+# register is int16, so each word is masked back to its uint16 bits.
+# tests/test_registry_contract.py fails if these drift from the header.
+ISR_GAP_W_MIN = 0
+ISR_GAP_W_OVER = 2
+ISR_GAP_W_THRESH = 10
+ISR_GAP_W_NOMINAL = 14
+ISR_GAP_W_WORST_TICK = 15
+ISR_GAP_W_WORST_PREV = 17
+ISR_GAP_W_WORST_MMODE = 18
+ISR_GAP_W_WORST_SERVO = 19
+ISR_GAP_W_WORST_ENABLE = 20
+ISR_GAP_W_WORST_ACTIVE = 21
+ISR_GAP_W_WORST_TAKEUP = 22
+ISR_GAP_W_WINDOW = 23
+ISR_GAP_THRESHOLDS = 4
+
+
+def decode_isr_gap(capture: dict) -> dict:
+    """The schema-8 window from a raw capture (read_diag_capture's shape).
+
+    Raw cycles throughout; the published nominal tick is carried along so a
+    ratio needs no assumed rate.
+    """
+    trace = [int(v) & 0xFFFF for v in capture["trace"]]
+
+    def w32(i):
+        return trace[i] | (trace[i + 1] << 16)
+
+    return {
+        "window": trace[ISR_GAP_W_WINDOW],
+        "ticks": int(capture["net_counts"]) & 0xFFFFFFFF,
+        "nominal_cycles": trace[ISR_GAP_W_NOMINAL],
+        "worst_gap_cycles": int(capture["settle_ticks"]) & 0xFFFFFFFF,
+        "min_gap_cycles": w32(ISR_GAP_W_MIN),
+        "isr_peak_cycles": int(capture["capture_ticks"]),
+        "thresholds_cycles": [trace[ISR_GAP_W_THRESH + i]
+                              for i in range(ISR_GAP_THRESHOLDS)],
+        "over_counts": [w32(ISR_GAP_W_OVER + 2 * i)
+                        for i in range(ISR_GAP_THRESHOLDS)],
+        "worst": {
+            "tick": w32(ISR_GAP_W_WORST_TICK),
+            "prev_tick_cycles": trace[ISR_GAP_W_WORST_PREV],
+            "machine_mode": trace[ISR_GAP_W_WORST_MMODE],
+            "servo_mode": trace[ISR_GAP_W_WORST_SERVO],
+            "enable": trace[ISR_GAP_W_WORST_ENABLE],
+            "active": trace[ISR_GAP_W_WORST_ACTIVE],
+            "takeup_pending": trace[ISR_GAP_W_WORST_TAKEUP],
+        },
+    }
 
 # Consecutive failures tolerated before the recorder gives up for this
 # connection. Small on purpose -- if reads are failing, the useful behaviour is
@@ -318,6 +384,8 @@ class ElsDiagRecorder:
         # estate, so a local timestamp here would not line up with anything.
         record["utc"] = datetime.now(timezone.utc).isoformat()
         record["execution_interval_cycles"] = execution_interval_cycles
+        if record.get("schema") == ELS_DIAG_SCHEMA_ISR_GAP:
+            record["isr_gap"] = decode_isr_gap(capture)
 
         path = self._capture_path()
         with open(path, "a", encoding="utf-8") as fh:
@@ -332,6 +400,15 @@ class ElsDiagRecorder:
                 f"ELS mode transition #{seq}: "
                 f"{record['settle_ticks']} -> {record['capture_ticks']}, "
                 f"suppressions={record['net_counts']} -> {path}"
+            )
+        elif record.get("schema") == ELS_DIAG_SCHEMA_ISR_GAP:
+            g = record["isr_gap"]
+            over = g["over_counts"]
+            log.info(
+                f"ISR gap window {g['window']} #{seq}: worst "
+                f"{g['worst_gap_cycles']} cycles (nominal {g['nominal_cycles']}) "
+                f"at tick {g['worst']['tick']}, mode {g['worst']['machine_mode']}; "
+                f"{g['ticks']} ticks, late {over} -> {path}"
             )
         else:
             log.info(

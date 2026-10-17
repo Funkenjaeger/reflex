@@ -336,6 +336,26 @@ target_link_libraries(els_diag_stop_overshoot_test m)
 add_test(NAME els_diag_stop_overshoot_test
     COMMAND els_diag_stop_overshoot_test)
 
+# The isr-gap probe, driven through its ISR-tail hook directly and through the
+# real ISR, so the test sees both what it does with a gap and that it is wired
+# into every tick. Links Ramps.c for the second half.
+add_executable(els_diag_isr_gap_test
+    ${CMAKE_SOURCE_DIR}/test/els_diag_isr_gap_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_compile_definitions(els_diag_isr_gap_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_ISR_GAP)
+target_link_libraries(els_diag_isr_gap_test m pthread)
+add_test(NAME els_diag_isr_gap_test COMMAND els_diag_isr_gap_test)
+
+add_executable(els_diag_scratch_isr_gap_test
+    ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_compile_definitions(els_diag_scratch_isr_gap_test
+    PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_ISR_GAP)
+target_link_libraries(els_diag_scratch_isr_gap_test m pthread)
+add_test(NAME els_diag_scratch_isr_gap_test
+    COMMAND els_diag_scratch_isr_gap_test)
+
 add_executable(els_diag_scratch_disengage_latch_test
     ${CMAKE_SOURCE_DIR}/test/els_diag_scratch_test.cpp
     ${FW_DIR}/Core/Src/Ramps.c)
