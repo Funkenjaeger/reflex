@@ -86,6 +86,25 @@ def test_no_ui_schema_id_exists_without_a_firmware_side():
         )
 
 
+def test_isr_gap_word_map_matches_the_probe_header():
+    """Schema 8 packs its window into diagTrace words by index, and the UI
+    decodes them by index. A drifted index decodes a neighbour's value under
+    the right name, so compare every one."""
+    import reflex.fsms.els_diag as els_diag
+    text = (FW_DIR / "Core" / "Inc" / "els_diag_isr_gap.h").read_text(
+        encoding="utf-8"
+    )
+    fw = _parse_defines(text, "ELS_DIAG_GAP_W_")
+    assert len(fw) >= 12, "parsed too few ELS_DIAG_GAP_W_* defines"
+    for name, value in fw.items():
+        ui = getattr(els_diag, f"ISR_GAP_W_{name}", None)
+        assert ui == value, (
+            f"ELS_DIAG_GAP_W_{name}={value} but els_diag.ISR_GAP_W_{name}={ui}"
+        )
+    thresholds = _parse_defines(text, "ELS_DIAG_GAP_")["THRESHOLDS"]
+    assert els_diag.ISR_GAP_THRESHOLDS == thresholds
+
+
 def test_known_schemas_are_defined_ids_and_never_none():
     fw_values = set(_fw_schemas().values())
     for schema in KNOWN_SCHEMAS:
