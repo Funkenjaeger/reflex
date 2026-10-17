@@ -12,34 +12,18 @@
  * erase; the reply's arrival is "the operation finished", and blSeq /
  * blResult say how.
  *
- * No hardware in this file: the UART byte driver in src/bl_hw.c hands over
- * a complete frame and sends back whatever this returns.
+ * The frame handling is the shared core, modbus_rtu/mb_rtu.c, compiled
+ * against this image's port, mb_rtu_port.h: call mbRtuHandle(&core,
+ * identity, ...). No hardware in either file: the UART byte driver in
+ * src/bl_hw.c hands over a complete frame and sends back whatever the
+ * handler returns.
  */
 #ifndef BL_MODBUS_H
 #define BL_MODBUS_H
 
-#include <stdint.h>
-#include "bl_core.h"
+#include "mb_rtu.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#define BL_MODBUS_ADDRESS   17u
-#define BL_MODBUS_MAX_FRAME 256u
-
-/* Modbus RTU CRC-16 (poly 0xA001 reflected, init 0xFFFF), low byte first
- * on the wire. Exposed for the tests and the UART driver. */
-uint16_t blModbusCrc16(const uint8_t *data, uint32_t len);
-
-/* Handle one received frame (address .. CRC inclusive). Writes the reply
- * into resp (capacity BL_MODBUS_MAX_FRAME) and returns its length, or 0 when
- * no reply is due (not our address, bad CRC, runt). */
-uint32_t blModbusHandle(blCore_t *core, const uint16_t *identity,
-                        const uint8_t *req, uint32_t reqLen, uint8_t *resp);
-
-#ifdef __cplusplus
-}
-#endif
+#define BL_MODBUS_ADDRESS   MB_RTU_PORT_ADDRESS
+#define BL_MODBUS_MAX_FRAME MB_RTU_MAX_FRAME
 
 #endif /* BL_MODBUS_H */

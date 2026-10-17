@@ -542,10 +542,18 @@ set(BL_CORE_SOURCES
     ${BL_CORE_DIR}/bl_core.c
     ${BL_CORE_DIR}/bl_image.c
     ${BL_CORE_DIR}/bl_state.c
-    ${BL_CORE_DIR}/bl_modbus.c
+    ${FW_DIR}/modbus_rtu/mb_rtu.c
     ${BL_CORE_DIR}/bl_rxring.c
     ${BL_CORE_DIR}/bl_crc32_sw.c)
 set_source_files_properties(${BL_CORE_SOURCES} PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+
+# The Modbus RTU core both stages compile (modbus_rtu/), here against a
+# recording port (test/mb_rtu_port/mb_rtu_port.h): frame handling, the
+# command hook's order against the reply, and the ro_firmware refusal over
+# the generated access table.
+add_executable(mb_rtu_test ${CMAKE_SOURCE_DIR}/test/mb_rtu_test.cpp ${FW_DIR}/modbus_rtu/mb_rtu.c)
+target_include_directories(mb_rtu_test PRIVATE ${CMAKE_SOURCE_DIR}/test/mb_rtu_port ${FW_DIR}/modbus_rtu)
+add_test(NAME mb_rtu_test COMMAND mb_rtu_test)
 
 # The address resolver both stages share (header-only).
 add_executable(modbus_window_test ${CMAKE_SOURCE_DIR}/test/modbus_window_test.cpp)
@@ -580,7 +588,7 @@ add_test(NAME bl_rxring_test COMMAND bl_rxring_test)
 # Boot decisions, the update over Modbus, strikes and swap-back, and the
 # power-loss sweep over every flash operation of an apply.
 add_executable(bl_core_test ${CMAKE_SOURCE_DIR}/test/bl_core_test.cpp ${BL_CORE_SOURCES})
-target_include_directories(bl_core_test PRIVATE ${BL_CORE_DIR})
+target_include_directories(bl_core_test PRIVATE ${BL_CORE_DIR} ${FW_DIR}/modbus_rtu)
 add_test(NAME bl_core_test COMMAND bl_core_test)
 
 # The identity window END TO END: the real lathe-emulator (real Modbus.c,
