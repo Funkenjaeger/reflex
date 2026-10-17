@@ -88,10 +88,10 @@ static void check(bool ok, const char *label) {
 
 static const uint16_t identity[ELS_ID_SIZE] = ELS_ID_WINDOW_INIT(ELS_ID_STAGE_BOOTLOADER, 0u);
 
-/* ---- a tiny Modbus master over blModbusHandle -------------------------- */
+/* ---- a tiny Modbus master over mbRtuHandle -------------------------- */
 
 static std::vector<uint8_t> frame(std::vector<uint8_t> body) {
-    uint16_t crc = blModbusCrc16(body.data(), (uint32_t)body.size());
+    uint16_t crc = mbRtuCrc16(body.data(), (uint32_t)body.size());
     body.push_back((uint8_t)(crc & 0xFF));
     body.push_back((uint8_t)(crc >> 8));
     return body;
@@ -99,7 +99,7 @@ static std::vector<uint8_t> frame(std::vector<uint8_t> body) {
 
 static std::vector<uint8_t> ask(blCore_t *c, const std::vector<uint8_t> &req) {
     uint8_t resp[BL_MODBUS_MAX_FRAME];
-    uint32_t n = blModbusHandle(c, identity, req.data(), (uint32_t)req.size(), resp);
+    uint32_t n = mbRtuHandle(c, identity, req.data(), (uint32_t)req.size(), resp);
     return std::vector<uint8_t>(resp, resp + n);
 }
 
