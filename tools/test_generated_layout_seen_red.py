@@ -5,7 +5,9 @@ realistic way the generator could be wrong about layout; every one MUST fail to
 compile, and must name the field or struct that moved.
 
 elsStop_t (since 2026-09-07):
-  1. Widen a generator-emitted alignment pad -> everything after it shifts.
+  1. Add a stray alignment pad before a 32-bit field -> everything after it
+     shifts (the generator's over-padding fault; see the mutation for why the
+     pad is injected and not widened).
   2. Swap two uint16 fields                  -> a pure reorder, no size change.
   3. Widen a field uint16 -> uint32          -> the shape the C ABI punishes.
 
@@ -14,7 +16,7 @@ servo_t, input_t, fastData_t (since 2026-09-18), each:
   5. Drop the first field                    -> every later field shifts.
      (NOT the last: dropping input_t's trailing int16 leaves sizeof at 24 via
      a new implicit tail pad, so no offset or size moves and green would be the
-     right answer -- that drift is --check's job, as with elsStop's _pad1.)
+     right answer -- that drift is --check's job, as with a deleted pad.)
 """
 import glob
 import io
@@ -86,17 +88,30 @@ if compile_with(src, "control (unmutated)"):
 results = []
 
 # ---- elsStop_t -------------------------------------------------------------
-# DELETING _pad1 is deliberately NOT tested. It is not a layout change: the
+# DELETING a pad is deliberately NOT tested. It is not a layout change: the
 # compiler inserts an implicit pad at the same offset, so every assert correctly
 # holds and a green result is the right answer. That drift is caught by
 # `genregs.py --check` instead. Asserting otherwise would be testing a claim
 # that is false.
 #
-# WIDENING the pad IS a layout change -- everything after it shifts by 2 bytes.
-mut1, n1 = re.subn(r"^  uint16_t _pad1;", "  uint32_t _pad1;", src, count=1, flags=re.M)
-if n1 != 1:
-    sys.exit("MUTATION 1 ANCHOR FAILED: no _pad1 line in the generated header")
-results.append(compile_with(mut1, "elsStop_t: widened alignment pad _pad1 to uint32_t"))
+# ADDING a pad IS a layout change -- everything after it shifts. This used to
+# widen the generator's named `_pad1` from uint16_t to uint32_t, but no struct in
+# the current map needs an interior pad (every 32-bit field already lands on a
+# 4-byte boundary, and the tail pads are implicit), so the generator emits none
+# and there is nothing to widen. The equivalent fault is the generator emitting
+# a pad it does not need: inject `uint16_t _pad1;` (the form emit_c writes)
+# before the first 32-bit field. Found structurally, not by field name, so a
+# schema change cannot strand the anchor. The compiler cannot absorb it: the
+# 32-bit field and everything after it move, so the offsetof asserts must go red.
+els, base = decls(src, "elsStop_t")
+wide = [m for m in els if m.group(1) in ("int32_t", "uint32_t", "float")]
+if not wide:
+    sys.exit("MUTATION 1 ANCHOR FAILED: no 32-bit field in elsStop_t to pad before")
+w = wide[0]
+mut1 = src[:base + w.start(0)] + "  uint16_t _pad1;\n" + src[base + w.start(0):]
+if mut1 == src:
+    sys.exit("MUTATION 1 CHANGED NOTHING")
+results.append(compile_with(mut1, f"elsStop_t: stray alignment pad _pad1 before {w.group(2)}"))
 
 # A PURE REORDER: two uint16 fields exchange places. No size changes, so this
 # is the mutation a size check cannot see and only per-field offsets catch.
@@ -108,7 +123,6 @@ results.append(compile_with(mut1, "elsStop_t: widened alignment pad _pad1 to uin
 # Both times the anchor failed loudly, which is the right behaviour, but a
 # self-test that needs re-anchoring whenever the map moves is a self-test that
 # will eventually be switched off.
-els, base = decls(src, "elsStop_t")
 u16 = [m for m in els if m.group(1) == "uint16_t"]
 if len(u16) < 2:
     sys.exit("MUTATION 2 ANCHOR FAILED: fewer than two uint16 fields to swap")
