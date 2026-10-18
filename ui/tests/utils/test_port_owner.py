@@ -199,7 +199,7 @@ def test_device_access_goes_through_the_owner_one_command_per_exchange_group():
     cal, refresh = owner.commands[2], owner.commands[3]
     assert [type(i).__name__ for i in cal.items] == ["Read"] * 3
     assert [(i.address, i.count) for i in refresh.items] == [
-        (els.base_address, 72), (els.base_address + 72, els.size - 72)]
+        (els.base_address, 73), (els.base_address + 73, els.size - 73)]
     assert owner.commands[4] == ReadSpan(TICK_BASE, TICK_COUNT)
     assert wire[-1] == TICK
 

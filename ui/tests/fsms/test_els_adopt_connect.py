@@ -45,12 +45,29 @@ from tests.fsms.test_els_reconnect_teardown import _fsm_in_stopped, _reconnect
 
 # The only HAL traffic a hands-off cell may produce: the unconditional
 # cal-limits push, the pre-teardown snapshot, and the mode read itself.
-READS_ONLY = {'set_cal_limits', 'read_motion_in_flight', 'read_current_mode'}
+READS_ONLY = {'set_cal_limits', 'read_motion_in_flight', 'read_current_mode',
+              # protocolVersion 13: a session with no job reads the command
+              # channel's baseline at connect, through the fabricated-read
+              # guard.
+              'reads_baseline', 'read_command_seq', 'reads_fabricated_since'}
+
+
+def _hal():
+    """A MagicMock HAL whose read-failure accounting answers like the real
+    one: no failures. The connect-time commandSeq read passes its baseline
+    through reads_fabricated_since, and a MagicMock baseline differs per
+    instance, which would make two recordings of the same reconcile unequal
+    for no reason."""
+    hal = MagicMock()
+    hal.reads_baseline.return_value = 0
+    hal.reads_fabricated_since.return_value = False
+    hal.read_command_seq.return_value = 0
+    return hal
 
 
 def _adopt_fsm(*, mode=MODE_IDLE):
     """A fresh session ('disabled') reading a given published mode."""
-    fsm = _build_fsm(hal=MagicMock())
+    fsm = _build_fsm(hal=_hal())
     fsm.hal.read_current_mode.return_value = mode
     return fsm
 
@@ -75,7 +92,7 @@ def _fsm_in(state):
     set directly, which is all reconcile reads of them."""
     if state == 'stopped':
         return _fsm_in_stopped()
-    fsm = _build_fsm(hal=MagicMock())
+    fsm = _build_fsm(hal=_hal())
     if state not in (None, 'disabled'):
         fsm.fsm.set_state(state)
     return fsm
