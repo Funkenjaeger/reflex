@@ -473,19 +473,27 @@ class RatioWatch:
     mm_per_count()      Z scale resolution, or None
     on_verdict(v)       called once per pass with a TERMINAL verdict
     hold()              True while a measurement runs (default: never)
-    on_held(v)          called once per pass, at its end, with the pass's
-                        final verdict whatever its kind, instead of on_verdict
+    on_held(v, reading) called once per pass, at its end, with the pass's
+                        final verdict whatever its kind, instead of
+                        on_verdict, and the measurement's reading of it
+    measure(k)          a measurement's own meter for one pass, given the
+                        steps per Z count in the reference gear; built at
+                        the start of a held pass and fed every poll of it
+                        (default: none, and the reading is None)
 
     It only DECIDES and reports; on_verdict owns any action, including none
     at all in shadow mode. While `hold()` is true nothing acts: a gearbox
     measurement (els_gear_survey.py) cuts passes in a position the controller
     does not expect on purpose, and the check would abort every one. The
     verdict is still computed, and the pass's final one goes to `on_held`.
+    That verdict is NOT the measurement: it latches once the reading has
+    settled within TIGHT_TOL of a position, well before the pass ends, so
+    the measurement reads the whole pass with its own meter.
     """
 
     def __init__(self, hal, board, *, fsm_state, steps_per_count, gear,
                  gear_table, mm_per_count, on_verdict, now_ms=None,
-                 hold=None, on_held=None):
+                 hold=None, on_held=None, measure=None):
         self._hal = hal
         self._board = board
         self._fsm_state = fsm_state
@@ -495,7 +503,9 @@ class RatioWatch:
         self._mm_per_count = mm_per_count
         self._on_verdict = on_verdict
         self._hold = hold or (lambda: False)
-        self._on_held = on_held or (lambda _v: None)
+        self._on_held = on_held or (lambda _v, _reading: None)
+        self._measure = measure
+        self._meter = None
         self._now_ms = now_ms or (lambda: time.monotonic() * 1000.0)
         self._prev_state = None
         self._check: Optional[CouplingRatioCheck] = None
@@ -513,7 +523,8 @@ class RatioWatch:
             # reaches on_held once, when the pass ends.
             if ended and not self._reported:
                 self._reported = True
-                self._on_held(v)
+                meter, self._meter = self._meter, None
+                self._on_held(v, meter.reading() if meter is not None else None)
             return
         if v.kind in TERMINAL and not self._reported:
             self._reported = True
@@ -532,6 +543,11 @@ class RatioWatch:
         self._servo_raw = None
         self._servo = 0
         self._reported = False
+        self._meter = None
+        if self._measure is not None and self._hold():
+            c = self._check
+            self._meter = self._measure(
+                c.steps_per_count * float(c.table.factor(c.gear)))
         return True
 
     def poll(self) -> None:
@@ -558,10 +574,14 @@ class RatioWatch:
         idx = tick.scale_index()
         if not 0 <= idx < len(scales):
             return
+        t_ms, z, takeup = self._now_ms(), int(scales[idx]), tick.takeup_pending()
+        if self._meter is not None:
+            self._meter.feed(t_ms=t_ms, servo_steps=self._servo, z_counts=z,
+                             takeup_pending=takeup)
         v = self._check.feed(
-            t_ms=self._now_ms(), servo_steps=self._servo,
-            z_counts=int(scales[idx]), cutting=True,
-            takeup_pending=tick.takeup_pending(),
+            t_ms=t_ms, servo_steps=self._servo,
+            z_counts=z, cutting=True,
+            takeup_pending=takeup,
             steps_to_go=int(fast.get("stepsToGo", 0) or 0))
         self._report(v)
 

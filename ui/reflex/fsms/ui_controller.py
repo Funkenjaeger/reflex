@@ -20,6 +20,7 @@ from reflex.fsms.els_overshoot_guard import OvershootGuard
 from reflex.fsms.els_stop_outcome import StopOutcomeWatch
 from reflex.fsms import els_ratio
 from reflex.fsms.els_ratio import RatioWatch
+from reflex.fsms.els_gear_survey import WholePassRatio
 from reflex.fsms.els_gear import GearTable, GearTableError
 from reflex.utils.devices import (takeup_failure_text,
                                   ELS_DIAG_SCHEMA_MODE_WATCH,
@@ -447,9 +448,11 @@ class ElsUiController(EventDispatcher):
             on_verdict=self._on_ratio_verdict,
             # A gearbox measurement cuts in a position the controller does
             # not expect; nothing may act on that, and each pass's verdict
-            # goes to the measurement instead.
+            # goes to the measurement instead, with the measurement's own
+            # reading of the whole pass (the verdict latches early).
             hold=lambda: self._overshoot.gear_survey_running,
-            on_held=lambda v: self._overshoot.on_gear_pass(v),
+            on_held=lambda v, reading: self._overshoot.on_gear_pass(v, reading),
+            measure=WholePassRatio,
         )
 
         # Rung-2 sampler (log-only): compares the domain FSM's state against

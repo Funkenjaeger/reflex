@@ -58,6 +58,8 @@ class FakeHal:
         # reason the FSM has to promote it.
         self.servo_mode = 0
         self.mode_writes = []
+        # servoMode and syncEnable writes, in the order they were made.
+        self.writes = []
         self._fail_next_mode_read = False
         self._measured = list(measured)
         self._result = result
@@ -132,6 +134,11 @@ class FakeHal:
     def set_servo_mode(self, mode):
         self.servo_mode = mode
         self.mode_writes.append(mode)
+        self.writes.append(("servoMode", mode))
+
+    def stop_sync(self):
+        self.writes.append(("syncEnable", 0))
+        return True
 
     # -- reads -------------------------------------------------------
     def read_cal_seq(self):
@@ -817,6 +824,43 @@ def test_cancel_restores_servo_mode():
     assert hal.servo_mode == 1
     cal.cancel()
     assert hal.servo_mode == 0, "cancel left the servo promoted"
+
+
+@pytest.mark.parametrize("finish", ["passed", "refused", "cancelled"])
+def test_sync_is_cleared_before_servo_mode_goes_back_to_0(finish):
+    """The restore to servo off clears sync FIRST. start()'s mode-1 write arms
+    spindle sync through the servoMode binding, and servoEnableTask puts the
+    mode back to 1 while any sync is armed and the stop is not held, so a
+    servoMode 0 written before sync is cleared can be undone within 100 ms
+    and stay undone (bench 2026-10-18: the divergence watchdog fired after a
+    passed run).
+
+    MUTATION: drop the stop_sync() in _restore_motion and this fails."""
+    result = ELS_CAL_ERR_NO_MOTION if finish == "refused" else ELS_CAL_OK
+    hal = FakeHal(ticks_to_finish=3 if finish != "cancelled" else 50,
+                  measured=(100, 101, 100), result=result)
+    cal = BacklashCalibration(hal, _els())
+    cal.start()
+    if finish == "cancelled":
+        cal.cancel()
+    else:
+        _run_to_completion(cal)
+    assert hal.servo_mode == 0
+    last_mode_write = max(i for i, w in enumerate(hal.writes)
+                          if w == ("servoMode", 0))
+    assert ("syncEnable", 0) in hal.writes[:last_mode_write], (
+        f"servoMode 0 was written before sync was cleared: {hal.writes}")
+
+
+def test_restoring_mode_1_leaves_sync_alone():
+    """An operator who was already in mode 1 keeps their sync: nothing is
+    being switched off, so there is no race to close."""
+    hal = FakeHal(ticks_to_finish=3, measured=(100, 101, 100))
+    hal.servo_mode = 1
+    cal = BacklashCalibration(hal, _els())
+    cal.start()
+    assert _run_to_completion(cal) == CalState.PASSED
+    assert ("syncEnable", 0) not in hal.writes
 
 
 def test_jog_mode_is_restored_not_clobbered():
