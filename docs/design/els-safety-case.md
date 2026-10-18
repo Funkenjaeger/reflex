@@ -123,7 +123,7 @@ unprotected.
 | 4 | Jog-mode (`servoMode==2`) take-up refusal | `:1273-1307` |
 | 5 | Calibration request refusal (enabled / wrong mode / bad config) | `:644-676` |
 | 6 | Calibration abort on condition change mid-run | `:681-691` |
-| 7 | **Enable falling-edge teardown** — cancels pending take-up and all commanded motion so nothing survives the edge as banked debt. Since protocolVersion 13 it also runs on `DISENGAGE`'s request when `enable` was already 0 ([command channel](els-command-channel.md)) | `:792-832` |
+| 7 | **Enable falling-edge teardown** — cancels pending take-up and all commanded motion so nothing survives the edge as banked debt. It also runs on `DISENGAGE`'s request when `enable` is already 0 ([command channel](els-command-channel.md)) | `:792-832` |
 | 8 | `ELS_REQUIRE_QUIESCENCE` AND-gate | `:907-1035` |
 | 9 | Hysteresis re-latch guard | `:1159-1178` |
 

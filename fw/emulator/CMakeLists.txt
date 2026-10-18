@@ -647,7 +647,7 @@ target_link_libraries(els_boot_command_test m pthread)
 add_test(NAME els_boot_command_test COMMAND els_boot_command_test)
 
 # The ELS command channel (protocolVersion 13): every machine mode x
-# DISENGAGE, on the real ISR, with servoEnableTask's tick modelled around
+# DISENGAGE, on the real ISR, with servoEnableTask's tick modeled around
 # elsCommandIntake / elsCommandFinish (Ramps.c). Also pins the ack waiting for
 # the ISR's pass, a host syncEnable write landing inside the consumption, the
 # unknown-command refusal and one-command-in-flight.

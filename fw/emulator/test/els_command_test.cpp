@@ -22,7 +22,7 @@
  * and after every ack: command 0, commandSeq +1, machineMode published OFF,
  * servoMode 0, every syncEnable 0, enable 0, active 0, takeupPending 0,
  * stepsToGo 0, no sync backlog, and 2000 further ISR passes with the spindle
- * turning and the task's re-assert modelled emit no step and start no
+ * turning and the task's re-assert modeled emit no step and start no
  * take-up.
  *
  * Then the channel's own rules:
@@ -36,7 +36,7 @@
  *   - a command written while one is in flight waits in the register;
  *   - command 0 does nothing.
  *
- * The task tick is modelled as servoEnableTask orders it on hardware:
+ * The task tick is modeled as servoEnableTask orders it on hardware:
  * elsCommandIntake, the re-assert unless intake said skip, ISR passes (the
  * ISR preempts the task), mode publish, elsCommandFinish.
  */
