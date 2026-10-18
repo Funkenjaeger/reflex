@@ -13,7 +13,18 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
+from reflex.fsms import els_adopt
 from tests.fsms.test_els_fsm import _build_fsm, _make_controller, _make_z_axis
+
+
+@pytest.fixture(autouse=True)
+def _state_keyed_reconcile(monkeypatch):
+    """This file pins the STATE-KEYED branches. Since rung 3 went live
+    (2026-10-17) a fresh 'disabled' session reaches them only when the mode
+    read fails; engaged and alarmed sessions still always take them. With the
+    adopt path off, every test here exercises them directly.
+    test_els_adopt_connect pins when the adopt path runs instead."""
+    monkeypatch.setattr(els_adopt, 'ELS_ADOPT_ON_CONNECT', False)
 
 
 def _reconnect(fsm, *, moving, enable=True, active=False):
