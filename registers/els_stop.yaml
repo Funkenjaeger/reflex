@@ -113,7 +113,9 @@ types:
 fields:
 
   # --- job setup: written by the UI when a job is configured -----------------
-  - {id: 1,  name: enable,            type: uint16, access: sw_write,   group: hot, doc: "SW write: 1 = enable ELS stop feature"}
+  # export_offset: modbus-flash.py reads it by absolute register before a
+  # reboot request (APP_ELS_ENABLE_REG), since the firmware refuses one while it is set.
+  - {id: 1,  name: enable,            type: uint16, access: sw_write,   group: hot, export_offset: true, doc: "SW write: 1 = enable ELS stop feature"}
   - {id: 2,  name: scaleIndex,        type: uint16, access: sw_write,   group: hot, doc: "SW write: which scale (0\u20133) is the position reference (Z axis)"}
   - {id: 3,  name: stopPosition,      type: int32,  access: sw_write,   group: hot, doc: "SW write: threshold in encoder counts"}
   - {id: 4,  name: stopDirection,     type: int16,  access: sw_write,   group: hot, doc: "SW write: 1 = stop when pos >= threshold, -1 = stop when pos <= threshold"}

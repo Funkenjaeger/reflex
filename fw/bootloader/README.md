@@ -64,8 +64,9 @@ python3 scripts/modbus-flash.py --identity --port /dev/ttyUSB0
 python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
 ```
 
-The client refuses unless `idMagic` matches, has the app jump into the
-bootloader (`bootCommand` = 1), erases STAGING, streams 200 bytes per FC16,
+The client refuses unless `idMagic` matches and no ELS job is engaged (it reads
+`elsStop.enable` first; the app also refuses the jump while it is set), has the
+app jump into the bootloader (`bootCommand` = 1), erases STAGING, streams 200 bytes per FC16,
 verifies, applies (RUN to BACKUP, STAGING to RUN, journaled in flash), jumps,
 and polls until the app reports the image's build rev. `--dry-run` skips the
 writes.
