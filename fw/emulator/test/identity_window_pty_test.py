@@ -120,6 +120,11 @@ def main(argv):
         check(tail == [0, 0], "bootCommand/bootSeq read as 0 at the client's register index")
         check(mf.APP_BOOT_SEQ_REG.get(ident.app_protocol) == boot_reg + 1,
               "the client's bootSeq register is the one behind bootCommand")
+        # elsStop.enable, which the client reads before a reboot request: an
+        # idle board has no job engaged, so it must read 0 there.
+        enable_reg = mf.APP_ELS_ENABLE_REG.get(ident.app_protocol)
+        check(enable_reg is not None and bus.read(enable_reg, 1) == [0],
+              "elsStop.enable reads 0 at the client's register index")
 
         # Where the struct ENDS. This number is now READ FROM THE GENERATED MAP
         # rather than written here.

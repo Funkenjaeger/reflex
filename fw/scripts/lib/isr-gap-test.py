@@ -8,7 +8,8 @@ lathe as a plausible wrong number:
      header (a drifted index reads a neighbor's value);
   2. its absolute register addresses equal docs/reference/register-map.md;
   3. decode() of a known block;
-  4. the read/reset flow against a fake board: refusals, the reset handshake.
+  4. the read/reset flow against a fake board: refusals, the reset handshake,
+     and the engaged-job warning that comes before a revert would be refused.
 
     python3 scripts/lib/isr-gap-test.py      (from fw/)
 """
@@ -66,7 +67,8 @@ class FakeExceptionResponse(Exception):
 class FakeBoard:
     """The application's holding registers, with the ISR's reset handshake."""
 
-    def __init__(self, gs, schema=8, protocol=12, stage=2, ack=True, refuse=False):
+    def __init__(self, gs, schema=8, protocol=12, stage=2, ack=True, refuse=False,
+                 engaged=False):
         self.gs = gs
         self.refuse = refuse
         self.regs = {}
@@ -77,6 +79,7 @@ class FakeBoard:
         self.regs[gs.REG_BLOCK + gs.B_TRACE + gs.W_WINDOW] = 0
         self.regs[gs.REG_BLOCK + gs.B_WORST] = 4100
         self.regs[gs.REG_DIAG_SEQ] = 5
+        self.regs[gs.REG_ENABLE] = int(engaged)
         self.ident = types.SimpleNamespace(magic=0x454C, stage=stage, app_protocol=protocol,
                                                rev_str="abcdef0")
 
@@ -138,6 +141,7 @@ def main() -> int:
     check(req is not None and gs.RESET_REQ == int(req.group(1)), "reset request value matches")
 
     print("-- 2. absolute addresses match the register map --")
+    check(gs.REG_ENABLE == regmap_abs("enable"), "enable (an ELS job is engaged)")
     check(gs.REG_DIAG_SEQ == regmap_abs("diagSeq"), "diagSeq")
     check(gs.REG_BLOCK == regmap_abs("diagSchema"), "diagSchema (block start)")
     check(gs.REG_RESET == regmap_abs("diagEndReason"), "diagEndReason (reset request)")
@@ -213,6 +217,21 @@ def main() -> int:
     b = FakeBoard(gs, stage=1)
     rc, out, err = run_main(gs, b, [])
     check(rc == 2 and "not a running application" in err, "the bootloader is refused")
+
+    # 2026-10-17: the revert after the read was refused because the stop and
+    # retract cycle was still armed, and nothing in the read said so.
+    rc, out, err = run_main(gs, FakeBoard(gs), [])
+    check(rc == 0 and "ENGAGED" not in out + err, "an idle board: no engaged-job warning")
+    b = FakeBoard(gs, engaged=True)
+    rc, out, err = run_main(gs, b, [])
+    check(rc == 0 and "worst gap     4100 cycles" in out, "an engaged job: the window still reads")
+    check("ELS JOB ENGAGED" in out and "press Disengage at the touchscreen" in out,
+          "an engaged job: the read says so, and to disengage at the touchscreen")
+    check(b.writes == [] and b.regs[gs.REG_ENABLE] == 1, "an engaged job: nothing is written")
+    rc, out, err = run_main(gs, FakeBoard(gs, engaged=True), ["--json"])
+    check(rc == 0 and '"els_job_engaged": true' in out and "ELS JOB ENGAGED" in err
+          and "ENGAGED" not in out.replace("els_job_engaged", ""),
+          "--json: the flag in the JSON, the warning on stderr")
 
     print(f"=== {'ALL PASS' if failures == 0 else 'FAILURES'} ===")
     return 0 if failures == 0 else 1

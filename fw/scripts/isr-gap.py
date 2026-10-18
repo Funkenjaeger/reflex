@@ -10,7 +10,10 @@ UI's venv.
     isr-gap.py --json            print the decoded window as JSON
 
 It refuses unless the identity window shows a running application whose
-register layout this script knows, and the scratchpad names schema 8. The
+register layout this script knows, and the scratchpad names schema 8. Every
+read also reports whether an ELS job is engaged (elsStop.enable): the revert
+to release that ends the bench procedure is refused while one is, and with
+the UI stopped the job cannot be seen any other way. The
 probe and its registers are documented in fw/DIAG.md and
 Core/Inc/els_diag_isr_gap.h; the word map below mirrors that header, and
 scripts/lib/isr-gap-test.py fails if the two drift.
@@ -34,6 +37,7 @@ SCHEMA_ISR_GAP = 8
 # other: a protocolVersion bump may move them.
 KNOWN_APP_PROTOCOLS = {12}
 ELS_STOP_BASE = 104
+REG_ENABLE = ELS_STOP_BASE + 0          # elsStop.enable: an ELS job is engaged
 REG_DIAG_SEQ = ELS_STOP_BASE + 40
 REG_BLOCK = ELS_STOP_BASE + 78          # diagSchema, first register of the block
 BLOCK_REGS = 64
@@ -143,7 +147,20 @@ def render(d: dict) -> str:
     ]
     if d["reset_pending"]:
         lines.append("  RESET REQUESTED, not yet acknowledged")
+    if d.get("els_job_engaged"):
+        lines.append(f"  {ENGAGED_NOTE}")
     return "\n".join(lines)
+
+
+# Printed with the window when elsStop.enable is set. The firmware refuses to
+# reboot into its bootloader while it is (Ramps.c elsBootCommandTick), so the
+# revert to release that ends the bench procedure would be refused: it was on
+# 2026-10-17, with the stop and retract cycle still armed after the last pass.
+# This script only says so. Disengaging ends the operator's job, so it is done
+# at the touchscreen, never by writing the register from here.
+ENGAGED_NOTE = ("ELS JOB ENGAGED (elsStop.enable is set): a revert to release is refused "
+                "until it is cleared. Start the UI, press Disengage at the touchscreen, "
+                "and stop the UI again before reverting.")
 
 
 def read_stable(bus, attempts: int = 5) -> list[int]:
@@ -211,7 +228,11 @@ def main() -> int:
 
         d = decode(read_stable(bus))
         d["board_rev"] = ident.rev_str
+        d["els_job_engaged"] = bus.read(REG_ENABLE, 1)[0] != 0
         print(json.dumps(d, indent=2) if args.json else render(d))
+        if args.json and d["els_job_engaged"]:
+            # The JSON is usually redirected to a file; the warning must not go with it.
+            print(f"isr-gap: {ENGAGED_NOTE}", file=sys.stderr)
         return 0
     finally:
         bus.close()

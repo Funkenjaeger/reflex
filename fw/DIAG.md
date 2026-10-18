@@ -305,7 +305,9 @@ python3 scripts/isr-gap.py --port /dev/serial0 --reset
 # 4. Start the UI and run the session to be measured.
 sudo systemctl start reflex-ui.service
 
-# 5. Stop the UI and read the window.
+# 5. Press Disengage at the touchscreen (the button then reads Engage), stop
+#    the UI, and read the window. If the read prints ELS JOB ENGAGED, step 6
+#    will be refused: start the UI, disengage, and stop it again.
 sudo systemctl stop reflex-ui.service
 python3 scripts/isr-gap.py --port /dev/serial0
 python3 scripts/isr-gap.py --port /dev/serial0 --json > isr-gap-$(date +%F-%H%M).json
@@ -323,6 +325,15 @@ threading passes); a reset is the boundary. `--revert` goes back one step
 only; if it refuses, flash the release RUN-slot image instead
 (`build-slot/reflex-fw.bin` built from the release commit, or the release's
 own `reflex-fw.bin`).
+
+**Disengage before step 6.** The firmware will not reboot into its bootloader
+while `elsStop.enable` is set, and a stop or a stop-and-retract cycle stays
+armed after its last pass. `modbus-flash.py` reads `elsStop.enable` before it
+sends the reboot request, for `--revert` and for a plain flash alike, and with
+a job engaged it refuses with nothing written. Neither script clears it:
+disengaging ends the operator's job, so it is done at the touchscreen, where
+the job and its stop can be seen. With the UI stopped, start it, press
+**Disengage**, stop it, and run step 6 again.
 
 ### Retired ids
 
