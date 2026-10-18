@@ -380,71 +380,16 @@ class ElsFsm:
         # so conservatively assume the next retract needs full takeup.
         self._retract_backlash_applied = False
         self.board.unbind(update_tick=self._on_board_update)
-        if els_command.ELS_DISENGAGE_VIA_COMMAND:
-            # THE FIRMWARE DOES THE TEARDOWN (protocolVersion 13). One write,
-            # DISENGAGE; the firmware clears sync on every scale, then
-            # servoMode, then enable, cancels the job's motion through the
-            # ISR's end-of-job block, and only then bumps commandSeq. The
-            # ordering that _disengage_by_ordered_writes below has to get
-            # right over the wire is one place in the firmware instead.
-            #
-            # The session is 'disabled' from the WRITE, not the ack: a
-            # session still in 'stopped' while it waits would take a
-            # reconnect inside the wait for a link blip and re-arm the stop.
-            self._issue_disengage()
-            return
-        self._disengage_by_ordered_writes()
-
-    def _disengage_by_ordered_writes(self):
-        """The ordered teardown the command path replaced, kept in the tree
-        behind els_command.ELS_DISENGAGE_VIA_COMMAND until a bench session has
-        run the command path from every mode it can reach, and used as the
-        fallback when the firmware refuses DISENGAGE."""
-        # Safety: disengaging ELS removes the stop that was gating the feed, so
-        # also stop any running sync feed — otherwise a spindle-synced feed keeps
-        # driving the carriage with no auto-stop (audit H6). Idempotent.
+        # THE FIRMWARE DOES THE TEARDOWN (protocolVersion 13). One write,
+        # DISENGAGE; the firmware clears sync on every scale, then servoMode,
+        # then enable, cancels the job's motion through the ISR's end-of-job
+        # block, and only then bumps commandSeq. The ordering lives in one
+        # place, the firmware.
         #
-        # SYNC OFF FIRST, THEN ENABLE, THEN FEED. Not cosmetic ordering.
-        # Dropping enable clears elsStop.active in firmware, and the firmware's
-        # servoEnableTask turns the feed back ON whenever it sees
-        # (any syncEnable) && !active. So between "enable = 0" and "syncEnable =
-        # 0" there is a window in which that task re-asserts servoMode = 1 —
-        # and nothing in firmware ever clears it again.
-        #
-        # Previously syncEnable was cleared only as a side effect of the
-        # servoMode binding in dispatchers/els.py, which by construction fires
-        # AFTER servoMode changes, so the window was always open. Measured at
-        # ~1 disengage in 7-10 leaving the carriage feeding — 1.825 mm in 3 s and
-        # still going — with the ELS stop simultaneously disarmed, because the
-        # firmware gates the stop check on enable. Feed running, backstop gone.
-        feed_was_on = self.board.servo.servoMode != 0
-        # ONE BATCH: every syncEnable, then enable. Back to back with nothing
-        # able to get between them -- for as long as any syncEnable is still
-        # set after enable has gone to 0, the firmware's servoEnableTask is
-        # entitled to switch the feed back on and nothing will switch it off
-        # again. A verdict per write, so the enable-off succeeding cannot hide
-        # the sync-off having failed.
-        #
-        # BLOCKING, deliberately. This is the safety stop; the operator has
-        # asked for motion to end, and the few milliseconds it costs are not
-        # worth handing back a UI that says disengaged before it is.
-        if self.board.connected:
-            try:
-                writes_ok = self.hal.disengage()
-            except Exception as e:                       # noqa: BLE001
-                log.error(f"on_enter_disabled: the disengage raised: {e}")
-                writes_ok = False
-        else:
-            writes_ok = False
-        feed_off = self.board.servo.stop_feed()
-        if feed_was_on and not (writes_ok and feed_off):
-            # A stop-feed write was attempted but not acknowledged (link down).
-            # Nothing more software can do to stop it here — surface it loudly.
-            # (Only when the feed was actually on, so an offline idle disengage
-            # doesn't cry wolf.)
-            log.error("on_enter_disabled: a disengage write was NOT "
-                      f"acknowledged (batch={writes_ok} feed_off={feed_off}) "
-                      "— sync feed may still be running")
+        # The session is 'disabled' from the WRITE, not the ack: a session
+        # still in 'stopped' while it waits would take a reconnect inside the
+        # wait for a link blip and re-arm the stop.
+        self._issue_disengage()
 
     # ——— the ELS command channel: DISENGAGE ———
     DISENGAGE_UNCONFIRMED = (
@@ -560,15 +505,27 @@ class ElsFsm:
     def _on_disengage_refused(self, result):
         """No DISENGAGE refusal exists in firmware that speaks this protocol
         (it is legal from every mode), so a refusal means a firmware this UI
-        does not understand. Say so, and fall back to the ordered teardown so
-        the machine is still made inert."""
+        does not understand. Say so, and make the machine inert with the
+        writes on_enter_alarm uses: the session is already 'disabled', so
+        doing nothing would leave the job armed while the screen says it is
+        not.
+
+        SYNC OFF FIRST, THEN THE FEED, THEN ENABLE: dropping enable clears
+        elsStop.active, and servoEnableTask turns the feed back on whenever
+        any syncEnable is set with active clear (see stop_sync)."""
         name = els_command.result_name(result)
         log.error(f"disengage: the controller refused DISENGAGE ({name}); "
-                  f"falling back to the ordered teardown")
+                  f"turning sync, the feed and the stop off from the UI")
         notify_operator(f"The controller refused the disengage ({name}). "
                         f"The UI turned sync and the stop off itself.",
                         NOTICE_WARNING)
-        self._disengage_by_ordered_writes()
+        sync_off = self.hal.stop_sync()
+        feed_off = self.board.servo.stop_feed()
+        enable_off = self.hal.set_enable(False)
+        if not (sync_off and feed_off and enable_off):
+            log.error("disengage: a teardown write after the refusal was NOT "
+                      f"acknowledged (sync={sync_off} feed={feed_off} "
+                      f"enable={enable_off}); the feed may still be running")
 
     def _raise_stop_write_fault(self):
         """Top-level fault after an unacknowledged cut-stop write (scheduled from
@@ -582,8 +539,9 @@ class ElsFsm:
         # the stop, and detach the move poller. Reached e.g. when a cut's stop
         # writes weren't acknowledged (on_enter_cutting).
         self.board.unbind(update_tick=self._on_board_update)
-        # SYNC OFF FIRST, explicitly, for the same reason as on_enter_disabled
-        # and reconcile_firmware_on_connect: set_enable(False) clears
+        # SYNC OFF FIRST, explicitly, for the same reason as
+        # reconcile_firmware_on_connect and the firmware's own DISENGAGE
+        # (els_command.h): set_enable(False) clears
         # elsStop.active in firmware, and active == 1 is what HOLDS the carriage
         # (Ramps.c:815 only accumulates sync steps while active == 0; clearing it
         # 1->0 is the resume trigger, Ramps.c:826).
@@ -864,7 +822,7 @@ class ElsFsm:
         # wait for as an ack. An engaged session reconnecting after a link
         # blip keeps the one it has; every DISENGAGE also reads a fresh one
         # just before its write.
-        if self.state == 'disabled' and els_command.ELS_DISENGAGE_VIA_COMMAND:
+        if self.state == 'disabled':
             self._read_command_baseline()
 
         # A DISENGAGE this session wrote and never saw acked goes out again
@@ -872,8 +830,7 @@ class ElsFsm:
         # the session disengaged from, and that can be a hands-off row
         # (FEEDING with the spindle stopped is one disengage_refusal()
         # allows), which would leave the job running. It is idempotent.
-        if (self._disengage_pending is not None and self.state == 'disabled'
-                and els_command.ELS_DISENGAGE_VIA_COMMAND):
+        if self._disengage_pending is not None and self.state == 'disabled':
             log.warning("reconcile_firmware_on_connect: a DISENGAGE was never "
                         "acknowledged; issuing it again")
             self._issue_disengage()
@@ -1032,7 +989,7 @@ class ElsFsm:
         if self.state != plan.state:
             # ADOPTION, not a transition: set_state fires no callbacks, which
             # is the point -- on_enter_stopped would arm a fresh stop and
-            # on_enter_disabled would run its own teardown, and the plan has
+            # on_enter_disabled would issue a DISENGAGE, and the plan has
             # already decided both. Broadcast manually so the controller
             # mirrors the adopted state exactly as it would a transition.
             self.fsm.set_state(plan.state)

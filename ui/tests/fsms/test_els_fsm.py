@@ -174,25 +174,11 @@ def test_on_enter_disabled_writes_disengage():
     hal = MagicMock()
     fsm = _build_fsm(hal=hal)
     fsm.enable()    # disabled → stopped
+    hal.reset_mock()
     fsm.disable()   # stopped → disabled (fires on_enter_disabled)
     hal.request_disengage.assert_called_once_with()
-    hal.disengage.assert_not_called()
-
-
-def test_on_enter_disabled_with_the_command_path_off_writes_the_batch(monkeypatch):
-    """The ordered teardown it replaced stays behind
-    els_command.ELS_DISENGAGE_VIA_COMMAND until a bench session has run the
-    command path. The disengage there is ONE BATCH (every syncEnable, then
-    enable); the order inside it is ElsStopRegisters.disengage_batch's
-    contract and is tested there."""
-    from reflex.fsms import els_command
-    monkeypatch.setattr(els_command, "ELS_DISENGAGE_VIA_COMMAND", False)
-    hal = MagicMock()
-    fsm = _build_fsm(hal=hal)
-    fsm.enable()
-    fsm.disable()
-    hal.disengage.assert_called_once_with()
-    hal.request_disengage.assert_not_called()
+    hal.stop_sync.assert_not_called()
+    hal.set_enable.assert_not_called()
 
 
 # ─── stopped re-arm: hysteresis driven by mode flags ───────────────────────

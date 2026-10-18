@@ -15,15 +15,6 @@ tests/test_registry_contract.py compares the two copies in both directions.
 Append, never renumber.
 """
 
-# THE SWITCH. True: the operator's disengage (ElsFsm.on_enter_disabled) writes
-# DISENGAGE and waits for its ack. False: the ordered teardown it replaced
-# (ElsStopRegisters.disengage, every syncEnable then enable, and a feed stop),
-# kept in the tree until a bench session has run the command path from every
-# mode it can reach. Read live off this module, so a test (or a revert) reaches
-# the real setting. Only the operator's disengage moves: on_enter_alarm, the
-# reconnect teardowns and the adopt plan keep their ordered writes for now.
-ELS_DISENGAGE_VIA_COMMAND = True
-
 # Command ids (ELS_CMD_*).
 CMD_NONE = 0
 CMD_DISENGAGE = 1

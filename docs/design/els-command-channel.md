@@ -1,10 +1,8 @@
 # ELS command channel
 
-**Status: `DISENGAGE` is built (protocolVersion 13).** The operator's disengage
-uses it by default, behind `ELS_DISENGAGE_VIA_COMMAND` in
-`ui/reflex/fsms/els_command.py`. The ordered teardown it replaces stays behind that flag until the command
-is verified on hardware from every mode it can reach. `FEED_OFF` is decided: it stays immediate ("What the census
-answered").
+**Status: `DISENGAGE` is built (protocolVersion 13) and verified on hardware.**
+The operator's disengage always uses it. `FEED_OFF` is decided: it stays
+immediate ("What the census answered").
 
 This design moves transition legality and safety-critical teardown ordering
 into the firmware, and register edges stop carrying command meaning.
@@ -72,8 +70,7 @@ republished every `servoEnableTask` tick in every build
 `ELS_CMD_DISENGAGE` = 1. Executed entirely inside the firmware
 (`elsCommandIntake` and `elsCommandFinish`, `fw/Core/Src/Ramps.c`):
 
-1. clear `syncEnable` on every scale (motion source off first: the sync-first
-   ordering the UI repeats at five call sites becomes this one line);
+1. clear `syncEnable` on every scale (motion source off first);
 2. `servoMode = 0`;
 3. clear `enable`, and ask the ISR to run its end-of-job block
    (`elsCommandEndJob`). That block in `SynchroRefreshTimerIsr` clears
@@ -111,15 +108,15 @@ commanded value, `ServoDispatcher.adopt_feed_off`) and every axis's
 `syncEnable`. No ack within about a second (`ACK_TIMEOUT_POLLS`) is a link
 fault: the UI issues `DISENGAGE` once more, since it is idempotent, and after
 a second silence puts a notice on the status bar. A refusal also shows a
-notice, and the UI then runs the ordered teardown itself, so the machine is
-still made inert.
+notice, and the UI then turns sync, the feed and the stop off itself, in that
+order, with the writes `on_enter_alarm` uses (`stop_sync`, `stop_feed`,
+`set_enable(False)`), so the machine is still made inert.
 
-`on_enter_disabled`'s ordered batch (`hal.disengage()`, `_disengage_batch`)
-sits in `_disengage_by_ordered_writes`, reached with the flag off or on a
-refusal. It and the tests that pin its order
-(`test_port_owner.py::test_the_disengage_order_survives_the_queue`,
-`test_els_threaded_io.py::test_a_disengage_lands_in_order_with_the_scan_on_the_thread`)
-are deleted after hardware verification. `disengage_refusal()` in
+No firmware this UI pairs with should refuse `DISENGAGE` (the only refusal
+is `ERR_UNKNOWN`). The refusal response stays because the session is already
+`disabled` when the answer arrives, so ignoring a refusal would leave the job
+armed while the screen says it is not.
+`disengage_refusal()` in
 `ui_controller.py` stays as affordance: it refuses while sync is armed with
 the spindle turning and while a cycle runs. Once the firmware owns teardown,
 those refusals are a UX question. The Update screen, which disengages before a
@@ -214,10 +211,8 @@ there is a link blip, not a restart. Where `DISENGAGE` meets this:
   `disengage_refusal()` allows), which would leave the job running. So a
   session with an unacked `DISENGAGE` issues it again at reconnect, ahead of
   the adopt table, instead of consulting it.
-- The teardown rows still run the ordered writes. Once the command is
-  verified on hardware, a teardown row issues `DISENGAGE` and waits for the
-  ack. The snapshot (`read_motion_in_flight`, `read_current_mode`) is still
-  taken first.
+- The teardown rows still run the ordered writes, and take the snapshot
+  (`read_motion_in_flight`, `read_current_mode`) first.
 
 ## The calMeasured split
 

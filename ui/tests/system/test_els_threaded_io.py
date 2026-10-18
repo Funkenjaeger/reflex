@@ -111,10 +111,10 @@ def test_a_cut_starts_with_the_scan_on_the_thread(threaded_harness):
                         timeout_s=5), "the cut never released the hold"
 
 
-def test_a_disengage_lands_in_order_with_the_scan_on_the_thread(threaded_harness):
-    """The disengage sequence (sync off, enable off, feed off) is one ordered
-    group. A queue that split or reordered it would leave the firmware fed
-    with the sync off, which is the state this must never produce."""
+def test_a_disengage_is_acked_with_the_scan_on_the_thread(threaded_harness):
+    """DISENGAGE crosses the queue to the owner thread and its ack comes back
+    in a snapshot: the firmware leaves sync, the feed and the stop off, and
+    the session stops waiting."""
     h = threaded_harness
     h.set_imperial()
     h.configure(is_threading=False, retract_enabled=False, wizard_enabled=False,
@@ -132,6 +132,10 @@ def test_a_disengage_lands_in_order_with_the_scan_on_the_thread(threaded_harness
     assert h.wait_until(
         lambda: int(h.board.els_stop_values.get("enable", 1)) == 0,
         timeout_s=5), "enable was left set after a disengage"
+    assert h.wait_until(lambda: not h.els_fsm.disengage_unacked,
+                        timeout_s=5), "the DISENGAGE was never acknowledged"
+    assert int(h.board.fast_data_values["servoMode"]) == 0
+    assert all(int(s["syncEnable"]) == 0 for s in h.board.device["scales"])
 
 
 def test_the_flasher_handover_really_releases_the_port(threaded_harness):

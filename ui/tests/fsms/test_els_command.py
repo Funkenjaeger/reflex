@@ -15,13 +15,11 @@ ordered teardown (docs/design/els-command-channel.md). What these pin:
   whose result read is fabricated waits for the next tick;
 - the timeout: no ack issues DISENGAGE once more (it is idempotent), and a
   second silence tells the operator;
-- the refusal: a result in the refusal range is shown, and the old ordered
-  teardown runs as a fallback;
+- the refusal: a result in the refusal range is shown, and the UI turns
+  sync, the feed and the stop off itself, sync first;
 - reconnect: a session with a DISENGAGE unacked issues it again instead of
   consulting the adopt table, and a fresh session takes commandSeq at
-  connect as its baseline;
-- the flag: with ELS_DISENGAGE_VIA_COMMAND off, the old ordered teardown
-  runs exactly as before.
+  connect as its baseline.
 
 HAL-level checks (the register written, the snapshot keys read) are at the
 bottom, against the stub board from test_els_stop_registers.
@@ -77,20 +75,14 @@ def _poll(fsm, n=1):
         fsm._poll_command_ack()
 
 
-@pytest.fixture(autouse=True)
-def _command_path_on(monkeypatch):
-    monkeypatch.setattr(els_command, "ELS_DISENGAGE_VIA_COMMAND", True)
-
-
 # ─── the write ────────────────────────────────────────────────────────────
 
 def test_disengage_writes_one_command_and_nothing_else():
     fsm, hal, tick, _ = _rig()
     _engage_then_disengage(fsm, hal)
     hal.request_disengage.assert_called_once_with()
-    # Nothing to elsStop or syncEnable beside the command: no ordered batch,
-    # no sync-off, no enable or active write.
-    hal.disengage.assert_not_called()
+    # Nothing to elsStop or syncEnable beside the command: no sync-off, no
+    # enable or active write.
     hal.stop_sync.assert_not_called()
     hal.set_enable.assert_not_called()
     hal.set_active.assert_not_called()
@@ -131,7 +123,7 @@ def test_an_ok_ack_completes_the_disengage():
     fsm.board.unbind.assert_any_call(update_tick=fsm._poll_command_ack)
     # The mirrors are observations: nothing was written to make them so.
     hal.stop_sync.assert_not_called()
-    hal.disengage.assert_not_called()
+    hal.set_enable.assert_not_called()
 
 
 def test_a_calibration_aborted_by_the_disengage_is_a_success():
@@ -142,7 +134,7 @@ def test_a_calibration_aborted_by_the_disengage_is_a_success():
         _poll(fsm)
     assert not fsm.disengage_unacked
     notify.assert_not_called()
-    hal.disengage.assert_not_called()
+    hal.stop_sync.assert_not_called()
 
 
 def test_an_unchanged_seq_is_not_an_ack():
@@ -212,15 +204,24 @@ def test_an_ack_after_the_reissue_still_completes_it():
 
 # ─── the refusal ──────────────────────────────────────────────────────────
 
-def test_a_refusal_is_shown_and_falls_back_to_the_ordered_teardown():
+def test_a_refusal_is_shown_and_the_ui_turns_sync_feed_and_stop_off():
+    """The session is already 'disabled' when the refusal arrives, so the UI
+    makes the machine inert itself: sync off first, then the feed, then
+    enable (dropping enable clears active, and servoEnableTask turns the feed
+    back on while any sync is armed with active clear)."""
     fsm, hal, tick, _ = _rig()
     _engage_then_disengage(fsm, hal)
+    order = []
+    hal.stop_sync.side_effect = lambda: order.append("sync") or True
+    hal.set_enable.side_effect = lambda on: order.append(f"enable={on}") or True
+    fsm.board.servo.stop_feed = MagicMock(
+        side_effect=lambda: order.append("feed") or True)
     tick.seq, tick.result = 8, els_command.CMD_RESULT_ERR_UNKNOWN
     with patch("reflex.fsms.els_fsm.notify_operator") as notify:
         _poll(fsm)
     notify.assert_called_once()
     assert "refused" in notify.call_args[0][0]
-    hal.disengage.assert_called_once_with()     # the ordered batch, sync first
+    assert order == ["sync", "feed", "enable=False"]
     assert not fsm.disengage_unacked
 
 
@@ -280,22 +281,6 @@ def test_a_connect_with_nothing_unacked_keeps_the_adopt_path():
     hal.request_disengage.assert_not_called()
     hal.read_current_mode.assert_called()
 
-
-# ─── the flag ─────────────────────────────────────────────────────────────
-
-def test_the_ordered_teardown_runs_with_the_flag_off(monkeypatch):
-    monkeypatch.setattr(els_command, "ELS_DISENGAGE_VIA_COMMAND", False)
-    fsm, hal, tick, _ = _rig()
-    _engage_then_disengage(fsm, hal)
-    hal.disengage.assert_called_once_with()
-    hal.request_disengage.assert_not_called()
-    assert not fsm.disengage_unacked
-
-
-def test_the_command_path_is_the_default():
-    import importlib
-    fresh = importlib.reload(els_command)
-    assert fresh.ELS_DISENGAGE_VIA_COMMAND is True
 
 
 # ─── HAL ──────────────────────────────────────────────────────────────────

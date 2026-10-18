@@ -109,16 +109,6 @@ def test_commands_execute_in_fifo_order(rig):
     assert [f.result() for f in futures] == [True] * 4
 
 
-def test_the_disengage_order_survives_the_queue(rig):
-    """sync off on every scale, then enable, then the feed: the order the
-    firmware's servoEnableTask makes load-bearing (els_fsm.on_enter_disabled)."""
-    sync = [_write(a, 0) for a in (36, 48, 60, 72)]
-    for command in sync + [_write(104, 0), _write(102, 0)]:
-        rig.owner.submit(command)
-    rig.owner.run_cycle()
-    assert [entry[1] for entry in rig.wire] == [36, 48, 60, 72, 104, 102]
-
-
 def test_a_batch_is_executed_whole_and_in_order(rig):
     before = rig.owner.submit(_write(1, 1))
     batch = rig.owner.submit(Batch((_write(10, 1), _read(11), _write(12, 2))))
