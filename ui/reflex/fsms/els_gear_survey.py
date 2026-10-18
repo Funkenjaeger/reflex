@@ -4,17 +4,27 @@ The gearbox table (els_gear.py) holds a factor per lever position: carriage
 travel per motor step relative to the FIRST position, the reference. Typing a
 factor from the gear plate gives the plate's number, not the machine's; this
 measures it. The operator puts the lever in ONE position, then cuts
-GEAR_PASSES passes in air with the ELS bar as usual. The coupling-ratio check
-(els_ratio.py) already reads, for every pass, the absolute coupling since the
-pass started -- `Verdict.r_since_start`, in reference-gear terms -- and in the
-lever's position that IS the position's factor. Each pass's reading is fed to
-this class.
+GEAR_PASSES passes in air with the ELS bar as usual. Each pass's coupling,
+carriage travel per commanded step in reference-gear terms, is the lever
+position's factor; WholePassRatio measures it and each pass's reading is fed
+to this class.
+
+The coupling-ratio check (els_ratio.py) runs during these passes too, held so
+it cannot act, and its estimate since the pass started is not the
+measurement: the check latches its verdict as soon as the reading has settled
+within 5 % of a position, from 350 ms into the pass and at the latest by the
+later of 1 s and 2 mm, because its job is to tell positions apart.
+WholePassRatio fits its own slope, from SETTLE_MS after the take-up to the
+stop, and the check's verdict only says whether the pass counts at all.
 
 The passes must agree: the readings may spread by at most GEAR_MAX_SPREAD of
 their mean. The gate comes from the scatter of whole passes on the recorded
 lathe, 1.002 +/- 0.003 (0.3 %); three passes may sit anywhere in that band, so
 the limit is its full width, 0.6 %. It is relative, not absolute: scatter
 scales with the reading, and a fixed 0.006 would refuse a good x2 position.
+A tighter gate would cost the operator more passes on a good position, and a
+loose one is still caught by the rounding to a simple fraction and by the
+separation from the other positions.
 
 The result is a PROPOSAL, not a change: Save writes it, Discard drops it. It is
 rounded to a form GearTable.parse accepts, and refused when it could not be
@@ -22,10 +32,12 @@ saved: outside MIN_FACTOR..MAX_FACTOR, or closer than MIN_SEPARATION to
 another position. The REFERENCE position is never measured; its factor is 1 by
 definition.
 
-States: RUNNING, PROPOSED, REFUSED. A pass with no reading, or a decoupled one
-(half nut open), is not counted and is asked for again.
+States: RUNNING, PROPOSED, REFUSED. A pass with no reading, a decoupled one
+(half nut open), or one shorter than MIN_COUNTS, is not counted and is asked
+for again.
 
-PURE: no Kivy, no registers. The guard and the popup drive it.
+PURE: no Kivy, no registers. RatioWatch feeds WholePassRatio while the
+measurement holds it; the guard and the popup drive the rest.
 """
 from __future__ import annotations
 
@@ -42,7 +54,7 @@ from reflex.fsms.els_gear import (
     _fmt,
 )
 from reflex.fsms.els_overshoot_survey import NEXT_PASS, NEXT_SETTING  # noqa: F401
-from reflex.fsms.els_ratio import DECOUPLED, Verdict
+from reflex.fsms.els_ratio import DECOUPLED, Verdict, _Fit
 
 #: Air passes per position.
 GEAR_PASSES = 3
@@ -59,12 +71,90 @@ SNAP_MAX_DENOMINATOR = 12
 #: Otherwise a decimal of this many places.
 DECIMAL_PLACES = 3
 
+#: The start of a pass that is not measured, after the take-up has ended:
+#: the drive lags a step burst, so the first windows read low (as low as 0.82
+#: of the true ratio).
+SETTLE_MS = 300
+
+#: The least Z travel, in scale counts after the settle, that counts as a
+#: pass. A count is the reading's quantum; over 1000 of them it is at most
+#: 0.1 % at the two ends and far less across a fitted slope, a sixth of the
+#: gate.
+MIN_COUNTS = 1000
+
+#: The least number of polls in the fit, so a pass of a few fast polls is
+#: not a slope through three points.
+MIN_POLLS = 10
+
 # States
 RUNNING = "running"
 PROPOSED = "proposed"
 REFUSED = "refused"
 
 FINAL = frozenset({PROPOSED, REFUSED})
+
+
+@dataclass(frozen=True)
+class PassReading:
+    """One pass, measured. `r` is None when the pass does not count, and
+    `why` then says why, for the log."""
+
+    r: Optional[float]
+    counts: int = 0
+    polls: int = 0
+    why: str = ""
+
+
+class WholePassRatio:
+    """The coupling over one whole pass: the least-squares slope of Z counts
+    on commanded steps, from SETTLE_MS after the take-up ends to the stop, in
+    reference-gear terms. Fed once per poll; a fresh one per pass.
+
+    steps_per_ref_count: commanded steps per Z count with the lever in the
+    reference position, so a pass in a position of factor f reads f.
+    """
+
+    def __init__(self, steps_per_ref_count: float):
+        self._k = float(steps_per_ref_count)
+        self._t_start: Optional[float] = None
+        self._s0 = 0
+        self._z0 = 0
+        self._z_last = 0
+        self._fit = _Fit()
+
+    def feed(self, *, t_ms: float, servo_steps: int, z_counts: int,
+             takeup_pending: bool) -> None:
+        """One poll. servo_steps is the commanded-step counter unwrapped to a
+        signed running count; z_counts the Z scale position."""
+        if takeup_pending:
+            # Before the take-up has ended; a pass that re-enters it starts
+            # the settle again.
+            self._t_start = None
+            self._fit = _Fit()
+            return
+        if self._t_start is None:
+            self._t_start = t_ms
+        if t_ms - self._t_start < SETTLE_MS:
+            return
+        if self._fit.n == 0:
+            self._s0, self._z0 = servo_steps, z_counts
+        self._fit.add(float(servo_steps - self._s0), float(z_counts - self._z0))
+        self._z_last = z_counts
+
+    def reading(self) -> PassReading:
+        polls = self._fit.n
+        counts = abs(self._z_last - self._z0) if polls else 0
+        if polls == 0:
+            # A refused take-up ends the pass before it ever settles.
+            return PassReading(None, 0, 0, "nothing measured after the take-up")
+        if polls < MIN_POLLS or counts < MIN_COUNTS:
+            return PassReading(None, counts, polls,
+                               f"too short: {counts} counts over {polls} polls "
+                               f"(at least {MIN_COUNTS} and {MIN_POLLS})")
+        slope = self._fit.slope()
+        if slope is None:
+            return PassReading(None, counts, polls, "no slope")
+        return PassReading(abs(slope) * self._k, counts, polls)
 
 
 def refusal_for(table: GearTable, position: str) -> Optional[str]:
@@ -92,7 +182,7 @@ def round_factor(r: float) -> Fraction:
 
 @dataclass
 class GearSurvey:
-    """One position's measurement. Feed it each pass's Verdict."""
+    """One position's measurement. Feed it each pass's Verdict and reading."""
 
     position: str
     table: GearTable
@@ -101,7 +191,7 @@ class GearSurvey:
     message: str = ""
     #: The longer result, for the popup.
     detail: str = ""
-    #: Each counted pass's r_since_start.
+    #: Each counted pass's whole-pass coupling.
     readings: List[float] = field(default_factory=list)
     #: PROPOSED only: the position's measured factor.
     factor: Optional[Fraction] = None
@@ -114,13 +204,18 @@ class GearSurvey:
     def done(self) -> bool:
         return self.state in FINAL
 
-    def add(self, v: Verdict) -> str:
-        """File one pass. Returns the operator line."""
+    def add(self, v: Verdict, reading: Optional[PassReading]) -> str:
+        """File one pass: the coupling check's final verdict, which only says
+        whether the pass counts (a decoupled one does not), and the pass's
+        whole-pass reading. Returns the operator line."""
         if self.done:
             return self.message
-        r = v.r_since_start
+        r = reading.r if reading is not None else None
         if r is None or r <= 0 or v.kind == DECOUPLED:
-            self.message = f"Pass not counted. {NEXT_PASS}"
+            short = reading is not None and reading.why.startswith("too short")
+            self.message = (f"Pass too short to measure. {NEXT_PASS}" if short
+                            and v.kind != DECOUPLED
+                            else f"Pass not counted. {NEXT_PASS}")
             return self.message
         self.readings.append(float(r))
         n = len(self.readings)
@@ -188,6 +283,7 @@ class GearSurvey:
 
 __all__ = [
     "GEAR_PASSES", "GEAR_MAX_SPREAD", "RUNNING", "PROPOSED", "REFUSED", "FINAL",
-    "NEXT_PASS", "NEXT_SETTING", "GearSurvey", "GearTableError", "refusal_for",
+    "NEXT_PASS", "NEXT_SETTING", "GearSurvey", "GearTableError", "MIN_COUNTS",
+    "MIN_POLLS", "PassReading", "SETTLE_MS", "WholePassRatio", "refusal_for",
     "round_factor",
 ]
