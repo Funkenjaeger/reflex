@@ -522,9 +522,13 @@ typedef struct {
    */
   uint16_t bootSeq;
 
-  /* reg 66 READ-ONLY (firmware-owned): lash measured at each of the 3
-   * reversals, in servo steps. The host judges whether the spread is
-   * acceptable
+  /* reg 66 bidirectional: lash measured at each of the 3 reversals, in servo
+   * steps. The firmware writes it at the end of every calibration run
+   * (partial values on a failed run). The UI also writes it back after a
+   * power cycle, a gear change and a failed run, because the take-up
+   * confirmation threshold derives from it. The host judges whether the
+   * spread is acceptable. A split into a firmware result and a host-written
+   * basis is planned with the DISENGAGE protocol bump
    */
   int32_t calMeasured[3];
 
