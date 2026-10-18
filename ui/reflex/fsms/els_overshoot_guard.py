@@ -29,6 +29,14 @@ tested directly (tests/fsms/test_els_overshoot_guard.py):
   times out (same visit: a cue on a timer was waited for, or lost). When a
   sweep ends, `on_result(survey)` opens its result for Save or Discard.
 
+- THE GEARBOX MEASUREMENT (els_gear_survey.py) rides on the same guard: it is
+  the same kind of guided air passes, and shares the cue strip and the
+  Save-or-Discard window. While one runs, `gear_survey_running` is the hold
+  that keeps the coupling-ratio check from acting (RatioWatch's `hold`), and
+  each pass's final verdict arrives at `on_gear_pass`. Save writes the one
+  position's factor into the gearbox table text through GearTable, by way of
+  `apply_gear_table(text)`, which is the controller's own validated setter.
+
 NEVER writes a register. It changes only ElsDispatcher settings and posts
 notices.
 """
@@ -39,8 +47,11 @@ from typing import Callable, Optional
 
 from kivy.logger import Logger
 
+from reflex.fsms import els_gear_survey as gear_mod
 from reflex.fsms import els_overshoot_survey as survey_mod
 from reflex.fsms import els_overshoot_table as tbl
+from reflex.fsms.els_gear import NO_GEARBOX, GearTable, GearTableError
+from reflex.fsms.els_ratio import Verdict
 from reflex.fsms.els_stop_outcome import (
     PAST_TOLERANCE_COUNTS,
     StopOutcome,
@@ -65,13 +76,24 @@ class OvershootGuard:
     """`els` is the ElsDispatcher (its els_overshoot_* settings); `binding()`
     the live Binding or None; `notify(message, severity, seconds=None)` posts a
     notice; `gear()` the engaged gearbox position name, for a measured
-    table's source line; `today()` the date for it."""
+    table's source line; `today()` the date for it.
+
+    The gearbox measurement's parts: `gear_table()` the configured table,
+    `apply_gear_table(text)` the controller's setter for it (True when
+    applied), `on_gear_result(survey)` a finished measurement for Save or
+    Discard, and `on_lever_change(position)` the seam for clearing the thread
+    reference when the lever is moved to a position to be measured. It does
+    nothing yet."""
 
     def __init__(self, els, binding: Callable[[], Optional[tbl.Binding]],
                  notify: Callable[..., object], gear: Callable[[], str] = lambda: "",
                  today: Callable[[], datetime.date] = datetime.date.today,
                  cue: Callable[[str], object] = lambda _text: None,
-                 on_result: Callable[[survey_mod.Survey], object] = lambda _s: None):
+                 on_result: Callable[[survey_mod.Survey], object] = lambda _s: None,
+                 gear_table: Callable[[], GearTable] = lambda: NO_GEARBOX,
+                 apply_gear_table: Callable[[str], bool] = lambda _text: False,
+                 on_gear_result: Callable[[gear_mod.GearSurvey], object] = lambda _s: None,
+                 on_lever_change: Callable[[str], object] = lambda _p: None):
         self._els = els
         self._binding = binding
         self._notify = notify
@@ -86,6 +108,11 @@ class OvershootGuard:
                          and not getattr(els, "els_overshoot_table", ""))
         self.survey: Optional[survey_mod.Survey] = None
         self._survey_binding: Optional[tbl.Binding] = None
+        self._gear_table = gear_table
+        self._apply_gear_table = apply_gear_table
+        self._on_gear_result = on_gear_result
+        self._on_lever_change = on_lever_change
+        self.gear_survey: Optional[gear_mod.GearSurvey] = None
 
     # ── reading the settings ────────────────────────────────────────────
 
@@ -240,4 +267,73 @@ class OvershootGuard:
         self.survey = None
         self._survey_binding = None
         self._cue("")
+        return None
+
+    # ── the gearbox measurement ─────────────────────────────────────────
+
+    def gear_table(self) -> GearTable:
+        """The configured gearbox table, for the measurement's window."""
+        return self._gear_table()
+
+    @property
+    def gear_survey_running(self) -> bool:
+        """True while a gearbox position is being measured: the hold that
+        keeps the coupling-ratio check from acting."""
+        return self.gear_survey is not None and not self.gear_survey.done
+
+    def start_gear_survey(self, position: str) -> Optional[str]:
+        """Start measuring `position`'s factor. Returns the reason it cannot
+        start, or None when it has."""
+        if self.survey is not None and not self.survey.done:
+            return "An overshoot measurement is running. Stop it first."
+        if self._binding() is None:
+            return "Set the Z scale and the leadscrew first."
+        table = self._gear_table()
+        why = gear_mod.refusal_for(table, position)
+        if why:
+            return why
+        self.gear_survey = gear_mod.GearSurvey(position, table)
+        log.info(f"gear {position} measurement started")
+        # The lever is moved to `position` for this: the place a thread
+        # reference that no longer holds is cleared.
+        self._on_lever_change(position)
+        self._cue(self.gear_survey.message)
+        return None
+
+    def on_gear_pass(self, v: Verdict) -> None:
+        """A pass ended; `v` is the coupling check's final verdict for it."""
+        s = self.gear_survey
+        if s is None or s.done:
+            return
+        log.info(f"gear {s.position} pass: r {v.r_since_start} ({v.kind})")
+        self._cue(s.add(v))
+        if s.done:
+            self._on_gear_result(s)
+
+    def cancel_gear_survey(self) -> None:
+        if self.gear_survey is not None and not self.gear_survey.done:
+            log.info(f"gear {self.gear_survey.position} measurement cancelled "
+                     f"after {len(self.gear_survey.readings)} passes")
+        self.gear_survey = None
+        self._cue("")
+
+    def save_gear_survey(self) -> Optional[str]:
+        """Write the proposed factor into the gearbox table. Returns the
+        reason it was not saved, or None."""
+        s = self.gear_survey
+        if s is None or s.state != gear_mod.PROPOSED:
+            return "No gear factor to save."
+        if self._gear_table() != s.table:
+            return "Gearbox table changed during the measurement. Run it again."
+        try:
+            text = s.updated_table().text()
+        except (GearTableError, ValueError) as e:
+            return f"Factor not saved: {e}"[:65]
+        if not self._apply_gear_table(text):
+            return "Gearbox table not changed. See the status bar."
+        log.info(f"gear {s.position} factor saved: {text}")
+        table = s.table
+        later = table.names[table.names.index(s.position) + 1:]
+        self.gear_survey = None
+        self._cue(survey_mod.NEXT_SETTING if later else "")
         return None

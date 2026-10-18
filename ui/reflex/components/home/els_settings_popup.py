@@ -164,6 +164,11 @@ class ElsSettingsPopup(Popup):
         from reflex.components.home.els_overshoot_popup import OvershootSurveyPopup
         OvershootSurveyPopup(owner=self).open()
 
+    def open_gear_survey(self):
+        """Open the gearbox factor measurement (one lever position)."""
+        from reflex.components.home.els_gear_survey_popup import GearSurveyPopup
+        GearSurveyPopup(owner=self).open()
+
     def open_backlash_calibration(self):
         """Open the closed-loop backlash calibration wizard.
 
