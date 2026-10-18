@@ -262,8 +262,11 @@ def test_the_whole_block_refresh_is_still_two_requests(els_stop_device):
     and is what forced the split.
     """
     device, transport = els_stop_device
-    assert device.size == 142, (
-        f"elsStop is {device.size} registers, not the 142 this case was "
+    # protocolVersion 13: 146 registers (the command channel and
+    # calBasisSteps added four), so two requests need a chunk of 73, which
+    # MAX_REGISTERS_PER_READ became; 73 is still under the 60%-of-125 cap.
+    assert device.size == 146, (
+        f"elsStop is {device.size} registers, not the 146 this case was "
         f"reasoned about -- re-check the chunk arithmetic, do not just "
         f"update the number")
 
@@ -271,7 +274,7 @@ def test_the_whole_block_refresh_is_still_two_requests(els_stop_device):
 
     base = device.base_address
     assert len(transport.requests) == 2
-    assert transport.requests == [(base, 72), (base + 72, 70)]
+    assert transport.requests == [(base, 73), (base + 73, 73)]
 
 
 def test_the_block_still_fits_in_two_requests_with_room_to_spare(els_stop_device):
@@ -364,8 +367,9 @@ def test_the_chunk_size_keeps_real_headroom_against_the_firmware():
     from reflex.utils.communication import ConnectionManager
     size = ConnectionManager(serial_device="/dev/null")['Global']['elsStop'].size
     floor = -(-size // 2)          # ceil, so two requests still cover the block
-    assert floor == 71, (
-        f"the two-request floor is now {floor}, not the 71 that 142 registers "
+    # 13 grew the block to 146 registers, so the floor is 73.
+    assert floor == 73, (
+        f"the two-request floor is now {floor}, not the 73 that 146 registers "
         f"gives -- re-derive the chunk size rather than editing this number")
     assert n >= floor, (
         f"chunking at {n} registers puts elsStop ({size} registers) back above "

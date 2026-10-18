@@ -196,17 +196,20 @@ def test_fresh_boot_armed_job_teaches_its_premises_then_cuts(harness):
 
 
 # ── 3. reconcile re-teaches the session-wide premises ─────────────────────
-# The take-up confirmation threshold derives from elsStop.calMeasured, which
-# a power cycle zeroes: the gate silently fell to its 2-count motion floor
-# every boot, mitigated only by a bench-sheet instruction to recalibrate.
-# Reconcile now re-teaches the persisted legs; this pins the round-trip end
-# to end -- persisted UI record, through the device layer's element-wise
-# array write, over real Modbus, into the virgin register block.
+# The take-up confirmation threshold derives from the calibration basis
+# (elsStop.calBasisSteps since protocolVersion 13, calMeasured before it),
+# which a power cycle zeroes: the gate silently fell to its 2-count motion
+# floor every boot, mitigated only by a bench-sheet instruction to
+# recalibrate. Reconcile re-teaches the basis from the persisted legs; this
+# pins the round-trip end to end -- persisted UI record, over real Modbus,
+# into the virgin register block -- and that calMeasured, the firmware's
+# result register, is left alone.
 
-def test_fresh_boot_reconcile_reteaches_the_calibration_legs(harness):
+def test_fresh_boot_reconcile_reteaches_the_calibration_basis(harness):
     h = harness
     _settle(h)
     _assert_virgin(h)
+    assert int(h.register('elsStop', 'calBasisSteps')) == 0
 
     # The persisted record a previously calibrated machine carries.
     h.els.els_cal_measured_legs = [365, 373, 366]
@@ -216,6 +219,10 @@ def test_fresh_boot_reconcile_reteaches_the_calibration_legs(harness):
     h.controller._on_connected_changed(h.board, True)
     _settle(h)
 
-    assert list(h.register('elsStop', 'calMeasured')) == [365, 373, 366], (
-        "the persisted calibration legs did not reach the firmware -- the "
-        "take-up gate is deriving its threshold from the motion floor")
+    assert int(h.register('elsStop', 'calBasisSteps')) == 368, (
+        "the persisted calibration did not reach the firmware as the gate's "
+        "basis -- the take-up gate is deriving its threshold from the motion "
+        "floor")
+    assert list(h.register('elsStop', 'calMeasured')) == [0, 0, 0], (
+        "calMeasured is the firmware's result register; the host writes the "
+        "basis, never the legs")

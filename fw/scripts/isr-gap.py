@@ -34,14 +34,17 @@ SCHEMA_ISR_GAP = 8
 # Absolute holding registers. elsStop starts at register 104 (ui
 # els_stop_map.ELS_STOP_BASE); the offsets are the elsStop-relative ones in
 # docs/reference/register-map.md. Valid for the layouts listed below and no
-# other: a protocolVersion bump may move them.
-KNOWN_APP_PROTOCOLS = {12}
+# other: a protocolVersion bump may move them. 13 moved every cold register,
+# the diagnostic block included, by four (12 had the block at 78 and the reset
+# word at 137), so a probe build from before 13 needs the script from its own
+# tree.
+KNOWN_APP_PROTOCOLS = {13}
 ELS_STOP_BASE = 104
 REG_ENABLE = ELS_STOP_BASE + 0          # elsStop.enable: an ELS job is engaged
 REG_DIAG_SEQ = ELS_STOP_BASE + 40
-REG_BLOCK = ELS_STOP_BASE + 78          # diagSchema, first register of the block
+REG_BLOCK = ELS_STOP_BASE + 82          # diagSchema, first register of the block
 BLOCK_REGS = 64
-REG_RESET = ELS_STOP_BASE + 137         # diagEndReason: the reset request
+REG_RESET = ELS_STOP_BASE + 141         # diagEndReason: the reset request
 RESET_REQ = 1                           # ELS_DIAG_GAP_RESET_REQ
 
 # Block-relative register indexes.

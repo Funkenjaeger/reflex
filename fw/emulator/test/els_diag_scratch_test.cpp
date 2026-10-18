@@ -129,8 +129,11 @@ int main(void)
      * to the layout by registers/layout-fingerprints.json. */
     /* 11 -> 12: clearRefCommand / clearRefSeq, the host's clear of the thread
      * reference, in the last two alignment pads. Nothing else moved. */
-    check(data.shared.elsStop.protocolVersion == 12,
-          "protocolVersion is 12 (clearRefCommand / clearRefSeq)");
+    /* 12 -> 13: the ELS command channel (command / commandSeq /
+     * commandResult) and calBasisSteps, the calMeasured split. The hot group
+     * grew, so every cold register moved by two. */
+    check(data.shared.elsStop.protocolVersion == 13,
+          "protocolVersion is 13 (command channel, calBasisSteps)");
     check(data.shared.elsStop.protocolVersion == ELS_PROTOCOL_VERSION,
           "RampsStart publishes the ELS_PROTOCOL_VERSION macro, not a drifting literal");
 

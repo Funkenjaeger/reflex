@@ -581,7 +581,7 @@ int main() {
      * threshold. The ramp overshoots slightly past the take-up target, and each
      * overshoot step is extra carriage motion, so a case sitting one or two
      * counts from the boundary measures the overshoot rather than the guard.
-     * calMeasured 65, commanded 105 (margin 40), zPerStep 0.5, floor 2
+     * calBasisSteps 65, commanded 105 (margin 40), zPerStep 0.5, floor 2
      *   => expected 40*0.5 + 2 = 22 counts, threshold 11. */
     printf("\n-- PARTIAL ENGAGEMENT: carriage moves, but less than it should --\n");
     {
@@ -591,7 +591,7 @@ int main() {
         rig.lash.stepsPerZCount = 2;
         rig.data.shared.elsStop.zCountsPerPitch =
             rig.data.shared.elsStop.threadPitchSteps / 2.0f;
-        for (int i = 0; i < 3; i++) rig.data.shared.elsStop.calMeasured[i] = 65;
+        rig.data.shared.elsStop.calBasisSteps = 65;   /* the gate's basis (protocolVersion 13) */
 
         rig.armAndTrigger();
         rig.step(Z_CLEAR);
@@ -621,7 +621,7 @@ int main() {
         rig.lash.stepsPerZCount = 2;
         rig.data.shared.elsStop.zCountsPerPitch =
             rig.data.shared.elsStop.threadPitchSteps / 2.0f;
-        for (int i = 0; i < 3; i++) rig.data.shared.elsStop.calMeasured[i] = 65;
+        rig.data.shared.elsStop.calBasisSteps = 65;   /* the gate's basis (protocolVersion 13) */
 
         rig.armAndTrigger();
         rig.step(Z_CLEAR);
@@ -647,7 +647,7 @@ int main() {
         rig.lash.stepsPerZCount = 2;
         rig.data.shared.elsStop.zCountsPerPitch =
             rig.data.shared.elsStop.threadPitchSteps / 2.0f;
-        for (int i = 0; i < 3; i++) rig.data.shared.elsStop.calMeasured[i] = 65;
+        rig.data.shared.elsStop.calBasisSteps = 65;   /* the gate's basis (protocolVersion 13) */
 
         rig.armAndTrigger();
         rig.step(Z_CLEAR);

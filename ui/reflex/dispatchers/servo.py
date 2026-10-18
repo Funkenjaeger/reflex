@@ -524,6 +524,27 @@ class ServoDispatcher(SavingDispatcher):
         # which cannot happen here because this is UI-originated.
         return self.last_mode_write_acknowledged is not False
 
+    def adopt_feed_off(self) -> None:
+        """The firmware turned the feed off ON OUR COMMAND (an acknowledged
+        DISENGAGE, els_command.py): record it as commanded, and mirror it.
+
+        Writes nothing. The firmware already set servoMode 0 and cleared every
+        syncEnable; this only brings the UI's side into line, so the
+        divergence watchdog below compares against 0 from here on. Left at the
+        last UI-originated value (1), the watchdog could never report the
+        firmware switching the feed back on after the disengage, which is the
+        one event it exists to catch. The mirror is flagged as observed so the
+        servoMode -> syncEnable binding (dispatchers/els.py) writes nothing
+        either.
+        """
+        self._commanded_servo_mode = 0
+        if self.servoMode != 0:
+            self.servoMode_from_firmware = True
+            try:
+                self.servoMode = 0
+            finally:
+                self.servoMode_from_firmware = False
+
     def set_current_position(self, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)
         self.position = int(value / ratio)

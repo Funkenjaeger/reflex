@@ -110,17 +110,22 @@ int main() {
      * the reorder costs two registers of alignment padding the old field order
      * did not need. Confirmed against the compiler, and a deliberate wrong
      * value (490) was checked to fail. */
+    /* protocolVersion 13 kept the pair where it was. The hot group did not
+     * grow (commandSeq took the slot clearRefSeq left), and the four new cold
+     * uint16s (clearRefSeq, command, commandResult, calBasisSteps) sit AFTER
+     * bootSeq. The struct grew by those four registers: 492 -> 500 bytes,
+     * with no alignment pad added. */
     check(offsetof(rampsSharedData_t, elsStop.bootCommand) == 336, "bootCommand at byte 336 = register 168");
     check(offsetof(rampsSharedData_t, elsStop.bootSeq) == 338, "bootSeq at byte 338 = register 169");
-    check(sizeof(rampsSharedData_t) == 492,
-          "rampsSharedData_t is 492 bytes (140 register of fields + 2 of alignment)");
+    check(sizeof(rampsSharedData_t) == 500,
+          "rampsSharedData_t is 500 bytes (144 registers of fields + 2 of alignment)");
     /* protocolVersion 11 (2026-09-18) filled two alignment pads with
      * stopOffset / stopTriggerOffset: bootCommand, bootSeq and the 492-byte
      * size above are deliberately UNCHANGED, which is why they are asserted
      * with the same numbers and only the version moved. protocolVersion 12
      * filled the last two pads with clearRefSeq / clearRefCommand, the same
      * way and with the same result. */
-    check(ELS_PROTOCOL_VERSION == 12, "ELS_PROTOCOL_VERSION is 12");
+    check(ELS_PROTOCOL_VERSION == 13, "ELS_PROTOCOL_VERSION is 13");
     /* The no-phantom-register property, asserted against whatever ends the
      * struct TODAY. An implicit trailing pad would make a register reflex-ui
      * cannot mirror, and the contract test would report a size mismatch it

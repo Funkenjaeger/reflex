@@ -118,7 +118,7 @@ class BaseDevice:
     # on 2026-08-23, every drop a timeout at the transition into `cutting` and
     # not one a corrupted frame. This trades more bytes for fewer exchanges on
     # purpose.
-    MAX_REGISTERS_PER_READ = 72  # 2026-09-07: elsStop is 140 regs (protocolVersion 9); two requests need >= 70, the 60%-of-125 rule caps at 75
+    MAX_REGISTERS_PER_READ = 73  # protocolVersion 13: elsStop is 146 regs; two requests need >= 73, the 60%-of-125 rule caps at 75 (72 since 2026-09-07, for 140 regs)
 
     # The largest single request read_span() will issue, and a separate number
     # from the refresh() chunk above on purpose. The one span past that chunk

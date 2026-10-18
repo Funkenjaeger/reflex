@@ -139,19 +139,21 @@ STATE_NAMES = {0: "IDLE", 1: "BACKUP", 2: "COPY", 3: "TRIAL", 4: "REVERT", 5: "R
 # 11 (2026-09-18) keeps 168: stopOffset and stopTriggerOffset were placed in two
 # of protocolVersion 10's alignment pads, so no group grew and nothing moved.
 # Listed separately for the whitelist reason above; genregs --check verifies it.
-APP_BOOT_COMMAND_REG = {8: 232, 9: 232, 10: 168, 11: 168, 12: 168}
+# 13 keeps 168: the hot group did not grow (commandSeq took the slot clearRefSeq
+# left), and the new cold registers sit after bootSeq.
+APP_BOOT_COMMAND_REG = {8: 232, 9: 232, 10: 168, 11: 168, 12: 168, 13: 168}
 # bootSeq, the firmware's ack of an ACCEPTED boot command, is the uint16 right
 # behind bootCommand in every layout above (Ramps.h: the two were appended as a
 # pair in protocolVersion 8 and moved together in 10). A table of its own, not
 # "bootCommand + 1", for the whitelist reason above; genregs --check verifies
 # it against registers/offsets.json exactly as it does APP_BOOT_COMMAND_REG.
-APP_BOOT_SEQ_REG = {8: 233, 9: 233, 10: 169, 11: 169, 12: 169}
+APP_BOOT_SEQ_REG = {8: 233, 9: 233, 10: 169, 11: 169, 12: 169, 13: 169}
 # elsStop.enable, read BEFORE the reboot request (see _refuse_if_els_engaged).
 # Offset 0 of elsStop, absolute 104, under every layout listed; 8 and 9 are
 # left out because their elsStop map was never checked for it, and an unlisted
 # layout only skips the early read. genregs --check verifies the entry for the
 # current protocolVersion against registers/offsets.json.
-APP_ELS_ENABLE_REG = {10: 104, 11: 104, 12: 104}
+APP_ELS_ENABLE_REG = {10: 104, 11: 104, 12: 104, 13: 104}
 BOOT_CMD_BOOTLOADER = 1
 # How many polls must see the refusal signature (bootCommand 0, bootSeq
 # unmoved, idStage still the application) before the flasher believes it. Two,

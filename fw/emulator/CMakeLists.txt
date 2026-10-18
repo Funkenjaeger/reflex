@@ -645,3 +645,27 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
 target_link_libraries(els_boot_command_test m pthread)
 add_test(NAME els_boot_command_test COMMAND els_boot_command_test)
+
+# The ELS command channel (protocolVersion 13): every machine mode x
+# DISENGAGE, on the real ISR, with servoEnableTask's tick modeled around
+# elsCommandIntake / elsCommandFinish (Ramps.c). Also pins the ack waiting for
+# the ISR's pass, a host syncEnable write landing inside the consumption, the
+# unknown-command refusal and one-command-in-flight.
+add_executable(els_command_test
+    ${CMAKE_SOURCE_DIR}/test/els_command_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_command_test m pthread)
+add_test(NAME els_command_test COMMAND els_command_test)
+
+# The calMeasured split (protocolVersion 13): calBasisSteps moves only on a
+# successful run, and the take-up threshold derives from it, not from
+# calMeasured. Real ISR, the Lash/Rig pair from els_cal_isr_attribution_test.
+add_executable(els_cal_basis_test
+    ${CMAKE_SOURCE_DIR}/test/els_cal_basis_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_cal_basis_test m pthread)
+add_test(NAME els_cal_basis_test COMMAND els_cal_basis_test)

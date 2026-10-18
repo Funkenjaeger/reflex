@@ -167,15 +167,32 @@ def test_disable_transitions_back_to_disabled(domain):
     assert domain.state == "disabled"
 
 
-def test_on_enter_disabled_writes_set_enable_false():
+def test_on_enter_disabled_writes_disengage():
+    """protocolVersion 13: the disengage is ONE command, DISENGAGE, and the
+    firmware does the ordered teardown. The command path itself (ack,
+    timeout, refusal, reconnect) is tests/fsms/test_els_command.py."""
     hal = MagicMock()
     fsm = _build_fsm(hal=hal)
     fsm.enable()    # disabled → stopped
     fsm.disable()   # stopped → disabled (fires on_enter_disabled)
-    # The disengage is ONE BATCH now (every syncEnable, then enable), so what
-    # is asserted is that it was built and put on the wire -- the order inside
-    # it is ElsStopRegisters.disengage_batch's contract and is tested there.
+    hal.request_disengage.assert_called_once_with()
+    hal.disengage.assert_not_called()
+
+
+def test_on_enter_disabled_with_the_command_path_off_writes_the_batch(monkeypatch):
+    """The ordered teardown it replaced stays behind
+    els_command.ELS_DISENGAGE_VIA_COMMAND until a bench session has run the
+    command path. The disengage there is ONE BATCH (every syncEnable, then
+    enable); the order inside it is ElsStopRegisters.disengage_batch's
+    contract and is tested there."""
+    from reflex.fsms import els_command
+    monkeypatch.setattr(els_command, "ELS_DISENGAGE_VIA_COMMAND", False)
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.enable()
+    fsm.disable()
     hal.disengage.assert_called_once_with()
+    hal.request_disengage.assert_not_called()
 
 
 # ─── stopped re-arm: hysteresis driven by mode flags ───────────────────────
@@ -859,16 +876,21 @@ def test_arm_idle_stop_teaches_turning_geometry_in_turning_mode():
     fsm.push_thread_geometry.assert_not_called()
 
 
-def test_reconcile_reteaches_the_calibration_legs():
-    """A real record is pushed back; the take-up gate keeps its derived
-    threshold across power cycles instead of falling to the 2-count floor."""
+def test_reconcile_reteaches_the_calibration_basis():
+    """A real record is pushed back as the take-up gate's basis
+    (calBasisSteps, protocolVersion 13): the mean of the stored legs, by the
+    firmware's own rule (elsCalMeanValid: integer mean, every leg positive),
+    so the gate keeps the threshold it had across a power cycle instead of
+    falling to the 2-count floor. calMeasured is the firmware's result
+    register and is never written."""
     hal = MagicMock()
     fsm = _build_fsm(hal=hal)
     fsm.els.els_cal_measured_legs = [365, 373, 366]
 
     fsm.reconcile_firmware_on_connect()
 
-    hal.set_cal_measured.assert_called_once_with([365, 373, 366])
+    hal.set_cal_basis.assert_called_once_with(368)      # 1104 // 3
+    hal.set_cal_measured.assert_not_called()
 
 
 def test_reconcile_never_teaches_zero_legs():
@@ -881,7 +903,7 @@ def test_reconcile_never_teaches_zero_legs():
 
     fsm.reconcile_firmware_on_connect()
 
-    hal.set_cal_measured.assert_not_called()
+    hal.set_cal_basis.assert_not_called()
 
 
 def test_reconcile_never_teaches_partial_legs():
@@ -893,7 +915,7 @@ def test_reconcile_never_teaches_partial_legs():
 
     fsm.reconcile_firmware_on_connect()
 
-    hal.set_cal_measured.assert_not_called()
+    hal.set_cal_basis.assert_not_called()
 
 
 def test_reconcile_repushes_every_axis_sync_ratio():
@@ -925,7 +947,7 @@ def test_reconcile_reteaching_happens_in_every_state():
 
     fsm.reconcile_firmware_on_connect()
 
-    hal.set_cal_measured.assert_called_once()
+    hal.set_cal_basis.assert_called_once_with(101)
     axis.push_sync_ratio.assert_called_once()
     # and the state policy still ran
     hal.set_enable.assert_called_once_with(False)
