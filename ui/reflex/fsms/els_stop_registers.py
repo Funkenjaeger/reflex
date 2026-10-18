@@ -177,23 +177,6 @@ class ElsStopRegisters:
             z_counts_per_pitch=z_counts_per_pitch,
             backlash_steps=backlash_steps))
 
-    def disengage(self) -> bool:
-        """Clear every sync source and disarm the stop. True iff the
-        controller acknowledged all of it.
-
-        BLOCKING, deliberately: this is the safety stop, the operator has
-        asked for motion to end, and the few milliseconds are not worth
-        handing back a UI that says disengaged before it is.
-        """
-        if not self._board.connected:
-            return False
-        try:
-            results = self._submit(self._disengage_batch()).result()
-        except Exception as e:                           # noqa: BLE001
-            log.error(f"disengage: the batch did not complete: {e}")
-            return False
-        return all(bool(r) for r in results)
-
     def _arming_batch(self, *, stop_position: int, scale_index: int,
                      thread_pitch_steps: float, z_counts_per_pitch: float,
                      backlash_steps: int):
@@ -224,21 +207,6 @@ class ElsStopRegisters:
             write_command(els, 'backlashSteps', max(0, int(backlash_steps))),
             write_command(els, 'enable', 1),
         ))
-
-    def _disengage_batch(self):
-        """Clear sync on every scale, then enable. ONE Batch, in that order.
-
-        The order is the point and stop_sync explains why: for as long as any
-        syncEnable is set after enable has gone to 0, the firmware's
-        servoEnableTask is entitled to switch the feed back on, and nothing
-        will switch it off again. Batching removes the last way anything could
-        get between the two.
-        """
-        els = self._board.device['elsStop']
-        writes = [write_command(scale, 'syncEnable', 0)
-                  for scale in self._board.device['scales']]
-        writes.append(write_command(els, 'enable', 0))
-        return Batch(tuple(writes))
 
     def set_active(self, active: bool) -> bool:
         """The HOLD. Clearing it is what releases a cut, so it is CONFIRMED.

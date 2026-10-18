@@ -1699,8 +1699,8 @@ class ElsUiController(EventDispatcher):
             # second way -- clearing enable clears elsStop.active, which is what
             # HOLDS the carriage, so disengaging RELEASES it.
             #
-            # The teardown in on_enter_disabled makes that safe (sync is cleared
-            # before the hold is released), so this is not the safety mechanism.
+            # The firmware's DISENGAGE makes that safe (it clears sync before
+            # the hold is released), so this is not the safety mechanism.
             # It removes the ambiguous input instead of interpreting it: turning
             # sync off is the unambiguous way to stop the carriage, and it is
             # exactly equivalent to opening the half nut.
@@ -1727,12 +1727,13 @@ class ElsUiController(EventDispatcher):
         """Disengage ELS if the rules allow it; otherwise say why, and do nothing.
 
         Returns None when the domain FSM was disabled (on_enter_disabled has
-        run its teardown -- sync off, enable 0, feed stop -- by the time this
-        returns: the FSM is not mid-transition here), else the refusal from
-        disengage_refusal(), which has also been put on the notice strip.
+        written DISENGAGE by the time this returns: the FSM is not
+        mid-transition here), else the refusal from disengage_refusal(), which
+        has also been put on the notice strip.
 
         Returning is not the same as the CONTROLLER having released the job:
-        the writes are Modbus writes. A caller that needs the firmware's own
+        the firmware does the teardown and acknowledges it a task tick or two
+        later. A caller that needs the firmware's own
         word -- the Update screen, before it hands the port to the flasher --
         waits on firmware_els_enable() reading False.
         """
@@ -2404,9 +2405,8 @@ class ElsUiController(EventDispatcher):
             if not confirmed:
                 # CLEAR SYNC FIRST, THEN DROP THE MODE. This ordering is the
                 # whole fix, and it is not new: ElsStopRegisters.stop_sync's docstring
-                # spells out the race, and on_enter_disabled and on_enter_alarm
-                # both already do it. THIS BUTTON WAS THE THIRD CALL SITE AND
-                # NEVER GOT IT.
+                # spells out the race, and on_enter_alarm does it too (the
+                # operator's disengage leaves it to the firmware's DISENGAGE).
                 #
                 # servoEnableTask re-asserts servoMode = 1 every 100 ms while
                 # ANY scale still has syncEnable set and elsStop.active is 0 --
