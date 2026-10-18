@@ -25,7 +25,9 @@
  *      generated structs places a sample of fields, independently of the
  *      generator's own arithmetic, and their bits must agree with the schema.
  *
- * MUTATIONS (seen red 2026-10-16, each applied alone and reverted):
+ * MUTATIONS (seen red 2026-10-16, each applied alone and reverted). The counts
+ * below are as recorded then; calMeasured (6 registers) became host-writable
+ * afterwards, so the firmware-owned total is now 160, not 166:
  *   M1 mb_rtu.c without the FC 6 access check -> 166 checks fail, one per
  *      firmware-owned register (D1)
  *   M2 touchesReadOnly testing only the first register of the range -> 13
@@ -250,7 +252,7 @@ static void sectionD() {
             checkf(a16.size() == 8 && m.main[r] == 0x6666, "D4 FC 16 to host-writable register %u lands", r);
         }
     }
-    checkf(ro == 166, "D5 166 firmware-owned registers in the map (got %u)", ro);
+    checkf(ro == 160, "D5 160 firmware-owned registers in the map (got %u)", ro);
 
     /* Blocks that reach into a firmware-owned register from below and from
      * above: a writable register on one side, the firmware-owned one on the
@@ -269,10 +271,10 @@ static void sectionD() {
 
     {   /* A long block across a whole firmware-owned field, writable on both sides. */
         Board b(N, &acc);
-        auto a = ask(&b.t, fc16(166, std::vector<uint16_t>(12, 0x3333)));   /* 166..177 spans calMeasured 170..175 */
+        auto a = ask(&b.t, fc16(166, std::vector<uint16_t>(12, 0x3333)));   /* 166..177 spans bootSeq 169 */
         bool untouched = true;
         for (uint16_t r = 166; r < 178; r++) if (b.main[r] != (uint16_t)(0x1000 + r)) untouched = false;
-        check(excOf(a, 16) == 2 && untouched, "D8 FC 16 over 166..177 (calMeasured inside) is refused, nothing written");
+        check(excOf(a, 16) == 2 && untouched, "D8 FC 16 over 166..177 (bootSeq inside) is refused, nothing written");
     }
     {   /* A block over host-writable fields only lands, as before. */
         Board b(N, &acc);
@@ -319,7 +321,8 @@ static void sectionE() {
         { "elsStop.enable",         AT(ELS, elsStop_t, enable),           false },
         { "elsStop.protocolVersion",AT(ELS, elsStop_t, protocolVersion),  true  },
         { "elsStop.calCommand",     AT(ELS, elsStop_t, calCommand),       false },
-        { "elsStop.calMeasured",    AT(ELS, elsStop_t, calMeasured),      true  },
+        { "elsStop.bootSeq",        AT(ELS, elsStop_t, bootSeq),          true  },
+        { "elsStop.calMeasured",    AT(ELS, elsStop_t, calMeasured),      false },
         { "elsStop.calCeilingSteps",AT(ELS, elsStop_t, calCeilingSteps),  false },
         { "elsStop.executionCyclesPeak", AT(ELS, elsStop_t, executionCyclesPeak), true },
         { "elsStop.clearRefCommand",AT(ELS, elsStop_t, clearRefCommand),  false },

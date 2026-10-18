@@ -209,7 +209,11 @@ fields:
   # ===========================================================================
 
   # --- calibration results + machine-specific limits ------------------------
-  - {id: 39, name: calMeasured,       type: int32, count: 3, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): lash measured at each of the 3 reversals, in servo steps. The host judges whether the spread is acceptable"}
+  # calMeasured is bidirectional only because the host must restore the take-up
+  # gate's basis. A planned split (a firmware-owned result plus a host-written
+  # basis) lands with the DISENGAGE protocol bump, and this register returns to
+  # ro_firmware then.
+  - {id: 39, name: calMeasured,       type: int32, count: 3, access: bidirectional, group: cold, doc: "bidirectional: lash measured at each of the 3 reversals, in servo steps. The firmware writes it at the end of every calibration run (partial values on a failed run). The UI also writes it back after a power cycle, a gear change and a failed run, because the take-up confirmation threshold derives from it. The host judges whether the spread is acceptable. A split into a firmware result and a host-written basis is planned with the DISENGAGE protocol bump"}
   - {id: 40, name: calCeilingSteps,   type: int32,  access: sw_write, group: cold, doc: "SW write: per-leg hard ceiling in servo steps. Driving this far without Z moving is the open-half-nut / uncoupled failure. Machine-specific; size it comfortably past the largest credible lash"}
   - {id: 41, name: calMotionThreshCounts, type: int32, access: sw_write, group: cold, doc: "SW write: Z scale counts that count as real motion. Machine-specific: ~2 counts on a 200 counts/mm scale (1 count \u2248 2.5 servo steps); the emulator is 400 counts/mm. 0 disables detection and fails closed (never confirms)"}
 
