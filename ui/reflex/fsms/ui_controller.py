@@ -385,6 +385,12 @@ class ElsUiController(EventDispatcher):
             cue=self._set_measure_cue,
             on_result=lambda _survey: Clock.schedule_once(
                 lambda _dt: self._open_overshoot_result(), 0),
+            # The gearbox measurement (els_gear_survey.py) rides on this
+            # guard; it saves through the same setter the typed field uses.
+            gear_table=lambda: self._els_fsm.gear_table(),
+            apply_gear_table=lambda text: self.set_gear_table(text),
+            on_gear_result=lambda _survey: Clock.schedule_once(
+                lambda _dt: self._open_gear_result(), 0),
         )
 
         # Stop-overshoot correction (protocolVersion 11). Opt-in, default off.
@@ -439,6 +445,11 @@ class ElsUiController(EventDispatcher):
             gear_table=lambda: self._els_fsm.gear_table(),
             mm_per_count=lambda: self._els_fsm.z_mm_per_count(),
             on_verdict=self._on_ratio_verdict,
+            # A gearbox measurement cuts in a position the controller does
+            # not expect; nothing may act on that, and each pass's verdict
+            # goes to the measurement instead.
+            hold=lambda: self._overshoot.gear_survey_running,
+            on_held=lambda v: self._overshoot.on_gear_pass(v),
         )
 
         # Rung-2 sampler (log-only): compares the domain FSM's state against
@@ -663,6 +674,15 @@ class ElsUiController(EventDispatcher):
             OvershootSurveyPopup().open()
         except Exception as e:
             log.warning(f"could not open the overshoot result window: {e}")
+
+    def _open_gear_result(self) -> None:
+        """A gearbox measurement ended: open its result for Save or Discard.
+        Imported here for the reason _open_overshoot_result is."""
+        try:
+            from reflex.components.home.els_gear_survey_popup import GearSurveyPopup
+            GearSurveyPopup().open()
+        except Exception as e:
+            log.warning(f"could not open the gearbox result window: {e}")
 
     def _sync_engaged(self, state):
         self.engaged = state != "disabled"
@@ -1247,6 +1267,21 @@ class ElsUiController(EventDispatcher):
             why = self._overshoot.start_survey(kind)
         if why:
             log.warning(f"overshoot measurement refused: {why}")
+            self.notify(why, NOTICE_WARNING)
+            return why
+        return None
+
+    def start_gear_survey(self, position: str) -> str | None:
+        """Start measuring one gearbox position's factor (Advanced ELS
+        Settings). Returns None when it started, else the reason it did not,
+        for the caller to show in its own window (the status bar is covered
+        by it, as for start_overshoot_survey)."""
+        if self._els_fsm.state in ("cutting", "retracting"):
+            why = "Pass is running. Wait for the stop."
+        else:
+            why = self._overshoot.start_gear_survey(position)
+        if why:
+            log.warning(f"gearbox measurement refused: {why}")
             self.notify(why, NOTICE_WARNING)
             return why
         return None

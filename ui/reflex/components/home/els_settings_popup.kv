@@ -118,6 +118,14 @@
                 value: app.servo.gearbox_table
                 on_value: root.commit_gear_table(self)
 
+            # Measures one position's factor with guided air passes; the typed
+            # row above is unchanged and stays the way to set a table.
+            ButtonItem:
+                name: "Measure gearbox factor"
+                value: "Measure"
+                help_file: "els_gearbox.md"
+                on_release: root.open_gear_survey()
+
             # The owner's own position names. Absent with no gearbox: the
             # row collapses to nothing rather than offering a position.
             DropDownItem:

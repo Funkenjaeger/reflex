@@ -1,0 +1,108 @@
+<GearSurveyPopup>:
+    title: "Measure gearbox factor"
+    size_hint_x: 0.8
+    size_hint_y: None
+    height: 480
+    # Not auto-dismiss: a stray tap outside must not look like a choice.
+    auto_dismiss: False
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: dp(16)
+        spacing: dp(10)
+
+        Label:
+            text: root.body_text
+            halign: "left"
+            valign: "top"
+            text_size: self.width, None
+            size_hint_y: None
+            height: self.texture_size[1]
+            color: app.theme.text
+            font_size: app.formats.font_size
+
+        Label:
+            text: root.detail_text
+            halign: "left"
+            valign: "top"
+            text_size: self.width, None
+            size_hint_y: None
+            height: self.texture_size[1] if root.detail_text else 0
+            opacity: 1 if root.detail_text else 0
+            color: app.theme.text_dim if hasattr(app.theme, "text_dim") else app.theme.text
+            font_size: app.formats.font_size
+
+        Widget:
+            # spacer so the buttons sit at the bottom regardless of text length
+
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(56)
+            spacing: dp(10)
+
+            # ── prompt: cancel / position / start ───────────────────
+            FormValueButton:
+                text: "Cancel"
+                opacity: 1 if root.state == "prompt" else 0
+                disabled: root.state != "prompt"
+                size_hint_x: 1 if root.state == "prompt" else None
+                width: 0 if root.state != "prompt" else 100
+                on_press: app.beep()
+                on_release: root.close()
+
+            FormValueButton:
+                text: ("Position " + root.position) if root.position else "No position"
+                opacity: 1 if root.state == "prompt" else 0
+                disabled: root.state != "prompt" or not root.position
+                size_hint_x: 1 if root.state == "prompt" else None
+                width: 0 if root.state != "prompt" else 100
+                on_press: app.beep()
+                on_release: root.next_position()
+
+            FormValueButton:
+                text: "Start"
+                opacity: 1 if root.state == "prompt" else 0
+                disabled: root.state != "prompt" or not root.position
+                size_hint_x: 1 if root.state == "prompt" else None
+                width: 0 if root.state != "prompt" else 100
+                on_press: app.beep()
+                on_release: root.start()
+
+            # ── running: stop measuring / close (keeps measuring) ───
+            FormValueButton:
+                text: "Stop measuring"
+                opacity: 1 if root.state == "running" else 0
+                disabled: root.state != "running"
+                size_hint_x: 1 if root.state == "running" else None
+                width: 0 if root.state != "running" else 100
+                on_press: app.beep()
+                on_release: root.stop()
+
+            FormValueButton:
+                text: "Close"
+                opacity: 1 if root.state in ("running", "result") else 0
+                disabled: root.state not in ("running", "result")
+                size_hint_x: 1 if root.state in ("running", "result") else None
+                width: 0 if root.state not in ("running", "result") else 100
+                on_press: app.beep()
+                on_release: root.close()
+
+            # ── proposed: discard / save ────────────────────────────
+            FormValueButton:
+                text: "Discard"
+                opacity: 1 if root.state == "proposed" else 0
+                disabled: root.state != "proposed"
+                size_hint_x: 1 if root.state == "proposed" else None
+                width: 0 if root.state != "proposed" else 100
+                on_press: app.beep()
+                on_release: root.stop()
+
+            FormValueButton:
+                text: "Save"
+                opacity: 1 if root.state == "proposed" else 0
+                disabled: root.state != "proposed"
+                size_hint_x: 1 if root.state == "proposed" else None
+                width: 0 if root.state != "proposed" else 100
+                on_press: app.beep()
+                on_release: root.save()

@@ -472,13 +472,20 @@ class RatioWatch:
     gear_table()        the configured gearbox table, read at each pass start
     mm_per_count()      Z scale resolution, or None
     on_verdict(v)       called once per pass with a TERMINAL verdict
+    hold()              True while a measurement runs (default: never)
+    on_held(v)          called once per pass, at its end, with the pass's
+                        final verdict whatever its kind, instead of on_verdict
 
     It only DECIDES and reports; on_verdict owns any action, including none
-    at all in shadow mode.
+    at all in shadow mode. While `hold()` is true nothing acts: a gearbox
+    measurement (els_gear_survey.py) cuts passes in a position the controller
+    does not expect on purpose, and the check would abort every one. The
+    verdict is still computed, and the pass's final one goes to `on_held`.
     """
 
     def __init__(self, hal, board, *, fsm_state, steps_per_count, gear,
-                 gear_table, mm_per_count, on_verdict, now_ms=None):
+                 gear_table, mm_per_count, on_verdict, now_ms=None,
+                 hold=None, on_held=None):
         self._hal = hal
         self._board = board
         self._fsm_state = fsm_state
@@ -487,6 +494,8 @@ class RatioWatch:
         self._gear_table = gear_table
         self._mm_per_count = mm_per_count
         self._on_verdict = on_verdict
+        self._hold = hold or (lambda: False)
+        self._on_held = on_held or (lambda _v: None)
         self._now_ms = now_ms or (lambda: time.monotonic() * 1000.0)
         self._prev_state = None
         self._check: Optional[CouplingRatioCheck] = None
@@ -498,7 +507,14 @@ class RatioWatch:
     def verdict(self) -> Verdict:
         return self._check.verdict if self._check else Verdict(UNKNOWN)
 
-    def _report(self, v: Verdict) -> None:
+    def _report(self, v: Verdict, ended: bool = False) -> None:
+        if self._hold():
+            # Held: nothing acts. The pass's final verdict, ended or not,
+            # reaches on_held once, when the pass ends.
+            if ended and not self._reported:
+                self._reported = True
+                self._on_held(v)
+            return
         if v.kind in TERMINAL and not self._reported:
             self._reported = True
             self._on_verdict(v)
@@ -525,7 +541,7 @@ class RatioWatch:
             self._start()
         if state != "cutting":
             if prev == "cutting" and self._check is not None:
-                self._report(self._check.end_pass())
+                self._report(self._check.end_pass(), ended=True)
             return
         if self._check is None:
             return
