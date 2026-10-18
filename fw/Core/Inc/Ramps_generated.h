@@ -186,7 +186,7 @@ typedef struct {
   uint32_t servoDesired;
 
   /* reg 4 READ-ONLY (firmware-owned): mirror of servo.stepsToGo (signed:
-   * negative on reverse moves), updated by ramp algorithm
+   * negative on reverse moves), published by the ISR at the end of every pass
    */
   int32_t stepsToGo;
 

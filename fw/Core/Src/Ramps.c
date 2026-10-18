@@ -512,7 +512,6 @@ static inline void updateIndexingPosition(rampsHandler_t *data) {
     data->rampsDeltaPos.error = ((int32_t)((float)shared->servo.currentSpeed * (float)shared->executionInterval + (float)data->rampsDeltaPos.error) % 100000000);
     shared->servo.desiredSteps += positionIncrement;
     shared->servo.stepsToGo -= positionIncrement;
-    shared->fastData.stepsToGo = shared->servo.stepsToGo;
   }
 }
 
@@ -1620,6 +1619,16 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
 
   if (shared->fastData.servoMode == 1) updateIndexingPosition(data);
   if (shared->fastData.servoMode == 2) updateJogPosition(data);
+
+  /* THE PUBLISHED BACKLOG, once per pass, after the last writer of
+   * servo.stepsToGo in it: the end-of-job block, the take-up paths, the phase
+   * correction, elsCalUpdate and the ramp above all run earlier in this
+   * pass. Publishing it anywhere earlier, or only while the ramp steps, would
+   * leave a stale remainder after the paths that set servo.stepsToGo directly
+   * and hide a move banked with servoMode != 1. One 32-bit store per
+   * pass. Host writes to servo.stepsToGo appear here on the next pass.
+   * Emulator: els_stepstogo_mirror_test. */
+  shared->fastData.stepsToGo = shared->servo.stepsToGo;
 
   /* Bracket the pulse generator to recover THIS TICK's signed commanded step
    * delta. The generator's own `direction` is a local that dies at the end of
