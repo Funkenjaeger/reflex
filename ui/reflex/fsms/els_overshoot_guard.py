@@ -33,9 +33,10 @@ tested directly (tests/fsms/test_els_overshoot_guard.py):
   the same kind of guided air passes, and shares the cue strip and the
   Save-or-Discard window. While one runs, `gear_survey_running` is the hold
   that keeps the coupling-ratio check from acting (RatioWatch's `hold`), and
-  each pass's final verdict arrives at `on_gear_pass`. Save writes the one
-  position's factor into the gearbox table text through GearTable, by way of
-  `apply_gear_table(text)`, which is the controller's own validated setter.
+  each pass's final verdict and whole-pass reading arrive at `on_gear_pass`.
+  Save writes the one position's factor into the gearbox table text through
+  GearTable, by way of `apply_gear_table(text)`, which is the controller's own
+  validated setter.
 
 NEVER writes a register. It changes only ElsDispatcher settings and posts
 notices.
@@ -300,13 +301,21 @@ class OvershootGuard:
         self._cue(self.gear_survey.message)
         return None
 
-    def on_gear_pass(self, v: Verdict) -> None:
-        """A pass ended; `v` is the coupling check's final verdict for it."""
+    def on_gear_pass(self, v: Verdict,
+                     reading: Optional[gear_mod.PassReading]) -> None:
+        """A pass ended; `v` is the coupling check's final verdict for it and
+        `reading` the measurement's own whole-pass reading (None without one)."""
         s = self.gear_survey
         if s is None or s.done:
             return
-        log.info(f"gear {s.position} pass: r {v.r_since_start} ({v.kind})")
-        self._cue(s.add(v))
+        if reading is not None and reading.r is not None:
+            what = (f"r {reading.r:.4f} over {reading.counts} counts, "
+                    f"{reading.polls} polls")
+        else:
+            what = f"not measured ({reading.why if reading else 'no reading'})"
+        log.info(f"gear {s.position} pass: {what}; check {v.kind}, "
+                 f"r_since_start {v.r_since_start}")
+        self._cue(s.add(v, reading))
         if s.done:
             self._on_gear_result(s)
 

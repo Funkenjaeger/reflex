@@ -86,7 +86,8 @@ class _Bare:
 def _passes(p, *readings):
     for r in readings:
         p.app.els_uic.overshoot.on_gear_pass(
-            R.Verdict(R.GEAR_CHANGE, "B", r_since_start=r))
+            R.Verdict(R.GEAR_CHANGE, "B", r_since_start=r),
+            gs.PassReading(r, counts=5000, polls=100))
 
 
 def test_the_prompt_offers_the_first_non_reference_position():
