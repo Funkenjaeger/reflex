@@ -67,7 +67,7 @@ class FakeExceptionResponse(Exception):
 class FakeBoard:
     """The application's holding registers, with the ISR's reset handshake."""
 
-    def __init__(self, gs, schema=8, protocol=12, stage=2, ack=True, refuse=False,
+    def __init__(self, gs, schema=8, protocol=13, stage=2, ack=True, refuse=False,
                  engaged=False):
         self.gs = gs
         self.refuse = refuse
@@ -211,7 +211,7 @@ def main() -> int:
     b = FakeBoard(gs, schema=7)
     rc, out, err = run_main(gs, b, ["--reset"])
     check(rc == 2 and b.writes == [], "another probe's schema is refused before any write")
-    b = FakeBoard(gs, protocol=13)
+    b = FakeBoard(gs, protocol=12)
     rc, out, err = run_main(gs, b, ["--reset"])
     check(rc == 2 and b.writes == [], "an unknown register layout is refused before any write")
     b = FakeBoard(gs, stage=1)

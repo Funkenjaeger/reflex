@@ -545,12 +545,22 @@ static void isrThreadFunc(LathePhysics *physics, rampsHandler_t *rampsData, int 
          * emulator-backed test would exercise a rung-2 census against a dead
          * register and report it as healthy. That is the same shape as the
          * defect this register exists to fix, one level down. */
+        /* The command channel rides the same ~100 ms tick, in servoEnableTask's
+         * order: intake first, the mode publish, the ack last. The same two
+         * functions the task calls (Ramps.c), so the emulator runs DISENGAGE
+         * through the firmware's own code. The ISR runs between ticks, never
+         * inside one, so here an ack always lands on the tick AFTER the
+         * consuming one -- the case hardware reaches only when the ISR has
+         * not preempted the task in between. There is no re-assert to skip:
+         * the emulator does not model it. */
         static int mode_divider = 0;
         mode_divider++;
         if (mode_divider >= rate_hz / 10) {
             mode_divider = 0;
+            (void)elsCommandIntake(rampsData);
             elsPublishMachineMode(&rampsData->shared,
                                   (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
+            elsCommandFinish(rampsData);
         }
 
         /* Mirror updateSpeedTask's spindle-period refresh, ~20 ms.

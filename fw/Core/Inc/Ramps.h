@@ -19,6 +19,7 @@
 #define THIRD_PARTY_RAMPS_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "stm32f4xx_hal.h"
 #include "cmsis_os2.h"
 #include "Modbus.h"
@@ -512,6 +513,13 @@ typedef struct {
   int32_t  elsStopQuiescentZ;         // last Z scale position the quiescence tracker saw; any change resets elsStopQuiescentTicks
   int32_t  elsStopQuiescentTicks;     // consecutive ISR ticks with Z unchanged. The "has it STOPPED" input the confirmation gate never had; only consulted when ELS_REQUIRE_QUIESCENCE is set (see Ramps.c)
   uint16_t elsStopTakeupLatched;      // 1 once the Z confirmation window has closed on an unconfirmed takeup; further Z motion can no longer release the gate (see ELS_TAKEUP_CONFIRM_WINDOW_TICKS)
+  /* ELS command channel (els_command.h). Task-owned except elsCommandEndJob,
+   * which the task sets and the ISR clears once it has ended the job; the
+   * ack waits for that, so an ack never describes a machine still carrying
+   * motion. Non-Modbus. */
+  uint16_t elsCommandPending;         // ELS_CMD_* consumed and not yet acked; 0 = none
+  uint16_t elsCommandResult;          // 1 if a calibration was running when the command was consumed (decides OK_CAL_ABORTED at the ack)
+  volatile uint16_t elsCommandEndJob; // task -> ISR: run the end-of-job teardown on the next pass, then clear
   uint16_t elsStopCorrectOnConfirm;  // 1 if the take-up in flight is to be followed by applyPhaseCorrection() once CONFIRMED, i.e. a reference was latched and thread geometry was set at initiation. 0 on a first pass (no reference yet) and in turning (no pitch): those take-ups exist to prove coupling only. Set at initiation, read at confirmation, cleared with the job (2026-08-21).
   elsCalCtx_t elsCal;                 // backlash calibration run state; non-Modbus, the ISR owns it entirely (els_backlash_cal.h)
   /* Motion attribution for the Z confirmation gate: which of the Z counts seen
@@ -555,6 +563,18 @@ void elsRefreshSpindlePeriod(rampsSharedData_t *shared);
 /* bootCommand intake (Ramps.c), called from servoEnableTask every ~100 ms. */
 void elsBootCommandTick(rampsSharedData_t *shared);
 
+/* The ELS command channel (els_command.h), consumed in servoEnableTask, ~100 ms.
+ * Two halves of one task tick, so the emulator (which runs no FreeRTOS tasks)
+ * can mirror the tick with the same two calls:
+ *   elsCommandIntake  FIRST in the tick. Consumes elsStop.command and carries
+ *                     out the task's part of it. Returns true while a command
+ *                     is in flight: the caller skips its servoMode re-assert.
+ *   elsCommandFinish  LAST before bootCommand, after the mode is published.
+ *                     Acks once the ISR has taken the teardown and the
+ *                     machine is inert: commandResult, then commandSeq. */
+bool elsCommandIntake(rampsHandler_t *data);
+void elsCommandFinish(rampsHandler_t *data);
+
 _Noreturn void userLedTask(__attribute__((unused)) void *argument);
 
 _Noreturn void servoEnableTask(void *argument);
@@ -568,6 +588,7 @@ _Noreturn void servoEnableTask(void *argument);
  * els_machine_mode.h needs rampsSharedData_t for the same reason, and must
  * precede els_diag.h because the mode-watch probe calls its function. */
 #include "els_machine_mode.h"
+#include "els_command.h"
 #include "els_diag.h"
 
 #endif

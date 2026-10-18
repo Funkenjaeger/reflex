@@ -26,8 +26,9 @@
  *      generator's own arithmetic, and their bits must agree with the schema.
  *
  * MUTATIONS (seen red 2026-10-16, each applied alone and reverted). The counts
- * below are as recorded then; calMeasured (6 registers) became host-writable
- * afterwards, so the firmware-owned total is now 160, not 166:
+ * below are as recorded then. calMeasured (6 registers) was host-writable
+ * under protocolVersion 12 and is firmware-owned again under 13, which also
+ * adds commandSeq and commandResult, so the firmware-owned total is now 168:
  *   M1 mb_rtu.c without the FC 6 access check -> 166 checks fail, one per
  *      firmware-owned register (D1)
  *   M2 touchesReadOnly testing only the first register of the range -> 13
@@ -252,7 +253,7 @@ static void sectionD() {
             checkf(a16.size() == 8 && m.main[r] == 0x6666, "D4 FC 16 to host-writable register %u lands", r);
         }
     }
-    checkf(ro == 160, "D5 160 firmware-owned registers in the map (got %u)", ro);
+    checkf(ro == 168, "D5 168 firmware-owned registers in the map (got %u)", ro);
 
     /* Blocks that reach into a firmware-owned register from below and from
      * above: a writable register on one side, the firmware-owned one on the
@@ -322,7 +323,11 @@ static void sectionE() {
         { "elsStop.protocolVersion",AT(ELS, elsStop_t, protocolVersion),  true  },
         { "elsStop.calCommand",     AT(ELS, elsStop_t, calCommand),       false },
         { "elsStop.bootSeq",        AT(ELS, elsStop_t, bootSeq),          true  },
-        { "elsStop.calMeasured",    AT(ELS, elsStop_t, calMeasured),      false },
+        { "elsStop.calMeasured",    AT(ELS, elsStop_t, calMeasured),      true  },
+        { "elsStop.calBasisSteps",  AT(ELS, elsStop_t, calBasisSteps),    false },
+        { "elsStop.command",        AT(ELS, elsStop_t, command),          false },
+        { "elsStop.commandSeq",     AT(ELS, elsStop_t, commandSeq),       true  },
+        { "elsStop.commandResult",  AT(ELS, elsStop_t, commandResult),    true  },
         { "elsStop.calCeilingSteps",AT(ELS, elsStop_t, calCeilingSteps),  false },
         { "elsStop.executionCyclesPeak", AT(ELS, elsStop_t, executionCyclesPeak), true },
         { "elsStop.clearRefCommand",AT(ELS, elsStop_t, clearRefCommand),  false },

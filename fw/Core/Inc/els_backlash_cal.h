@@ -423,8 +423,8 @@ static inline elsCalAction_t elsCalTick(elsCalCtx_t *ctx,
        * lash actually being crossed, and the resulting calMeasured[] value
        * (a distance with NOTHING to do with the true mechanical lash --
        * purely an artifact of when the leadscrew happened to have turned to
-       * by the time someone bumped the carriage) feeds directly into
-       * elsTakeupConfirmThreshold(), which is the standard the take-up gate
+       * by the time someone bumped the carriage) becomes, on a successful
+       * run, the calBasisSteps that elsTakeupConfirmThreshold() derives from, which is the standard the take-up gate
        * is judged against on every real cut thereafter. Poisoning this poisons
        * that. elsSlipConfirmed() is the same primitive the take-up gate uses
        * (els_slip.h) -- built once there, reused here rather than rebuilt --

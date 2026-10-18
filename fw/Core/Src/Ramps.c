@@ -360,7 +360,15 @@ void RampsStart(rampsHandler_t *rampsData) {
    * reference (reflex-ui writes it when it adopts a gearbox position with a
    * reference latched). Both sit in slots that were alignment pads under 11:
    * clearRefSeq in hot before lastTakeupZDelta, clearRefCommand in cold before
-   * diagSettleTicks. Nothing else moved; bootCommand is still register 168. */
+   * diagSettleTicks. Nothing else moved; bootCommand is still register 168.
+   *
+   * 13: the ELS command channel (command / commandSeq / commandResult, and
+   * DISENGAGE, its first command; els_command.h) and the calMeasured split:
+   * calMeasured is the last run's result again, and the take-up gate reads
+   * calBasisSteps, which only a successful run or the host writes. commandSeq
+   * took clearRefSeq's hot slot and clearRefSeq moved to cold, so the hot
+   * group (and the board tick) did not grow; the new cold registers sit after
+   * bootSeq, so bootCommand is still register 168. */
   rampsData->shared.elsStop.protocolVersion = ELS_PROTOCOL_VERSION;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
@@ -383,6 +391,12 @@ void RampsStart(rampsHandler_t *rampsData) {
   rampsData->shared.elsStop.bootSeq     = 0;
   rampsData->shared.elsStop.clearRefCommand = 0;
   rampsData->shared.elsStop.clearRefSeq     = 0;
+  rampsData->shared.elsStop.command         = ELS_CMD_NONE;
+  rampsData->shared.elsStop.commandSeq      = 0;
+  rampsData->shared.elsStop.commandResult   = ELS_CMD_RESULT_OK;
+  rampsData->shared.elsStop.calBasisSteps   = 0;   /* no calibration on file until a run or the host says so */
+  rampsData->elsCommandPending = ELS_CMD_NONE;
+  rampsData->elsCommandEndJob  = 0;
   rampsData->shared.elsStop.calResult    = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupResult = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupSeq    = 0;
@@ -772,6 +786,21 @@ static inline void elsCalUpdate(rampsHandler_t *data) {
     for (int32_t i = 0; i < ELS_CAL_CYCLES; i++) {
       shared->elsStop.calMeasured[i] = data->elsCal.measured[i];
     }
+    /* THE TAKE-UP GATE'S BASIS MOVES ONLY ON SUCCESS (protocolVersion 13).
+     * Until 13 the gate derived its threshold from calMeasured itself, so a
+     * failed run's partial values (zeros) dropped it to the bare motion floor
+     * for every later pass until the host wrote the legs back. calBasisSteps
+     * is a separate register: a failed run leaves it alone, and a successful
+     * one installs its mean, exactly the number the gate used to take from
+     * calMeasured. A mean too large for the uint16 register is left out
+     * rather than clamped -- a clamped basis would be a number nobody
+     * measured -- and the gate keeps whatever basis it had. */
+    if (data->elsCal.result == ELS_CAL_OK) {
+      int32_t mean = elsCalMeanValid(data->elsCal.measured, ELS_CAL_CYCLES);
+      if (mean > 0 && mean <= (int32_t)UINT16_MAX) {
+        shared->elsStop.calBasisSteps = (uint16_t)mean;
+      }
+    }
     shared->elsStop.calResult = data->elsCal.result;
     shared->elsStop.calSeq++;
     data->elsCal.phase = ELS_CAL_IDLE;
@@ -850,8 +879,22 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
     shared->elsStop.phaseOffsetSteps = 0;
   }
 
-  // Auto-clear active when enable is deasserted
-  if (data->elsStopPreviousEnable && !shared->elsStop.enable) {
+  // Auto-clear active when enable is deasserted.
+  //
+  // ALSO RUN ON DISENGAGE'S REQUEST (elsCommandEndJob, set by servoEnableTask
+  // in elsCommandIntake, protocolVersion 13). DISENGAGE clears enable, which
+  // makes the falling edge -- but only when enable was 1. With enable already
+  // 0 there is no edge, and a commanded move (MOVING), a jog's ramp, a take-up
+  // started from a hold with enable 0, or an active left set would survive an
+  // ack that says the machine is inert. So the command asks for this block
+  // directly. It is the same teardown the edge runs, in the same place,
+  // ahead of the resume detector: clearing active here consumes the edge it
+  // makes, which the task could not do from outside the ISR. Running it on
+  // both the edge and the request in one pass is harmless (every write is to
+  // the same value). The flag is cleared last, and the task acks only once it
+  // reads 0, so the ack follows this pass.
+  if ((data->elsStopPreviousEnable && !shared->elsStop.enable)
+      || data->elsCommandEndJob) {
     shared->elsStop.active = 0;
     /* Consume the 1->0 active edge this handler just created. The resume
      * detector further down runs LATER IN THIS SAME PASS (its shadow copy
@@ -890,6 +933,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
     data->elsStopTakeupTicks      = 0;
     data->elsStopTakeupLatched    = 0;
     data->elsStopCorrectOnConfirm = 0;
+    data->elsCommandEndJob        = 0;
   }
 
   data->elsStopPreviousEnable = shared->elsStop.enable;
@@ -1120,7 +1164,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
          * wanted, not just that it refused. */
         shared->elsStop.takeupThreshCounts = elsTakeupConfirmThreshold(
             (int32_t)shared->elsStop.backlashSteps,
-            elsCalMeanValid(shared->elsStop.calMeasured, ELS_CAL_CYCLES),
+            (int32_t)shared->elsStop.calBasisSteps,
             shared->elsStop.threadPitchSteps,
             shared->elsStop.zCountsPerPitch,
             shared->elsStop.calMotionThreshCounts);
@@ -1841,6 +1885,12 @@ _Noreturn void servoEnableTask(void *argument) {
   for (;;) {
     osDelay(100);
 
+    /* The command channel goes FIRST in the tick (els_command.h). While a
+     * command is in flight the re-assert below is skipped: DISENGAGE has just
+     * cleared sync and servoMode, and the re-assert is a read followed by a
+     * write that must not land between them. */
+    bool commandInFlight = elsCommandIntake(rampsData);
+
     bool anySyncMotionEnabled = false;
     for (int i = 0; i < SCALES_COUNT; i++) {
       anySyncMotionEnabled = anySyncMotionEnabled || (shared->scales[i].syncEnable != 0);
@@ -1850,7 +1900,8 @@ _Noreturn void servoEnableTask(void *argument) {
      * release build; a diagnostic probe may refuse the assert and record that
      * it did (see els_diag_disengage_latch.h, which exists precisely because
      * this line can switch the feed back on after a disengage). */
-    if (anySyncMotionEnabled && !shared->elsStop.active && rampsData->shared.fastData.servoMode != 2) {
+    if (!commandInFlight && anySyncMotionEnabled && !shared->elsStop.active
+        && rampsData->shared.fastData.servoMode != 2) {
       if (!elsDiagServoGate(&rampsData->diag, &shared->elsStop,
                             rampsData->shared.fastData.servoMode)) {
         rampsData->shared.fastData.servoMode = 1;
@@ -1882,9 +1933,109 @@ _Noreturn void servoEnableTask(void *argument) {
     if (shared->fastData.servoMode != 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_RESET);
     if (shared->fastData.servoMode == 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_SET);
 
+    /* The command ack, after the mode is published and ENA driven, so the
+     * mode a host reads beside the new commandSeq describes the result. */
+    elsCommandFinish(rampsData);
+
     /* Boot command intake, once per task tick. */
     elsBootCommandTick(shared);
   }
+}
+
+/* ---- The ELS command channel (els_command.h, protocolVersion 13) ----------
+ *
+ * Consumed in servoEnableTask, not in the ISR, for the reason the design doc
+ * gives (docs/design/els-command-channel.md, "Where the command is
+ * consumed"): the task's re-assert reads syncEnable and then writes
+ * servoMode, and an ISR consumption landing between the two would be
+ * overwritten, leaving servoMode = 1 behind an OFF ack. Consuming in the same
+ * task, ahead of the re-assert, and skipping the re-assert while a command is
+ * in flight, closes that.
+ *
+ * DISENGAGE, in order:
+ *   1. syncEnable = 0 on every scale -- the motion source off first, so
+ *      nothing can re-promote servoMode behind the rest;
+ *   2. servoMode = 0 -- no pulses from the next ISR pass, and ENA high (drive
+ *      off) later in this same task tick;
+ *   3. enable = 0, and elsCommandEndJob = 1: the ISR's end-of-job block
+ *      clears active, consumes the resume edge it makes so no take-up starts,
+ *      abandons a take-up in flight and cancels the pending motion, whether
+ *      or not enable was 1 (see that block in SynchroRefreshTimerIsr). From
+ *      CAL, servoMode 0 is the calibration's abort condition, so the same ISR
+ *      pass ends the run with ELS_CAL_ERR_ABORTED on calSeq;
+ *   4. the ack (elsCommandFinish): commandResult, then commandSeq, only once
+ *      the ISR has cleared elsCommandEndJob, no calibration is running and the
+ *      machine still reads inert. Otherwise it waits for the next tick, so an
+ *      ack never describes a machine still carrying motion.
+ *
+ * Legal from every mode, so DISENGAGE has no refusal. A host write that lands
+ * while it is in flight (the Modbus task preempts this one) and reopens sync,
+ * servoMode or enable holds the ack back, and the next intake applies the
+ * teardown again: the command's contract wins over a write the UI is not
+ * supposed to make in that window.
+ */
+static bool elsDisengageInert(const rampsHandler_t *data) {
+  const rampsSharedData_t *shared = &data->shared;
+  for (int i = 0; i < SCALES_COUNT; i++) {
+    if (shared->scales[i].syncEnable != 0u) return false;
+  }
+  return shared->fastData.servoMode == 0u && shared->elsStop.enable == 0u;
+}
+
+static void elsDisengageTeardown(rampsHandler_t *data) {
+  rampsSharedData_t *shared = &data->shared;
+  for (int i = 0; i < SCALES_COUNT; i++) {
+    shared->scales[i].syncEnable = 0;
+  }
+  shared->fastData.servoMode = 0;
+  shared->elsStop.enable     = 0;
+  data->elsCommandEndJob     = 1;
+}
+
+bool elsCommandIntake(rampsHandler_t *data) {
+  rampsSharedData_t *shared = &data->shared;
+
+  if (data->elsCommandPending != ELS_CMD_NONE) {
+    /* In flight. A command written meanwhile stays in the register until
+     * this one is acked: one command in flight, one ack each. */
+    if (!elsDisengageInert(data)) {
+      elsDisengageTeardown(data);
+    }
+    return true;
+  }
+
+  uint16_t cmd = shared->elsStop.command;
+  if (cmd == ELS_CMD_NONE) return false;
+  shared->elsStop.command = ELS_CMD_NONE;
+
+  if (cmd != ELS_CMD_DISENGAGE) {
+    shared->elsStop.commandResult = ELS_CMD_RESULT_ERR_UNKNOWN;
+    shared->elsStop.commandSeq++;
+    return false;
+  }
+
+  /* Whether a calibration was running when the command was consumed. The
+   * result is decided at the ack from this and calResult, so a run that
+   * happened to finish on its own in the same instant is not reported as
+   * aborted by us. */
+  data->elsCommandResult  = (data->elsCal.phase != ELS_CAL_IDLE) ? 1u : 0u;
+  data->elsCommandPending = cmd;
+  elsDisengageTeardown(data);
+  return true;
+}
+
+void elsCommandFinish(rampsHandler_t *data) {
+  rampsSharedData_t *shared = &data->shared;
+  if (data->elsCommandPending == ELS_CMD_NONE) return;
+  if (data->elsCommandEndJob != 0u) return;              /* the ISR has not run the teardown yet */
+  if (data->elsCal.phase != ELS_CAL_IDLE) return;         /* abort not taken yet */
+  if (!elsDisengageInert(data)) return;                   /* a host write reopened it */
+
+  shared->elsStop.commandResult =
+      (data->elsCommandResult != 0u && shared->elsStop.calResult == ELS_CAL_ERR_ABORTED)
+      ? ELS_CMD_RESULT_OK_CAL_ABORTED : ELS_CMD_RESULT_OK;
+  shared->elsStop.commandSeq++;
+  data->elsCommandPending = ELS_CMD_NONE;
 }
 
 /* The calCommand hand-off for bootCommand (see Ramps.h). Consumed and cleared
