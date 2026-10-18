@@ -7,7 +7,6 @@ from reflex.fsms.els_gear import GearTable, table_of
 from reflex.fsms.els_mode_watch import mode_name
 from reflex.fsms.els_stop_registers import ElsStopRegisters
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
-from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
 
 import math
 from fractions import Fraction
@@ -79,18 +78,12 @@ class ElsFsm:
         {'trigger': 'fault', 'source': '*', 'dest': 'alarm'},
     ]
 
-    def __init__(self, els: els, board: board, hal: ElsStopRegisters, controller,
-                 diag_recorder=None):
+    def __init__(self, els: els, board: board, hal: ElsStopRegisters, controller):
         self.els = els
         self.board = board
         self.servo = board.servo
         self.hal = hal
         self.controller = controller
-        # How the (dark) rung-3 adopt path learns which diagnostic probe THIS
-        # connection's firmware carries -- the recorder's learned schema is the
-        # gate, so no second diagSchema read is ever issued. Optional: None
-        # simply keeps the adopt gates failed (see _read_adoptable_mode).
-        self.diag_recorder = diag_recorder
         # The arming attempt in flight. Incremented per attempt so a batch
         # result or a timeout belonging to an abandoned one is ignored.
         self._arming_seq = 0
@@ -118,11 +111,12 @@ class ElsFsm:
         # on_enter_stopped know to arm ELS with a fresh stopPosition.
         self._engaging = False
 
-        # Set by reconcile_firmware_on_connect when it finds the firmware was
-        # driving the carriage at connect and stops it. Holds the register
-        # snapshot so the UI can tell the operator WHAT it interrupted; None
-        # means no pass was interrupted this session. Read once and cleared by
-        # whoever presents it.
+        # Set by reconcile_firmware_on_connect when it finds work in flight at
+        # connect: either it stopped a moving carriage (teardown=True), or the
+        # adopt plan left live work running untouched (teardown=False, with the
+        # published mode). Holds the register snapshot so the UI can tell the
+        # operator what it found and what it did; None means nothing to report
+        # this session. Read once and cleared by whoever presents it.
         self.interrupted_pass = None
 
 
@@ -635,12 +629,14 @@ class ElsFsm:
           blindly rewriting could disarm a stop that is actively protecting the
           cut. (Full link-loss-mid-cut recovery is a known separate gap.)
 
-        A DARK rung-3 path sits ahead of these branches: when
-        els_adopt.ELS_ADOPT_ON_CONNECT is flipped and the mode-watch probe
-        (diag schema 4) is present, the policy keys on the firmware-published
-        machine mode (els_adopt.adopt_plan) instead of this session's state.
-        The flag ships False, so today every connect takes the branches above
-        unchanged; see els_adopt.py for the policy and what earns the flip.
+        The rung-3 adopt path sits ahead of these branches. When this session
+        holds no job ('disabled', which is every session after a UI restart)
+        the policy keys on the machine mode the firmware publishes in
+        elsStop.machineMode (els_adopt.adopt_plan) instead of on this session's
+        state, which says nothing about the machine after a restart. An
+        engaged or alarmed session keeps the branches above: it holds the job,
+        so a reconnect there is a link blip, not a restart. A failed mode read
+        also falls back to them. See els_adopt.py for the policy.
         """
         # Push the calibration limits FIRST, in every state, before any
         # state-specific policy below.
@@ -693,13 +689,12 @@ class ElsFsm:
         # it. Never raises -- a diagnostic must not block a safety teardown.
         flight = self.hal.read_motion_in_flight()
 
-        # RUNG-3 ADOPT PATH, DARK. With ELS_ADOPT_ON_CONNECT at its shipped
-        # False this evaluates one module attribute and falls through -- every
-        # gate below stays byte-for-byte today's behavior. When the census
-        # earns the flip, connect becomes a READ: the plan keys on the
-        # firmware's published mode, not on which state THIS session happens
-        # to be in (which after a restart is always 'disabled' -- the
-        # unreachable-branch class the 2026-08-16 review §4.4 documents).
+        # RUNG-3 ADOPT PATH. For a session with no job, connect is a READ: the
+        # plan keys on the firmware's published mode, not on which state THIS
+        # session happens to be in (which after a restart is always 'disabled'
+        # -- the unreachable-branch class the 2026-08-16 review §4.4
+        # documents). None from the read falls through to the state-keyed
+        # branches below, unchanged.
         mode = self._read_adoptable_mode()
         if mode is not None:
             self._adopt_on_connect(mode, flight)
@@ -753,7 +748,7 @@ class ElsFsm:
                     f"carriage at connect ({flight}) — sync disabled and stop "
                     f"cleared; a pass was interrupted"
                 )
-                self.interrupted_pass = flight
+                self.interrupted_pass = dict(flight, teardown=True)
                 bus.publish("els_pass_interrupted")
         elif state == 'stopped':
             self.hal.set_stop_direction(
@@ -789,19 +784,28 @@ class ElsFsm:
         gate passes. Any None keeps reconcile on the state-keyed branches
         unchanged. Gates, in order:
 
-        - els_adopt.ELS_ADOPT_ON_CONNECT, read live off the module so the
-          eventual flip (and tests) reach the real setting;
-        - the diag recorder has recognized the mode-watch probe (schema 4) on
-          THIS connection. read_current_mode is a scratchpad register that
-          means something else entirely under any other schema, so the
-          recorder's learned schema is the gate -- never a bare read;
-        - the read itself succeeds. A raising diagnostic read must degrade to
-          the state-keyed reconcile, never take connect down with it.
+        - els_adopt.ELS_ADOPT_ON_CONNECT, read live off the module so tests
+          (and a revert of the flip) reach the real setting;
+        - this session holds no job ('disabled'). That is every session after
+          a UI restart, and the one state whose branch below cannot tell what
+          the machine is doing. An engaged session ('stopped', 'arming',
+          'cutting', 'retracting') reconnects after a link blip, not a
+          restart: it still holds the committed stop, the direction and the
+          pass in flight, and its own branches act on them. 'alarm' keeps its
+          teardown. The link drops on a single failed scan, so without this
+          gate one bad read mid-cut would drop the session to 'disabled';
+        - the read itself succeeds. A raising read must degrade to the
+          state-keyed reconcile, never take connect down with it.
+
+        No diagnostic-schema gate: read_current_mode reads the permanent
+        machineMode register, which every build publishes (its docstring says
+        callers must not add one). Until 2026-10-17 this gate required the
+        retired mode-watch probe (schema 4), which no firmware can be built
+        with, so the adopt path could never run.
         """
         if not els_adopt.ELS_ADOPT_ON_CONNECT:
             return None
-        recorder = self.diag_recorder
-        if recorder is None or recorder.schema != ELS_DIAG_SCHEMA_MODE_WATCH:
+        if self.state != 'disabled':
             return None
         try:
             return int(self.hal.read_current_mode())
@@ -838,7 +842,8 @@ class ElsFsm:
                 f"notifying the operator of interrupted work"
             )
             self.interrupted_pass = dict(
-                flight, mode=mode, mode_name=mode_name(mode))
+                flight, mode=mode, mode_name=mode_name(mode),
+                teardown=plan.teardown)
             bus.publish("els_pass_interrupted")
         if self.state != plan.state:
             # ADOPTION, not a transition: set_state fires no callbacks, which

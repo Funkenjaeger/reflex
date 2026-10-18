@@ -13,7 +13,8 @@ from reflex.fsms.els_diag import ElsDiagRecorder
 from reflex.fsms.els_flight_recorder import FlightRecorder
 from reflex.fsms.els_phase_recorder import (
     PhaseCorrectionRecorder, PhaseLiveTracker, SpindleCountWatch)
-from reflex.fsms.els_mode_watch import ElsModeWatch
+from reflex.fsms.els_mode_watch import (ElsModeWatch, MODE_FEEDING, MODE_MOVING,
+                                         MODE_TAKEUP, MODE_CAL)
 from reflex.fsms.els_overshoot import OffsetWriteLimiter, StopOffsetCorrector
 from reflex.fsms.els_overshoot_guard import OvershootGuard
 from reflex.fsms.els_stop_outcome import StopOutcomeWatch
@@ -494,10 +495,8 @@ class ElsUiController(EventDispatcher):
         self._els.bind(x_axis_index=lambda *_: self._invalidate_x_targets())
 
         # 2. Build domain FSM (HAL injected; controller doubles as modes
-        # source). The diag recorder rides along so the dark rung-3 adopt path
-        # can gate on its learned schema -- inert until els_adopt flips.
-        self._els_fsm = ElsFsm(els, board, self._hal, self,
-                               diag_recorder=self._diag_recorder)
+        # source).
+        self._els_fsm = ElsFsm(els, board, self._hal, self)
 
         # 3. Eagerly compute initial validation so FSM guards don't start False.
         self._validate_stop_z()
@@ -2196,22 +2195,77 @@ class ElsUiController(EventDispatcher):
         return ("The ELS stop is not armed. The feed will run with no "
                 "automatic stop.\n\nPress Enable feed to continue.")
 
+    # What the controller was doing when a hands-off connect found it, by the
+    # mode it published (els_mode_watch.MODE_*). Completes "the controller
+    # was ...". Each says whether the work ends by itself, because nothing on
+    # this app's side will end it.
+    HANDS_OFF_ACTIVITY = {
+        MODE_FEEDING: "feeding: sync was on, so the carriage moves whenever the spindle turns",
+        MODE_MOVING: "making a commanded move, such as a retract, which ends by itself",
+        MODE_TAKEUP: "taking up backlash at the start of a pass, and the feed follows it",
+        MODE_CAL: "running a backlash calibration, which ends by itself",
+    }
+
+    def _interrupted_notice(self, flight) -> tuple[str, str]:
+        """(title, message) for the connect-time notice, from what reconcile
+        actually did. flight['teardown'] says whether it stopped the work;
+        an older payload without the key came from the teardown path."""
+        armed = "with an armed stop" if flight.get('enable') else "with NO armed stop"
+        if flight.get('teardown', True):
+            return ("Feed stopped on startup", "\n\n".join([
+                "The controller was still driving the carriage when this app "
+                f"started ({armed}).",
+                "The previous session stopped during a pass. Sync is now off "
+                "and the ELS stop is clear. The carriage stopped HERE, not at "
+                "a shoulder.",
+                "Examine the workpiece and the tool before you continue.",
+            ]))
+
+        mode = flight.get('mode')
+        activity = self.HANDS_OFF_ACTIVITY.get(
+            mode, f"in a mode this app does not know ({flight.get('mode_name', mode)})")
+        parts = [f"When this app connected, the controller was {activity}."]
+        if 'sync' in flight and 'enable' in flight:
+            sync = "on" if flight['sync'] else "off"
+            stop = "armed" if flight['enable'] else "NOT armed"
+            parts.append("This app changed nothing. Sync is still "
+                         f"{sync} and the ELS stop is still {stop}.")
+            if flight['sync'] and not flight['enable']:
+                parts.append("Nothing will stop the carriage at a shoulder.")
+        else:
+            parts.append("This app changed nothing, and could not read whether "
+                         "sync is on or the ELS stop is armed.")
+        parts.append("This app has no record of that job, so ELS shows as "
+                     "disengaged.")
+        if mode in (MODE_FEEDING, MODE_TAKEUP):
+            parts.append("If the carriage should not be moving, turn Sync "
+                         "Enable off. Then examine the workpiece and the tool.")
+        else:
+            parts.append("Examine the workpiece and the tool before you continue.")
+        return ("Controller still working", "\n\n".join(parts))
+
     def _on_pass_interrupted(self):
-        """Tell the operator we stopped a pass that the firmware was still running.
+        """Tell the operator what connect found in flight, and what it did.
 
-        Fired by ElsFsm.reconcile_firmware_on_connect when it comes up to find the
-        carriage moving -- i.e. the previous session died mid-pass and the
-        firmware carried on without it.
+        Fired by ElsFsm.reconcile_firmware_on_connect in two cases, and the
+        notice must say which, because they leave the machine in opposite
+        states:
 
-        THE WHOLE POINT IS REMOVING AMBIGUITY. Disabling sync on connect is a
-        deliberate choice (safest in the large majority of cases; see the note in
-        reconcile_firmware_on_connect), but its cost lands exactly where it is
-        hardest to interpret -- a thread that stops partway with no explanation.
-        Saying so plainly turns a mystery into a known event.
+        - TEARDOWN (the state-keyed path): the carriage was moving -- the
+          previous session died mid-pass and the firmware carried on -- and
+          reconcile turned sync off and cleared the stop. Disabling sync on
+          connect is deliberate (see the note in reconcile_firmware_on_connect),
+          but its cost lands where it is hardest to interpret: a thread that
+          stops partway with no explanation. Saying so turns a mystery into a
+          known event.
+        - HANDS OFF (the adopt path's live-work rows, els_adopt.py): the
+          firmware published FEEDING, MOVING, TAKEUP, CAL or a mode this UI
+          does not know, and reconcile wrote nothing. The work is still
+          running with whatever stop it had, so the notice must not say it
+          was stopped.
 
-        Non-blocking and informational: the stop has ALREADY happened by the time
-        this runs. There is nothing to confirm and nothing to undo, so it is an
-        acknowledgement, not a choice.
+        Non-blocking and informational either way: there is nothing to
+        confirm and nothing to undo, so it is an acknowledgement, not a choice.
         """
         fsm = self._els_fsm
         flight = getattr(fsm, 'interrupted_pass', None)
@@ -2219,22 +2273,11 @@ class ElsUiController(EventDispatcher):
             return
         fsm.interrupted_pass = None   # one-shot; do not re-warn on a later event
 
-        armed = "with an armed stop" if flight.get('enable') else "with NO armed stop"
         log.warning(f"presenting interrupted-pass notice to operator: {flight}")
         try:
             from reflex.components.popups.custom_popup import CustomPopup
-            CustomPopup(
-                title="Feed stopped on startup",
-                message="\n\n".join([
-                    "The controller was still driving the carriage when this app "
-                    f"started ({armed}).",
-                    "The previous session stopped during a pass. Sync is now off "
-                    "and the ELS stop is clear. The carriage stopped HERE, not at "
-                    "a shoulder.",
-                    "Examine the workpiece and the tool before you continue.",
-                ]),
-                button_text="OK",
-            ).open()
+            title, message = self._interrupted_notice(flight)
+            CustomPopup(title=title, message=message, button_text="OK").open()
         except Exception as e:
             # A notice that cannot be drawn must not take the app down on startup.
             log.error(f"could not show interrupted-pass notice: {e}")
