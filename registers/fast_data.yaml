@@ -63,7 +63,7 @@ fields:
   # the field build/2026-09-12-5's mirror_of gate (d7de6de) was written to
   # catch: it was uint32 over servo.stepsToGo's int32 for months and nothing
   # but this declaration would have refused it.
-  - {id: 3, name: stepsToGo,         type: int32,  access: ro_firmware, group: all, mirror_of: servo.stepsToGo, doc: "READ-ONLY (firmware-owned): mirror of servo.stepsToGo (signed: negative on reverse moves), updated by ramp algorithm"}
+  - {id: 3, name: stepsToGo,         type: int32,  access: ro_firmware, group: all, mirror_of: servo.stepsToGo, doc: "READ-ONLY (firmware-owned): mirror of servo.stepsToGo (signed: negative on reverse moves), published by the ISR at the end of every pass"}
   - {id: 4, name: servoSpeed,        type: float,  access: ro_firmware, group: all, doc: "READ-ONLY (firmware-owned): output step rate (steps/100ms), updated by servoEnableTask"}
   - {id: 5, name: scaleCurrent,      type: int32, count: SCALES_COUNT, access: ro_firmware, group: all, mirror_of: "scales[].position", doc: "READ-ONLY (firmware-owned): mirror of scales[i].position, updated by ISR"}
   - {id: 6, name: scaleSpeed,        type: int32, count: SCALES_COUNT, access: ro_firmware, group: all, mirror_of: "scales[].speed", doc: "READ-ONLY (firmware-owned): mirror of scales[i].speed, updated by updateSpeedTask"}

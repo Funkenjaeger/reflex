@@ -669,3 +669,15 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
 target_link_libraries(els_cal_basis_test m pthread)
 add_test(NAME els_cal_basis_test COMMAND els_cal_basis_test)
+
+# fastData.stepsToGo, the host's view of the commanded-move backlog, equals
+# servo.stepsToGo after every ISR pass, including after the paths that set
+# servo.stepsToGo directly (a calibration ending, the end-of-job block).
+# Real ISR, the Lash/Rig pair from els_cal_isr_attribution_test.
+add_executable(els_stepstogo_mirror_test
+    ${CMAKE_SOURCE_DIR}/test/els_stepstogo_mirror_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_stepstogo_mirror_test m pthread)
+add_test(NAME els_stepstogo_mirror_test COMMAND els_stepstogo_mirror_test)
