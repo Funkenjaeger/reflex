@@ -289,6 +289,11 @@ static void runElsScenario(LathePhysics *physics, rampsHandler_t *rampsData,
  *   z jog <-1|0|1>      -> physics->jogCarriage(dir)
  *   halfnut open        -> physics->setHalfNutEngaged(false)
  *   halfnut close       -> physics->setHalfNutEngaged(true)
+ *   spindle rpm <rpm>   -> physics->setTargetRPM(rpm)
+ *
+ * spindle rpm is the operator's spindle switch. EMU_RPM only sets it at
+ * launch, so without this a test could not stop motion the way the operator
+ * does, from outside the UI, mid-session.
  *
  * WHY THE Z AND HALFNUT COMMANDS EXIST
  * ------------------------------------
@@ -336,6 +341,19 @@ static void stdinCommandThreadFunc(LathePhysics *physics) {
                 emu_log_event("stdin cmd: malformed 'halfnut' verb '%s' "
                               "(want open|close) (line: \"%s\")",
                               verb.c_str(), line.c_str());
+            }
+            continue;
+        }
+
+        if (noun == "spindle") {
+            double rpm;
+            if (verb == "rpm" && (iss >> rpm)) {
+                physics->setTargetRPM(rpm);
+                emu_log_event("stdin cmd: spindle rpm %.1f", rpm);
+            } else {
+                emu_log_event("stdin cmd: malformed 'spindle' command "
+                              "(want rpm <value>) (line: \"%s\")",
+                              line.c_str());
             }
             continue;
         }

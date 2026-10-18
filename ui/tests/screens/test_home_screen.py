@@ -1,4 +1,4 @@
-"""Mode-switch teardown (HomePage.change_mode_speed_check).
+"""Mode-switch teardown (HomePage.change_mode_speed_check), and construction.
 
 The requirement pinned here: a mode switch clears syncEnable on ALL scales
 EXPLICITLY -- through the controller's HAL (the single stop_sync
@@ -15,8 +15,8 @@ armed scale feeding the firmware's `anySyncMotionEnabled` term across a mode
 switch (and a same-value servoMode write, 0 -> 0, fires no binding at all,
 so the hole was reachable without mutating anything).
 
-HomePage is built via __new__: its __init__ assembles the full widget tree
-(StatusBar, four mode layouts, kv rules), none of which
+The switch tests build HomePage via __new__: __init__ assembles the full
+widget tree (StatusBar, four mode layouts, kv rules), none of which
 change_mode_speed_check touches beyond the attributes stubbed here.
 """
 from types import SimpleNamespace
@@ -108,3 +108,99 @@ def test_sync_is_cleared_before_the_servo_mode_write(rig):
         "servoMode was written before the scales were cleared -- the "
         "SYNC OFF FIRST ordering regressed"
     )
+
+
+# ── Construction vs. an operator mode switch ──────────────────────────────────
+#
+# These build the REAL HomePage through __init__ (tests/home_page_rig.py), which
+# the tests above deliberately skip. Built mid-feed, the screen draws its layout
+# at once and writes nothing; only an operator switch waits for the servo and
+# tears down.
+
+from tests.home_page_rig import (  # noqa: E402
+    MODE_DRO, MODE_ELS, HomeApp, build_home_page, shown_layout,
+)
+
+
+class _FakeClock:
+    """Stands in for home_screen.Clock: runs scheduled callbacks on demand."""
+
+    def __init__(self):
+        self.pending = []
+
+    def schedule_once(self, callback, timeout=0):
+        self.pending.append(callback)
+
+    def run(self, rounds=5):
+        for _ in range(rounds):
+            due, self.pending = self.pending, []
+            for callback in due:
+                callback(0)
+
+
+class _RecordingServo:
+    """Records EVERY servo write, same-value ones included (a Kivy binding
+    would miss those). speed is read only."""
+
+    def __init__(self, events, speed, servoMode):
+        object.__setattr__(self, "_events", events)
+        object.__setattr__(self, "speed", speed)
+        object.__setattr__(self, "servoMode", servoMode)
+        object.__setattr__(self, "jogSpeed", 0)
+
+    def __setattr__(self, name, value):
+        if name != "speed":
+            self._events.append((name, value))
+        object.__setattr__(self, name, value)
+
+
+@pytest.fixture
+def startup(monkeypatch):
+    from reflex.components.screens import home_screen
+    clock = _FakeClock()
+    monkeypatch.setattr(home_screen, "Clock", clock)
+    events = []
+    hal = SimpleNamespace(stop_sync=lambda: events.append(("stop_sync",)))
+    # Firmware FEEDING, as the first snapshot mirrors it: servoMode 1, moving.
+    servo = _RecordingServo(events, speed=120.0, servoMode=1)
+    app = HomeApp(servo=servo, els_uic=SimpleNamespace(hal=hal),
+                  current_mode=MODE_ELS)
+    return SimpleNamespace(clock=clock, events=events, servo=servo, app=app)
+
+
+def test_construction_mid_feed_draws_the_layout_and_touches_nothing(startup):
+    page = build_home_page(startup.app)
+
+    assert shown_layout(page) is page.mode_layouts[MODE_ELS], (
+        "home screen built while the servo moves shows no mode layout, so "
+        "Sync Enable is unreachable")
+    startup.clock.run()
+    assert startup.events == []
+
+    # Motion stops (the operator stops the spindle): still nothing written.
+    object.__setattr__(startup.servo, "speed", 0)
+    startup.clock.run()
+    assert startup.events == [], (
+        "construction tore the job down once motion stopped: "
+        f"{startup.events}")
+    assert shown_layout(page) is page.mode_layouts[MODE_ELS]
+
+
+def test_operator_mode_switch_while_moving_still_waits_then_tears_down(startup):
+    page = build_home_page(startup.app)
+    startup.clock.run()
+    assert startup.events == []
+
+    startup.app.current_mode = MODE_DRO
+    startup.clock.run()
+    # Waiting for the servo: the old layout stays, nothing torn down yet.
+    # jogSpeed 0 is change_mode's own first write while servoMode != 0.
+    assert shown_layout(page) is page.mode_layouts[MODE_ELS]
+    assert startup.events == [("jogSpeed", 0)]
+
+    object.__setattr__(startup.servo, "speed", 0)
+    startup.clock.run()
+    assert startup.events == [("jogSpeed", 0), ("stop_sync",), ("servoMode", 0)], (
+        "mode switch teardown order changed: SYNC OFF FIRST, then servoMode 0")
+    assert shown_layout(page) is page.mode_layouts[MODE_DRO]
+    assert page.mode_layouts[3].jog_bar.enable_jog is False
