@@ -1,9 +1,11 @@
 # ELS command channel
 
-**Status: design only, no code.** One question is open: where `FEED_OFF` is
-consumed ("What the census answered"). `DISENGAGE` is built only after
-adopt-on-connect (`ui/reflex/fsms/els_adopt.py`) passes its hardware run, so
-the two changes to teardown are never verified in the same session.
+**Status: `DISENGAGE` is built (protocolVersion 13).** The operator's disengage
+uses it by default, behind `ELS_DISENGAGE_VIA_COMMAND` in
+`ui/reflex/fsms/els_command.py`. The ordered teardown it replaces stays in the
+tree behind that flag until a hardware session has run the command from every
+mode it can reach. `FEED_OFF` is decided: it stays immediate ("What the census
+answered").
 
 This design moves transition legality and safety-critical teardown ordering
 into the firmware, and register edges stop carrying command meaning.
@@ -24,21 +26,35 @@ to the registers that move the carriage.
 ## Register additions
 
 Declared in `registers/els_stop.yaml`, in one `protocolVersion` bump (12 to
-13):
+13), together with the calMeasured split below:
 
 | Register | Type | Group | Writer | Meaning |
 |---|---|---|---|---|
-| `command` | u16 | cold | host | requested command id; firmware consumes and clears it to 0 on its next `servoEnableTask` tick (~100 ms). 0 = none. `kind: command`, `ack: commandSeq` |
+| `command` | u16 | cold | host | requested command id (`ELS_CMD_*`, `fw/Core/Inc/els_command.h`); the firmware consumes and clears it on its next `servoEnableTask` tick (~100 ms). 0 = none. `kind: command`, `ack: commandSeq` |
 | `commandSeq` | u16 | hot | firmware | bumped once per consumed command, AFTER `commandResult` is written: the ack the UI edge-detects in the tick snapshot, as it does `takeupSeq`. `kind: seq`, `acks: [commandResult]` |
-| `commandResult` | u16 | hot | firmware | outcome of the most recent command: `OK`, or a named refusal |
+| `commandResult` | u16 | cold | firmware | outcome of the most recent command (`ELS_CMD_RESULT_*`): below 0x100 a success, 0x100 and up a refusal. Read live once `commandSeq` has moved |
 
-`commandSeq` and `commandResult` are `access: ro_firmware`. The layout has
-no free pads left, so the two hot registers grow the hot group (56 to 58 of
-its 75-register budget) and move every cold register, `bootCommand`
-included (absolute register 168 under versions 10 to 12). The flasher finds
-`bootCommand` through a per-version table (`APP_BOOT_COMMAND_REG` in
-`fw/scripts/modbus-flash.py`, checked against `registers/offsets.json`) and
-refuses a version it does not list, so the new row lands in the same commit.
+`commandSeq` and `commandResult` are `access: ro_firmware`.
+
+**The hot group does not grow.** The board tick reads fastData and the hot
+group as one 86-register FC3 request, and
+`test_the_tick_read_keeps_its_stated_margin_against_the_firmware` pins that at
+70% of the 125-register ceiling, a margin decided once and not to be eroded
+one register at a time. Two more hot registers would make it 88. So
+`commandSeq` takes the hot slot `clearRefSeq` held under 12, and `clearRefSeq`
+moves to cold: it acks no payload and no tick reader reads it
+(`tools/audit_tick_readers.py`). `commandResult` is cold, which lays it out
+above `commandSeq`, so the seq still precedes its payload; the UI reads it in a
+later frame than the one that showed the seq move, so it is at least as new.
+
+The new cold registers (`clearRefSeq`, `command`, `commandResult`,
+`calBasisSteps`, four uint16s) sit right after `bootSeq`. No hot register
+moves, `bootCommand` keeps absolute register 168, and the cold fields after
+them move by four. The flasher finds `bootCommand` through a per-version table
+(`APP_BOOT_COMMAND_REG` in `fw/scripts/modbus-flash.py`, checked against
+`registers/offsets.json`) and refuses a version it does not list, so the table
+carries a 13 row. The isr-gap bench reader (`fw/scripts/isr-gap.py`) reads the
+moved diagnostic block, so it moves to the 13 addresses.
 
 Parameters are **staged in the existing registers** (`stopPosition`,
 `scaleIndex`, `stopDirection`, `hysteresis`, `stopOffset`, `threadPitchSteps`,
@@ -55,47 +71,73 @@ republished every `servoEnableTask` tick in every build
 
 ## `DISENGAGE`, the only v1 command
 
-Semantics, executed entirely inside the firmware:
+`ELS_CMD_DISENGAGE` = 1. Executed entirely inside the firmware
+(`elsCommandIntake` and `elsCommandFinish`, `fw/Core/Src/Ramps.c`):
 
-1. clear `syncEnable` on every scale (motion source off first: the
-   sync-first ordering the UI repeats at five call sites becomes this one
-   line);
+1. clear `syncEnable` on every scale (motion source off first: the sync-first
+   ordering the UI repeats at five call sites becomes this one line);
 2. `servoMode = 0`;
-3. clear `enable`. The ISR's enable falling-edge handler
-   (`SynchroRefreshTimerIsr`, `fw/Core/Src/Ramps.c`) already does the rest:
-   it clears `active`, consumes the resume edge it just made so no take-up
-   starts, abandons an in-flight take-up, and cancels the job's pending
-   motion (`stepsToGo`, ramp speed, sync backlog). `DISENGAGE` does not copy that work;
-4. once the ISR has taken that edge, write `commandResult = OK` and bump
-   `commandSeq`; the mode published on that tick reads `OFF`. If the edge
-   has not run by the end of the consuming tick, the ack goes out on the
-   next one, so an ack never describes a machine still carrying motion.
+3. clear `enable`, and ask the ISR to run its end-of-job block
+   (`elsCommandEndJob`). That block in `SynchroRefreshTimerIsr` clears
+   `active`, consumes the resume edge it just made so no take-up starts,
+   abandons an in-flight take-up, and cancels the job's pending motion
+   (`stepsToGo`, ramp speed, sync backlog). It used to run only on `enable`'s
+   falling edge, and with `enable` already 0 there is no edge: a commanded
+   move (`MOVING`), a jog's ramp, or a take-up started from a hold with
+   `enable` 0 would have survived the ack. The request runs it either way.
+   Clearing `active` from the task instead would start a take-up, because the
+   resume detector is not gated on `enable`;
+4. once the ISR has cleared the request, no calibration is running and the
+   machine still reads inert (`syncEnable`, `servoMode` and `enable` all 0),
+   write `commandResult` and then bump `commandSeq`. If the request has not
+   run by the end of the consuming tick, the ack goes out on a later one, so
+   an ack never describes a machine still carrying motion. The mode is
+   published before the ack in the same tick, so the mode a host reads beside
+   the new `commandSeq` is `OFF`.
 
 Legality: `DISENGAGE` is legal from **every** state, because it is the safe
 direction. From `CAL`, `servoMode = 0` is the calibration's own abort
 condition (`elsCalUpdate`), so the run ends with `calResult =
 ELS_CAL_ERR_ABORTED` on `calSeq` and `commandResult` reads `OK_CAL_ABORTED`.
 There is deliberately no state in which "make the machine inert" can be
-refused.
+refused. The only refusal is `ERR_UNKNOWN`, for an id the firmware does not
+know, which changes nothing. A command written while another is still waiting
+for its ack stays in the register and is consumed after that ack: one in
+flight, one ack each.
 
 UI side: the operator's Disengage writes one register and edge-detects
-`commandSeq`. For that path, `on_enter_disabled`'s ordered batch
-(`hal.disengage()`, `_disengage_batch`) retires, and so do the tests that pin
-its order (`test_port_owner.py::test_the_disengage_order_survives_the_queue`,
-`test_els_threaded_io.py::test_a_disengage_lands_in_order_with_the_scan_on_the_thread`).
-`disengage_refusal()` in `ui_controller.py` stays as affordance: it refuses
-while sync is armed with the spindle turning and while a cycle runs. Once the
-firmware owns teardown, those refusals are a UX question. The Update screen,
-which disengages before a bootloader reboot, can wait on `commandSeq` instead
-of reading `enable` back.
+`commandSeq` (`ElsFsm._issue_disengage`, `_poll_command_ack`). The baseline is
+read live just before the write. On the ack the UI brings its mirrors into
+line without writing anything: `servoMode` (and the divergence watchdog's
+commanded value, `ServoDispatcher.adopt_feed_off`) and every axis's
+`syncEnable`. No ack within about a second (`ACK_TIMEOUT_POLLS`) is a link
+fault: the UI issues `DISENGAGE` once more, since it is idempotent, and after
+a second silence puts a notice on the status bar. A refusal also shows a
+notice, and the UI then runs the ordered teardown itself, so the machine is
+still made inert.
+
+`on_enter_disabled`'s ordered batch (`hal.disengage()`, `_disengage_batch`)
+is now `_disengage_by_ordered_writes`, reached with the flag off or on a
+refusal. It and the tests that pin its order
+(`test_port_owner.py::test_the_disengage_order_survives_the_queue`,
+`test_els_threaded_io.py::test_a_disengage_lands_in_order_with_the_scan_on_the_thread`)
+are deleted after the hardware session. `disengage_refusal()` in
+`ui_controller.py` stays as affordance: it refuses while sync is armed with
+the spindle turning and while a cycle runs. Once the firmware owns teardown,
+those refusals are a UX question. The Update screen, which disengages before a
+bootloader reboot, still waits for `enable` to read 0 in a tick after the
+disengage; with the command path that takes one or two task ticks, well inside
+its timeout. It can wait on `commandSeq` instead later.
 
 The domain FSM enters `disabled` when the command is **written**, not when it
 is acked. A session still in `stopped` while it waits would treat a reconnect
 inside the wait as a link blip and re-arm the stop (the `stopped` branch of
-`reconcile_firmware_on_connect`). A missing ack is a link fault, and the
-answer to it is to issue `DISENGAGE` again: it is idempotent.
+`reconcile_firmware_on_connect`). An operator who engages a new job while a
+`DISENGAGE` is still unacked drops it: the firmware consumes a command within
+a tick or not at all, and issuing the old one at a later reconnect would end
+the new job.
 
-The other teardown sites issue the same writes in the same order:
+The other teardown sites still issue the ordered writes:
 `on_enter_alarm`, the `disabled`/`alarm` branch and the refused re-arm in
 `reconcile_firmware_on_connect`, and the adopt plan's teardown rows. Each
 switches to `DISENGAGE` in a later release, after a hardware run reaches it,
@@ -107,8 +149,12 @@ stop (`request_feed_enable`) is `FEED_OFF`'s, not `DISENGAGE`'s.
 In `servoEnableTask`, **ahead of** its `servoMode` re-assert. Every 100 ms
 the task re-asserts (`anySync && !active && servoMode != 2` sets
 `servoMode = 1`), publishes `machineMode`, drives ENA and takes
-`bootCommand`. `DISENGAGE` goes first in that tick, and the re-assert is
-skipped on the tick that consumed it.
+`bootCommand`. `elsCommandIntake` goes first in that tick, and the re-assert
+is skipped while a command is in flight. `elsCommandFinish` runs after ENA is
+driven and before `bootCommand`. The emulator, which runs no FreeRTOS tasks,
+mirrors the tick with the same two calls around its mode publish
+(`fw/emulator/src/main.cpp`); there the ISR never runs inside a tick, so every
+ack lands on the tick after the consuming one.
 
 It is not the ISR, which consumes `calCommand`, `latchCommand`,
 `phaseOffsetCommand` and `clearRefCommand`. The re-assert is a read followed
@@ -117,10 +163,10 @@ by a write in the task. An ISR consumption that lands between the read of
 `servoMode = 1` behind an `OFF` ack.
 
 The Modbus slave task (priority Normal) can preempt `servoEnableTask`
-(Low), so a host write can land between the consumer's steps. A `syncEnable`
-write landing there would reopen the re-assert window. The UI therefore
-writes nothing to `elsStop` or `syncEnable` between a command write and its
-ack.
+(Low), so a host write can land between the consumer's steps. The UI writes
+nothing to `elsStop` or `syncEnable` between a command write and its ack. A
+write that does land there and reopens `syncEnable`, `servoMode` or `enable`
+holds the ack back, and the next tick applies the teardown again.
 
 Planned firmware work replaces the vendored Modbus slave with the shared RTU
 core (`fw/modbus_rtu/`), which rejects host writes to `ro_firmware`
@@ -128,16 +174,18 @@ registers, and then replaces FreeRTOS with a superloop. For command
 consumption:
 
 - `servoEnableTask`'s body becomes a periodic superloop job, in the same
-  order: `DISENGAGE`, the re-assert, mode publish, ENA, `bootCommand`.
+  order: `elsCommandIntake`, the re-assert, mode publish, ENA,
+  `elsCommandFinish`, `bootCommand`.
 - Frames are serviced between jobs, so no host write can land inside a
   consumption.
-- The ISR still preempts every job, so step 4's ack-after-edge rule is
+- The ISR still preempts every job, so step 4's ack-after-the-ISR rule is
   unchanged.
 - The period becomes the job's, not `osDelay(100)`. The latency figures
   below assume about 100 ms; a different period means re-reading them.
 
-`DISENGAGE` lands before that work, so its emulator table test is part of the
-baseline the replacement has to keep green.
+`DISENGAGE` lands before that work, so its emulator table test
+(`fw/emulator/test/els_command_test.cpp`) is part of the baseline the
+replacement has to keep green.
 
 ## Connect, and adopt-on-connect
 
@@ -154,34 +202,66 @@ every session after a UI restart. It keys on the published mode:
 An engaged or alarmed session keeps the state-keyed reconcile: a reconnect
 there is a link blip, not a restart. Where `DISENGAGE` meets this:
 
-- The teardown rows become `DISENGAGE`. The connect-time teardown is the
-  same four writes, so once the command is verified a teardown row issues it
-  and waits for the ack. The snapshot (`read_motion_in_flight`,
-  `read_current_mode`) is still taken first.
-- A `DISENGAGE` consumed before a fresh session connects: the command
-  clears within a tick and a UI restart takes about 10 s, so the new session
-  finds it consumed: the mode reads `OFF`, and the at-rest row's teardown
-  changes nothing. A fresh session records `commandSeq` at connect as its
-  baseline and never takes an edge it did not wait for as an ack.
-- A `DISENGAGE` written just before the link drops: the session is
-  already `disabled` (it entered at the write), so its reconnect takes the
-  adopt path. If the command never landed, the mode is whatever the session
-  disengaged from, and that can be a hands-off row (`FEEDING` with the
-  spindle stopped is one `disengage_refusal()` allows), which would leave
-  the job running. A session with an unacked `DISENGAGE` therefore issues
-  it again at reconnect instead of consulting the table.
+- A fresh session reads `commandSeq` at connect as its baseline, and every
+  `DISENGAGE` reads a fresh one just before its write, so a session never
+  takes an edge it did not wait for as an ack.
+- A `DISENGAGE` consumed before a fresh session connects: the command clears
+  within a tick and a UI restart takes about 10 s, so the new session finds
+  it consumed: the mode reads `OFF`, and the at-rest row's teardown changes
+  nothing.
+- A `DISENGAGE` written just before the link drops, or written with no link
+  at all: the session is already `disabled` (it entered at the write). If the
+  command never landed, the mode is whatever the session disengaged from, and
+  that can be a hands-off row (`FEEDING` with the spindle stopped is one
+  `disengage_refusal()` allows), which would leave the job running. So a
+  session with an unacked `DISENGAGE` issues it again at reconnect, ahead of
+  the adopt table, instead of consulting it.
+- The teardown rows still run the ordered writes. Once the command is
+  verified on hardware, a teardown row issues `DISENGAGE` and waits for the
+  ack. The snapshot (`read_motion_in_flight`, `read_current_mode`) is still
+  taken first.
+
+## The calMeasured split
+
+Until protocolVersion 13 the take-up confirmation gate derived its threshold
+from `calMeasured`, which the firmware overwrites at the end of every
+calibration run, partial values on a failed one. A failed run therefore
+dropped the gate to its bare motion floor, and the UI re-taught the stored
+legs after every failure, every power cycle and every gear change. 12
+relabelled `calMeasured` bidirectional to say so.
+
+13 splits it. `calMeasured` is `ro_firmware` again: the last run's result.
+`calBasisSteps` (u16, cold) is the gate's basis, and
+`elsTakeupConfirmThreshold` takes it in place of `elsCalMeanValid(calMeasured)`.
+The firmware copies a successful run's mean into it and leaves it alone on a
+failed or aborted run. The host writes it where it used to write the legs: at
+connect (`reconcile_firmware_on_connect`) and on a gear change
+(`_reteach_gear`), in the engaged gear's steps. `els_cal.py`'s failed-run
+re-teach is gone. What the host still writes after a run is the case the
+firmware cannot see: a run it reported OK that the host rejects for its
+spread, or that the operator closes without accepting. The basis goes back to
+the accepted record (0 with none).
+
+**One mean, not three legs.** The gate only ever used the mean, so three legs
+carry nothing it reads. One uint16 is one register, so the ISR can never read
+a basis half-written by the host, where three int32 legs are six registers
+written one at a time. The UI computes it by the firmware's own rule
+(`elsCalMeanValid`: every leg positive, integer mean) from the gear-scaled
+legs (`els_cal.cal_basis`), so the threshold is exactly what it was. The UI
+still stores the three legs, for the spread and drift it reports.
 
 ## Later commands, one per paired release
 
 `ENGAGE` (arm from staged stop params; refuse on missing or half-staged
 params or Z past stop: the `arm_idle_stop` refusals become result codes),
 `CUT` (release the hold; refuse unless `HELD` **and** the servo and sync are
-in a state that can move), `RETRACT(steps staged)`, `FEED_ON`/`FEED_OFF`,
+in a state that can move), `RETRACT(steps staged)`, `FEED_ON`,
 `JOG_ON`/`JOG_OFF`. Each migration deletes the corresponding boolean-poke
-path in the same release. `active` stops being UI-writable once
-`ENGAGE`/`CUT` land (its meanings by then live in the mode register), which
-is where the `servoEnableTask` re-assert is removed and every register
-becomes single-writer.
+path in the same release. `FEED_OFF` is not on this list: it stays immediate
+(below). `active` stops being UI-writable once `ENGAGE`/`CUT` land (its
+meanings by then live in the mode register), which is where the
+`servoEnableTask` re-assert is removed and every register becomes
+single-writer.
 
 ## What the census answered
 
@@ -206,13 +286,13 @@ calibration's running flag.
   takes a median 355 ms, and thread registration stays in the ISR) and for
   `DISENGAGE`, which is refused while sync is armed with the spindle turning
   and so runs at rest.
-- **Open: `FEED_OFF`.** Sync off is the operator's mid-cut stop. At the
-  measured feeds, 100 ms is 0.6 mm of travel at p90 and
-  1.2 mm at p99. Whether `FEED_OFF` is consumed in the task or in the ISR
-  waits on one hardware measurement: today's time from the Sync Enable press
-  to `syncEnable` cleared, which the flight recorder does not capture. ISR
-  consumption would also have to close the re-assert race above some other
-  way.
+- **`FEED_OFF` stays immediate.** It is consumed on the ISR tick, or left as
+  today's direct `syncEnable` write, and never goes through the
+  task-consumed command path. Sync off is the operator's mid-cut stop.
+  Measured on the bench, today's sync-off stops Z within one 30 Hz recorder
+  tick; task consumption would add up to 100 ms, which at the measured feeds
+  is 0.6 mm of travel at p90 and 1.2 mm at p99. An ISR consumption has to
+  close the re-assert race above some other way.
 
 ## Non-goals
 
@@ -226,8 +306,13 @@ Per command: an emulator state×command table test (every mode × the new
 command, asserting outcome and result code), the cross-registry contract
 test extended to the command/result enums, and one hardware session
 exercising the migrated flow from every mode it can reach before its old path
-is deleted from the UI. For `DISENGAGE` the table also covers the `CAL` abort
-(`calSeq` and `commandResult` both), the ack waiting for the enable-edge
-pass, and a host `syncEnable` write landing during consumption. The UI tests
-cover a reconnect with a `DISENGAGE` unacked (issued again) and a fresh
-session's `commandSeq` baseline.
+is deleted from the UI. For `DISENGAGE` the table
+(`fw/emulator/test/els_command_test.cpp`) also covers the `CAL` abort
+(`calSeq` and `commandResult` both), the ack waiting for the ISR's pass, a
+host `syncEnable` write landing during consumption, the unknown-command
+refusal and one command in flight. The UI tests
+(`ui/tests/fsms/test_els_command.py`) cover the write, the ack, the timeout
+and its reissue, the refusal, a reconnect with a `DISENGAGE` unacked (issued
+again) and a fresh session's `commandSeq` baseline. The calMeasured split is
+`fw/emulator/test/els_cal_basis_test.cpp` and the basis tests in
+`ui/tests/fsms/test_els_cal.py`, `test_els_fsm.py` and `test_els_gear.py`.
