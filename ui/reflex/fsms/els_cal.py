@@ -469,6 +469,17 @@ class BacklashCalibration:
             # established the link, so a 0 read here is a genuine "servo off"
             # and putting the operator back in it is the correct behaviour. The
             # untrustworthy case is filtered at save time, not here.
+            #
+            # SYNC OFF FIRST when leaving mode 1. start()'s mode-1 write armed
+            # spindle sync through the servoMode binding (dispatchers/els.py),
+            # and that binding clears it again only as a REACTION to this
+            # write, so syncEnable would be written last. In between,
+            # servoEnableTask (100 ms) sees sync armed with elsStop.active
+            # clear and puts servoMode back to 1, and nothing turns it off
+            # again (the UI's divergence watchdog then fires until the next
+            # disengage). Same race, same cure, as ElsStopRegisters.stop_sync.
+            if mode != 1:
+                self._hal.stop_sync()
             self._hal.set_servo_mode(mode)
 
     @property
