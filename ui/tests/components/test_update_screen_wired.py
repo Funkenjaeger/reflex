@@ -183,3 +183,16 @@ def test_the_gate_raises_rather_than_logging():
     assert gate.count("raise FirmwareProtocolMismatch(") == 1
     assert "log.warning" not in gate
     assert "log.error" not in gate
+
+
+def test_the_firmware_only_reinstall_goes_through_the_same_flash():
+    """reinstall_firmware flashes through flash_firmware -- the
+    identity reads, the already-mismatched refusal, the gate and its rollback
+    -- and has no UI half to reach: no install_ui_half, no git, no uv."""
+    src = _updater_src()
+    body = src[src.index("    def reinstall_firmware"):]
+    code = body.split('"""', 2)[-1]
+    assert "self.flash_firmware(prepared)" in code
+    assert "self._snapshot_before(release)" in code
+    for absent in ("install_ui_half", '"git"', '"sync"', "restart"):
+        assert absent not in code, f"reinstall_firmware reaches {absent}"
