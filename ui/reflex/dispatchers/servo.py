@@ -10,7 +10,9 @@ from kivy.properties import (
 )
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
-from reflex.fsms.els_gear import NO_GEARBOX, GearTable, GearTableError
+from reflex.fsms.els_gear import (
+    NO_GEARBOX, GearTable, GearTableError, drive_position_of,
+)
 from reflex.utils.ctype_calc import uint32_subtract_to_int32
 from reflex.utils.notices import NOTICE_WARNING
 from reflex.utils.operator_notice import notify_operator
@@ -59,6 +61,12 @@ class ServoDispatcher(SavingDispatcher):
     #: restart. A name not in the table reads as the reference; with no
     #: gearbox it is ignored.
     gearbox_position = StringProperty("")
+    #: Not persisted: the position being measured by the gearbox
+    #: measurement (els_gear_survey.py), "" otherwise. While set, the ratio
+    #: is derived for it instead of gearbox_position, because the lever is
+    #: in it for every pass of the measurement. Never saved, so a restart
+    #: mid-measurement is back in the stored position.
+    gearbox_measuring = StringProperty("")
     #: Derived, not persisted: the parsed gearbox_table.
     gear_table = ObjectProperty(NO_GEARBOX)
     #: Derived, not persisted: the position in effect (gearbox_position
@@ -88,6 +96,7 @@ class ServoDispatcher(SavingDispatcher):
         "speed",
         "stepsToGo",
         "gearbox_engaged",
+        "gearbox_measuring",
     ]
 
     def __init__(self, board, formats, **kv):
@@ -120,6 +129,7 @@ class ServoDispatcher(SavingDispatcher):
         self.bind(gearbox_table=self._on_gearbox_table)
         self.bind(gearbox_position=self._sync_gearbox_engaged)
         self.bind(gearbox_position=self.configure_lead_screw_ratio)
+        self.bind(gearbox_measuring=self.configure_lead_screw_ratio)
         self.bind(reverse=self._on_reverse_changed)
 
         # Private variables that don't need dispatchers etc
@@ -172,7 +182,7 @@ class ServoDispatcher(SavingDispatcher):
             # retract, cut margin) then sees the real travel per step without
             # knowing about gears.
             leadScrewRatio = (leadScrewPitch * Fraction(1, self.leadScrewPitchSteps)
-                              * self.gear_table.factor(self.gearbox_position))
+                              * self.gear_table.factor(drive_position_of(self)))
             self.ratioNum = leadScrewRatio.numerator
             self.ratioDen = leadScrewRatio.denominator
 

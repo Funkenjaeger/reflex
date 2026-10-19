@@ -47,6 +47,11 @@ REFERENCE position. The engaged position enters in exactly two places:
 
 A position name that is not in the table (a hand-edited file, a table changed
 since) reads as the reference. With no gearbox, a stored position is ignored.
+
+WHILE A POSITION IS MEASURED (els_gear_survey.py) the lever is in it for every
+pass, so the servo's ``gearbox_measuring`` names it and every conversion above
+uses its nominal factor from the table instead of the stored position's. The
+stored position is not changed, and comes back when the measurement ends.
 """
 from __future__ import annotations
 
@@ -238,6 +243,17 @@ class GearTable:
 
 #: The default: the servo drives the leadscrew directly.
 NO_GEARBOX = GearTable()
+
+
+def drive_position_of(servo) -> str:
+    """The position a servo's motor steps are scaled for, unresolved: the
+    position being measured while a gearbox measurement runs (the lever is
+    in it for every pass), else the stored position; "" for a servo that
+    carries neither."""
+    measuring = getattr(servo, "gearbox_measuring", "")
+    if isinstance(measuring, str) and measuring:
+        return measuring
+    return getattr(servo, "gearbox_position", "")
 
 
 def table_of(servo) -> GearTable:

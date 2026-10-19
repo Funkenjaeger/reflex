@@ -9,6 +9,15 @@ carriage travel per commanded step in reference-gear terms, is the lever
 position's factor; WholePassRatio measures it and each pass's reading is fed
 to this class.
 
+The passes are DRIVEN in the position being measured: from the start until
+the measurement ends and the carriage is at rest, the controller's engaged
+position is the measured one (ElsFsm.drive_for_measurement), so the take-up,
+the retract, the sync ratio and the calibration basis are in its steps at its
+nominal factor from the gearbox table. That factor is the one being checked,
+within the scatter of the measured one. The reading does not use it:
+WholePassRatio is given the reference's steps per count from the leadscrew
+and the scale alone, so a factor 0.1 % off its nominal reads as it is.
+
 The coupling-ratio check (els_ratio.py) runs during these passes too, held so
 it cannot act, and its estimate since the pass started is not the
 measurement: the check latches its verdict as soon as the reading has settled

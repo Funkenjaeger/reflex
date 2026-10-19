@@ -24,7 +24,7 @@ from kivy.properties import BooleanProperty, ObjectProperty, StringProperty
 from kivy.uix.popup import Popup
 
 from reflex.fsms.els_cal import BacklashCalibration, CalState
-from reflex.fsms.els_gear import table_of
+from reflex.fsms.els_gear import drive_position_of, table_of
 from reflex.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
@@ -58,7 +58,7 @@ class BacklashCalPopup(Popup):
         self.app = MainApp.get_running_app()
         self._cal = BacklashCalibration(
             self.app.els_uic.hal, self.app.els,
-            gear=lambda: getattr(self.app.servo, "gearbox_position", ""),
+            gear=lambda: drive_position_of(self.app.servo),
             gear_table=lambda: table_of(self.app.servo))
         self._poll_ev = None
         self._refresh()

@@ -82,9 +82,10 @@ class OvershootGuard:
     The gearbox measurement's parts: `gear_table()` the configured table,
     `apply_gear_table(text)` the controller's setter for it (True when
     applied), `on_gear_result(survey)` a finished measurement for Save or
-    Discard, and `on_lever_change(position)` the seam for clearing the thread
-    reference when the lever is moved to a position to be measured. It does
-    nothing yet."""
+    Discard, and `on_lever_change(position)` called when the lever is moved
+    to a position to be measured: the controller drives the passes in that
+    position (ElsFsm.drive_for_measurement), which also clears a thread
+    reference measured in another."""
 
     def __init__(self, els, binding: Callable[[], Optional[tbl.Binding]],
                  notify: Callable[..., object], gear: Callable[[], str] = lambda: "",
