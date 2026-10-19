@@ -85,23 +85,12 @@ class BaseDevice:
     #
     # WHAT THE FIRMWARE CAN SURVIVE. An FC3 response is 5 + 2N bytes (address,
     # function, byte-count, 2N of data, 2 of CRC) and it is assembled in a
-    # 256-byte buffer -- `uint8_t u8Buffer[MAX_BUFFER]`, MAX_BUFFER 256, in
-    # fw/Core/Inc/Modbus.h and ModbusConfig.h. That alone puts the ceiling at
-    # N = 125 (5 + 250 = 255). Two details in `process_FC3`
-    # (fw/Core/Src/Modbus.c) say do not go anywhere near it:
-    #
-    #   * the copy loop writes `u8Buffer[u8BufferSize++]` twice per register
-    #     with NO bounds check at all, so overrunning the buffer corrupts
-    #     whatever follows it in RAM rather than returning an error; and
-    #   * `u8BufferSize` is itself a `uint8_t`, so the response length wraps
-    #     silently one byte past 255 -- and the byte-count field the firmware
-    #     writes into `u8Buffer[2]` is a single byte too, wrapping at N = 128.
-    #     `u8regsno` truncates the REQUESTED count to a uint8_t before any of
-    #     this, so a too-large request is not even reliably too-large.
-    #
-    # N = 125 therefore lands exactly on both edges with zero slack, and every
-    # way of exceeding it fails silently. Nothing here may change the firmware,
-    # so the only safe move is to stay well short of it.
+    # 256-byte buffer, MB_RTU_MAX_FRAME in fw/modbus_rtu/mb_rtu.h. That puts
+    # the ceiling at N = 125 (5 + 250 = 255), and the firmware's Modbus core
+    # refuses a count outside 1..125 with exception 3. The slave it replaced
+    # had no such check: it overran its buffer or wrapped its one-byte length
+    # field past 125, silently. Either way 125 is the cliff, so the only safe
+    # move is to stay well short of it.
     #
     # WHY 64. It is half the ceiling to within the rounding: 5 + 2*64 = 133
     # bytes, leaving 123 of the 256-byte buffer unused, 122 counts before the

@@ -22,6 +22,8 @@
 #include "els_phase.h"
 #include "els_identity.h"
 #include "els_boot.h"
+#include "mb_app.h"
+#include "Ramps_access_generated.h"
 
 /* Post-takeup settle dwell: after the backlash takeup reaches its commanded
  * target step count, the step/dir servo may still be closing following error /
@@ -227,14 +229,20 @@ static int32_t  emu_step6_prev_change_sign = 0;
 #endif
 
 
-// This variable is the handler for the modbus communication
-modbusHandler_t RampsModbusData;
+/* The Modbus slave serves rampsSharedData_t as registers 0..N-1 and checks
+ * host writes against the generated access table, which has one bit per
+ * register of exactly this struct; and its port answers the address the host
+ * is configured for. A drift in either fails the build here. */
+_Static_assert(sizeof(rampsSharedData_t) / sizeof(uint16_t) == RAMPS_ACCESS_REGISTERS,
+               "Ramps_access_generated.h does not cover rampsSharedData_t: rerun tools/genregs.py");
+_Static_assert(MODBUS_ADDRESS == MB_APP_ADDRESS,
+               "mb_app.h answers a different slave address");
 
 /* The identity window (els_identity.h): magic, stage = application, window
  * layout version, the git short rev this binary was built from (from the
  * generated reflex_build_rev.h; 0 + dirty if that header was absent), and
  * the protocolVersion of the struct above. Const, so it lives in flash and
- * a torn read of it is impossible. Registered with the Modbus handler in
+ * a torn read of it is impossible. Handed to the Modbus slave in
  * RampsStart(). */
 const uint16_t rampsIdentityWindow[ELS_ID_SIZE] =
     ELS_ID_WINDOW_INIT(ELS_ID_STAGE_APP, ELS_PROTOCOL_VERSION);
@@ -247,6 +255,14 @@ uint16_t servoCyclesCounter = 0;
  * layout is identical on STM32 (4-byte pointer) and 64-bit emulator hosts. */
 TIM_HandleTypeDef *ramps_timer_handles[SCALES_COUNT] = {0};
 
+
+/* Normal, above the three Low tasks, as the slave task it replaces was: a
+ * frame is served as soon as the task polls after it ends. */
+const osThreadAttr_t modbusTaskAttributes = {
+.name = "modbusTask",
+.stack_size = 128 * 4,
+.priority = (osPriority_t) osPriorityNormal,
+};
 
 //osThreadId_t userLedTaskHandler;
 const osThreadAttr_t ledTaskAttributes = {
@@ -411,6 +427,7 @@ void RampsStart(rampsHandler_t *rampsData) {
   configureOutputPin(SPARE_3_GPIO_PORT, SPARE_3_PIN);
 
   // Configure tasks
+  osThreadNew(modbusTask, rampsData, &modbusTaskAttributes);
   osThreadNew(userLedTask, rampsData, &ledTaskAttributes);
   osThreadNew(updateSpeedTask, rampsData, &speedTaskAttributes);
   osThreadNew(servoEnableTask, rampsData, &servoEnableTaskAttributes);
@@ -427,28 +444,15 @@ void RampsStart(rampsHandler_t *rampsData) {
   DWT->CYCCNT = 0;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
-  // Start Modbus
-  RampsModbusData.uModbusType = MB_SLAVE;
-  RampsModbusData.port = rampsData->modbusUart;
-  RampsModbusData.u8id = MODBUS_ADDRESS;
-  RampsModbusData.u16timeOut = 1000;
-  RampsModbusData.EN_Port = NULL;
-  RampsModbusData.u16regs = (uint16_t *) (&rampsData->shared);
-  RampsModbusData.u16regsize = sizeof(rampsData->shared) / sizeof(uint16_t);
-  RampsModbusData.xTypeHW = USART_HW;
-  /* The identity window, served OUTSIDE rampsSharedData_t at ELS_ID_BASE so
-   * the write-protected bootloader answers the same registers at the same
-   * address no matter how the struct above grows. Read-only. The bootloader
-   * control window at ELS_BL_BASE is deliberately NOT registered: the app
-   * answers exception 2 there, which is the client's "this is the app"
-   * signal alongside idStage. */
-  RampsModbusData.windows[0].base     = ELS_ID_BASE;
-  RampsModbusData.windows[0].size     = ELS_ID_SIZE;
-  RampsModbusData.windows[0].regs     = (uint16_t *)rampsIdentityWindow;
-  RampsModbusData.windows[0].readOnly = 1;
-  RampsModbusData.windowCount = 1;
-  ModbusInit(&RampsModbusData);
-  ModbusStart(&RampsModbusData);
+  /* Start Modbus. The identity window is served OUTSIDE rampsSharedData_t at
+   * ELS_ID_BASE, so the write-protected bootloader answers the same registers
+   * at the same address however the struct grows. Read-only. The bootloader
+   * control window at ELS_BL_BASE is deliberately NOT served: the app answers
+   * exception 2 there, which is the client's "this is the app" signal
+   * alongside idStage (Core/mb_port/mb_rtu_port.h). */
+  mbAppInit((uint16_t *)&rampsData->shared,
+            (uint16_t)(sizeof(rampsData->shared) / sizeof(uint16_t)),
+            rampsIdentityWindow);
 
   // Start synchro interrupt
   HAL_TIM_Base_Start_IT(rampsData->synchroRefreshTimer);
@@ -1796,8 +1800,20 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   }
 }
 
+/* The Modbus slave (mb_app.h), polled once per FreeRTOS tick. Receive runs on
+ * DMA whatever this task is doing, and a finished frame waits in the ring
+ * behind the latched IDLE flag, so the poll period adds at most 1 ms to a
+ * reply and costs nothing in correctness. The reply leaves by DMA too, so the
+ * task sleeps through it. */
+_Noreturn void modbusTask(__attribute__((unused)) void *argument) {
+  for (;;) {
+    (void)mbAppService();
+    osDelay(1);
+  }
+}
+
 _Noreturn void userLedTask(__attribute__((unused)) void *argument) {
-  uint16_t oldInCnt = 0;
+  uint16_t oldReplies = 0;
   uint8_t blinkInterval = 0;
 
   for (;;) {
@@ -1813,14 +1829,14 @@ _Noreturn void userLedTask(__attribute__((unused)) void *argument) {
      * the boot-attempt counter. No-op in the legacy (no-bootloader) build. */
     elsBootWatchdogKick();
 
-    if (oldInCnt != RampsModbusData.u16InCnt) {
-      /* MODBUS IS LIVE: the first frame the handler counted is the app's
+    if (oldReplies != mbAppReplies()) {
+      /* MODBUS IS LIVE: the first reply the slave sent is the app's
        * proof of life to the bootloader. Clears the boot-attempt counter
        * (els_boot.h); without this, three boots strike out and the
        * bootloader swaps the previous image back. Once per boot is enough,
        * but the write is cheap and idempotent, so it rides every edge. */
       elsBootAttemptsClear();
-      oldInCnt = RampsModbusData.u16InCnt;
+      oldReplies = mbAppReplies();
       HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_RESET);
       osDelay(25);
       HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_SET);

@@ -321,11 +321,9 @@ def test_the_chunk_size_keeps_real_headroom_against_the_firmware():
     """The number, checked against the firmware's own arithmetic.
 
     An FC3 response is 5 + 2N bytes and the firmware assembles it in a
-    256-byte buffer (MAX_BUFFER, fw/Core/Inc/ModbusConfig.h) whose length it
-    tracks in a uint8_t, with NO bounds check in the copy loop
-    (process_FC3, fw/Core/Src/Modbus.c). Both limits put the ceiling at
-    N = 125, and every way of exceeding it fails silently -- a buffer overrun
-    into whatever follows, or a wrapped length field.
+    256-byte buffer (MB_RTU_MAX_FRAME, fw/modbus_rtu/mb_rtu.h), refusing a
+    count above 125 with exception 3. Both limits put the ceiling at
+    N = 125.
 
     So this is not "assert 64 == 64". It asserts the chunk stays at most half
     of BOTH limits, which is what "conservative" was decided to mean here, and
@@ -396,7 +394,7 @@ def test_the_tick_read_keeps_its_stated_margin_against_the_firmware():
     """
     from reflex.utils import devices
     ceiling = 125                       # see the chunk test above for the derivation
-    buffer_bytes = 256                  # MAX_BUFFER, fw/Core/Inc/ModbusConfig.h
+    buffer_bytes = 256                  # MB_RTU_MAX_FRAME, fw/modbus_rtu/mb_rtu.h
 
     n = devices.TICK_COUNT
     assert n == 86, (

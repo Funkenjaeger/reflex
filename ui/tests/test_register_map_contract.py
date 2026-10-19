@@ -467,10 +467,11 @@ def test_ui_recognises_no_schema_the_firmware_never_defined():
 
 # ── seq/payload ORDERING: why cal and diag need no torn-read guard ───────────
 #
-# THE MECHANISM, read rather than assumed (Modbus.c process_FC3):
+# THE MECHANISM, read rather than assumed (the FC 3 case of mbRtuHandle,
+# fw/modbus_rtu/mb_rtu.c):
 #
-#     for (i = u16StartAdd; i < u16StartAdd + u8regsno; i++)
-#         ... copy modH->u16regs[i] into the TX buffer ...
+#     for (uint16_t i = 0; i < count; i++)
+#         ... copy p[i] into the reply, high byte first ...
 #
 # Registers are copied into the response ONE AT A TIME, in ASCENDING ADDRESS
 # ORDER, and the ~100 kHz ISR can preempt that loop at any point. So within a

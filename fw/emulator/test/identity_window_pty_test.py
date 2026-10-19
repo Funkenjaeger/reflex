@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """identity_window_pty_test.py -- the identity window END TO END.
 
-Launches the real lathe-emulator (real Modbus.c with the window resolver,
-real Ramps.c publishing rampsIdentityWindow) in serve mode on a PTY, then
-drives it with the real host client, scripts/modbus-flash.py, imported as a
-module. Asserts:
+Launches the real lathe-emulator (the real Modbus slave, mb_app.c, with the
+window resolver, real Ramps.c publishing rampsIdentityWindow) in serve mode on
+a PTY, then drives it with the real host client, scripts/modbus-flash.py,
+imported as a module. Asserts:
 
   1. `--identity` reads magic 0x454C, stage 2 (application), window version
      1, the git rev the build recorded in reflex_build_rev.h, and

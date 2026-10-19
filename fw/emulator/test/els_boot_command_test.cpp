@@ -54,8 +54,13 @@ void HAL_GPIO_TogglePin(GPIO_TypeDef *p, uint16_t pin) { (void)p; (void)pin; }
 HAL_StatusTypeDef HAL_TIM_Base_Start_IT(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
 HAL_StatusTypeDef HAL_TIM_Encoder_Start(TIM_HandleTypeDef *h, uint32_t ch) { (void)h; (void)ch; return HAL_OK; }
 HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
-void ModbusInit(modbusHandler_t *m)  { (void)m; }
-void ModbusStart(modbusHandler_t *m) { (void)m; }
+/* Records what RampsStart hands the Modbus slave (case 8). */
+static uint16_t       *mbRegs;
+static uint16_t        mbNregs;
+static const uint16_t *mbIdentity;
+void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { mbRegs = r; mbNregs = n; mbIdentity = id; }
+int mbAppService(void) { return 0; }
+uint16_t mbAppReplies(void) { return 0; }
 osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
 osThreadId_t osThreadNew(osThreadFunc_t f, void *a, const osThreadAttr_t *at) { (void)f; (void)a; (void)at; return nullptr; }
 
@@ -187,13 +192,14 @@ int main() {
     RampsStart(&data);
     check(data.shared.elsStop.protocolVersion == ELS_PROTOCOL_VERSION, "8 RampsStart publishes ELS_PROTOCOL_VERSION");
     check(data.shared.elsStop.bootCommand == 0 && data.shared.elsStop.bootSeq == 0, "8 RampsStart zeroes bootCommand/bootSeq");
-    check(RampsModbusData.windowCount == 1 && RampsModbusData.windows[0].base == ELS_ID_BASE &&
-          RampsModbusData.windows[0].size == ELS_ID_SIZE && RampsModbusData.windows[0].readOnly == 1,
-          "8 RampsStart registers the identity window, read-only, at ELS_ID_BASE");
-    check(RampsModbusData.windows[0].regs[ELS_ID_MAGIC_OFF] == ELS_ID_MAGIC &&
-          RampsModbusData.windows[0].regs[ELS_ID_STAGE_OFF] == ELS_ID_STAGE_APP &&
-          RampsModbusData.windows[0].regs[ELS_ID_APP_PROTOCOL_OFF] == ELS_PROTOCOL_VERSION,
-          "8 ...and it carries magic, stage 2 and the protocol version");
+    check(mbRegs == (uint16_t *)&data.shared &&
+          mbNregs == sizeof(rampsSharedData_t) / sizeof(uint16_t),
+          "8 RampsStart hands the Modbus slave the whole shared struct as registers");
+    check(mbIdentity != nullptr &&
+          mbIdentity[ELS_ID_MAGIC_OFF] == ELS_ID_MAGIC &&
+          mbIdentity[ELS_ID_STAGE_OFF] == ELS_ID_STAGE_APP &&
+          mbIdentity[ELS_ID_APP_PROTOCOL_OFF] == ELS_PROTOCOL_VERSION,
+          "8 ...and the identity window, carrying magic, stage 2 and the protocol version");
 
     printf("%s\n", failures ? "FAILURES" : "all passed");
     return failures ? 1 : 0;
