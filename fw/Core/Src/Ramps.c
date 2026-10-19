@@ -256,36 +256,48 @@ uint16_t servoCyclesCounter = 0;
 TIM_HandleTypeDef *ramps_timer_handles[SCALES_COUNT] = {0};
 
 
-/* Normal, above the three Low tasks, as the slave task it replaces was: a
- * frame is served as soon as the task polls after it ends. */
-const osThreadAttr_t modbusTaskAttributes = {
-.name = "modbusTask",
-.stack_size = 128 * 4,
-.priority = (osPriority_t) osPriorityNormal,
-};
+/* ---- The superloop's jobs ---------------------------------------------
+ *
+ * main() calls RampsPoll() forever. Each pass services the Modbus slave once
+ * and then runs at most ONE job that has fallen due, so frames are serviced
+ * between jobs and a host write can never land inside one. The ISR preempts
+ * everything here, jobs and Modbus alike. The jobs are named ...Task because
+ * the register schemas, the design docs and the UI cite them by those names:
+ *
+ *   servoEnableTask   100 ms  command intake, re-assert, mode publish, ENA,
+ *                             command ack, bootCommand
+ *   updateSpeedTask    50 ms  spindle period, fastData mirrors, servoCycles,
+ *                             scale speeds
+ *   userLedTask        50 ms  LED blink, watchdog kick, boot-attempt clear
+ *
+ * When several fall due in the same millisecond, servoEnableTask goes first:
+ * it is the one that consumes DISENGAGE. Periods are kept on average (each
+ * run is scheduled one period after the previous one was DUE, not after it
+ * ran), because updateSpeedTask's speeds and servoEnableTask's servoSpeed
+ * divide by the nominal period; a pass that finds a job more than a period
+ * late runs it once and restarts its schedule rather than running it in a
+ * burst. */
+#define RAMPS_SERVO_ENABLE_PERIOD_MS 100u
+#define RAMPS_LED_PERIOD_MS          50u
+#define RAMPS_LED_PULSE_MS           25u
 
-//osThreadId_t userLedTaskHandler;
-const osThreadAttr_t ledTaskAttributes = {
-.name = "UpdateLedTask",
-.stack_size = 128 * 4,
-.priority = (osPriority_t) osPriorityLow,
+typedef struct {
+  uint32_t due;      /* HAL tick the job next falls due at */
+  uint32_t period;   /* ms */
+} rampsJob_t;
 
-};
+static rampsJob_t servoEnableJob = { 0u, RAMPS_SERVO_ENABLE_PERIOD_MS };
+static rampsJob_t speedJob       = { 0u, 50u };   /* updateSpeedTaskTicks */
+static rampsJob_t ledJob         = { 0u, RAMPS_LED_PERIOD_MS };
 
-//osThreadId_t updateSpeedTaskHandler;
-const osThreadAttr_t speedTaskAttributes = {
-.name = "updateSpeedTask",
-.stack_size = 128 * 4,
-.priority = (osPriority_t) osPriorityLow,
-};
-
-//osThreadId_t updateServoEnableTaskHandler;
-const osThreadAttr_t servoEnableTaskAttributes = {
-.name = "servoEnableTask",
-.stack_size = 128 * 4,
-.priority = (osPriority_t) osPriorityLow,
-};
-
+/* Nonzero once, when `job` has fallen due at `now`. Wrap-safe: HAL ticks are
+ * compared by signed difference. */
+static int rampsJobDue(rampsJob_t *job, uint32_t now) {
+  if ((int32_t)(now - job->due) < 0) return 0;
+  job->due += job->period;
+  if ((int32_t)(now - job->due) >= 0) job->due = now + job->period;
+  return 1;
+}
 
 void configureOutputPin(GPIO_TypeDef *Port, uint16_t Pin) {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -426,11 +438,13 @@ void RampsStart(rampsHandler_t *rampsData) {
   configureOutputPin(SPARE_2_GPIO_PORT, SPARE_2_PIN);
   configureOutputPin(SPARE_3_GPIO_PORT, SPARE_3_PIN);
 
-  // Configure tasks
-  osThreadNew(modbusTask, rampsData, &modbusTaskAttributes);
-  osThreadNew(userLedTask, rampsData, &ledTaskAttributes);
-  osThreadNew(updateSpeedTask, rampsData, &speedTaskAttributes);
-  osThreadNew(servoEnableTask, rampsData, &servoEnableTaskAttributes);
+  /* Schedule the jobs. Each first falls due one period from now. */
+  {
+    uint32_t now = HAL_GetTick();
+    servoEnableJob.due = now + servoEnableJob.period;
+    speedJob.due       = now + speedJob.period;
+    ledJob.due         = now + ledJob.period;
+  }
 
 
   // Initialize and start encoder timer, reset the sync flags
@@ -608,8 +622,8 @@ static int32_t elsPeriodKeyNum     = 0;
 static int32_t elsPeriodKeyDen     = 0;
 static float   elsPeriodKeyTps     = 0.0f;
 
-/* Called from updateSpeedTask (and mirrored in the emulator's main loop --
- * the emulator does not run FreeRTOS tasks). Cheap when nothing changed. */
+/* Called from the updateSpeedTask job, in the emulator as on the chip.
+ * Cheap when nothing changed. */
 void elsRefreshSpindlePeriod(rampsSharedData_t *shared) {
   int32_t num = shared->scales[0].syncRatioNum;
   int32_t den = shared->scales[0].syncRatioDen;
@@ -1737,18 +1751,16 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   }
 
   /* Divide-by-zero guard. The zero window is REACHABLE, not theoretical:
-   * servoCycles is 0 from reset (Ramps.c:64) and its only writer is
-   * updateSpeedTask (Ramps.c:613), but RampsStart() enables the 50 kHz TIM9
-   * interrupt as its last act (HAL_TIM_Base_Start_IT, Ramps.c:165) and main.c
-   * only reaches osKernelStart() afterwards, so this ISR runs before the
-   * scheduler exists at all, and updateSpeedTask then sleeps osDelay(50) before
-   * its first assignment. That is >2500 ISR ticks at 20 us with servoCycles == 0.
+   * servoCycles is 0 from reset and its only writer is updateSpeedTask, but
+   * RampsStart() enables the 50 kHz TIM9 interrupt as its last act
+   * (HAL_TIM_Base_Start_IT) and the updateSpeedTask job first falls due 50 ms
+   * later: >2500 ISR ticks at 20 us with servoCycles == 0.
    * It goes unnoticed on hardware because Cortex-M4 UDIV-by-zero yields 0 with
    * DIV_0_TRP clear (never set here) and servoMode is still 0 so no pulses are
    * emitted; it is still C undefined behavior, and the emulator's x86 build
    * takes SIGFPE on this line. Substituting 0 reproduces the observed hardware
    * result without the UB. Nonzero servoCycles behaves exactly as before.
-   * COUPLED WITH updateSpeedTask's newPeriod clamp (Ramps.c:610-613): that
+   * COUPLED WITH updateSpeedTask's newPeriod clamp: that
    * clamp now floors at 1, not 0, so the boot window above is the only
    * remaining source of servoCycles == 0. This guard must stay regardless —
    * it is what makes that window survivable. */
@@ -1800,170 +1812,166 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   }
 }
 
-/* The Modbus slave (mb_app.h), polled once per FreeRTOS tick. Receive runs on
- * DMA whatever this task is doing, and a finished frame waits in the ring
- * behind the latched IDLE flag, so the poll period adds at most 1 ms to a
- * reply and costs nothing in correctness. The reply leaves by DMA too, so the
- * task sleeps through it. */
-_Noreturn void modbusTask(__attribute__((unused)) void *argument) {
-  for (;;) {
-    (void)mbAppService();
-    osDelay(1);
-  }
-}
+/* LED pulse state: set when a reply edge pulls the LED low, cleared when
+ * RampsPoll restores it RAMPS_LED_PULSE_MS later. */
+static uint32_t ledPulseStart;
+static uint8_t  ledPulseActive;
 
-_Noreturn void userLedTask(__attribute__((unused)) void *argument) {
-  uint16_t oldReplies = 0;
-  uint8_t blinkInterval = 0;
+void userLedTask(void) {
+  static uint16_t oldReplies = 0;
+  static uint8_t blinkInterval = 0;
 
-  for (;;) {
-    osDelay(50);
-    blinkInterval = (blinkInterval + 1) % 10;
-    if (blinkInterval == 0) {
-      HAL_GPIO_TogglePin(USR_LED_GPIO_Port, USR_LED_Pin);
-    }
-
-    /* The bootloader arms the IWDG (~32 s) before jumping here and it cannot
-     * be stopped, so this 50 ms loop refreshes it. It proves the scheduler is
-     * alive, nothing more; a hung app is reset and counted as a strike by
-     * the boot-attempt counter. No-op in the legacy (no-bootloader) build. */
-    elsBootWatchdogKick();
-
-    if (oldReplies != mbAppReplies()) {
-      /* MODBUS IS LIVE: the first reply the slave sent is the app's
-       * proof of life to the bootloader. Clears the boot-attempt counter
-       * (els_boot.h); without this, three boots strike out and the
-       * bootloader swaps the previous image back. Once per boot is enough,
-       * but the write is cheap and idempotent, so it rides every edge. */
-      elsBootAttemptsClear();
-      oldReplies = mbAppReplies();
-      HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_RESET);
-      osDelay(25);
-      HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_SET);
-    }
+  blinkInterval = (blinkInterval + 1) % 10;
+  if (blinkInterval == 0) {
+    HAL_GPIO_TogglePin(USR_LED_GPIO_Port, USR_LED_Pin);
   }
 
+  /* The bootloader arms the IWDG (~32 s) before jumping here and it cannot
+   * be stopped, so this 50 ms job refreshes it. It proves the superloop is
+   * alive, nothing more; a hung app is reset and counted as a strike by
+   * the boot-attempt counter. No-op in the legacy (no-bootloader) build. */
+  elsBootWatchdogKick();
+
+  if (oldReplies != mbAppReplies()) {
+    /* MODBUS IS LIVE: the first reply the slave sent is the app's
+     * proof of life to the bootloader. Clears the boot-attempt counter
+     * (els_boot.h); without this, three boots strike out and the
+     * bootloader swaps the previous image back. Once per boot is enough,
+     * but the write is cheap and idempotent, so it rides every edge. */
+    elsBootAttemptsClear();
+    oldReplies = mbAppReplies();
+    HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_RESET);
+    ledPulseStart  = HAL_GetTick();
+    ledPulseActive = 1;
+  }
 }
 
 const int32_t updateSpeedTaskTicks = 50;
 
-_Noreturn void updateSpeedTask(void *argument) {
-  rampsHandler_t *rampsData = (rampsHandler_t *) argument;
+void updateSpeedTask(rampsHandler_t *rampsData) {
+  /* Keep the spindle period current. Off the ISR deliberately: the
+   * computation is double-precision and there is no FP64 hardware on this
+   * core. Cheap when the geometry has not moved, which is almost always. */
+  elsRefreshSpindlePeriod(&rampsData->shared);
 
-  for (;;) {
+  // Update fast access variables
+  rampsData->shared.fastData.cycles = rampsData->shared.executionCycles;
+  rampsData->shared.fastData.servoCurrent = rampsData->shared.servo.currentSteps;
+  rampsData->shared.fastData.servoDesired = rampsData->shared.servo.desiredSteps;
 
-    // Update the current speed
-    osDelay(updateSpeedTaskTicks);
+  // If maximum speed has been changed, update the motor timer accordingly
+  float clock_freq = 100000000.0f / ((float) rampsData->synchroRefreshTimer->Init.Prescaler + 1) /
+                     (float) (rampsData->synchroRefreshTimer->Init.Period + 1);
 
-    /* Keep the spindle period current. Off the ISR deliberately: the
-     * computation is double-precision and there is no FP64 hardware on this
-     * core. Cheap when the geometry has not moved, which is almost always. */
-    elsRefreshSpindlePeriod(&rampsData->shared);
+  // Clamping value for max speed to the maximum allowed by the current timer refresh rate from the sync routine
+  if (rampsData->shared.servo.maxSpeed > 100000) {
+    rampsData->shared.servo.maxSpeed = 100000;
+  }
 
-    // Update fast access variables
-    rampsData->shared.fastData.cycles = rampsData->shared.executionCycles;
-    rampsData->shared.fastData.servoCurrent = rampsData->shared.servo.currentSteps;
-    rampsData->shared.fastData.servoDesired = rampsData->shared.servo.desiredSteps;
+  float newPeriod = floorf(clock_freq / rampsData->shared.servo.maxSpeed);
+  if (newPeriod > (float) UINT16_MAX) {
+    newPeriod = 65535;
+  }
+  if (newPeriod < 1) {
+    // Never clamp to 0: a period of 0 has no meaningful semantics (it
+    // would encode "too fast to subdivide" as an impossible state), and
+    // the only thing that makes a zero survivable is the ISR divide-by-
+    // zero guard in SynchroRefreshTimerIsr. Floor at 1 (the fastest representable
+    // subdivision) so this writer stops relying on that guard.
+    newPeriod = 1;
+  }
+  servoCycles = (uint16_t) newPeriod;
 
-    // If maximum speed has been changed, update the motor timer accordingly
-    float clock_freq = 100000000.0f / ((float) rampsData->synchroRefreshTimer->Init.Prescaler + 1) /
-                       (float) (rampsData->synchroRefreshTimer->Init.Period + 1);
-
-    // Clamping value for max speed to the maximum allowed by the current timer refresh rate from the sync routine
-    if (rampsData->shared.servo.maxSpeed > 100000) {
-      rampsData->shared.servo.maxSpeed = 100000;
-    }
-
-    float newPeriod = floorf(clock_freq / rampsData->shared.servo.maxSpeed);
-    if (newPeriod > (float) UINT16_MAX) {
-      newPeriod = 65535;
-    }
-    if (newPeriod < 1) {
-      // Never clamp to 0: a period of 0 has no meaningful semantics (it
-      // would encode "too fast to subdivide" as an impossible state), and
-      // the only thing that makes a zero survivable is the ISR divide-by-
-      // zero guard at Ramps.c:513. Floor at 1 (the fastest representable
-      // subdivision) so this writer stops relying on that guard.
-      newPeriod = 1;
-    }
-    servoCycles = (uint16_t) newPeriod;
-
-    for (int i = 0; i < SCALES_COUNT; i++) {
-      // Update scale/spindle speed value
-      deltaPositionAndError(
-        rampsData->shared.scales[i].position,
-        1000,
-        updateSpeedTaskTicks,
-        &rampsData->scalesSpeed[i]
-      );
-      rampsData->shared.scales[i].speed = rampsData->scalesSpeed[i].scaledDelta;
-      rampsData->shared.fastData.scaleSpeed[i] = rampsData->scalesSpeed[i].scaledDelta;
-    }
+  for (int i = 0; i < SCALES_COUNT; i++) {
+    // Update scale/spindle speed value
+    deltaPositionAndError(
+      rampsData->shared.scales[i].position,
+      1000,
+      updateSpeedTaskTicks,
+      &rampsData->scalesSpeed[i]
+    );
+    rampsData->shared.scales[i].speed = rampsData->scalesSpeed[i].scaledDelta;
+    rampsData->shared.fastData.scaleSpeed[i] = rampsData->scalesSpeed[i].scaledDelta;
   }
 }
 
-_Noreturn void servoEnableTask(void *argument) {
-  rampsHandler_t *rampsData = (rampsHandler_t *) argument;
+void servoEnableTask(rampsHandler_t *rampsData) {
   rampsSharedData_t *shared = (rampsSharedData_t *) &rampsData->shared;
-  uint32_t previousPosition = 0;
+  static uint32_t previousPosition = 0;
 
-  for (;;) {
-    osDelay(100);
+  /* The command channel goes FIRST in the tick (els_command.h). While a
+   * command is in flight the re-assert below is skipped: DISENGAGE has just
+   * cleared sync and servoMode, and the re-assert is a read followed by a
+   * write that must not land between them. */
+  bool commandInFlight = elsCommandIntake(rampsData);
 
-    /* The command channel goes FIRST in the tick (els_command.h). While a
-     * command is in flight the re-assert below is skipped: DISENGAGE has just
-     * cleared sync and servoMode, and the re-assert is a read followed by a
-     * write that must not land between them. */
-    bool commandInFlight = elsCommandIntake(rampsData);
+  bool anySyncMotionEnabled = false;
+  for (int i = 0; i < SCALES_COUNT; i++) {
+    anySyncMotionEnabled = anySyncMotionEnabled || (shared->scales[i].syncEnable != 0);
+  }
 
-    bool anySyncMotionEnabled = false;
-    for (int i = 0; i < SCALES_COUNT; i++) {
-      anySyncMotionEnabled = anySyncMotionEnabled || (shared->scales[i].syncEnable != 0);
+  /* The re-assert. elsDiagServoGate is a no-op returning false in every
+   * release build; a diagnostic probe may refuse the assert and record that
+   * it did (see els_diag_disengage_latch.h, which exists because
+   * this line can switch the feed back on after a disengage). */
+  if (!commandInFlight && anySyncMotionEnabled && !shared->elsStop.active
+      && rampsData->shared.fastData.servoMode != 2) {
+    if (!elsDiagServoGate(&rampsData->diag, &shared->elsStop,
+                          rampsData->shared.fastData.servoMode)) {
+      rampsData->shared.fastData.servoMode = 1;
     }
+  }
 
-    /* The re-assert. elsDiagServoGate is a no-op returning false in every
-     * release build; a diagnostic probe may refuse the assert and record that
-     * it did (see els_diag_disengage_latch.h, which exists precisely because
-     * this line can switch the feed back on after a disengage). */
-    if (!commandInFlight && anySyncMotionEnabled && !shared->elsStop.active
-        && rampsData->shared.fastData.servoMode != 2) {
-      if (!elsDiagServoGate(&rampsData->diag, &shared->elsStop,
-                            rampsData->shared.fastData.servoMode)) {
-        rampsData->shared.fastData.servoMode = 1;
-      }
-    }
+  rampsData->shared.fastData.servoSpeed = (float)(int32_t)(rampsData->shared.servo.currentSteps - previousPosition) * 10;
+  previousPosition = rampsData->shared.servo.currentSteps;
 
-    rampsData->shared.fastData.servoSpeed = (float)(int32_t)(rampsData->shared.servo.currentSteps - previousPosition) * 10;
-    previousPosition = rampsData->shared.servo.currentSteps;
+  /* THE MACHINE MODE, published unconditionally -- release builds included.
+   *
+   * Derived here rather than in the ISR because it is a ~100 ms question
+   * about what the machine is doing, and the ISR has no business spending
+   * cycles on it. Written before the probe hook below so a mode-watch probe
+   * and this register can never disagree about the same tick. */
+  elsPublishMachineMode(shared, (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
 
-    /* THE MACHINE MODE, published unconditionally -- release builds included.
-     *
-     * Derived here rather than in the ISR because it is a ~100 ms question
-     * about what the machine is doing, and the ISR has no business spending
-     * cycles on it. Written before the probe hook below so a mode-watch probe
-     * and this register can never disagree about the same tick.
-     *
-     * This used to happen ONLY inside that probe. See the machineMode comment
-     * in Ramps.h for why that made the rung-2 census uncollectable in any
-     * build the operator would actually cut with. */
-    elsPublishMachineMode(shared, (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
+  /* Probe hook: a mode-watch probe derives and publishes the machine mode
+   * once per task tick. No code in a release build or any other probe.
+   * AFTER the re-assert above, so the published mode reflects this tick's
+   * decision rather than last tick's. */
+  elsDiagTaskTick(&rampsData->diag, shared,
+                  (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
 
-    /* Probe hook: a mode-watch probe derives and publishes the machine mode
-     * once per task tick. No code in a release build or any other probe.
-     * AFTER the re-assert above, so the published mode reflects this tick's
-     * decision rather than last tick's. */
-    elsDiagTaskTick(&rampsData->diag, shared,
-                    (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
+  if (shared->fastData.servoMode != 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_RESET);
+  if (shared->fastData.servoMode == 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_SET);
 
-    if (shared->fastData.servoMode != 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_RESET);
-    if (shared->fastData.servoMode == 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_SET);
+  /* The command ack, after the mode is published and ENA driven, so the
+   * mode a host reads beside the new commandSeq describes the result. */
+  elsCommandFinish(rampsData);
 
-    /* The command ack, after the mode is published and ENA driven, so the
-     * mode a host reads beside the new commandSeq describes the result. */
-    elsCommandFinish(rampsData);
+  /* Boot command intake, once per task tick. */
+  elsBootCommandTick(shared);
+}
 
-    /* Boot command intake, once per task tick. */
-    elsBootCommandTick(shared);
+/* One pass of the superloop (see the job table above RampsStart). */
+void RampsPoll(rampsHandler_t *rampsData) {
+  uint32_t now = HAL_GetTick();
+
+  (void)mbAppService();
+
+  if (rampsJobDue(&servoEnableJob, now)) {
+    servoEnableTask(rampsData);
+  } else if (rampsJobDue(&speedJob, now)) {
+    updateSpeedTask(rampsData);
+  } else if (rampsJobDue(&ledJob, now)) {
+    userLedTask();
+  }
+
+  /* The reply-edge LED pulse userLedTask started, ended on time. Signed:
+   * the job stamps the start with a later tick than `now` when the HAL tick
+   * moves during this pass, and an unsigned difference would end the pulse
+   * at once. */
+  if (ledPulseActive && (int32_t)(now - ledPulseStart) >= (int32_t)RAMPS_LED_PULSE_MS) {
+    HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_SET);
+    ledPulseActive = 0;
   }
 }
 
@@ -1993,11 +2001,11 @@ _Noreturn void servoEnableTask(void *argument) {
  *      machine still reads inert. Otherwise it waits for the next tick, so an
  *      ack never describes a machine still carrying motion.
  *
- * Legal from every mode, so DISENGAGE has no refusal. A host write that lands
- * while it is in flight (the Modbus task preempts this one) and reopens sync,
- * servoMode or enable holds the ack back, and the next intake applies the
- * teardown again: the command's contract wins over a write the UI is not
- * supposed to make in that window.
+ * Legal from every mode, so DISENGAGE has no refusal. Frames are serviced
+ * between superloop jobs, never inside one, so a host write cannot land
+ * within a tick; one that lands between the consuming tick and the ack and
+ * reopens sync, servoMode or enable holds the ack back, and the next intake
+ * applies the teardown again.
  */
 static bool elsDisengageInert(const rampsHandler_t *data) {
   const rampsSharedData_t *shared = &data->shared;

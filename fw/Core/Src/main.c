@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "cmsis_os.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -52,7 +51,6 @@ rampsHandler_t rampsInstance;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -108,26 +106,19 @@ int main(void)
   rampsInstance.synchroRefreshTimer = &htim9;
 
   /* Starts the encoders, the Modbus slave and the TIM9 motion interrupt, and
-   * creates the application tasks. The interrupt runs from here on; the tasks
-   * only once osKernelStart() below hands over to the scheduler. */
+   * schedules the superloop's jobs. The interrupt runs from here on. */
   RampsStart(&rampsInstance);
 
   /* USER CODE END 2 */
 
-  /* Init scheduler */
-  osKernelInitialize();
-
-  /* Call init function for freertos objects (in freertos.c) */
-  MX_FREERTOS_Init();
-
-  /* Start scheduler */
-  osKernelStart();
-
-  /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  /* The superloop: no RTOS. Each pass services the Modbus slave and runs at
+   * most one job that has fallen due (Ramps.c RampsPoll); the TIM9 motion
+   * interrupt preempts all of it. */
   while (1)
   {
+    RampsPoll(&rampsInstance);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

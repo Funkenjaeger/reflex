@@ -94,7 +94,7 @@ extern "C" {
 /* (nm -u on the firmware build's Ramps.c.o: HAL_GPIO_{Init,WritePin,   */
 /*  TogglePin}, HAL_TIM_{Base_Start_IT,Encoder_Start}, mbApp{Init,      */
 /*  Service,Replies}, emu_{coreDebug,dwt,gpioa,gpiob,hw,log_trace},     */
-/*  initScaleTimer, osDelay, osThreadNew.)                              */
+/*  initScaleTimer.)                                                    */
 /* ------------------------------------------------------------------ */
 
 extern "C" {
@@ -123,11 +123,8 @@ HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK;
 void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { (void)r; (void)n; (void)id; }
 int mbAppService(void) { return 0; }
 uint16_t mbAppReplies(void) { return 0; }
+uint32_t HAL_GetTick(void) { return 0; }
 
-osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
-osThreadId_t osThreadNew(osThreadFunc_t f, void *arg, const osThreadAttr_t *a) {
-    (void)f; (void)arg; (void)a; return nullptr;
-}
 
 /* Ramps.c globals the ISR divides by. servoCycles is 0 at startup and is
  * normally set by updateSpeedTask (Ramps.c:601); the ISR's

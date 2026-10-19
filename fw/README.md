@@ -3,8 +3,8 @@
 The **real-time half** of [Reflex](../README.md): STM32F411 firmware providing
 encoder capture, step generation, and all motion control the UI must never be
 trusted with — spindle-synchronized feed, the electronic stop, retract, jog
-profiles, and thread-phase re-sync all execute here, in a 50 kHz ISR with
-FreeRTOS tasks alongside. The UI talks to it as a Modbus RTU master over
+profiles, and thread-phase re-sync all execute here, in a 50 kHz ISR with a
+superloop alongside. The UI talks to it as a Modbus RTU master over
 RS-485; the register contract is defined in `Core/Inc/Ramps.h` and mirrored by
 `../ui/reflex/utils/devices.py`, guarded by `protocolVersion`.
 
@@ -106,7 +106,7 @@ address to get wrong, and it is more tolerant of ST-Link **clones**.
 ## Lathe emulator
 
 A native Linux emulator compiles the real firmware sources against a
-HAL/FreeRTOS shim and simulates the lathe (spindle, leadscrew, carriage with
+HAL shim and simulates the lathe (spindle, leadscrew, carriage with
 half nut, cross-slide). It serves Modbus RTU on a PTY pair and a TCP socket, so
 the unmodified UI connects as if to real hardware. It also hosts the firmware
 test suite (`emulator/test/`), which drives the real ISR; run it with `ctest`
@@ -160,5 +160,5 @@ recovery path.
 
 ## License
 
-MIT — see `LICENSE`. The STM32 drivers and CMSIS under `Drivers/` and FreeRTOS
-under `Middlewares/` keep their own licenses, in those directories.
+MIT — see `LICENSE`. The STM32 drivers and CMSIS under `Drivers/` keep their
+own licenses, in that directory.

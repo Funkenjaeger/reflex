@@ -9,7 +9,7 @@
  * (modbus_rtu/mb_rtu.c), which calls it, so they cannot disagree about a gap.
  *
  * Header-only and dependency-free on purpose: it is compiled into a
- * FreeRTOS firmware, a bare-metal bootloader, and native tests.
+ * bare-metal application, a bare-metal bootloader, and native tests.
  *
  * A range is served only if it lies WHOLLY inside one region. A range that
  * straddles the main map and a window, or falls in the gap between them,

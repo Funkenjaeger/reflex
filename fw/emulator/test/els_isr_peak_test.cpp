@@ -5,8 +5,8 @@
  * core, 10 us TIM9 tick) and everything else on the chip -- the Modbus task,
  * the USART RX interrupt -- runs in what it leaves. executionCycles has always
  * been measured every tick, but the only copy anyone could see was
- * fastData.cycles, which servoEnableTask samples once per ~10 ms osDelay: about
- * one tick in a thousand, and therefore a TYPICAL tick, never the worst one.
+ * fastData.cycles, which updateSpeedTask samples once per 50 ms: about
+ * one tick in 2500, and therefore a TYPICAL tick, never the worst one.
  *
  * On 2026-08-23 the machine lost Modbus on 6 of 6 cuts, every failure a timeout
  * rather than a CRC error -- the Modbus task getting no CPU. The instrument
@@ -70,11 +70,8 @@ HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK;
 void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { (void)r; (void)n; (void)id; }
 int mbAppService(void) { return 0; }
 uint16_t mbAppReplies(void) { return 0; }
+uint32_t HAL_GetTick(void) { return 0; }
 
-osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
-osThreadId_t osThreadNew(osThreadFunc_t f, void *arg, const osThreadAttr_t *a) {
-    (void)f; (void)arg; (void)a; return nullptr;
-}
 
 extern uint16_t servoCycles;
 extern uint16_t servoCyclesCounter;

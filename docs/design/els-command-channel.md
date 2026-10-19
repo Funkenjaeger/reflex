@@ -146,10 +146,9 @@ the task re-asserts (`anySync && !active && servoMode != 2` sets
 `servoMode = 1`), publishes `machineMode`, drives ENA and takes
 `bootCommand`. `elsCommandIntake` goes first in that tick, and the re-assert
 is skipped while a command is in flight. `elsCommandFinish` runs after ENA is
-driven and before `bootCommand`. The emulator, which runs no FreeRTOS tasks,
-mirrors the tick with the same two calls around its mode publish
-(`fw/emulator/src/main.cpp`); there the ISR never runs inside a tick, so every
-ack lands on the tick after the consuming one.
+driven and before `bootCommand`. `servoEnableTask` is a superloop job
+(`RampsPoll`, `fw/Core/Src/Ramps.c`); the emulator runs the
+same loop on its own thread.
 
 It is not the ISR, which consumes `calCommand`, `latchCommand`,
 `phaseOffsetCommand` and `clearRefCommand`. The re-assert is a read followed
@@ -157,30 +156,16 @@ by a write in the task. An ISR consumption that lands between the read of
 `syncEnable` and the write of `servoMode` is overwritten, which leaves
 `servoMode = 1` behind an `OFF` ack.
 
-The Modbus slave task (priority Normal) can preempt `servoEnableTask`
-(Low), so a host write can land between the consumer's steps. The UI writes
-nothing to `elsStop` or `syncEnable` between a command write and its ack. A
-write that does land there and reopens `syncEnable`, `servoMode` or `enable`
-holds the ack back, and the next tick applies the teardown again.
+The superloop services Modbus frames between jobs, never inside one, so no
+host write can land between the consumer's steps; the ISR preempts every
+job, so step 4's ack-after-the-ISR rule holds. A write can land
+between the consuming tick and a later ack tick. The UI writes nothing to
+`elsStop` or `syncEnable` between a command write and its ack; a write that
+does land there and reopens `syncEnable`, `servoMode` or `enable` holds the
+ack back, and the next tick applies the teardown again.
 
-Planned firmware work replaces the vendored Modbus slave with the shared RTU
-core (`fw/modbus_rtu/`), which rejects host writes to `ro_firmware`
-registers, and then replaces FreeRTOS with a superloop. For command
-consumption:
-
-- `servoEnableTask`'s body becomes a periodic superloop job, in the same
-  order: `elsCommandIntake`, the re-assert, mode publish, ENA,
-  `elsCommandFinish`, `bootCommand`.
-- Frames are serviced between jobs, so no host write can land inside a
-  consumption.
-- The ISR still preempts every job, so step 4's ack-after-the-ISR rule is
-  unchanged.
-- The period becomes the job's, not `osDelay(100)`. The latency figures
-  below assume about 100 ms; a different period means re-reading them.
-
-The `DISENGAGE` emulator table test
-(`fw/emulator/test/els_command_test.cpp`) is part of the baseline the
-replacement has to keep green.
+`fw/emulator/test/els_command_test.cpp` covers `DISENGAGE` from every
+machine mode against the real ISR.
 
 ## Connect, and adopt-on-connect
 
