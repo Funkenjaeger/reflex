@@ -71,8 +71,7 @@ HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK;
 void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { (void)r; (void)n; (void)id; }
 int mbAppService(void) { return 0; }
 uint16_t mbAppReplies(void) { return 0; }
-osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
-osThreadId_t osThreadNew(osThreadFunc_t f, void *a, const osThreadAttr_t *at) { (void)f; (void)a; (void)at; return nullptr; }
+uint32_t HAL_GetTick(void) { return 0; }
 
 extern uint16_t servoCycles;
 extern uint16_t servoCyclesCounter;

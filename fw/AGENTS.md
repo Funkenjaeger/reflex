@@ -88,7 +88,7 @@ After any changes to `Core/Src/Ramps.c`, `Core/Inc/Ramps.h`, or other firmware s
 
 ### Concurrency
 - TIM9 ISR (`SynchroRefreshTimerIsr`) handles all motion control at 20 µs ticks (50 kHz; rate and derived tick constants in `Core/Inc/els_isr_rate.h`)
-- FreeRTOS tasks handle Modbus, speed updates, motor enable
+- A superloop (`RampsPoll`, no RTOS) services Modbus and runs the speed-update, motor-enable and LED jobs
 - `rampsSharedData_t` is the shared state, memory-mapped to Modbus registers
 
 ### Servo modes

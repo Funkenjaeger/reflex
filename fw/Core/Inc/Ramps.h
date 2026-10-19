@@ -21,7 +21,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "stm32f4xx_hal.h"
-#include "cmsis_os2.h"
 #include "Scales.h"
 #include "els_backlash_cal.h"
 #include "els_slip.h"
@@ -322,8 +321,7 @@ extern TIM_HandleTypeDef *ramps_timer_handles[SCALES_COUNT];
    *
    * WHY A PEAK AND NOT THE EXISTING COUNTER. executionCycles is measured every
    * tick, but the only copy anyone can see is fastData.cycles, which
-   * servoEnableTask samples once per ~10 ms osDelay -- about one tick in a
-   * thousand. The event worth measuring is cut-start, where take-up initiation,
+   * updateSpeedTask samples once per 50 ms -- about one tick in 2500. The event worth measuring is cut-start, where take-up initiation,
    * applyPhaseCorrection's float work and diagnostic arming land in the same
    * few ticks; a spot sampler will essentially never catch it. On 2026-08-23
    * the machine lost Modbus on 6 of 6 cuts, every one a TIMEOUT rather than a
@@ -546,22 +544,28 @@ void RampsStart(rampsHandler_t *rampsData);
 
 void SynchroRefreshTimerIsr(rampsHandler_t *data);
 
-_Noreturn void updateSpeedTask(void *argument);
+/* The superloop (Ramps.c). main() calls RampsPoll() forever after
+ * RampsStart(): each pass services the Modbus slave and runs at most one job
+ * that has fallen due. Each job call is one tick; the ...Task names are the
+ * ones the register schemas, the design docs and the UI cite. */
+void RampsPoll(rampsHandler_t *rampsData);
+void servoEnableTask(rampsHandler_t *rampsData);   /* 100 ms */
+void updateSpeedTask(rampsHandler_t *rampsData);   /*  50 ms */
+void userLedTask(void);                            /*  50 ms */
 
 /* Recompute the cached spindle-count period when the geometry registers move.
  * Lives in Ramps.c because the cache must be ONE object -- a static-inline
  * version in a header would give each translation unit its own copy, so the
- * producer would fill one and the ISR would read another. Called from
- * updateSpeedTask on hardware and mirrored in the emulator's main loop, which
- * does not run FreeRTOS tasks. Never call it from the ISR: it is double
- * arithmetic and this core has no FP64 hardware. */
+ * producer would fill one and the ISR would read another. Called from the
+ * updateSpeedTask job, in the emulator as on the chip. Never call it from the
+ * ISR: it is double arithmetic and this core has no FP64 hardware. */
 void elsRefreshSpindlePeriod(rampsSharedData_t *shared);
 /* bootCommand intake (Ramps.c), called from servoEnableTask every ~100 ms. */
 void elsBootCommandTick(rampsSharedData_t *shared);
 
 /* The ELS command channel (els_command.h), consumed in servoEnableTask, ~100 ms.
- * Two halves of one task tick, so the emulator (which runs no FreeRTOS tasks)
- * can mirror the tick with the same two calls:
+ * Two halves of one tick, so the native tests can model the tick with the
+ * same two calls and ISR passes in between:
  *   elsCommandIntake  FIRST in the tick. Consumes elsStop.command and carries
  *                     out the task's part of it. Returns true while a command
  *                     is in flight: the caller skips its servoMode re-assert.
@@ -570,12 +574,6 @@ void elsBootCommandTick(rampsSharedData_t *shared);
  *                     machine is inert: commandResult, then commandSeq. */
 bool elsCommandIntake(rampsHandler_t *data);
 void elsCommandFinish(rampsHandler_t *data);
-
-_Noreturn void modbusTask(__attribute__((unused)) void *argument);
-
-_Noreturn void userLedTask(__attribute__((unused)) void *argument);
-
-_Noreturn void servoEnableTask(void *argument);
 
 //static void timServoEnableOnCallback(xTimerHandle pxTimer);
 //static void timServoEnableOffCallback(xTimerHandle pxTimer);

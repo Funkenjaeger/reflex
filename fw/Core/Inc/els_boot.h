@@ -10,8 +10,8 @@
  *      the swap-back to the previous image.
  *   2. elsBootWatchdogKick()   -- the bootloader arms the IWDG (~32 s) before
  *      jumping and the IWDG cannot be stopped, so the app must refresh it
- *      forever. Called from a task every 50 ms: it proves the scheduler runs,
- *      not that Modbus does. A hung app is reset and counted as a strike.
+ *      forever. Called from a superloop job every 50 ms: it proves the loop
+ *      runs, not that Modbus does. A hung app is reset and counted as a strike.
  *   3. elsBootEnterBootloader() -- elspi cannot power-cycle the board, so
  *      "go to the bootloader and stay resident" is a software path: leave
  *      the request magic in a backup register and JUMP to sector 0. A jump,

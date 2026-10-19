@@ -219,9 +219,9 @@ stop-trigger hook, so the `dZ`/`dServo` arithmetic always runs, against a
 
 ### `isr-gap` (schema 8)
 
-How late the motion ISR starts. TIM9 runs at NVIC priority 5, equal to
-`configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY`, so FreeRTOS critical sections
-and same-priority interrupts (the Modbus UART among them) can hold a tick back.
+How late the motion ISR starts. TIM9 runs at NVIC priority 0 and nothing
+raises BASEPRI, so a tick is held back only by its own previous pass running
+long, or by code that disables interrupts outright.
 `executionCyclesPeak` measures only how long the ISR runs.
 This probe peak-holds the gap between ISR entries (`executionInterval`, DWT
 cycles) over a window.

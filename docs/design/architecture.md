@@ -9,7 +9,7 @@ reasoning, with the rejected alternatives, is in
 | Part | Repository | What lives there |
 |---|---|---|
 | **UI** | `Funkenjaeger/reflex`, `ui/` | Kivy touchscreen app, Modbus **master**, operator workflow, configuration, the in-app updater |
-| **Firmware** | `Funkenjaeger/reflex`, `fw/` | STM32F411 application (50 kHz motion ISR, FreeRTOS, Modbus RTU **slave**), the sector-0 field bootloader and a native emulator |
+| **Firmware** | `Funkenjaeger/reflex`, `fw/` | STM32F411 application (50 kHz motion ISR, a superloop, Modbus RTU **slave**), the sector-0 field bootloader and a native emulator |
 | **Hardware** | the board design (not published) | Schematic and board. In service: a third-party **Provvedo V1.2** controller, STM32F411CEU6. The respin is the maintainer's own design |
 | **System image** | `Funkenjaeger/elspi` | A soft fork of [pi-gen](https://github.com/RPi-Distro/pi-gen) that builds the Raspberry Pi SD-card image the UI boots from, plus the provisioning deltas |
 

@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Firmware source directory
 set(FW_DIR ${CMAKE_SOURCE_DIR}/..)
 
-# --- Shim headers come FIRST so they override the real HAL/FreeRTOS ---
+# --- Shim headers come FIRST so they override the real HAL ---
 include_directories(
     ${CMAKE_SOURCE_DIR}/shim
     ${CMAKE_SOURCE_DIR}/src
@@ -67,7 +67,6 @@ set(FW_SOURCES
 # --- Shim implementations ---
 set(SHIM_SOURCES
     ${CMAKE_SOURCE_DIR}/shim/hal_shim.c
-    ${CMAKE_SOURCE_DIR}/shim/freertos_shim.cpp
 )
 
 # --- Emulator C++ sources ---
@@ -197,7 +196,7 @@ add_test(NAME els_boot_delta_test COMMAND els_boot_delta_test)
 
 # KNOWN-FAILING REPRODUCTION: ELS stop resume re-latch defect.
 # Drives the REAL Core/Src/Ramps.c ISR (SynchroRefreshTimerIsr) directly; the
-# test file stubs every Ramps.c external (HAL GPIO/TIM, Modbus, CMSIS-RTOS,
+# test file stubs every Ramps.c external (HAL GPIO/TIM/tick, Modbus,
 # emu_hw/emu_log_trace/emu_dwt), so neither hal_shim.c nor mb_app.c is linked.
 # Contains a defect case (resume without retracting) that FAILS on purpose and
 # a control case (resume after retracting) that passes -- the pair is what

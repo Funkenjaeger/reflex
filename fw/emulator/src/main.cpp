@@ -485,6 +485,20 @@ static void runPhysicsServer(LathePhysics *physics, rampsHandler_t *rampsData,
 }
 
 /*
+ * Superloop thread: the firmware's main loop (Core/Src/main.c), calling
+ * RampsPoll -- the Modbus slave and the 100 ms / 50 ms jobs -- against the
+ * HAL tick the ISR thread advances. On the chip the ISR preempts this loop;
+ * here the two run on separate threads, so a job can also run in the middle
+ * of an ISR pass, which the chip never does.
+ */
+static void superloopThreadFunc(rampsHandler_t *rampsData) {
+    while (g_running.load()) {
+        RampsPoll(rampsData);
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+}
+
+/*
  * ISR thread: ticks the physics model and calls the firmware's
  * SynchroRefreshTimerIsr at the configured rate.
  */
@@ -534,50 +548,6 @@ static void isrThreadFunc(LathePhysics *physics, rampsHandler_t *rampsData, int 
         if (tick_divider >= rate_hz / 1000) {
             tick_divider = 0;
             HAL_IncTick();
-        }
-
-        /* Mirror servoEnableTask's machine-mode publication, ~100 ms.
-         *
-         * The emulator does not run the FreeRTOS tasks -- it reimplements the
-         * parts it needs, right here. Without this line elsStop.machineMode
-         * would read 0 (ELS_MMODE_OFF) forever in the emulator, so every
-         * emulator-backed test would exercise a rung-2 census against a dead
-         * register and report it as healthy. That is the same shape as the
-         * defect this register exists to fix, one level down. */
-        /* The command channel rides the same ~100 ms tick, in servoEnableTask's
-         * order: intake first, the mode publish, the ack last. The same two
-         * functions the task calls (Ramps.c), so the emulator runs DISENGAGE
-         * through the firmware's own code. The ISR runs between ticks, never
-         * inside one, so here an ack always lands on the tick AFTER the
-         * consuming one -- the case hardware reaches only when the ISR has
-         * not preempted the task in between. There is no re-assert to skip:
-         * the emulator does not model it. */
-        static int mode_divider = 0;
-        mode_divider++;
-        if (mode_divider >= rate_hz / 10) {
-            mode_divider = 0;
-            (void)elsCommandIntake(rampsData);
-            elsPublishMachineMode(&rampsData->shared,
-                                  (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
-            elsCommandFinish(rampsData);
-        }
-
-        /* Mirror updateSpeedTask's spindle-period refresh, ~20 ms.
-         *
-         * SAME REASON AS THE LINE ABOVE, and the consequence is sharper here.
-         * On hardware the period is computed off the ISR by updateSpeedTask;
-         * without this mirror the cache would stay 0 in the emulator forever,
-         * applyPhaseCorrection would be handed 0 on every pass, and 0 means
-         * DO NOT REDUCE. Every emulator-backed test would then quietly
-         * exercise the pre-04dd1f9 unreduced path while reporting green on the
-         * reduced one -- a test suite that stops testing the feature and says
-         * nothing. Calls the same header function the task does, so there is
-         * one implementation, not two. */
-        static int period_divider = 0;
-        period_divider++;
-        if (period_divider >= rate_hz / 50) {
-            period_divider = 0;
-            elsRefreshSpindlePeriod(&rampsData->shared);
         }
 
         /* Sleep until next tick */
@@ -654,7 +624,7 @@ int main(int argc, char *argv[]) {
     Transport transport(cfg);
     transport.start();
 
-    /* Initialize the firmware (Modbus, tasks, etc.) */
+    /* Initialize the firmware (encoders, Modbus, the superloop's schedule) */
     printf("Starting firmware initialization...\n");
     RampsStart(&rampsData);
     printf("Firmware initialized.\n");
@@ -671,7 +641,7 @@ int main(int argc, char *argv[]) {
      */
 
     /* Initialize servoCycles to avoid division by zero on first ISR tick.
-     * On real hardware updateSpeedTask() sets this within 50ms of boot,
+     * On real hardware the updateSpeedTask job sets this 50 ms after boot,
      * but the emulator's ISR thread starts immediately.
      * Formula from updateSpeedTask: clock_freq / maxSpeed
      * clock_freq = 100MHz / (Prescaler+1) / (Period+1) = 100000
@@ -692,6 +662,7 @@ int main(int argc, char *argv[]) {
 
     /* Start ISR thread */
     std::thread isrThread(isrThreadFunc, &physics, &rampsData, cfg.isr_rate_hz);
+    std::thread loopThread(superloopThreadFunc, &rampsData);
 
     emu_log_event("Emulator started");
 
@@ -712,6 +683,7 @@ int main(int argc, char *argv[]) {
     /* Shutdown */
     g_running.store(false);
     if (isrThread.joinable()) isrThread.join();
+    if (loopThread.joinable()) loopThread.join();
     transport.stop();
 
     printf("Emulator stopped.\n");

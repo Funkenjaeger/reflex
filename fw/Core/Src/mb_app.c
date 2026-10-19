@@ -9,7 +9,7 @@
  *     (modbus_rtu/mb_rtu.c), so the two stages cannot disagree about a frame;
  *   - a write touching a firmware-owned register is refused (exception 2).
  *
- * No FreeRTOS here: the caller decides when to poll.
+ * No interrupts here: the caller decides when to poll.
  */
 #include "mb_app.h"
 #include "mb_app_hw.h"

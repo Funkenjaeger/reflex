@@ -4,9 +4,8 @@
  * distribution of late ticks, and the machine state at the worst one.
  *
  * ---- WHY ---------------------------------------------------------------------
- * TIM9 sits at NVIC priority 5, equal to configLIBRARY_MAX_SYSCALL_INTERRUPT_
- * PRIORITY, so every FreeRTOS critical section and every same-priority
- * interrupt can hold a tick back. executionCyclesPeak measures only how long
+ * Anything that masks TIM9 or runs at its priority or above holds a tick
+ * back: an interrupt at NVIC priority 0, a PRIMASK or BASEPRI section. executionCyclesPeak measures only how long
  * the ISR RUNS. The ISR already computes the gap between entries every tick
  * (shared->executionInterval, DWT cycles), and this probe peak-holds it over a
  * window the host can reset.
