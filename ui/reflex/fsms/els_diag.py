@@ -126,8 +126,9 @@ SCHEMAS_WITH_END_REASON = frozenset({
 })
 
 # Schema 8 is absent above: its diagEndReason is the host's reset
-# request, which reads 0 whenever no reset is pending, so the end-reason gate
-# would drop every line.
+# request, which reads 1 while a window is open and 0 only between a host's
+# reset write and the next ISR tick. It is not an end reason, so it is not
+# gated on.
 
 # Schema 8's diagTrace word map: ELS_DIAG_GAP_W_* in
 # fw/Core/Inc/els_diag_isr_gap.h. A uint32 is two words, low first; the

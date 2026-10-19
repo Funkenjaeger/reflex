@@ -95,6 +95,18 @@ target_link_libraries(lathe-emulator
 target_include_directories(lathe-emulator PRIVATE ${FW_DIR}/modbus_rtu ${FW_DIR}/Core/mb_port)
 add_dependencies(lathe-emulator reflex_build_rev)
 
+# The same emulator with the isr-gap probe compiled in, the way the bench
+# builds it (fw/DIAG.md, isr-gap), for host_reset_pty_test below.
+add_executable(lathe-emulator-isr-gap
+    ${FW_SOURCES}
+    ${SHIM_SOURCES}
+    ${EMU_SOURCES}
+)
+target_link_libraries(lathe-emulator-isr-gap pthread m)
+target_include_directories(lathe-emulator-isr-gap PRIVATE ${FW_DIR}/modbus_rtu ${FW_DIR}/Core/mb_port)
+target_compile_definitions(lathe-emulator-isr-gap PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_ISR_GAP)
+add_dependencies(lathe-emulator-isr-gap reflex_build_rev)
+
 # Allow C++ files to include C headers
 set_source_files_properties(${FW_SOURCES} PROPERTIES LANGUAGE C)
 set_source_files_properties(${SHIM_SOURCES} ${EMU_SOURCES} PROPERTIES LANGUAGE CXX)
@@ -650,6 +662,16 @@ if (REFLEX_TEST_PYTHON)
                 $<TARGET_FILE:lathe-emulator> ${FW_DIR}/scripts/modbus-flash.py ${REFLEX_BUILD_REV_H}
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     set_tests_properties(identity_window_pty_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+    # Host resets END TO END: scripts/isr-gap.py --reset against the probe
+    # build, and the release build's resettable counters, over the real slave
+    # and its generated access tables. Skips (not fails) without pyserial.
+    add_test(NAME host_reset_pty_test
+        COMMAND ${REFLEX_TEST_PYTHON} ${CMAKE_SOURCE_DIR}/test/host_reset_pty_test.py
+                $<TARGET_FILE:lathe-emulator-isr-gap> $<TARGET_FILE:lathe-emulator>
+                ${FW_DIR}/scripts/isr-gap.py ${FW_DIR}/scripts/modbus-flash.py
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(host_reset_pty_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
 
     # The host client's bounded retry (scripts/modbus-flash.py), against a fake
     # board that drops requests and replies on demand. Asserts on how many times

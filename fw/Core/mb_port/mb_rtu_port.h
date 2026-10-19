@@ -16,7 +16,8 @@
  *
  * The access table is Ramps_access_generated.h: a write, FC 6 or FC 16,
  * touching any register the schema marks `access: ro_firmware` is answered
- * with exception 2 and writes nothing (mb_rtu.h).
+ * with exception 2 and writes nothing, unless the register is also marked
+ * `host_reset: true` and the value written is 0 (mb_rtu.h).
  *
  * NO COMMAND HOOK. Every command register in the map is consumed by
  * servoEnableTask or the ISR, and a write is acknowledged as soon as it

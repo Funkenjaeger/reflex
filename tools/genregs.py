@@ -239,6 +239,18 @@ def validate(doc, items, groups, rel):
         if i.get("ack") not in placed:
             errs.append(f"command {i['name']} names ack {i.get('ack')!r}, which is not a field")
 
+    # host_reset: a firmware-owned counter or request the host clears by
+    # writing 0. Only meaningful on ro_firmware (everything else is writable
+    # anyway), and only as a literal true: the access table is built from it.
+    for i in items:
+        if i["pad"] or "host_reset" not in i:
+            continue
+        if i["host_reset"] is not True:
+            errs.append(f"{i['name']}: host_reset must be true or absent, not {i['host_reset']!r}")
+        elif i.get("access") != "ro_firmware":
+            errs.append(f"{i['name']}: host_reset is only meaningful on access: ro_firmware, "
+                        f"not {i.get('access')!r}")
+
     seen, names = set(), set()
     for i in items:
         if i["pad"]:
@@ -858,9 +870,15 @@ MD_ACCESS_PREFIX = {
 }
 
 
+# The host-reset flag says the same of a field whose doc opens with this.
+MD_HOST_RESET_PREFIX = "READ-ONLY except for reset: "
+
+
 def md_note(i):
     doc = i.get("doc", "")
     prefix = MD_ACCESS_PREFIX.get(i.get("access", ""))
+    if i.get("host_reset") and doc.startswith(MD_HOST_RESET_PREFIX):
+        prefix = MD_HOST_RESET_PREFIX
     if prefix and doc.startswith(prefix):
         doc = doc[len(prefix):]
     # A bare pipe ends a Markdown table cell.
@@ -916,6 +934,8 @@ def emit_md(schemas):
                     flag = "**seq**, monotonic ack: "
                 elif i.get("kind") == "reserved":
                     flag = "**reserved**: "
+                if i.get("host_reset"):
+                    flag += "**host reset**: a host may write 0 here, and no other value. "
                 tail = ""
                 if i.get("audit") == "unverified":
                     tail = ". Group assignment unverified."
@@ -925,9 +945,10 @@ def emit_md(schemas):
     return "\n".join(L)
 
 
-def ro_firmware_ranges(schemas):
+def ro_firmware_ranges(schemas, host_reset_only=False):
     """(first register, register count, name) of every ro_firmware field, in
-    parent registers, each element of an array member listed on its own."""
+    parent registers, each element of an array member listed on its own. With
+    host_reset_only, just the ones a host may reset by writing 0."""
     out = []
     for s in schemas:
         for k in range(s.parent_count):
@@ -936,21 +957,34 @@ def ro_firmware_ranges(schemas):
             for i in s.items:
                 if i["pad"] or i.get("access") != "ro_firmware":
                     continue
+                if host_reset_only and not i.get("host_reset"):
+                    continue
                 out.append((base + i["byte_off"] // 2, i["bytes"] // 2,
                             f"{s.meta['parent_member']}{elem}.{i['name']}"))
     return out
 
 
-def emit_access(schemas):
-    """The ro_firmware table the Modbus RTU core checks writes against
-    (fw/modbus_rtu/mb_rtu.h, mbRtuAccess_t)."""
-    parent = schemas[0].meta["parent"]
-    end = max(s.end for s in schemas)
+def access_bits(end, ranges):
     bits = bytearray((end + 7) // 8)
-    ranges = ro_firmware_ranges(schemas)
     for first, n, _ in ranges:
         for r in range(first, first + n):
             bits[r >> 3] |= 1 << (r & 7)
+    return bits
+
+
+def bits_init(bits):
+    rows = [", ".join(f"0x{b:02x}" for b in bits[i:i + 12]) for i in range(0, len(bits), 12)]
+    return [f"  {r}{',' if n < len(rows) - 1 else ''} \\" for n, r in enumerate(rows)]
+
+
+def emit_access(schemas):
+    """The tables the Modbus RTU core checks writes against
+    (fw/modbus_rtu/mb_rtu.h, mbRtuAccess_t)."""
+    parent = schemas[0].meta["parent"]
+    end = max(s.end for s in schemas)
+    ranges = ro_firmware_ranges(schemas)
+    resets = ro_firmware_ranges(schemas, host_reset_only=True)
+    bits = access_bits(end, ranges)
     first_described = min(s.base for s in schemas)
     L = [BANNER.split("\n *\n * The static_asserts")[0] + "\n */",
          "#ifndef RAMPS_ACCESS_GENERATED_H", "#define RAMPS_ACCESS_GENERATED_H", "",
@@ -959,16 +993,24 @@ def emit_access(schemas):
          " * says `access: ro_firmware`. For mbRtuAccess_t (fw/modbus_rtu/mb_rtu.h):",
          " *",
          f" *   static const uint8_t roBits[] = RAMPS_RO_FIRMWARE_BITS_INIT;",
-         " *   mbRtuAccess_t acc = { 0, RAMPS_ACCESS_REGISTERS, roBits };",
+         f" *   static const uint8_t resetBits[] = RAMPS_HOST_RESET_BITS_INIT;",
+         " *   mbRtuAccess_t acc = { 0, RAMPS_ACCESS_REGISTERS, roBits, resetBits };",
          " *",
          f" * Registers 0..{first_described - 1}, the head of {parent} that no schema describes,",
          " * have no bit set. Interior and tail pads have none either. */",
          f"#define RAMPS_ACCESS_REGISTERS {end}u", "",
          "#define RAMPS_RO_FIRMWARE_BITS_INIT { \\"]
-    rows = [", ".join(f"0x{b:02x}" for b in bits[i:i + 12]) for i in range(0, len(bits), 12)]
-    L += [f"  {r}{',' if n < len(rows) - 1 else ''} \\" for n, r in enumerate(rows)]
+    L += bits_init(bits)
     L += ["}", "", "/* The set bits, field by field:"]
     L += [f" *   {first:3d}..{first + n - 1:<3d} {name}" for first, n, name in ranges]
+    L += [" */", "",
+          "/* Which of those a host may reset: the same layout, a bit set only where the",
+          " * schema adds `host_reset: true`. A host write of 0 to such a register lands;",
+          " * any other value is refused like a write to the rest of the table. */",
+          "#define RAMPS_HOST_RESET_BITS_INIT { \\"]
+    L += bits_init(access_bits(end, resets))
+    L += ["}", "", "/* The set bits, field by field:"]
+    L += [f" *   {first:3d}..{first + n - 1:<3d} {name}" for first, n, name in resets]
     L += [" */", "", "#endif /* RAMPS_ACCESS_GENERATED_H */", ""]
     return "\n".join(L)
 

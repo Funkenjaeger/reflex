@@ -631,8 +631,10 @@ typedef struct {
    */
   uint16_t diagCaptureTicks;
 
-  /* reg 141 READ-ONLY (firmware-owned): ELS_DIAG_END_*. A window-full capture
-   * did not finish measuring; treat its tail as a floor, not a result
+  /* reg 141 READ-ONLY except for reset: ELS_DIAG_END_*. A window-full capture
+   * did not finish measuring; treat its tail as a floor, not a result. Under
+   * the isr-gap probe (schema 8) the firmware holds it at 1 while a window is
+   * open, and a host write of 0 requests a fresh window
    */
   uint16_t diagEndReason;
 

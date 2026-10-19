@@ -234,7 +234,7 @@ and again on every host reset. The hook is `elsDiagTickTail`, every tick.
 | `diagSettleTicks` | **worst gap**, CPU cycles |
 | `diagNetCounts` | ticks measured in the window (uint32; wraps after ~23.8 h at 50 kHz) |
 | `diagCaptureTicks` | longest ISR run in the window, cycles, saturating at 65535. Window-scoped, unlike `executionCyclesPeak` |
-| `diagEndReason` | **reset request**, written by the host: `1` starts a fresh window; the ISR writes `0` back as the acknowledgement |
+| `diagEndReason` | **reset request**: the ISR holds it at `1` while a window is open; a host write of `0` starts a fresh window, and the ISR writes `1` back as the acknowledgement. `0` is the only value a host may write here (`host_reset` in `registers/els_stop.yaml`) |
 | `diagBucketTicks` / `diagBucketCount` | 0 / 24: no time buckets; 24 `diagTrace` words in use |
 | `diagTrace[0..1]` | shortest gap, uint32 |
 | `diagTrace[2..9]` | late-tick counts, four uint32s: gaps strictly above +5%, +25%, +50% and 2x nominal, cumulative |

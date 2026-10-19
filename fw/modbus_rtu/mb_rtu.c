@@ -38,15 +38,22 @@ static uint32_t dropped(mbRtuPort_t *port, unsigned why)
   return 0u;
 }
 
-/* Nonzero when addr..addr+count-1 touches a register `acc` marks as
- * firmware-owned. */
-static int touchesReadOnly(const mbRtuAccess_t *acc, uint16_t addr, uint16_t count)
+/* Nonzero when writing `vals` (big-endian, as on the wire) to
+ * addr..addr+count-1 touches a register `acc` marks as firmware-owned,
+ * unless that register is one it marks host-resettable and gets 0. */
+static int writeRefused(const mbRtuAccess_t *acc, uint16_t addr, uint16_t count,
+                        const uint8_t *vals)
 {
-  uint32_t end = (uint32_t)addr + (uint32_t)count;
-  for (uint32_t r = addr; r < end; r++) {
+  for (uint32_t k = 0; k < count; k++) {
+    uint32_t r = (uint32_t)addr + k;
     uint32_t i = r - acc->base;
-    if (r >= acc->base && i < acc->size && (acc->roBits[i >> 3] & (1u << (i & 7u))))
-      return 1;
+    uint8_t m = (uint8_t)(1u << (i & 7u));
+    if (r < acc->base || i >= acc->size || !(acc->roBits[i >> 3] & m))
+      continue;
+    if (acc->resetBits != (const uint8_t *)0 && (acc->resetBits[i >> 3] & m) &&
+        vals[2u * k] == 0u && vals[2u * k + 1u] == 0u)
+      continue;
+    return 1;
   }
   return 0;
 }
@@ -99,7 +106,7 @@ uint32_t mbRtuHandle(mbRtuPort_t *port, const uint16_t *identity,
       value = (uint16_t)((req[4] << 8) | req[5]);
       if (mbResolveRange(mbRtuPortMainRegs(port), mbRtuPortMainSize(port), wins, MB_RTU_PORT_WINDOWS, addr, 1u, 1, &p) != 0u)
         return exception(resp, fc, MB_RTU_EXC_ILLEGAL_ADDRESS);
-      if (acc != (const mbRtuAccess_t *)0 && touchesReadOnly(acc, addr, 1u))
+      if (acc != (const mbRtuAccess_t *)0 && writeRefused(acc, addr, 1u, &req[4]))
         return exception(resp, fc, MB_RTU_EXC_ILLEGAL_ADDRESS);
       *p = value;
       mbRtuPortCommand(port);       /* runs to completion before the reply */
@@ -118,7 +125,7 @@ uint32_t mbRtuHandle(mbRtuPort_t *port, const uint16_t *identity,
         return exception(resp, fc, MB_RTU_EXC_ILLEGAL_VALUE);
       if (mbResolveRange(mbRtuPortMainRegs(port), mbRtuPortMainSize(port), wins, MB_RTU_PORT_WINDOWS, addr, count, 1, &p) != 0u)
         return exception(resp, fc, MB_RTU_EXC_ILLEGAL_ADDRESS);
-      if (acc != (const mbRtuAccess_t *)0 && touchesReadOnly(acc, addr, count))
+      if (acc != (const mbRtuAccess_t *)0 && writeRefused(acc, addr, count, &req[7]))
         return exception(resp, fc, MB_RTU_EXC_ILLEGAL_ADDRESS);
       for (uint16_t i = 0; i < count; i++)
         p[i] = (uint16_t)((req[7u + 2u * i] << 8) | req[7u + 2u * i + 1u]);

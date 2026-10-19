@@ -72,11 +72,18 @@ extern "C" {
  * register is answered with exception 2, ILLEGAL DATA ADDRESS, and writes
  * nothing: the same answer a write into a read-only window gets
  * (modbus_window.h), so a host has one rule for "not writable". Registers
- * outside base..base+size-1 are not checked. */
+ * outside base..base+size-1 are not checked.
+ *
+ * resetBits, same layout, marks the firmware-owned registers a host may
+ * RESET (`host_reset: true`): a 0 written to one of them lands, any other
+ * value is refused as above. An FC 16 block lands only if every
+ * firmware-owned register in it is such a register and gets 0. NULL marks
+ * none. */
 typedef struct {
   uint16_t       base;
   uint16_t       size;
   const uint8_t *roBits;
+  const uint8_t *resetBits;
 } mbRtuAccess_t;
 
 #include "mb_rtu_port.h"

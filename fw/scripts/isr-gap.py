@@ -45,7 +45,8 @@ REG_DIAG_SEQ = ELS_STOP_BASE + 40
 REG_BLOCK = ELS_STOP_BASE + 82          # diagSchema, first register of the block
 BLOCK_REGS = 64
 REG_RESET = ELS_STOP_BASE + 141         # diagEndReason: the reset request
-RESET_REQ = 1                           # ELS_DIAG_GAP_RESET_REQ
+RESET_REQ = 0                           # ELS_DIAG_GAP_RESET_REQ: what the host writes
+WINDOW_OPEN = 1                         # ELS_DIAG_GAP_OPEN: what the probe holds there
 
 # Block-relative register indexes.
 B_SCHEMA, B_BUCKET_TICKS, B_BUCKET_COUNT = 0, 1, 2
@@ -119,7 +120,7 @@ def decode(block: list[int]) -> dict:
             "active": w(W_WORST_ACTIVE),
             "takeup_pending": w(W_WORST_TAKEUP),
         },
-        "reset_pending": block[B_RESET] != 0,
+        "reset_pending": block[B_RESET] != WINDOW_OPEN,
     }
 
 
@@ -211,17 +212,25 @@ def main() -> int:
 
         if args.reset:
             before = bus.read(REG_BLOCK + B_TRACE + W_WINDOW, 1)[0]
+            if bus.read(REG_RESET, 1)[0] != WINDOW_OPEN:
+                # An older probe build holds 0 here and waits for a 1, which
+                # no host may write.
+                # A power cycle opens a window on any build.
+                print("isr-gap: this probe build does not hold diagEndReason at "
+                      f"{WINDOW_OPEN}, so it predates the 0-write reset; "
+                      "power-cycle to open a window instead", file=sys.stderr)
+                return 1
             try:
                 bus.write_one(REG_RESET, RESET_REQ)
             except mf.ExceptionResponse as e:
-                # diagEndReason is classed ro_firmware in the register schema;
-                # firmware that enforces access classes refuses the write. A
-                # power cycle also opens a window (the probe starts one at boot).
+                # Firmware that enforces the schema's access classes but
+                # predates host_reset refuses even the 0. A power cycle also
+                # opens a window (the probe starts one at boot).
                 print(f"isr-gap: the board refused the reset write ({e}); "
                       f"power-cycle to open a window instead", file=sys.stderr)
                 return 1
             deadline = time.monotonic() + 2.0
-            while bus.read(REG_RESET, 1)[0] != 0:
+            while bus.read(REG_RESET, 1)[0] != WINDOW_OPEN:
                 if time.monotonic() > deadline:
                     print("isr-gap: reset not acknowledged within 2 s", file=sys.stderr)
                     return 1

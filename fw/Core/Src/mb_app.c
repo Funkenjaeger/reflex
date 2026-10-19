@@ -7,7 +7,8 @@
  *     (mb_app_hw.h);
  *   - frames are checked and served by the same core as the bootloader's
  *     (modbus_rtu/mb_rtu.c), so the two stages cannot disagree about a frame;
- *   - a write touching a firmware-owned register is refused (exception 2).
+ *   - a write touching a firmware-owned register is refused (exception 2),
+ *     except a 0 to one the schema lets a host reset.
  *
  * No interrupts here: the caller decides when to poll.
  */
@@ -17,8 +18,9 @@
 #include "els_identity.h"
 #include "Ramps_access_generated.h"
 
-static const uint8_t      roBits[] = RAMPS_RO_FIRMWARE_BITS_INIT;
-static const mbRtuAccess_t access  = { 0u, RAMPS_ACCESS_REGISTERS, roBits };
+static const uint8_t      roBits[]    = RAMPS_RO_FIRMWARE_BITS_INIT;
+static const uint8_t      resetBits[] = RAMPS_HOST_RESET_BITS_INIT;
+static const mbRtuAccess_t access     = { 0u, RAMPS_ACCESS_REGISTERS, roBits, resetBits };
 
 /* Receiver counters, blDiag layout (ELS_BL_DG_*). Not served over Modbus;
  * read them over SWD (symbol mbAppDiag). */

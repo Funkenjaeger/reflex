@@ -844,6 +844,19 @@ def verify_firmware_half(identity: Identity, target_protocol: int,
 # Default I/O bindings
 # --------------------------------------------------------------------------
 
+def sync_filesystems() -> None:
+    """Flush every filesystem's dirty pages to the card.
+
+    An install writes a new checkout and venv, and both halves write the flash
+    manifest. The operator's next move after "done" may be the power switch,
+    which can lose a manifest record, leave the UI log ending in NUL bytes,
+    and make the Update screen misread which firmware the board runs. os.sync() exists only on POSIX systems; elsewhere there is
+    nothing to do. (Tested by name, not by hasattr: test_update_screen_wired
+    pins where the quoted word sync may appear in this module.)"""
+    if os.name == "posix":
+        os.sync()
+
+
 def subprocess_runner(argv, cwd=None, timeout=None, emit=None, env=None):
     """Run a command, streaming its output to ``emit``. Returns (rc, output).
 
@@ -988,7 +1001,7 @@ class UpdateSession:
                  python: str | None = None, restart=None,
                  manifest: Path | None = None,
                  elspi_release_path: Path | None = None,
-                 home_source=None, snapshot=None):
+                 home_source=None, snapshot=None, sync=sync_filesystems):
         self.checkout = Path(checkout)
         #: The optional private release source (release_source.HomeSource),
         #: or None, in which case nothing below differs from a machine that
@@ -1011,12 +1024,19 @@ class UpdateSession:
         self.service = service
         self.python = python or sys.executable
         self._restart = restart or self._systemctl_restart
+        self._sync = sync
 
     # -- helpers ----------------------------------------------------------
 
     def emit(self, line: str):
         self._emit(line)
         log.info(f"update: {line}")
+
+    def sync_to_card(self):
+        """Make what this update wrote survive a power cut, before it says it
+        is done (sync_filesystems)."""
+        self.emit("Writing the changes to the SD card.")
+        self._sync()
 
     def _run(self, argv, cwd=None, timeout=None, what="", quiet=False, env=None):
         """``quiet`` suppresses the live echo, not the capture.
@@ -1529,6 +1549,9 @@ class UpdateSession:
         self.emit("Syncing the Python environment (this can take a while).")
         self._run([prepared.uv, "sync", "--frozen"],
                   cwd=self.checkout / "ui", timeout=3600, what="uv sync")
+        # Before the restart and before either message below says the update
+        # is installed: the checkout, the venv and the manifest are on the card.
+        self.sync_to_card()
 
         self.emit(f"Restarting {self.service}. The UI will come back on "
                   f"{prepared.release.tag}.")
@@ -1663,7 +1686,10 @@ class UpdateSession:
         if pause_link:
             pause_link()
         try:
-            return self.flash_firmware(prepared)
+            verdict = self.flash_firmware(prepared)
+            # The screen reports the reinstall done when this returns.
+            self.sync_to_card()
+            return verdict
         finally:
             if resume_link:
                 resume_link()

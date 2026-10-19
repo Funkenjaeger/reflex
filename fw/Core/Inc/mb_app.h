@@ -6,7 +6,8 @@
  * Address 17, FC 3 / 6 / 16. Registers 0..size-1 are rampsSharedData_t; the
  * identity window (els_identity.h) is served read-only at ELS_ID_BASE; a
  * write touching an `access: ro_firmware` register is refused with
- * exception 2 and writes nothing (Ramps_access_generated.h).
+ * exception 2 and writes nothing, except a 0 to one the schema marks
+ * `host_reset: true` (Ramps_access_generated.h).
  *
  * Polled, one frame per call, from task context. The frame is handled to
  * completion -- registers copied or written -- before the reply starts, and
