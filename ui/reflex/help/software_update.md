@@ -53,6 +53,18 @@ Install** disengages it. The update starts when the controller confirms that
 the job is released. If the spindle turns or a cycle runs, the screen tells
 you. Stop it, then press Install selected release again.
 
+### Reinstall firmware
+The install button reads **Reinstall firmware** when you select the release
+that is already installed, but the controller runs other firmware, such as
+a diagnostic build or another release's firmware. The status area says what the controller runs. The
+screen reads this from the flash record that each firmware flash writes. When
+nothing is recorded, the button is not offered.
+
+Reinstall firmware flashes the selected release's firmware only. This UI does
+not change and does not restart. It uses the same steps 2 and 3 below, and the
+settings are saved first, as for an update. If an ELS job is engaged, the
+screen asks you first, the same as for an install.
+
 ## What happens when you press Install
 
 1. **Checks that it can finish, and changes nothing.** It checks for a clean
