@@ -22,7 +22,6 @@
 #include <stdbool.h>
 #include "stm32f4xx_hal.h"
 #include "cmsis_os2.h"
-#include "Modbus.h"
 #include "Scales.h"
 #include "els_backlash_cal.h"
 #include "els_slip.h"
@@ -239,7 +238,7 @@ extern TIM_HandleTypeDef *ramps_timer_handles[SCALES_COUNT];
   /* EXPLICIT pad, not decoration. elsStop_t is 4-aligned (it holds int32/float),
    * so a lone trailing uint16 makes the compiler add two bytes of IMPLICIT
    * padding -- and this struct is cast wholesale into uint16 Modbus holding
-   * registers (RampsModbusData.u16regsize = sizeof(shared)/sizeof(uint16_t)),
+   * registers (mbAppInit is handed sizeof(shared)/sizeof(uint16_t) of them),
    * which turns invisible padding into a phantom register nobody declared and
    * reflex-ui cannot mirror. Naming it keeps both sides computing the same
    * size, which is exactly what the contract test caught here: firmware 436,
@@ -489,7 +488,6 @@ typedef struct {
 
   // STM32 Related
   TIM_HandleTypeDef *synchroRefreshTimer;
-  UART_HandleTypeDef *modbusUart;
 
   deltaPosError_t scalesDeltaPos[SCALES_COUNT];
   deltaPosError_t scalesSyncDeltaPos[SCALES_COUNT];
@@ -544,8 +542,6 @@ typedef struct {
   elsDiagCtx_t diag;
 } rampsHandler_t;
 
-extern modbusHandler_t RampsModbusData;
-
 void RampsStart(rampsHandler_t *rampsData);
 
 void SynchroRefreshTimerIsr(rampsHandler_t *data);
@@ -574,6 +570,8 @@ void elsBootCommandTick(rampsSharedData_t *shared);
  *                     machine is inert: commandResult, then commandSeq. */
 bool elsCommandIntake(rampsHandler_t *data);
 void elsCommandFinish(rampsHandler_t *data);
+
+_Noreturn void modbusTask(__attribute__((unused)) void *argument);
 
 _Noreturn void userLedTask(__attribute__((unused)) void *argument);
 

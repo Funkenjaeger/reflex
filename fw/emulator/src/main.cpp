@@ -28,7 +28,6 @@ extern "C" {
 
 /* Firmware externs */
 extern TIM_HandleTypeDef htim1, htim2, htim3, htim4, htim9, htim11;
-extern UART_HandleTypeDef huart1;
 extern void emu_update_timer_counters(void);
 }
 
@@ -623,10 +622,6 @@ int main(int argc, char *argv[]) {
     memset(&emu_hw, 0, sizeof(emu_hw));
     pthread_mutex_init(&emu_hw.mutex, nullptr);
 
-    /* Set TC flag so Modbus sendTxBuffer busy-wait completes immediately */
-    extern USART_TypeDef emu_usart1;
-    emu_usart1.SR = USART_SR_TC;
-
     /* Initialize physics model */
     LathePhysics physics(cfg);
 
@@ -642,9 +637,8 @@ int main(int argc, char *argv[]) {
         ramps_timer_handles[i] = htims[i];
     }
 
-    /* Set synchro timer and UART handles */
+    /* Set the synchro timer handle */
     rampsData.synchroRefreshTimer = &htim9;
-    rampsData.modbusUart = &huart1;
 
     /* Apply config defaults to servo */
     rampsData.shared.servo.maxSpeed = (float)cfg.servo_max_speed;

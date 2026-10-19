@@ -105,7 +105,6 @@ int main(void)
     rampsInstance.shared.scales[i].timerHandleSlot = (uint32_t)i;
     ramps_timer_handles[i] = scale_htims[i];
   }
-  rampsInstance.modbusUart          = &huart1;
   rampsInstance.synchroRefreshTimer = &htim9;
 
   /* Starts the encoders, the Modbus slave and the TIM9 motion interrupt, and

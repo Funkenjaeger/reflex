@@ -1,6 +1,7 @@
 /*
  * Modbus transport layer.
- * PTY pair + TCP socket, feeding bytes into the firmware's UART shim.
+ * PTY pair + TCP socket, feeding bytes into the firmware's emulated receive
+ * ring and raising IDLE when the line goes quiet (mb_hw_emu.h).
  */
 #ifndef EMU_TRANSPORT_H
 #define EMU_TRANSPORT_H

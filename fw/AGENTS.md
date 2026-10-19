@@ -82,7 +82,8 @@ After any changes to `Core/Src/Ramps.c`, `Core/Inc/Ramps.h`, or other firmware s
 ### Key files
 - `Core/Src/Ramps.c` — core motion control (ISR, indexing, jog, ELS)
 - `Core/Inc/Ramps.h` — shared data structs, Modbus-mapped
-- `Core/Src/Modbus.c` — Modbus RTU slave (addr 17)
+- `Core/Src/mb_app.c` — Modbus RTU slave (addr 17): the shared core in `modbus_rtu/`, bound by `Core/mb_port/mb_rtu_port.h`
+- `Core/Src/mb_app_hw.c` — its USART1 transport, DMA both ways
 - `Core/Src/Scales.c` — encoder timer init
 
 ### Concurrency

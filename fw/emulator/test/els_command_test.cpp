@@ -68,8 +68,9 @@ void HAL_GPIO_TogglePin(GPIO_TypeDef *p, uint16_t pin) { (void)p; (void)pin; }
 HAL_StatusTypeDef HAL_TIM_Base_Start_IT(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
 HAL_StatusTypeDef HAL_TIM_Encoder_Start(TIM_HandleTypeDef *h, uint32_t ch) { (void)h; (void)ch; return HAL_OK; }
 HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
-void ModbusInit(modbusHandler_t *m)  { (void)m; }
-void ModbusStart(modbusHandler_t *m) { (void)m; }
+void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { (void)r; (void)n; (void)id; }
+int mbAppService(void) { return 0; }
+uint16_t mbAppReplies(void) { return 0; }
 osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
 osThreadId_t osThreadNew(osThreadFunc_t f, void *a, const osThreadAttr_t *at) { (void)f; (void)a; (void)at; return nullptr; }
 

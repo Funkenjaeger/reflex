@@ -58,9 +58,10 @@ add_compile_options(-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initi
 # --- Firmware C sources (compiled against our shim) ---
 set(FW_SOURCES
     ${FW_DIR}/Core/Src/Ramps.c
-    ${FW_DIR}/Core/Src/Modbus.c
     ${FW_DIR}/Core/Src/Scales.c
-    ${FW_DIR}/Core/Src/UARTCallback.c
+    ${FW_DIR}/Core/Src/mb_app.c
+    ${FW_DIR}/modbus_rtu/mb_rtu.c
+    ${FW_DIR}/bootloader/core/bl_rxring.c
 )
 
 # --- Shim implementations ---
@@ -76,6 +77,7 @@ set(EMU_SOURCES
     ${CMAKE_SOURCE_DIR}/src/transport.cpp
     ${CMAKE_SOURCE_DIR}/src/dashboard.cpp
     ${CMAKE_SOURCE_DIR}/src/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/mb_hw_emu.cpp
 )
 
 add_executable(lathe-emulator
@@ -88,6 +90,10 @@ target_link_libraries(lathe-emulator
     pthread
     m
 )
+# The application's Modbus slave: the RTU core and the app's port of it
+# (Core/mb_port, kept off every other target's path so the native tests and
+# the bootloader core keep resolving their own mb_rtu_port.h).
+target_include_directories(lathe-emulator PRIVATE ${FW_DIR}/modbus_rtu ${FW_DIR}/Core/mb_port)
 add_dependencies(lathe-emulator reflex_build_rev)
 
 # Allow C++ files to include C headers
@@ -182,7 +188,7 @@ add_test(NAME els_halfnut_test COMMAND els_halfnut_test)
 # First-tick boot-delta int16 wrap guard: exercises LathePhysics directly
 # (same link shape as els_halfnut_test) and replays Ramps.c's own per-tick
 # int16-cast-and-accumulate DRO logic against it, so it proves the guard
-# without linking Ramps.c/Modbus.c or the Modbus register map.
+# without linking Ramps.c, the Modbus slave or the register map.
 add_executable(els_boot_delta_test ${CMAKE_SOURCE_DIR}/test/els_boot_delta_test.cpp
     ${CMAKE_SOURCE_DIR}/src/physics.cpp
     ${CMAKE_SOURCE_DIR}/src/config.cpp)
@@ -192,7 +198,7 @@ add_test(NAME els_boot_delta_test COMMAND els_boot_delta_test)
 # KNOWN-FAILING REPRODUCTION: ELS stop resume re-latch defect.
 # Drives the REAL Core/Src/Ramps.c ISR (SynchroRefreshTimerIsr) directly; the
 # test file stubs every Ramps.c external (HAL GPIO/TIM, Modbus, CMSIS-RTOS,
-# emu_hw/emu_log_trace/emu_dwt), so neither hal_shim.c nor Modbus.c is linked.
+# emu_hw/emu_log_trace/emu_dwt), so neither hal_shim.c nor mb_app.c is linked.
 # Contains a defect case (resume without retracting) that FAILS on purpose and
 # a control case (resume after retracting) that passes -- the pair is what
 # distinguishes a real defect from a broken test. Expect this target RED until
@@ -575,6 +581,17 @@ add_executable(mb_rtu_test ${CMAKE_SOURCE_DIR}/test/mb_rtu_test.cpp ${FW_DIR}/mo
 target_include_directories(mb_rtu_test PRIVATE ${CMAKE_SOURCE_DIR}/test/mb_rtu_port ${FW_DIR}/modbus_rtu)
 add_test(NAME mb_rtu_test COMMAND mb_rtu_test)
 
+# The application's binding of that core (Core/Src/mb_app.c and its port,
+# Core/mb_port/mb_rtu_port.h) over the real rampsSharedData_t and the
+# generated access table, through a scripted transport: what a host sees of
+# the map, the identity window, the bootloader window and ro_firmware, and
+# the reply counter the boot-attempt clear rides on.
+add_executable(mb_app_test ${CMAKE_SOURCE_DIR}/test/mb_app_test.cpp
+    ${FW_DIR}/Core/Src/mb_app.c ${FW_DIR}/modbus_rtu/mb_rtu.c)
+target_include_directories(mb_app_test PRIVATE ${FW_DIR}/modbus_rtu ${FW_DIR}/Core/mb_port)
+set_source_files_properties(${FW_DIR}/Core/Src/mb_app.c PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+add_test(NAME mb_app_test COMMAND mb_app_test)
+
 # The address resolver both stages share (header-only).
 add_executable(modbus_window_test ${CMAKE_SOURCE_DIR}/test/modbus_window_test.cpp)
 add_test(NAME modbus_window_test COMMAND modbus_window_test)
@@ -611,7 +628,7 @@ add_executable(bl_core_test ${CMAKE_SOURCE_DIR}/test/bl_core_test.cpp ${BL_CORE_
 target_include_directories(bl_core_test PRIVATE ${BL_CORE_DIR} ${FW_DIR}/modbus_rtu)
 add_test(NAME bl_core_test COMMAND bl_core_test)
 
-# The identity window END TO END: the real lathe-emulator (real Modbus.c,
+# The identity window END TO END: the real lathe-emulator (real mb_app.c,
 # real Ramps.c) on a PTY, read by the real host client
 # (scripts/modbus-flash.py --identity) -- plus the app's exception-2 answer
 # at the bootloader window. Skips (not fails) without pyserial.
