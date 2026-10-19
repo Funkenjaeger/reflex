@@ -444,6 +444,9 @@ def _session(runner, tmp_path, **kw):
     restarts = []
     snapshots = []
     kw.setdefault("restart", lambda: restarts.append(1))
+    # Never the real os.sync; recorded in the runner's call list so a test can
+    # see where in the sequence it ran.
+    kw.setdefault("sync", lambda: runner.calls.append(["<sync>"]) if hasattr(runner, "calls") else None)
     # Never the real one: it writes the commissioning bundle into the
     # developer's own config dir (~/.config/reflex/ledger/snapshots).
     kw.setdefault("snapshot", lambda reason: (snapshots.append(reason),
@@ -1430,6 +1433,37 @@ def test_a_failed_restart_keeps_the_update_and_says_exit_application(tmp_path):
     assert "Exit application" in said and RELEASE.tag in said
 
 
+def test_an_install_is_synced_to_the_card_before_the_restart(tmp_path):
+    """The checkout, the venv and the manifest must survive a power cut the
+    moment the screen says the update is installed."""
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    order = []
+    s = _session(r, tmp_path, restart=lambda: order.append(len(r.calls)))
+    assert s.run(RELEASE) is True
+    syncs = [i for i, c in enumerate(r.calls) if c == ["<sync>"]]
+    [uv] = [i for i, c in enumerate(r.calls) if c[0].endswith("uv") and "sync" in c]
+    assert syncs, "the install never synced"
+    assert syncs[-1] > uv, "synced before uv sync finished writing the venv"
+    assert order == [syncs[-1] + 1], "the restart came before the sync"
+
+
+def test_a_refused_restart_still_leaves_the_install_synced(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+
+    def refuse():
+        raise updater.ServiceRestartFailed("`sudo -n ...` exited 1")
+    s = _session(r, tmp_path, restart=refuse)
+    assert s.run(RELEASE) is False
+    assert ["<sync>"] in r.calls
+
+
+def test_the_default_sync_is_the_os_one(monkeypatch):
+    calls = []
+    monkeypatch.setattr(updater.os, "sync", lambda: calls.append(1), raising=False)
+    updater.sync_filesystems()
+    assert calls == [1]
+
+
 def test_a_granted_restart_is_reported_as_restarting(tmp_path):
     r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
     s = _session(r, tmp_path)
@@ -1538,6 +1572,29 @@ def test_a_reinstall_flashes_and_leaves_the_checkout_alone(tmp_path):
     assert paused == [1] and resumed == [1]
     assert s.snapshots == [f"pre-update-{RELEASE.tag}"]
     assert verdict.identity.build_rev == IMAGE_REV
+
+
+def test_a_reinstall_is_synced_to_the_card_before_it_returns(tmp_path):
+    """The screen says "Firmware reinstalled" when reinstall_firmware
+    returns; the manifest record must be on the card by then, or a power
+    cycle soon after can lose it."""
+    r = FakeRunner(board_protocol_after=CURRENT_PROTOCOL)
+    resumed_at = []
+    s = _session(r, tmp_path)
+    s.reinstall_firmware(RELEASE, resume_link=lambda: resumed_at.append(len(r.calls)))
+    [flash] = [i for i, c in enumerate(r.calls)
+               if "modbus-flash.py" in " ".join(c) and "--identity" not in c]
+    syncs = [i for i, c in enumerate(r.calls) if c == ["<sync>"]]
+    assert syncs and syncs[-1] > flash
+    assert resumed_at and resumed_at[0] > syncs[-1]
+
+
+def test_a_refused_reinstall_is_not_reported_synced(tmp_path):
+    r = FakeRunner(board_protocol_after=CURRENT_PROTOCOL, image_valid=False)
+    s = _session(r, tmp_path)
+    with pytest.raises(UpdateRefused):
+        s.reinstall_firmware(RELEASE)
+    assert ["<sync>"] not in r.calls
 
 
 def test_a_reinstall_is_gated_on_this_uis_protocol(tmp_path):

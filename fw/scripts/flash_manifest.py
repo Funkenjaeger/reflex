@@ -22,6 +22,13 @@ bare `~` there is /root. The caller must therefore say WHERE (the updater
 passes the checkout owner's home), and when root writes into a user's home,
 append() hands the file -- and a directory it had to create -- back to that
 home's owner, so the next flash.sh run by the user can still append to it.
+
+DURABLE BEFORE IT RETURNS. The record is the only trace of what a flash put on
+the controller, and the operator's next move after a flash is often the power
+switch: a record still in the page cache is lost with it, and the file can end
+in a run of NUL bytes where the line should be. append() therefore fsyncs the
+file, and the directory so that a file it created has a directory entry that
+survives too (and the directory's parent when it created the directory).
 """
 from __future__ import annotations
 
@@ -54,22 +61,35 @@ def record(*, variant: str, rev: str, dirty: bool, md5: str, via: str,
     return rec
 
 
+def _fsync_dir(d: Path, fsync) -> None:
+    # Windows cannot open a directory; its file fsync above is all it has.
+    if os.name == "nt":
+        return
+    fd = os.open(d, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def append(path, rec: dict, *, euid: int | None = None, chown=os.chown,
-           stat=os.stat) -> Path:
-    """Append `rec` as one line. Returns the resolved path.
+           stat=os.stat, fsync=None) -> Path:
+    """Append `rec` as one line, durably (module docstring). Returns the
+    resolved path.
 
     `euid`, `chown` and `stat` are injectable so the root branch is testable
     without being root -- and `stat` has to be, because a non-root test can
     only create directories it owns itself, which makes "the new directory's
     owner" and "the home's owner" the same answer and the choice between them
-    untestable.
+    untestable. `fsync` is injectable so a test can see what was synced, and
+    when.
     """
+    fsync = fsync or os.fsync
     path = Path(path).expanduser()
     d = path.parent
     created_dir = not d.exists()
     d.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+    owner = None
     if (os.geteuid() if euid is None else euid) == 0:
         # The directory's owner is the user this manifest belongs to. When the
         # directory was just created, by root, its owner is root -- so go one
@@ -77,5 +97,14 @@ def append(path, rec: dict, *, euid: int | None = None, chown=os.chown,
         owner = stat(d.parent if created_dir else d)
         if created_dir:
             chown(d, owner.st_uid, owner.st_gid)
-        chown(path, owner.st_uid, owner.st_gid)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+        f.flush()
+        if owner is not None:
+            chown(path, owner.st_uid, owner.st_gid)
+        # After the chown, so the sync carries the owner as well as the line.
+        fsync(f.fileno())
+    _fsync_dir(d, fsync)
+    if created_dir:
+        _fsync_dir(d.parent, fsync)
     return path

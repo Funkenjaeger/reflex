@@ -11,7 +11,11 @@ WHAT MUST HOLD, each pinned below:
   * a record that cannot be written does not turn a good flash into a failed
     one;
   * written as ROOT into a user's home, the file ends up owned by that home's
-    user, so the user's own flash.sh can still append to it.
+    user, so the user's own flash.sh can still append to it;
+  * the record is on the card before append() returns: the file is fsynced
+    with the line (and its owner) in it, then its directory, then the
+    directory's parent when the directory was new. A record written but not
+    synced is lost to a power cycle soon after the flash.
 
 No board, no serial port: pyserial is stubbed, and modbus-flash.py's board
 conversation is replaced at the four functions flash() calls.
@@ -193,6 +197,22 @@ class ModbusFlashRecords(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("WARNING: the flash succeeded but was NOT recorded", out)
 
+    def test_the_record_modbus_flash_writes_is_fsynced(self):
+        synced = []
+        real = os.fsync
+
+        def spy(fd):
+            synced.append(os.readlink(f"/proc/self/fd/{fd}"))
+            real(fd)
+        flash_manifest.os.fsync = spy
+        try:
+            rc, _ = self.flash(manifest=self.manifest, variant="release", tag="v1.2.0")
+        finally:
+            flash_manifest.os.fsync = real
+        self.assertEqual(rc, 0)
+        self.assertIn(str(self.manifest), synced)
+        self.assertIn(str(self.manifest.parent), synced)
+
     def test_cli_default_is_the_invoking_users_home(self):
         # And --manifest / --no-manifest reach flash(). Parsed, not run.
         seen = {}
@@ -259,6 +279,62 @@ class AppendOwnership(unittest.TestCase):
         flash_manifest.append(d / "flashed.json", {"rev": "x"}, euid=0,
                               chown=self.fake_chown, stat=self.fake_stat(created_by_root={d}))
         self.assertEqual(self.chowns, [(d, 1000, 1000), (d / "flashed.json", 1000, 1000)])
+
+
+@unittest.skipUnless(Path("/proc/self/fd").is_dir(), "needs /proc to name an fd")
+class AppendDurability(unittest.TestCase):
+    """What append() syncs, in what order, and what was in the file then."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.events = []
+
+    def fsync(self, fd):
+        target = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        content = target.read_text() if target.is_file() else None
+        self.events.append(("fsync", target, content))
+        os.fsync(fd)
+
+    def chown(self, p, uid, gid):
+        self.events.append(("chown", Path(p), None))
+
+    def synced(self):
+        return [e[1] for e in self.events if e[0] == "fsync"]
+
+    def test_existing_dir_syncs_the_file_with_the_line_then_the_dir(self):
+        d = self.home / "firmware"
+        d.mkdir()
+        path = d / "flashed.json"
+        path.write_text('{"rev":"old"}\n')
+        flash_manifest.append(path, {"rev": "new"}, euid=1000, fsync=self.fsync)
+        self.assertEqual(self.synced(), [path, d])
+        self.assertEqual(self.events[0][2], '{"rev":"old"}\n{"rev":"new"}\n',
+                         "the line is in the file when the file is synced")
+
+    def test_a_new_dir_is_synced_into_its_parent_too(self):
+        d = self.home / "firmware"
+        flash_manifest.append(d / "flashed.json", {"rev": "x"}, euid=1000, fsync=self.fsync)
+        self.assertEqual(self.synced(), [d / "flashed.json", d, self.home])
+
+    def test_as_root_the_owner_is_set_before_the_sync(self):
+        d = self.home / "firmware"
+        stat = lambda p: types.SimpleNamespace(st_uid=1000, st_gid=1000)  # noqa: E731
+        flash_manifest.append(d / "flashed.json", {"rev": "x"}, euid=0,
+                              chown=self.chown, stat=stat, fsync=self.fsync)
+        kinds = [(k, p) for k, p, _ in self.events]
+        self.assertEqual(kinds, [("chown", d), ("chown", d / "flashed.json"),
+                                 ("fsync", d / "flashed.json"), ("fsync", d),
+                                 ("fsync", self.home)])
+
+    def test_the_default_is_the_real_fsync(self):
+        calls = []
+        real = os.fsync
+        flash_manifest.os.fsync = lambda fd: (calls.append(fd), real(fd))
+        try:
+            flash_manifest.append(self.home / "flashed.json", {"rev": "x"}, euid=1000)
+        finally:
+            flash_manifest.os.fsync = real
+        self.assertEqual(len(calls), 2, "the file and its directory")
 
 
 if __name__ == "__main__":

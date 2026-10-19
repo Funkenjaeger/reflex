@@ -345,7 +345,7 @@ STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # cannot tell you what a capture you pulled last week was measuring. null for
 # release builds -- an absent probe, stated, rather than a missing key.
 MANIFEST="{\"utc\":\"$STAMP\",\"variant\":\"$VARIANT\",\"probe\":$([ -n "$PROBE" ] && printf '"%s"' "$PROBE" || printf 'null'),\"rev\":\"$REV\",\"dirty\":$DIRTY,\"md5\":\"$MD5\"}"
-"${RUN[@]}" "printf '%s\n' '$MANIFEST' >> ~/firmware/flashed.json"
+"${RUN[@]}" "printf '%s\n' '$MANIFEST' >> ~/firmware/flashed.json && sync"
 
 echo
 echo "written  ${VARIANT^^}  rev ${REV}$([ "$DIRTY" = true ] && echo " (dirty)")"
