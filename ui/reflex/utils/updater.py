@@ -686,6 +686,89 @@ def last_flashed_rev(manifest: Path) -> str | None:
     return None
 
 
+def flash_records(manifest: Path) -> list[dict]:
+    """Every usable record in the flash manifest, oldest first: the JSON
+    objects that name a ``rev``. Torn or foreign lines are skipped, as in
+    :func:`last_flashed_rev`; no manifest is an empty list."""
+    try:
+        lines = Path(manifest).read_text().splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and record.get("rev"):
+            out.append(record)
+    return out
+
+
+def tag_rev(checkout: Path, tag: str, runner=None) -> str | None:
+    """The 7-hex rev of the commit ``tag`` names in the checkout, or ``None``.
+
+    A release image carries exactly that rev: the release workflow refuses an
+    image that does not name the release commit cleanly
+    (``fw/scripts/release_identity.py``). The tag is local on a machine the
+    updater installed, because preflight fetched it."""
+    runner = runner or subprocess_runner
+    try:
+        rc, out = runner(["git", "rev-parse", "--short=7", f"{tag}^{{commit}}"],
+                         cwd=checkout, timeout=30, emit=None)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    rev = out.strip()
+    return rev if rc == 0 and rev else None
+
+
+def _same_rev(a: str, b: str) -> bool:
+    """Revs compared on their first 7 hex digits: the identity window holds
+    28 bits, and ``git rev-parse --short`` may print more."""
+    return a[:7] == b[:7]
+
+
+def firmware_reinstall_reason(manifest: Path, tag: str,
+                              tag_rev: str | None = None) -> str | None:
+    """Why the controller is not running ``tag``'s release firmware, as a
+    sentence for the Update screen, or ``None`` when it is or when nothing
+    was recorded.
+
+    For the case the full update cannot reach: the UI already IS ``tag``, so
+    the screen offers no install, while the firmware under it is something
+    else -- a diagnostic build flashed by ``flash.sh``, or another release's
+    image. Read from the flash manifest, not the board: the identity window
+    needs the serial port the running UI holds. The reinstall itself reads the
+    board before and after it flashes.
+
+    The release image's rev is the newest ``release`` record for ``tag``, else
+    ``tag_rev`` (the tag's commit in the checkout). A diagnostic build of the
+    release commit carries the same rev, so the variant is checked first.
+    """
+    records = flash_records(manifest)
+    if not records:
+        return None
+    last = records[-1]
+    rev = str(last["rev"]) + ("-dirty" if last.get("dirty") else "")
+    if last.get("variant") == "diagnostic":
+        return (f"The controller runs diagnostic firmware (rev {rev}), not the "
+                f"{tag} firmware.")
+    if (last.get("variant") == "release" and last.get("tag")
+            and release_version.same_release(str(last["tag"]), tag)):
+        return None
+    expected = next((str(r["rev"]) for r in reversed(records)
+                     if r.get("variant") == "release" and r.get("tag")
+                     and release_version.same_release(str(r["tag"]), tag)),
+                    tag_rev)
+    if expected:
+        if _same_rev(str(last["rev"]), expected) and not last.get("dirty"):
+            return None
+        return (f"The controller runs firmware rev {rev}, not the {tag} "
+                f"firmware (rev {expected[:7]}).")
+    return (f"The controller runs firmware rev {rev}, which is not recorded "
+            f"as the {tag} firmware.")
+
+
 # --------------------------------------------------------------------------
 # The gate
 # --------------------------------------------------------------------------
@@ -882,7 +965,8 @@ class Prepared:
     image_path: Path
     image: ImageInfo
     target_protocol: int
-    uv: str
+    #: None for a firmware-only reinstall, which never syncs the venv.
+    uv: str | None = None
     #: Where the checkout was before the update: the commit, and the branch
     #: when it was on one (elspi runs `integration`). What _undo_ui_half puts
     #: back. None when git could not say, which disables the undo's checkout.
@@ -1106,6 +1190,28 @@ class UpdateSession:
         self.emit(f"{release.tag} UI expects register protocol version "
                   f"{target_protocol} (this UI: {self.current_protocol}).")
 
+        image_path, image = self._fetch_image(release)
+
+        # Where the checkout is NOW, so a UI half that fails after the flash
+        # can be undone (_undo_ui_half). A branch is recorded as well as the
+        # commit because the update's own checkout is --detach and leaves the
+        # branch pointing where it was: checking the BRANCH back out restores
+        # exactly the pre-update state, not a detached copy of it.
+        previous_rev = self._run(["git", "rev-parse", "HEAD"], cwd=self.checkout,
+                                 quiet=True, what="git rev-parse HEAD").strip() or None
+        rc, branch = self._runner(["git", "symbolic-ref", "-q", "--short", "HEAD"],
+                                  cwd=self.checkout, timeout=30, emit=None)
+        previous_branch = branch.strip() if rc == 0 and branch.strip() else None
+        self.emit(f"Checkout now: {previous_branch or 'detached'} at "
+                  f"{(previous_rev or 'UNKNOWN')[:12]}.")
+
+        return Prepared(release=release, image_path=image_path, image=image,
+                        target_protocol=target_protocol, uv=uv,
+                        previous_rev=previous_rev, previous_branch=previous_branch)
+
+    def _fetch_image(self, release: Release) -> tuple[Path, ImageInfo]:
+        """Download the release's firmware image and validate it, changing
+        nothing on the board. Shared by preflight and prepare_firmware."""
         self.workdir.mkdir(parents=True, exist_ok=True)
         image_path = self.workdir / release.firmware_name
         self.emit(f"Downloading {release.firmware_name}.")
@@ -1128,23 +1234,20 @@ class UpdateSession:
                 f"from the command line instead.\n{out.strip()[:400]}")
         image = parse_image_info(out)
         self.emit(f"Firmware image: rev {image.rev}, {image.length} bytes.")
+        return image_path, image
 
-        # Where the checkout is NOW, so a UI half that fails after the flash
-        # can be undone (_undo_ui_half). A branch is recorded as well as the
-        # commit because the update's own checkout is --detach and leaves the
-        # branch pointing where it was: checking the BRANCH back out restores
-        # exactly the pre-update state, not a detached copy of it.
-        previous_rev = self._run(["git", "rev-parse", "HEAD"], cwd=self.checkout,
-                                 quiet=True, what="git rev-parse HEAD").strip() or None
-        rc, branch = self._runner(["git", "symbolic-ref", "-q", "--short", "HEAD"],
-                                  cwd=self.checkout, timeout=30, emit=None)
-        previous_branch = branch.strip() if rc == 0 and branch.strip() else None
-        self.emit(f"Checkout now: {previous_branch or 'detached'} at "
-                  f"{(previous_rev or 'UNKNOWN')[:12]}.")
+    def prepare_firmware(self, release: Release) -> Prepared:
+        """Preflight for a firmware-only reinstall: the image, and nothing of
+        the UI half. No git, no uv, no venv check: the checkout and the
+        running UI stay as they are.
 
+        The target protocol is THIS UI's. The UI that will run over the
+        flashed firmware is the one running now, so that is the number the
+        gate must compare the firmware against."""
+        self.emit(f"Preparing the {release.tag} firmware.")
+        image_path, image = self._fetch_image(release)
         return Prepared(release=release, image_path=image_path, image=image,
-                        target_protocol=target_protocol, uv=uv,
-                        previous_rev=previous_rev, previous_branch=previous_branch)
+                        target_protocol=self.current_protocol)
 
     # -- 2. flash, then THE GATE ------------------------------------------
 
@@ -1539,3 +1642,28 @@ class UpdateSession:
             finally:
                 if resume_link:
                     resume_link()
+
+    def reinstall_firmware(self, release: Release, *, pause_link=None,
+                           resume_link=None) -> FirmwareVerdict:
+        """Flash ``release``'s firmware under the UI that is running now, and
+        nothing else. Raises :class:`UpdateRefused`.
+
+        For a UI that already IS ``release`` over firmware that is not its
+        image (a diagnostic build, another release's image): the full update
+        offers nothing there. The flash is the same :meth:`flash_firmware` the
+        full update runs -- the identity read before it, the refusal of an
+        already mismatched machine, the gate against this UI's protocol, and
+        the rollback on a mismatch -- after the same settings snapshot. There
+        is no UI half: no checkout, no ``uv sync``, no restart. The link is
+        handed back on every path, success included, because this UI goes on
+        running.
+        """
+        prepared = self.prepare_firmware(release)
+        self._snapshot_before(release)
+        if pause_link:
+            pause_link()
+        try:
+            return self.flash_firmware(prepared)
+        finally:
+            if resume_link:
+                resume_link()

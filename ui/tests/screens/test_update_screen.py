@@ -305,3 +305,111 @@ class TestIntegrationBuilds:
             home_screen.install_release()
         ask.assert_called_once()
         go.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Reinstall firmware: the UI is the selected release, the firmware is not
+# ---------------------------------------------------------------------------
+
+_DIAG = ('{"utc":"2026-10-17T14:02:11Z","variant":"diagnostic","probe":"isr-gap",'
+         '"rev":"dd26b76","dirty":false,"md5":"0"}\n')
+_RELEASE_1_1_0 = ('{"utc":"2026-10-16T09:00:00Z","variant":"release","rev":"43ac7c5",'
+                  '"via":"modbus","protocol":11,"tag":"v1.1.0"}\n')
+_RELEASE_1_0_1 = ('{"utc":"2026-10-15T09:00:00Z","variant":"release","rev":"5d0e1aa",'
+                  '"via":"modbus","protocol":11,"tag":"v1.0.1"}\n')
+
+
+def _check_firmware(screen, tmp_path, manifest_text, tag_rev=None):
+    """Run the screen's own firmware check against a manifest on disk."""
+    import asyncio
+    manifest = tmp_path / "flashed.json"
+    if manifest_text is not None:
+        manifest.write_text(manifest_text)
+    us = "reflex.components.screens.update_screen.updater"
+    with patch(f"{us}.resolve_checkout", return_value=tmp_path), \
+         patch(f"{us}.manifest_path_for", return_value=manifest), \
+         patch(f"{us}.tag_rev", return_value=tag_rev), \
+         patch.object(screen, "update_status", screen._append):
+        asyncio.run(screen.check_firmware())
+
+
+class TestReinstallFirmware:
+    @pytest.fixture
+    def at_1_1_0(self, screen):
+        screen.current_release = "v1.1.0"
+        screen._set_releases()
+        return screen
+
+    def test_a_diagnostic_image_under_this_release_offers_a_reinstall(self, at_1_1_0, tmp_path):
+        _check_firmware(at_1_1_0, tmp_path, _RELEASE_1_1_0 + _DIAG)
+        at_1_1_0.selected_release = "v1.1.0"
+        assert at_1_1_0.firmware_only
+        assert at_1_1_0.enable_update_button
+        assert "diagnostic firmware (rev dd26b76)" in at_1_1_0.status
+        assert "Reinstall firmware" in at_1_1_0.status
+
+    def test_another_releases_firmware_under_this_release_offers_a_reinstall(self, at_1_1_0, tmp_path):
+        _check_firmware(at_1_1_0, tmp_path, _RELEASE_1_1_0 + _RELEASE_1_0_1)
+        at_1_1_0.selected_release = "v1.1.0"
+        assert at_1_1_0.firmware_only and at_1_1_0.enable_update_button
+        assert "5d0e1aa" in at_1_1_0.status
+
+    def test_a_matching_pair_offers_nothing_new(self, at_1_1_0, tmp_path):
+        _check_firmware(at_1_1_0, tmp_path, _RELEASE_1_0_1 + _RELEASE_1_1_0)
+        at_1_1_0.selected_release = "v1.1.0"
+        assert not at_1_1_0.firmware_only
+        assert not at_1_1_0.enable_update_button
+        assert at_1_1_0.status == ""
+
+    def test_no_record_offers_nothing_new(self, at_1_1_0, tmp_path):
+        _check_firmware(at_1_1_0, tmp_path, None)
+        at_1_1_0.selected_release = "v1.1.0"
+        assert not at_1_1_0.firmware_only
+        assert not at_1_1_0.enable_update_button
+
+    def test_another_release_is_still_a_full_update(self, at_1_1_0, tmp_path):
+        _check_firmware(at_1_1_0, tmp_path, _RELEASE_1_1_0 + _DIAG)
+        at_1_1_0.selected_release = "v1.0.1"
+        assert at_1_1_0.enable_update_button
+        assert not at_1_1_0.firmware_only
+
+    def test_the_offer_follows_a_check_that_lands_after_the_selection(self, at_1_1_0, tmp_path):
+        at_1_1_0.selected_release = "v1.1.0"
+        assert not at_1_1_0.enable_update_button
+        _check_firmware(at_1_1_0, tmp_path, _RELEASE_1_1_0 + _DIAG)
+        assert at_1_1_0.firmware_only and at_1_1_0.enable_update_button
+
+    def test_a_reinstall_asks_no_pre_release_question(self, screen):
+        """The release is already installed; the question is about choosing
+        one. The ELS gate still applies (test_update_screen_els.py)."""
+        screen._catalogue["v1.2.0-rc.1"] = _release("v1.2.0-rc.1", prerelease=True)
+        screen.current_release = "v1.2.0-rc.1"
+        screen.allow_experimental = True
+        screen.firmware_mismatch = "The controller runs diagnostic firmware."
+        screen.selected_release = "v1.2.0-rc.1"
+        with patch.object(screen, "_confirm_prerelease") as ask, \
+             patch.object(screen, "_install_unless_engaged") as go:
+            screen.install_release()
+        ask.assert_not_called()
+        go.assert_called_once()
+
+    def test_the_reinstall_runs_the_firmware_only_session_path(self, at_1_1_0):
+        import asyncio
+        at_1_1_0.firmware_mismatch = "The controller runs diagnostic firmware."
+        at_1_1_0.selected_release = "v1.1.0"
+        at_1_1_0._firmware_only_install = True
+        lines = []
+        with patch.object(at_1_1_0, "update_status", lines.append), \
+             patch.object(at_1_1_0, "_install_blocking") as full, \
+             patch.object(at_1_1_0, "_reinstall_blocking") as fw_only, \
+             patch.object(at_1_1_0, "check_firmware", side_effect=_async_noop):
+            asyncio.run(at_1_1_0.perform_install(at_1_1_0._catalogue["v1.1.0"]))
+        full.assert_not_called()
+        fw_only.assert_called_once()
+        assert "Reinstalling the v1.1.0 firmware. This UI stays as it is." in lines
+        assert "Firmware reinstalled. The controller runs the v1.1.0 firmware." in lines
+        assert at_1_1_0.busy is False
+
+
+async def _async_noop(*_a, **_k):
+    return None
