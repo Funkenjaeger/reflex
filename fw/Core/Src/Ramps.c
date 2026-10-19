@@ -723,6 +723,18 @@ static inline void applyPhaseCorrection(rampsSharedData_t *shared) {
  * SAFETY: refuses to run unless elsStop.enable == 0 (no live job, so sync is not
  * driving the leadscrew and the spindle cannot fight the measurement) and
  * servoMode == 1 (otherwise stepsToGo is never consumed and the run would hang).
+ *
+ * A TAKEN REQUEST WAITS FOR THE DRIVE (ELS_CAL_WAIT_DRIVE). The host writes
+ * servoMode = 1 and calCommand back to back, so the request usually arrives
+ * before servoEnableTask has even asserted ENA, and the closed-loop drive
+ * ignores STEP for about a second after that. Pulses sent then are counted
+ * here and never turned, and they used to land in the SEAT leg, or in MEASURE
+ * leg 1 when the enable jolt ended SEAT early (2026-10-19: legs of 567 and
+ * 963 against a 395-step lash, and a NO_MOTION). So the first step waits
+ * until ENA has been on for ELS_CAL_ENA_SETTLE_MS (enaSettle.settled, decided
+ * by servoEnableTask, which owns the pin). The wait is a phase of the run:
+ * the machine mode reads CAL, sync stays gated, and the aborts below apply
+ * throughout it, so a run aborted while waiting commands no step at all.
  * Total travel is a few lash widths — well under a millimetre — but it IS
  * bidirectional carriage motion with the half-nut engaged, so the operator-facing
  * modal owns "tool clear of the work, spindle stopped". */
@@ -760,10 +772,7 @@ static inline void elsCalUpdate(rampsHandler_t *data) {
         }
         shared->servo.stepsToGo    = 0;
         shared->servo.currentSpeed = 0;
-        elsCalStart(&data->elsCal, cuttingDir,
-                    (int32_t)shared->servo.currentSteps,
-                    shared->scales[shared->elsStop.scaleIndex].position);
-        shared->servo.stepsToGo = data->elsCal.driveSign * shared->elsStop.calCeilingSteps;
+        elsCalRequest(&data->elsCal, cuttingDir);
       }
     }
   }
@@ -780,6 +789,17 @@ static inline void elsCalUpdate(rampsHandler_t *data) {
     shared->elsStop.calResult  = ELS_CAL_ERR_ABORTED;
     shared->elsStop.calSeq++;
     return;
+  }
+
+  /* ---- The drive wait. Nothing is commanded until ENA has settled; then the
+   * run starts from where the leadscrew and Z are NOW, and the SEAT burst goes
+   * out in this same pass, as it did straight from intake before the wait. */
+  if (data->elsCal.phase == ELS_CAL_WAIT_DRIVE) {
+    if (!data->enaSettle.settled) return;
+    elsCalStart(&data->elsCal, data->elsCal.driveSign,
+                (int32_t)shared->servo.currentSteps,
+                shared->scales[shared->elsStop.scaleIndex].position);
+    shared->servo.stepsToGo = data->elsCal.driveSign * shared->elsStop.calCeilingSteps;
   }
 
   elsCalAction_t act = elsCalTick(&data->elsCal,
@@ -1940,8 +1960,11 @@ void servoEnableTask(rampsHandler_t *rampsData) {
   elsDiagTaskTick(&rampsData->diag, shared,
                   (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
 
-  if (shared->fastData.servoMode != 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_RESET);
-  if (shared->fastData.servoMode == 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_SET);
+  /* ENA, and how long it has been on: a calibration does not step until the
+   * drive has had ELS_CAL_ENA_SETTLE_MS to wake (elsCalUpdate). */
+  bool enaOn = (shared->fastData.servoMode != 0);
+  HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, enaOn ? GPIO_PIN_RESET : GPIO_PIN_SET);
+  elsEnaSettleTick(&rampsData->enaSettle, enaOn, HAL_GetTick(), ELS_CAL_ENA_SETTLE_MS);
 
   /* The command ack, after the mode is published and ENA driven, so the
    * mode a host reads beside the new commandSeq describes the result. */

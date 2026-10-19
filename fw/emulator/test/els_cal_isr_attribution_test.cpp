@@ -126,6 +126,11 @@ struct Rig {
     void init(int32_t motionThresh, bool coupled, int32_t lashSteps = 60,
               int32_t ceilingSteps = 400) {
         std::memset(&data, 0, sizeof(data));
+        /* This rig never runs servoEnableTask, the only thing that drives ENA,
+         * so mark the drive as enabled long ago: a calibration waits for that
+         * before its first step (ELS_CAL_ENA_SETTLE_MS). */
+        data.enaSettle.on      = 1;
+        data.enaSettle.settled = 1;
         std::memset(tim,  0, sizeof(tim));
         std::memset(htim, 0, sizeof(htim));
         spindleCnt = 0;

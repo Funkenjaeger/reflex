@@ -518,6 +518,7 @@ typedef struct {
   volatile uint16_t elsCommandEndJob; // task -> ISR: run the end-of-job teardown on the next pass, then clear
   uint16_t elsStopCorrectOnConfirm;  // 1 if the take-up in flight is to be followed by applyPhaseCorrection() once CONFIRMED, i.e. a reference was latched and thread geometry was set at initiation. 0 on a first pass (no reference yet) and in turning (no pitch): those take-ups exist to prove coupling only. Set at initiation, read at confirmation, cleared with the job (2026-08-21).
   elsCalCtx_t elsCal;                 // backlash calibration run state; non-Modbus, the ISR owns it entirely (els_backlash_cal.h)
+  elsEnaSettle_t enaSettle;           // ENA as servoEnableTask last drove it and since when; task-owned, the ISR reads only .settled before a calibration's first step (els_backlash_cal.h, ELS_CAL_ENA_SETTLE_MS). Non-Modbus.
   /* Motion attribution for the Z confirmation gate: which of the Z counts seen
    * during a take-up arrived while the servo was actually driving. Non-Modbus,
    * ISR-owned, reset at take-up initiation (els_slip.h).
