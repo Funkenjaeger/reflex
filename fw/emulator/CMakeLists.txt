@@ -310,6 +310,18 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
 target_link_libraries(els_cal_nudge_refusal_test m pthread)
 add_test(NAME els_cal_nudge_refusal_test COMMAND els_cal_nudge_refusal_test)
 
+# A taken calibration request must not step until the drive has been enabled
+# for ELS_CAL_ENA_SETTLE_MS (servoEnableTask's enaSettle.settled). Replays a
+# failing sequence seen on the machine -- a job, DISENGAGE, five calibrations,
+# enable jolts and a carriage shifted with the drive off -- against a drive
+# that drops every pulse for 880 ms after ENA goes on, and covers aborts
+# during the wait.
+add_executable(els_cal_ena_settle_test
+    ${CMAKE_SOURCE_DIR}/test/els_cal_ena_settle_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_link_libraries(els_cal_ena_settle_test m pthread)
+add_test(NAME els_cal_ena_settle_test COMMAND els_cal_ena_settle_test)
+
 # Diagnostic scratchpad leak guard. The source asserts the OPPOSITE thing in
 # each configuration: a release build must advertise no probe (diagSchema == 0),
 # a probe build must advertise its own schema and publish its trace geometry.
