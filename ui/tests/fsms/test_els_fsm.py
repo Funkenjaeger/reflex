@@ -937,3 +937,53 @@ def test_reconcile_reteaching_happens_in_every_state():
     axis.push_sync_ratio.assert_called_once()
     # and the state policy still ran
     hal.set_enable.assert_called_once_with(False)
+
+
+# ─── The taught basis is in the log ─────────────────────────────────────
+# A feed pass's take-up threshold is the floor with or without a basis (a
+# feed has no thread geometry), so a pass cannot show whether the basis was
+# re-taught after a power cycle. The teach says so itself, once per write.
+
+def _basis_lines(caplog):
+    return [r.getMessage() for r in caplog.records
+            if "calibration basis" in r.getMessage()]
+
+
+def test_reconcile_logs_the_basis_it_teaches(caplog):
+    import logging
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.els.els_cal_measured_legs = [365, 373, 366]
+    with caplog.at_level(logging.INFO):
+        fsm.reconcile_firmware_on_connect()
+    hal.set_cal_basis.assert_called_once_with(368)
+    lines = _basis_lines(caplog)
+    assert len(lines) == 1, lines
+    assert "368 steps" in lines[0] and "connect" in lines[0]
+    assert caplog.records[-1].levelno >= logging.INFO
+
+
+def test_reconcile_logs_that_there_is_no_basis_to_teach(caplog):
+    import logging
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.els.els_cal_measured_legs = [0, 0, 0]
+    with caplog.at_level(logging.INFO):
+        fsm.reconcile_firmware_on_connect()
+    hal.set_cal_basis.assert_not_called()
+    lines = _basis_lines(caplog)
+    assert len(lines) == 1, lines
+    assert "no accepted calibration" in lines[0] and "connect" in lines[0]
+
+
+def test_a_gear_change_logs_the_basis_in_the_new_gear(caplog):
+    import logging
+    from tests.fsms.test_els_gear import _fsm_with_table_servo
+    fsm, _axis = _fsm_with_table_servo("A=1, B=2", "A", legs=(484, 484, 484))
+    with caplog.at_level(logging.INFO):
+        fsm.adopt_gear("B")
+    fsm.hal.set_cal_basis.assert_called_once_with(242)
+    lines = _basis_lines(caplog)
+    assert len(lines) == 1, lines
+    assert "242 steps" in lines[0] and "gear B" in lines[0]
+    assert "gear change" in lines[0]

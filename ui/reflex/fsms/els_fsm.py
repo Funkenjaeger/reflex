@@ -797,7 +797,7 @@ class ElsFsm:
         # calibration on file'). Stale-but-real raises the gate's bar above the floor; if the
         # machine's lash has since shrunk enough to over-tighten it, the gate
         # refuses LOUDLY and the fix (recalibrate) is in the message.
-        self._teach_cal_basis()
+        self._teach_cal_basis("connect")
 
         # Sync ratios, every axis: the firmware registers are written only by
         # a property-CHANGE binding, so an unchanged UI setting is never
@@ -1539,13 +1539,13 @@ class ElsFsm:
         self.hal.request_clear_reference()
         log.warning("thread reference cleared for the gear change")
 
-    def _reteach_gear(self) -> None:
+    def _reteach_gear(self, why: str = "gear change") -> None:
         """Push what the engaged position changes: the sync ratios (firmware
         RAM written only on a property CHANGE) and the calibration legs in the
         engaged position's steps, as on connect."""
         for axis in self.board.axes:
             axis.push_sync_ratio()
-        self._teach_cal_basis()
+        self._teach_cal_basis(why)
 
     def cal_basis_steps(self):
         """The take-up gate's basis for the engaged gear, or None with no
@@ -1553,20 +1553,30 @@ class ElsFsm:
         return cal_basis(self.els.els_cal_measured_legs, self.gear_table(),
                          self.engaged_gear())
 
-    def _teach_cal_basis(self) -> None:
+    def _teach_cal_basis(self, why: str) -> None:
         """Write the basis (calBasisSteps, protocolVersion 13) when there is
         an accepted record. Only a real record, never zero: an absent
         calibration stays absent. A basis too large for the uint16 register
         is not written (a clamped one would be a number nobody measured); the
-        gate keeps the basis it has."""
+        gate keeps the basis it has.
+
+        One INFO line either way, naming `why` (connect, gear change): a feed
+        pass's take-up threshold is the floor with or without a basis, so no
+        pass can show whether the basis was re-taught after a power cycle.
+        It runs on connect and on a gear change only, never per pass."""
         basis = self.cal_basis_steps()
         if basis is None:
+            log.info(f"calibration basis not taught: no accepted calibration "
+                     f"on file ({why})")
             return
         if basis > 0xFFFF:
             log.error(f"calibration basis {basis} steps does not fit the "
-                      f"register; not written")
+                      f"register; not written ({why})")
             return
         self.hal.set_cal_basis(basis)
+        gear = self.engaged_gear()
+        where = f" in gear {gear}" if gear else ""
+        log.info(f"calibration basis taught: {basis} steps{where} ({why})")
 
     def engaged_backlash_steps(self) -> int:
         """The commanded take-up in the ENGAGED gear's motor steps.
