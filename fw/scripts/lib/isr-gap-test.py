@@ -68,7 +68,7 @@ class FakeBoard:
     """The application's holding registers, with the ISR's reset handshake."""
 
     def __init__(self, gs, schema=8, protocol=13, stage=2, ack=True, refuse=False,
-                 engaged=False):
+                 engaged=False, probe_open=True):
         self.gs = gs
         self.refuse = refuse
         self.regs = {}
@@ -80,6 +80,7 @@ class FakeBoard:
         self.regs[gs.REG_BLOCK + gs.B_WORST] = 4100
         self.regs[gs.REG_DIAG_SEQ] = 5
         self.regs[gs.REG_ENABLE] = int(engaged)
+        self.regs[gs.REG_RESET] = gs.WINDOW_OPEN if probe_open else 0
         self.ident = types.SimpleNamespace(magic=0x454C, stage=stage, app_protocol=protocol,
                                                rev_str="abcdef0")
 
@@ -98,6 +99,7 @@ class FakeBoard:
                     self.regs.pop(gs.REG_BLOCK + i, None)
             self.regs[gs.REG_BLOCK + gs.B_TRACE + gs.W_NOMINAL] = 2000
             self.regs[gs.REG_BLOCK + gs.B_TRACE + gs.W_WINDOW] = 1
+            self.regs[gs.REG_RESET] = gs.WINDOW_OPEN
             self.regs[gs.REG_DIAG_SEQ] += 1
         elif addr == gs.REG_RESET:
             self.regs[addr] = value
@@ -139,6 +141,8 @@ def main() -> int:
     check(sid is not None and gs.SCHEMA_ISR_GAP == int(sid.group(1)), "schema id matches Ramps.h")
     req = re.search(r"^#define\s+ELS_DIAG_GAP_RESET_REQ\s+(\d+)u?", HEADER.read_text(), re.M)
     check(req is not None and gs.RESET_REQ == int(req.group(1)), "reset request value matches")
+    opn = re.search(r"^#define\s+ELS_DIAG_GAP_OPEN\s+(\d+)u?", HEADER.read_text(), re.M)
+    check(opn is not None and gs.WINDOW_OPEN == int(opn.group(1)), "open-window value matches")
 
     print("-- 2. absolute addresses match the register map --")
     check(gs.REG_ENABLE == regmap_abs("enable"), "enable (an ELS job is engaged)")
@@ -196,11 +200,15 @@ def main() -> int:
     check(rc == 0 and "worst gap     4100 cycles" in out, "read prints the window")
     b = FakeBoard(gs)
     rc, out, err = run_main(gs, b, ["--reset"])
-    check(rc == 0 and b.writes == [(gs.REG_RESET, 1)], "reset writes 1 to diagEndReason, once")
+    check(rc == 0 and b.writes == [(gs.REG_RESET, 0)], "reset writes 0 to diagEndReason, once")
     check("window 0 -> 1" in out and "worst gap     0 cycles" in out,
           "reset waits for the acknowledgement and prints the fresh window")
     rc, out, err = run_main(gs, FakeBoard(gs, ack=False), ["--reset"])
     check(rc == 1 and "not acknowledged" in err, "an unacknowledged reset is a failure")
+    b = FakeBoard(gs, probe_open=False)
+    rc, out, err = run_main(gs, b, ["--reset"])
+    check(rc == 1 and b.writes == [] and "predates the 0-write reset" in err,
+          "a probe that does not hold the window open is refused before any write")
     rc, out, err = run_main(gs, FakeBoard(gs, refuse=True), ["--reset"])
     check(rc == 1 and "refused the reset write" in err and "Traceback" not in err,
           "a refused reset write is reported, not a traceback")

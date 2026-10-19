@@ -15,6 +15,11 @@
  *   4. ro_firmware: FC 6 and FC 16 to a firmware-owned register (commandSeq,
  *      scales[0].position) are refused and write nothing; a host-written
  *      neighbor (command) lands;
+ *   4b. host reset: the four firmware-owned registers a host resets
+ *      (executionCyclesPeak, stepPulseMinCycles, stepPulseRuntCount,
+ *      diagEndReason; `host_reset: true` in the schema) take a 0, by FC 6 per
+ *      register and by FC 16 over the whole field, and refuse anything else;
+ *      a 0 to a firmware-owned register without the flag is still refused;
  *   5. the reply counter that clears the boot-attempt counter moves on every
  *      reply, exceptions included, and not on a frame dropped for its CRC or
  *      for another slave's address; those land in the receiver counters;
@@ -151,6 +156,56 @@ int main() {
         uint16_t cmd = REG(elsStop.command);
         std::vector<uint8_t> r = ask(fc6(cmd, 1));
         check(r.size() == 8 && regs[cmd] == 1, "4 FC6 to elsStop.command lands");
+    }
+
+    /* 4b. Host reset: 0, and only 0. */
+    {
+        struct { const char *name; uint16_t reg, regs; } resets[] = {
+            { "elsStop.executionCyclesPeak", REG(elsStop.executionCyclesPeak), 2 },
+            { "elsStop.stepPulseMinCycles",  REG(elsStop.stepPulseMinCycles),  2 },
+            { "elsStop.stepPulseRuntCount",  REG(elsStop.stepPulseRuntCount),  2 },
+            { "elsStop.diagEndReason",       REG(elsStop.diagEndReason),       1 },
+        };
+        char label[160];
+        for (const auto &f : resets) {
+            for (uint16_t k = 0; k < f.regs; k++) {
+                uint16_t r = (uint16_t)(f.reg + k);
+                regs[r] = 0x1234;
+                check(excOf(ask(fc6(r, 1)), 6) == MB_EXC_ILLEGAL_ADDRESS && regs[r] == 0x1234,
+                      (snprintf(label, sizeof label, "4b FC6 of 1 to %s word %u is refused", f.name, k), label));
+                check(excOf(ask(fc6(r, 0xFFFF)), 6) == MB_EXC_ILLEGAL_ADDRESS && regs[r] == 0x1234,
+                      (snprintf(label, sizeof label, "4b FC6 of 0xFFFF to %s word %u is refused", f.name, k), label));
+                std::vector<uint8_t> q = fc6(r, 0);
+                check(ask(q) == q && regs[r] == 0,
+                      (snprintf(label, sizeof label, "4b FC6 of 0 to %s word %u lands", f.name, k), label));
+            }
+            for (uint16_t k = 0; k < f.regs; k++) regs[f.reg + k] = 0x4321;
+            std::vector<uint8_t> r16 = ask(fc16(f.reg, std::vector<uint16_t>(f.regs, 0)));
+            bool zeroed = true;
+            for (uint16_t k = 0; k < f.regs; k++) zeroed = zeroed && regs[f.reg + k] == 0;
+            check(r16.size() == 8 && zeroed,
+                  (snprintf(label, sizeof label, "4b FC16 of zeros over %s lands", f.name), label));
+            for (uint16_t k = 0; k < f.regs; k++) regs[f.reg + k] = 0x4321;
+            std::vector<uint16_t> mixed(f.regs, 0);
+            mixed.back() = 5;
+            bool kept = excOf(ask(fc16(f.reg, mixed)), 16) == MB_EXC_ILLEGAL_ADDRESS;
+            for (uint16_t k = 0; k < f.regs; k++) kept = kept && regs[f.reg + k] == 0x4321;
+            check(kept, (snprintf(label, sizeof label,
+                                  "4b FC16 over %s with a nonzero word is refused whole", f.name), label));
+        }
+        uint16_t seq = REG(elsStop.commandSeq);
+        regs[seq] = 7;
+        check(excOf(ask(fc6(seq, 0)), 6) == MB_EXC_ILLEGAL_ADDRESS && regs[seq] == 7,
+              "4b FC6 of 0 to elsStop.commandSeq (no host reset) is still refused");
+        uint16_t res = REG(elsStop.diagReserved);
+        regs[res] = 8;
+        check(excOf(ask(fc6(res, 0)), 6) == MB_EXC_ILLEGAL_ADDRESS && regs[res] == 8,
+              "4b FC6 of 0 to elsStop.diagReserved[0], diagEndReason's neighbor, is still refused");
+        uint16_t er = REG(elsStop.diagEndReason);
+        regs[er] = 9; regs[er - 1] = 3;
+        check(excOf(ask(fc16((uint16_t)(er - 1), { 0, 0 })), 16) == MB_EXC_ILLEGAL_ADDRESS &&
+              regs[er] == 9 && regs[er - 1] == 3,
+              "4b FC16 of zeros reaching from diagCaptureTicks into diagEndReason is refused whole");
     }
 
     /* 5. The reply counter. */

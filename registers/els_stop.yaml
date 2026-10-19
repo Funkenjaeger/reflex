@@ -167,8 +167,8 @@ fields:
   # so this class of mistake fails instead of shipping. See the audit output in
   # the wiki journal 2026-09-07.
   - {id: 42, name: takeupThreshCounts, type: int32, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-derived, not operator-set): Z counts the last take-up had to move to be confirmed. Derived from (backlashSteps - calBasisSteps) via elsTakeupConfirmThreshold(); falls back to calMotionThreshCounts with no calibration on file or in turning mode. Published so the UI can say \"moved 3, needed 4\""}
-  - {id: 44, name: stepPulseMinCycles, type: uint32, access: ro_firmware, group: hot, doc: "READ-ONLY except for reset: narrowest STEP pulse since host wrote 0. 0 = nothing measured yet"}
-  - {id: 45, name: stepPulseRuntCount, type: uint32, access: ro_firmware, group: hot, doc: "READ-ONLY except for reset: pulses narrower than ELS_STEP_RUNT_CYCLES since host wrote 0"}
+  - {id: 44, name: stepPulseMinCycles, type: uint32, access: ro_firmware, host_reset: true, group: hot, doc: "READ-ONLY except for reset: narrowest STEP pulse since host wrote 0. 0 = nothing measured yet"}
+  - {id: 45, name: stepPulseRuntCount, type: uint32, access: ro_firmware, host_reset: true, group: hot, doc: "READ-ONLY except for reset: pulses narrower than ELS_STEP_RUNT_CYCLES since host wrote 0"}
   - {id: 47, name: diagSeq,           type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [diagBucketTicks, diagBucketCount, diagSettleTicks, diagNetCounts, diagTrace, diagCaptureTicks, diagEndReason], doc: "READ-ONLY (firmware-owned): increments once per completed capture. Edge-detect it; there is no \"capture in progress\" register to poll. Ordering invariant: must stay at a lower address than the capture payload it counts, or a host can read a torn capture"}
 
   # --- operator-facing mode + the interactive command/ack pairs -------------
@@ -238,7 +238,7 @@ fields:
   - {id: 41, name: calMotionThreshCounts, type: int32, access: sw_write, group: cold, doc: "SW write: Z scale counts that count as real motion. Machine-specific: ~2 counts on a 200 counts/mm scale (1 count \u2248 2.5 servo steps); the emulator is 400 counts/mm. 0 disables detection and fails closed (never confirms)"}
 
   # --- performance counters: diagnostic, monotonic, never urgent ------------
-  - {id: 43, name: executionCyclesPeak, type: uint32, access: ro_firmware, group: cold, doc: "READ-ONLY except for reset: highest executionCycles since the host last wrote 0 here. Compare against ELS_ISR_CYCLE_BUDGET (els_isr_rate.h), one tick at the 100 MHz core clock: 2000 cycles at the 50 kHz hardware tick"}
+  - {id: 43, name: executionCyclesPeak, type: uint32, access: ro_firmware, host_reset: true, group: cold, doc: "READ-ONLY except for reset: highest executionCycles since the host last wrote 0 here. Compare against ELS_ISR_CYCLE_BUDGET (els_isr_rate.h), one tick at the 100 MHz core clock: 2000 cycles at the 50 kHz hardware tick"}
 
   # --- the diagnostic scratchpad: 64 registers, ZERO in any release build ----
   #     Reserved in every build, written only under ELS_DIAG_SCRATCH. This is
@@ -259,7 +259,10 @@ fields:
   - {id: 51, name: diagNetCounts,     type: int32,  access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): signed Z counts summed across the capture"}
   - {id: 52, name: diagTrace,         type: int16, count: ELS_DIAG_TRACE_BUCKETS, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): per-bucket signed sum of dZ. Signed so encoder dither cancels and real motion does not, which is what a quiescence test needs"}
   - {id: 53, name: diagCaptureTicks,  type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ticks the capture actually ran, i.e. how long the servo stayed silent after the take-up. Distinct from diagSettleTicks, which is when Z last moved"}
-  - {id: 54, name: diagEndReason,     type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ELS_DIAG_END_*. A window-full capture did not finish measuring; treat its tail as a floor, not a result"}
+  # host_reset: the isr-gap probe (schema 8) reads a host's 0 here as a request
+  # to open a fresh window. Every other probe overwrites the register on its
+  # next capture, and a release build never reads it.
+  - {id: 54, name: diagEndReason,     type: uint16, access: ro_firmware, host_reset: true, group: cold, doc: "READ-ONLY except for reset: ELS_DIAG_END_*. A window-full capture did not finish measuring; treat its tail as a floor, not a result. Under the isr-gap probe (schema 8) the firmware holds it at 1 while a window is open, and a host write of 0 requests a fresh window"}
   - {id: 55, name: diagReserved,      type: uint16, count: 4, access: ro_firmware, group: cold, kind: reserved, doc: "pads the block to a fixed 128 bytes so its size never depends on which probe is in it"}
 
 # -----------------------------------------------------------------------------

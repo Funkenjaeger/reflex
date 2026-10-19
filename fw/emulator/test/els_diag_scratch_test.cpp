@@ -234,16 +234,20 @@ int main(void)
               == ELS_ISR_CYCLE_BUDGET,
           "isr gap publishes the nominal tick, so no reader assumes the rate");
     /* RampsStart must leave a clean window over the 0xA5 poison: diagEndReason
-     * is this probe's reset request, and a stale nonzero one would wipe the
-     * first tick's window. */
+     * is this probe's reset request, and anything but OPEN there would wipe
+     * the first tick's window. */
     check(data.shared.elsStop.diagSettleTicks == 0
               && data.shared.elsStop.diagNetCounts == 0,
           "isr gap starts with no worst gap and no ticks");
+    check(data.shared.elsStop.diagEndReason == ELS_DIAG_GAP_OPEN,
+          "isr gap starts with its window open (diagEndReason == OPEN)");
 #else
 #error "this probe has no assertions in els_diag_scratch_test.cpp -- add an arm above"
 #endif
+#if ELS_DIAG_PROBE != ELS_DIAG_SCHEMA_ISR_GAP   /* there it is the reset request, checked above */
     check(data.shared.elsStop.diagEndReason == 0,
           "end reason starts cleared (no stale verdict beside a fresh trace)");
+#endif
 #if ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
     check(data.shared.elsStop.diagBucketTicks > 0,
           "trace probe publishes bucket width (host must not assume the ISR rate)");
