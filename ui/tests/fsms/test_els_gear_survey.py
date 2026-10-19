@@ -533,6 +533,7 @@ def test_a_pass_that_reads_off_early_but_true_over_the_whole_pass_is_accepted():
     fake = SimpleNamespace(fast_data_values={}, els_stop_values={})
     w._fsm_state = lambda: state["s"]
     w._steps_per_count = lambda: K
+    w._steps_per_ref_count = lambda: K
     w._mm_per_count = lambda: MM_PER_COUNT
     w._gear = lambda: "A"
     w._gear_table = lambda: ABC
@@ -663,3 +664,146 @@ def test_the_meter_is_in_reference_terms_when_another_position_is_expected():
     w.poll()
     _profile_pass(w, board, clock, state, lambda t: 2.0)   # the lever in B
     assert held[0][1].r == pytest.approx(2.0, rel=0.0005)
+
+
+# ─── the passes are driven in the position being measured ───────────────
+# The lever is in the measured position for the whole measurement, so every
+# number the engaged position scales -- the take-up, the retract, the sync
+# ratio, the calibration basis -- is in that position's steps, at its
+# nominal factor from the gearbox table. Until 2026-10-18 they stayed in the
+# reference's: a B retract overshot by 100 %, a C retract went half way and
+# looped a dozen times, and the first C take-up after each retract was
+# refused because 484 reference steps cross half the lash in x1/2.
+
+def _survey_rig(_cfg):
+    """A controller over a real ServoDispatcher on the commissioned lathe's
+    leadscrew (8 TPI, 1600 steps) and Z scale (200 counts/mm), with a
+    484-step take-up and a calibration on file."""
+    from unittest.mock import MagicMock
+    from tests.fsms.test_els_ratio import _real_servo_controller
+    ctrl, servo, notes = _real_servo_controller(ABC.text())
+    servo.elsMode = True               # first: the ratio is derived only in ELS mode
+    servo.leadScrewPitch = 0.125
+    servo.leadScrewPitchIn = True
+    servo.leadScrewPitchSteps = 1600
+    fsm = ctrl._els_fsm
+    fsm._saddle_input.ratioNum = 1
+    fsm._saddle_input.ratioDen = 200
+    fsm.els.els_backlash_steps = 484
+    fsm.els.els_cal_measured_legs = [480, 488, 484]
+    fsm.hal = MagicMock()
+    axis = MagicMock()
+    fsm.board.axes = [axis]
+    ctrl._overshoot._binding = lambda: DEV
+    return ctrl, servo, fsm, axis
+
+
+def _retract_steps(ctrl, fsm, enc_d=-3555):
+    """The steps the retract commands from a stop enc_d counts short of
+    retract_z, take-up included (kivy log 2026-10-18: enc_d=-3555)."""
+    ctrl._retract_z_encoder = -enc_d
+    ctrl._retract_z_committed = True
+    fsm._saddle_input.encoderCurrent = 0
+    fsm._retract_backlash_applied = False
+    fsm.hal.reset_mock()
+    fsm.on_enter_retracting()
+    return fsm.hal.set_steps_to_go.call_args.args[0]
+
+
+@pytest.fixture
+def _cfg(tmp_path, monkeypatch):
+    monkeypatch.setenv("REFLEX_CONFIG_DIR", str(tmp_path))
+
+
+def test_outside_a_measurement_the_retract_is_in_the_engaged_position(_cfg):
+    """The log's A numbers: 3555 counts are 8958 steps, plus 484."""
+    ctrl, servo, fsm, axis = _survey_rig(_cfg)
+    assert fsm.engaged_gear() == "A"
+    assert _retract_steps(ctrl, fsm) == -9442
+
+
+@pytest.mark.parametrize("position, takeup, retract, basis", [
+    # 3555 counts = 17.775 mm = 8957.5 reference steps.
+    ("B", 242, -(4479 + 242), 242),
+    ("C", 968, -(17915 + 968), 968),
+])
+def test_a_measurement_drives_in_the_measured_position(
+        _cfg, position, takeup, retract, basis):
+    ctrl, servo, fsm, axis = _survey_rig(_cfg)
+    stored = servo.gearbox_position
+    assert ctrl.start_gear_survey(position) is None
+    assert fsm.engaged_gear() == position
+    assert fsm.engaged_backlash_steps() == takeup
+    # The take-up gate's basis, legs [480, 488, 484] in the position's steps.
+    fsm.hal.set_cal_basis.assert_called_with(basis)
+    assert _retract_steps(ctrl, fsm) == retract
+    ratio = Fraction(servo.ratioNum, servo.ratioDen)
+    assert ratio == Fraction(127, 64000) * ABC.factor(position)
+    # Re-taught at the start, as a gear adoption does.
+    axis.push_sync_ratio.assert_called()
+    # The setting is not changed: a restart is back in the stored position.
+    assert servo.gearbox_position == stored
+
+
+def test_the_measured_position_is_released_after_the_last_retract(_cfg):
+    """The survey finishes when its last pass ends, before that pass's
+    retract; the position holds until the carriage is back at rest."""
+    from unittest.mock import PropertyMock, patch
+    ctrl, servo, fsm, axis = _survey_rig(_cfg)
+    ctrl.start_gear_survey("C")
+    for r in (0.5, 0.5, 0.5):
+        ctrl.overshoot.on_gear_pass(v(r), rd(r))
+    assert not ctrl.overshoot.gear_survey_running
+    with patch.object(type(fsm), "state", new_callable=PropertyMock,
+                      return_value="retracting", create=True):
+        ctrl._poll_ratio_check()
+        assert fsm.engaged_gear() == "C"
+        assert _retract_steps(ctrl, fsm) == -(17915 + 968)
+    with patch.object(type(fsm), "state", new_callable=PropertyMock,
+                      return_value="stopped", create=True):
+        ctrl._poll_ratio_check()
+    assert fsm.engaged_gear() == "A"
+    assert _retract_steps(ctrl, fsm) == -9442
+
+
+def test_a_canceled_measurement_releases_the_position(_cfg):
+    ctrl, servo, fsm, axis = _survey_rig(_cfg)
+    ctrl.start_gear_survey("B")
+    ctrl.overshoot.cancel_gear_survey()
+    ctrl._poll_ratio_check()
+    assert fsm.engaged_gear() == "A"
+    assert fsm.engaged_backlash_steps() == 484
+
+
+def test_the_table_cannot_change_while_a_position_is_measured(_cfg):
+    """The position's nominal factor comes from the table; with the table
+    fixed for the measurement, the position always has one."""
+    ctrl, servo, fsm, axis = _survey_rig(_cfg)
+    notes = []
+    ctrl.notify = lambda msg, severity=None, **kw: notes.append(msg) or True
+    ctrl.start_gear_survey("B")
+    assert ctrl.set_gear_table("A=1, C=1/2") is False
+    assert servo.gearbox_table == ABC.text()
+    assert "measurement" in notes[-1]
+
+
+@pytest.mark.parametrize("position, true_r", [("B", 2.0015), ("C", 0.4993)])
+def test_the_reading_does_not_use_the_nominal_factor(_cfg, position, true_r):
+    """The meter is given the reference's steps per count, from the
+    leadscrew and scale alone, so a pass whose true coupling is 0.1 % off
+    the nominal factor reads that, not the nominal."""
+    ctrl, servo, fsm, axis = _survey_rig(_cfg)
+    assert ctrl.start_gear_survey(position) is None
+    w = ctrl._ratio_watch
+    k_ref = float(DEV.mm_per_count / DEV.mm_per_step)
+    state, clock = {"s": "stopped"}, {"t": 0.0}
+    tick = SimpleNamespace(scale_index=lambda: 1, takeup_pending=lambda: False)
+    fake = SimpleNamespace(fast_data_values={}, els_stop_values={})
+    w._fsm_state = lambda: state["s"]
+    w._now_ms = lambda: clock["t"]
+    w._hal = SimpleNamespace(tick=tick)
+    w._board = fake
+    w.poll()
+    _profile_pass(w, fake, clock, state, lambda t: true_r, step=400)
+    reading = ctrl.overshoot.gear_survey.readings
+    assert reading == [pytest.approx(true_r, rel=1e-4)]

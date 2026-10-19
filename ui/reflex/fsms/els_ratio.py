@@ -480,6 +480,14 @@ class RatioWatch:
                         steps per Z count in the reference gear; built at
                         the start of a held pass and fed every poll of it
                         (default: none, and the reading is None)
+    steps_per_ref_count()  that k, or None (then no meter is built): steps
+                        per Z count in the reference gear from the leadscrew
+                        and scale alone. While a measurement runs the
+                        expected gear is the position being measured, at its
+                        nominal factor; k must not depend on it, or the
+                        measurement would read back the factor it assumed.
+                        Default: steps_per_count() times the expected gear's
+                        factor, for a watch with no measurement wired.
 
     It only DECIDES and reports; on_verdict owns any action, including none
     at all in shadow mode. While `hold()` is true nothing acts: a gearbox
@@ -493,7 +501,8 @@ class RatioWatch:
 
     def __init__(self, hal, board, *, fsm_state, steps_per_count, gear,
                  gear_table, mm_per_count, on_verdict, now_ms=None,
-                 hold=None, on_held=None, measure=None):
+                 hold=None, on_held=None, measure=None,
+                 steps_per_ref_count=None):
         self._hal = hal
         self._board = board
         self._fsm_state = fsm_state
@@ -505,6 +514,7 @@ class RatioWatch:
         self._hold = hold or (lambda: False)
         self._on_held = on_held or (lambda _v, _reading: None)
         self._measure = measure
+        self._steps_per_ref_count = steps_per_ref_count
         self._meter = None
         self._now_ms = now_ms or (lambda: time.monotonic() * 1000.0)
         self._prev_state = None
@@ -545,9 +555,12 @@ class RatioWatch:
         self._reported = False
         self._meter = None
         if self._measure is not None and self._hold():
-            c = self._check
-            self._meter = self._measure(
-                c.steps_per_count * float(c.table.factor(c.gear)))
+            if self._steps_per_ref_count is not None:
+                k_ref = self._steps_per_ref_count()
+            else:
+                c = self._check
+                k_ref = c.steps_per_count * float(c.table.factor(c.gear))
+            self._meter = self._measure(float(k_ref)) if k_ref else None
         return True
 
     def poll(self) -> None:

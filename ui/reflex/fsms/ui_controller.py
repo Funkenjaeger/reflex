@@ -392,6 +392,10 @@ class ElsUiController(EventDispatcher):
             apply_gear_table=lambda text: self.set_gear_table(text),
             on_gear_result=lambda _survey: Clock.schedule_once(
                 lambda _dt: self._open_gear_result(), 0),
+            # The lever goes to the measured position for the measurement:
+            # every pass drives at its nominal factor until the measurement
+            # ends and the carriage is at rest (_release_measured_gear).
+            on_lever_change=lambda position: self._els_fsm.drive_for_measurement(position),
         )
 
         # Stop-overshoot correction (protocolVersion 11). Opt-in, default off.
@@ -453,6 +457,10 @@ class ElsUiController(EventDispatcher):
             hold=lambda: self._overshoot.gear_survey_running,
             on_held=lambda v, reading: self._overshoot.on_gear_pass(v, reading),
             measure=WholePassRatio,
+            # The measurement drives in the position it measures, at its
+            # nominal factor; its meter reads against the reference from the
+            # leadscrew and scale alone, so the nominal never reaches r.
+            steps_per_ref_count=lambda: self._els_fsm.steps_per_reference_z_count(),
         )
 
         # Rung-2 sampler (log-only): compares the domain FSM's state against
@@ -1143,6 +1151,23 @@ class ElsUiController(EventDispatcher):
             self._ratio_watch.poll()
         except Exception as e:
             log.warning(f"coupling-ratio check tick failed: {e}")
+        try:
+            self._release_measured_gear()
+        except Exception as e:
+            log.warning(f"gearbox measurement release failed: {e}")
+
+    def _release_measured_gear(self) -> None:
+        """Drive in the stored position again once a gearbox measurement has
+        ended (saved, discarded, refused or canceled) and the carriage is at
+        rest. A measurement ends when its last pass does, before that pass's
+        retract, and the retract is still in the measured position's steps;
+        so the release waits out the pass and the retract."""
+        fsm = self._els_fsm
+        if not fsm.measured_gear() or self._overshoot.gear_survey_running:
+            return
+        if fsm.state in ("arming", "cutting", "retracting"):
+            return
+        fsm.drive_for_measurement("")
 
     def _ratio_check_enabled(self) -> bool:
         # `is True`: a stand-in that is merely truthy must not arm an abort.
@@ -1224,6 +1249,12 @@ class ElsUiController(EventDispatcher):
             return True
         if self._els_fsm.state in ("cutting", "retracting"):
             self.notify("Gearbox table cannot change during a pass.",
+                        NOTICE_WARNING)
+            return False
+        if self._overshoot.gear_survey_running:
+            # The passes drive at the measured position's factor from this
+            # table, and the measurement saves into it: it stays as it is.
+            self.notify("Gearbox table cannot change during a measurement.",
                         NOTICE_WARNING)
             return False
         # A pending gear-change adoption names a position of the OLD table.

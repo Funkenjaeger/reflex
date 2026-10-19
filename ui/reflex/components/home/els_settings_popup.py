@@ -6,7 +6,7 @@ from kivy.properties import (
 
 from reflex.components.home.thread_type import ThreadType
 from reflex.components.widgets.string_item import StringItem  # noqa: F401
-from reflex.fsms.els_gear import table_of
+from reflex.fsms.els_gear import drive_position_of, table_of
 from reflex.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
@@ -91,7 +91,7 @@ class ElsSettingsPopup(Popup):
         servo = self.app.servo
         if servo.ratioDen == 0:
             return 0.0
-        factor = table_of(servo).factor(getattr(servo, "gearbox_position", ""))
+        factor = table_of(servo).factor(drive_position_of(servo))
         return float(servo.ratioNum) / float(servo.ratioDen) / float(factor)
 
     def _steps_to_mm(self, steps: int) -> float:

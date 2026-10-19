@@ -169,6 +169,28 @@ class TestConfigureLeadScrewRatio:
         servo.gearbox_position = "B"          # the binding, not a direct call
         assert Fraction(servo.ratioNum, servo.ratioDen) == 2 * a
 
+    def test_a_measured_position_drives_the_ratio_and_is_never_saved(
+            self, board, formats, servo):
+        """While a gearbox measurement runs the lever is in the measured
+        position, so the ratio follows gearbox_measuring; it is not a setting,
+        so the stored position is what a restart comes back in."""
+        import yaml
+        servo.elsMode = True
+        servo.leadScrewPitch = 0.125
+        servo.leadScrewPitchIn = True
+        servo.leadScrewPitchSteps = 1600
+        servo.gearbox_table = "A=1, B=2, C=1/2"
+        servo.gearbox_position = "A"
+        a = Fraction(servo.ratioNum, servo.ratioDen)
+        servo.gearbox_measuring = "C"         # the binding, not a direct call
+        assert Fraction(servo.ratioNum, servo.ratioDen) == a / 2
+        assert servo.gearbox_engaged == "A"
+        stored = yaml.safe_load(servo.filename.read_text())
+        assert "gearbox_measuring" not in stored
+        assert stored["gearbox_position"] == "A"
+        servo.gearbox_measuring = ""
+        assert Fraction(servo.ratioNum, servo.ratioDen) == a
+
     def test_changing_the_table_recomputes_the_ratio(self, servo):
         servo.elsMode = True
         servo.leadScrewPitch = 0.125

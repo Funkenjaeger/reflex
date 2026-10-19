@@ -4,7 +4,7 @@ from transitions import Machine
 from reflex.dispatchers import els, board
 from reflex.fsms import els_adopt, els_command
 from reflex.fsms.els_cal import cal_basis
-from reflex.fsms.els_gear import GearTable, table_of
+from reflex.fsms.els_gear import GearTable, drive_position_of, table_of
 from reflex.fsms.els_mode_watch import mode_name
 from reflex.fsms.els_stop_registers import ElsStopRegisters
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
@@ -1432,10 +1432,44 @@ class ElsFsm:
 
     def engaged_gear(self) -> str:
         """The gearbox position the controller currently believes is engaged:
-        the stored position if it is in the table, else the reference, and ""
-        with no gearbox (a stored position is then ignored)."""
-        return self.gear_table().resolve(
-            getattr(self.servo, "gearbox_position", ""))
+        the position being measured while a gearbox measurement runs, else
+        the stored position; either one only if it is in the table, else the
+        reference, and "" with no gearbox (a stored position is then
+        ignored)."""
+        return self.gear_table().resolve(drive_position_of(self.servo))
+
+    def measured_gear(self) -> str:
+        """The position a gearbox measurement is driving in, or ""."""
+        m = getattr(self.servo, "gearbox_measuring", "")
+        return m if isinstance(m, str) else ""
+
+    def drive_for_measurement(self, position: str) -> None:
+        """Drive in `position` while its factor is measured, or in the stored
+        position again with "".
+
+        The lever is in the measured position for every pass of a gearbox
+        measurement (els_gear_survey.py), so the take-up, the retract, the
+        sync ratio and the calibration basis must be in its steps. They take
+        its NOMINAL factor from the gearbox table, the one the measurement
+        checks against, which is within the scatter of the measured one.
+
+        The position must be in the table (the measurement refuses one that
+        is not); a name that is not reads as the reference, as everywhere
+        else. Nothing is persisted: the servo's gearbox_measuring is not a
+        saved setting. Re-teaches what a gear adoption does, and clears a
+        latched thread reference when the factor changes.
+        """
+        if self.measured_gear() == position:
+            return
+        previous = self.engaged_gear()
+        factor_before = self.gear_table().factor(previous)
+        self.servo.gearbox_measuring = position
+        self._reteach_gear("gear change, measuring" if position
+                           else "gear change, measurement ended")
+        log.warning(f"gearbox measurement: driving in {self.engaged_gear() or '-'} "
+                    f"(was {previous or '-'})")
+        if self.gear_table().factor(self.engaged_gear()) != factor_before:
+            self._clear_reference_for_gear_change()
 
     def z_mm_per_count(self):
         """Z scale resolution in mm per count, or None if unknown."""
@@ -1484,6 +1518,16 @@ class ElsFsm:
         if not mm_per_count or servo_ratio == 0:
             return None
         return mm_per_count / float(servo_ratio)
+
+    def steps_per_reference_z_count(self):
+        """Commanded steps per Z count in the REFERENCE position, or None.
+
+        From the leadscrew and the scale alone (overshoot_binding), never
+        from a position's factor: what a gearbox measurement's meter reads a
+        pass against, so the factor it measures cannot be the one it was
+        driven at."""
+        binding = self.overshoot_binding()
+        return float(binding.steps_per_count) if binding is not None else None
 
     def adopt_gear(self, gear: str) -> None:
         """Make `gear` the engaged gearbox position, and re-teach the firmware
