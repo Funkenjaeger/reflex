@@ -418,8 +418,8 @@ class TestModeWatchSchema:
 
 class TestIsrGapSchema:
     """Schema 8 peak-holds the ISR's tick-to-tick gap. Its diagEndReason is
-    the host's reset request and reads 0 in steady state, so a line must be
-    recorded whatever end_reason says, and it carries the decoded window."""
+    the host's reset request, not an end reason, so a line must be recorded
+    whatever end_reason says, and it carries the decoded window."""
 
     @staticmethod
     def _capture(seq=1):

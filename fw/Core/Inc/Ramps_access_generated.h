@@ -12,7 +12,8 @@
  * says `access: ro_firmware`. For mbRtuAccess_t (fw/modbus_rtu/mb_rtu.h):
  *
  *   static const uint8_t roBits[] = RAMPS_RO_FIRMWARE_BITS_INIT;
- *   mbRtuAccess_t acc = { 0, RAMPS_ACCESS_REGISTERS, roBits };
+ *   static const uint8_t resetBits[] = RAMPS_HOST_RESET_BITS_INIT;
+ *   mbRtuAccess_t acc = { 0, RAMPS_ACCESS_REGISTERS, roBits, resetBits };
  *
  * Registers 0..7, the head of rampsSharedData_t that no schema describes,
  * have no bit set. Interior and tail pads have none either. */
@@ -87,6 +88,22 @@
  *   244..244 elsStop.diagCaptureTicks
  *   245..245 elsStop.diagEndReason
  *   246..249 elsStop.diagReserved
+ */
+
+/* Which of those a host may reset: the same layout, a bit set only where the
+ * schema adds `host_reset: true`. A host write of 0 to such a register lands;
+ * any other value is refused like a write to the rest of the table. */
+#define RAMPS_HOST_RESET_BITS_INIT { \
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
+  0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, \
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00 \
+}
+
+/* The set bits, field by field:
+ *   140..141 elsStop.stepPulseMinCycles
+ *   142..143 elsStop.stepPulseRuntCount
+ *   184..185 elsStop.executionCyclesPeak
+ *   245..245 elsStop.diagEndReason
  */
 
 #endif /* RAMPS_ACCESS_GENERATED_H */
