@@ -89,6 +89,7 @@ nav:
       - Widening a groove: guide/widening-a-groove.md
       - "Stop overshoot correction (experimental)": guide/stop-overshoot-correction.md
       - Measuring the stop overshoot: guide/measuring-stop-overshoot.md
+      - Measuring the gearbox factor: guide/measuring-gearbox-factor.md
   - Setup:
       - setup/index.md
       - Installing on a Pi: setup/installing.md
