@@ -7,6 +7,7 @@ names and encoding: methods are named in domain terms and callers never see
 register keys. The servo, axis and input dispatchers write their own
 registers through PortOwner directly, by design.
 """
+from reflex.fsms import els_command
 from reflex.utils.base_device import write_command, write_confirmed
 from reflex.utils.port_owner import Batch, PortOwner
 from kivy.logger import Logger
@@ -85,6 +86,12 @@ class TickReads:
 
     def current_mode(self) -> int:
         return int(self._get('machineMode', 0))
+
+    # The ack of the ELS command channel (protocolVersion 13). Hot so the
+    # disengage can edge-detect it here; its payload, commandResult, is cold
+    # and read live (ElsStopRegisters.read_command_result) once it moves.
+    def command_seq(self) -> int:
+        return int(self._get('commandSeq', 0))
 
     # The pair the latched-reference indicator polls, TOGETHER, from the same
     # snapshot dict -- so "latched" and "enabled" describe the same board tick.
@@ -170,23 +177,6 @@ class ElsStopRegisters:
             z_counts_per_pitch=z_counts_per_pitch,
             backlash_steps=backlash_steps))
 
-    def disengage(self) -> bool:
-        """Clear every sync source and disarm the stop. True iff the
-        controller acknowledged all of it.
-
-        BLOCKING, deliberately: this is the safety stop, the operator has
-        asked for motion to end, and the few milliseconds are not worth
-        handing back a UI that says disengaged before it is.
-        """
-        if not self._board.connected:
-            return False
-        try:
-            results = self._submit(self._disengage_batch()).result()
-        except Exception as e:                           # noqa: BLE001
-            log.error(f"disengage: the batch did not complete: {e}")
-            return False
-        return all(bool(r) for r in results)
-
     def _arming_batch(self, *, stop_position: int, scale_index: int,
                      thread_pitch_steps: float, z_counts_per_pitch: float,
                      backlash_steps: int):
@@ -217,21 +207,6 @@ class ElsStopRegisters:
             write_command(els, 'backlashSteps', max(0, int(backlash_steps))),
             write_command(els, 'enable', 1),
         ))
-
-    def _disengage_batch(self):
-        """Clear sync on every scale, then enable. ONE Batch, in that order.
-
-        The order is the point and stop_sync explains why: for as long as any
-        syncEnable is set after enable has gone to 0, the firmware's
-        servoEnableTask is entitled to switch the feed back on, and nothing
-        will switch it off again. Batching removes the last way anything could
-        get between the two.
-        """
-        els = self._board.device['elsStop']
-        writes = [write_command(scale, 'syncEnable', 0)
-                  for scale in self._board.device['scales']]
-        writes.append(write_command(els, 'enable', 0))
-        return Batch(tuple(writes))
 
     def set_active(self, active: bool) -> bool:
         """The HOLD. Clearing it is what releases a cut, so it is CONFIRMED.
@@ -544,23 +519,27 @@ class ElsStopRegisters:
             return self._no_link([0, 0, 0])
         return [int(v) for v in self._board.device['elsStop']['calMeasured']]
 
-    def set_cal_measured(self, legs) -> None:
-        """Restore the three calibration leg measurements to firmware RAM.
+    def set_cal_basis(self, steps: int) -> None:
+        """Write the take-up gate's basis, elsStop.calBasisSteps (protocolVersion
+        13): the calibrated lash, in the engaged gear's servo steps, that
+        elsTakeupConfirmThreshold derives the per-pass threshold from.
 
-        calMeasured is by convention firmware-written -- the end of a real run
-        publishes it -- and the take-up confirmation gate derives its
-        threshold from the legs' mean. But the registers live in RAM: every
-        power cycle zeroes them, the mean derivation fails valid (any zero leg
-        reports "no calibration on file"), and the gate silently drops to the
-        2-count floor until the operator recalibrates. Since 2026-08-25 the
-        legs are persisted UI-side at commit and re-taught here at reconcile.
-        Pushing the actual measured legs -- never a fabricated mean -- keeps
-        the registers honest; a stale-but-real bar is stricter than the floor,
-        and an overtight one refuses loudly, which announces its own fix.
+        The firmware installs a successful run's mean here itself and leaves
+        it alone on a failed one, so the host writes it only when the firmware
+        cannot know the answer: after a power cycle (firmware RAM), after a
+        gear change (the steps change with the gear), and when the host
+        rejects or the operator declines a run the firmware accepted. Until 13
+        this was a write of the three legs to calMeasured, which is the
+        firmware's result register again and has no writer here.
+
+        uint16, one register, so the ISR can never read it half-written. The
+        callers compute it by the firmware's own rule (elsCalMeanValid: the
+        integer mean of three positive legs), which keeps the threshold the
+        gate had when it read the legs itself.
         """
         if not self._board.connected:
             return
-        self._board.device['elsStop']['calMeasured'] = [int(v) for v in legs]
+        self._board.device['elsStop']['calBasisSteps'] = int(steps)
 
     def reads_baseline(self) -> int:
         """Snapshot to detect fabricated reads across a group of reads.
@@ -594,6 +573,37 @@ class ElsStopRegisters:
         """
         self._board.connection_manager.read_failures += 1
         return fallback
+
+    # ── ELS command channel (protocolVersion 13) ──────────────────────
+    # The calCommand idiom for the registers that move the carriage
+    # (els_command.py). One command in flight: write nothing to elsStop or
+    # syncEnable between a command and its ack.
+
+    def request_disengage(self) -> bool:
+        """Write DISENGAGE. CONFIRMED: the answer says whether the command
+        reached the controller, not whether it has been carried out -- that is
+        commandSeq moving. False means no link or no acknowledgement."""
+        if not self._board.connected:
+            return False
+        return write_confirmed(self._board.device['elsStop'], 'command',
+                               els_command.CMD_DISENGAGE)
+
+    def read_command_seq(self) -> int:
+        """commandSeq, LIVE: the baseline a command is about to be measured
+        against. The tick snapshot (tick.command_seq) is what the ack poller
+        reads."""
+        if not self._board.connected:
+            return self._no_link(0)
+        return int(self._board.device['elsStop']['commandSeq'])
+
+    def read_command_result(self) -> int:
+        """commandResult, LIVE. Cold, so not in the snapshot; read it once
+        commandSeq has moved. Written before the seq, and read in a later
+        frame than the one that showed the seq move, so it is at least as new
+        as that seq."""
+        if not self._board.connected:
+            return self._no_link(0)
+        return int(self._board.device['elsStop']['commandResult'])
 
     # ── manual reference latch (interactive re-sync) ──────────────────
     # Same command/ack split as calibration: request_latch() sets latchCommand,

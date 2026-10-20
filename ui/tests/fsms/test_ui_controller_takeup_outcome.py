@@ -1,8 +1,8 @@
 """The take-up outcome poller must survive a torn Modbus snapshot.
 
 The firmware writes takeupResult and takeupSeq in one ISR pass, but the Modbus
-task copies the register block one 16-bit register at a time (reflex-fw
-Modbus.c process_FC3) and the 100 kHz ISR can land between the two. Result is
+task copies the register block one 16-bit register at a time (the FC 3 loop
+in fw/modbus_rtu/mb_rtu.c) and the ISR can land between the two. Result is
 the lower address, so a torn read is (stale result, new seq).
 
 Observed on elspi 2026-08-21: a REFUSED first pass was logged as

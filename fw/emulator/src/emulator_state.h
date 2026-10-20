@@ -24,7 +24,8 @@ typedef void (*gpio_write_cb_t)(void *GPIOx, uint16_t pin, int state);
 
 /*
  * UART TX callback type.
- * Called when the firmware writes bytes via HAL_UART_Transmit_IT.
+ * Called when the firmware's Modbus slave sends a reply (mbHwSend,
+ * src/mb_hw_emu.cpp).
  */
 typedef void (*uart_tx_cb_t)(const uint8_t *data, uint16_t size);
 
@@ -47,12 +48,6 @@ typedef struct {
     gpio_write_cb_t on_gpio_write;
     uart_tx_cb_t on_uart_tx;
     void *user_data;
-
-    /* UART RX: transport calls this to inject a byte into the firmware */
-    /* (we call HAL_UART_RxCpltCallback from the shim) */
-    volatile int uart_rx_armed;      /* 1 = firmware has called HAL_UART_Receive_IT */
-    uint8_t *uart_rx_buf;            /* pointer to firmware's dataRX byte */
-    uint16_t uart_rx_size;
 
     /* Monotonic tick counter for HAL_GetTick */
     volatile uint32_t hal_tick;

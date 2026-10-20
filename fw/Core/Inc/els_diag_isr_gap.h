@@ -4,9 +4,8 @@
  * distribution of late ticks, and the machine state at the worst one.
  *
  * ---- WHY ---------------------------------------------------------------------
- * TIM9 sits at NVIC priority 5, equal to configLIBRARY_MAX_SYSCALL_INTERRUPT_
- * PRIORITY, so every FreeRTOS critical section and every same-priority
- * interrupt can hold a tick back. executionCyclesPeak measures only how long
+ * Anything that masks TIM9 or runs at its priority or above holds a tick
+ * back: an interrupt at NVIC priority 0, a PRIMASK or BASEPRI section. executionCyclesPeak measures only how long
  * the ISR RUNS. The ISR already computes the gap between entries every tick
  * (shared->executionInterval, DWT cycles), and this probe peak-holds it over a
  * window the host can reset.
@@ -20,9 +19,11 @@
  *                     at 50 kHz)
  *   diagCaptureTicks  longest ISR run in this window, CPU cycles (saturates at
  *                     65535). Window-scoped, unlike executionCyclesPeak.
- *   diagEndReason     RESET REQUEST. The host writes ELS_DIAG_GAP_RESET_REQ;
- *                     the next tick clears the window and writes 0 back, which
- *                     is the acknowledgement.
+ *   diagEndReason     RESET REQUEST. ELS_DIAG_GAP_OPEN while a window is open;
+ *                     the host writes ELS_DIAG_GAP_RESET_REQ (0, the one value
+ *                     the schema's host_reset flag lets it write), and the next
+ *                     tick clears the window and writes ELS_DIAG_GAP_OPEN back,
+ *                     which is the acknowledgement.
  *   diagBucketTicks   0: no time buckets in this probe
  *   diagBucketCount   ELS_DIAG_GAP_WORDS, the diagTrace words in use
  *   diagTrace[]       ELS_DIAG_GAP_W_* below; a uint32 is two words, low first.
@@ -62,8 +63,13 @@
 #define ELS_DIAG_GAP_THRESH_3  (ELS_DIAG_GAP_NOMINAL * 2u)
 #define ELS_DIAG_GAP_THRESHOLDS 4
 
-/* The value the host writes to diagEndReason to start a fresh window. */
-#define ELS_DIAG_GAP_RESET_REQ 1u
+/* diagEndReason: the firmware holds it at OPEN while a window is open, and
+ * the host writes RESET_REQ to start a fresh one. The request is 0 because a
+ * host may write nothing else to a firmware-owned register (host_reset in
+ * registers/els_stop.yaml). A host 0 is harmless elsewhere: a release build
+ * never reads it and the other probes overwrite it at their next capture. */
+#define ELS_DIAG_GAP_RESET_REQ 0u
+#define ELS_DIAG_GAP_OPEN      1u
 
 /* diagSeq heartbeat: one minute of ticks. */
 #define ELS_DIAG_GAP_HEARTBEAT_TICKS ((uint32_t)ELS_MS_TO_TICKS(60000))
@@ -102,8 +108,8 @@ static inline uint16_t elsDiagGapSat16(uint32_t v) {
   return (v > 0xFFFFu) ? (uint16_t)0xFFFFu : (uint16_t)v;
 }
 
-/* Clear the window and republish the geometry. Leaves the reset request
- * alone; the caller acknowledges it. */
+/* Clear the window and republish the geometry. Leaves diagEndReason alone;
+ * the caller opens the window. */
 static inline void elsDiagGapClear(elsDiagCtx_t *ctx, elsStop_t *stop) {
   ctx->captureTick = ELS_DIAG_GAP_HEARTBEAT_TICKS;
   elsDiagGapMin = 0;
@@ -134,7 +140,7 @@ static inline void elsDiagGapClear(elsDiagCtx_t *ctx, elsStop_t *stop) {
  * its interval runs from wherever DWT was started, not from a previous tick. */
 static inline void elsDiagInit(elsDiagCtx_t *ctx, elsStop_t *stop) {
   stop->diagSchema    = ELS_DIAG_SCHEMA_ISR_GAP;
-  stop->diagEndReason = 0;
+  stop->diagEndReason = ELS_DIAG_GAP_OPEN;
   elsDiagGapWindow    = 0;
   elsDiagGapClear(ctx, stop);
   ctx->state = 0;
@@ -186,14 +192,16 @@ static inline void elsDiagTaskTick(elsDiagCtx_t *ctx, rampsSharedData_t *shared,
 static inline void elsDiagTickTail(elsDiagCtx_t *ctx, rampsSharedData_t *shared) {
   elsStop_t *stop = &shared->elsStop;
 
-  /* Host reset. Clear, acknowledge by writing the request back to 0, then
-   * bump diagSeq last so a reader that sees the new seq sees the cleared
-   * block. This tick is not measured: the window starts with the next one. */
-  if (stop->diagEndReason != 0u) {
+  /* Host reset. Clear, acknowledge by writing OPEN back, then bump diagSeq
+   * last so a reader that sees the new seq sees the cleared block. This tick
+   * is not measured: the window starts with the next one. Anything but OPEN
+   * counts as a request, so the register cannot be left holding a value that
+   * means neither. */
+  if (stop->diagEndReason != ELS_DIAG_GAP_OPEN) {
     elsDiagGapWindow++;
     elsDiagGapClear(ctx, stop);
     ctx->state = 2;
-    stop->diagEndReason = 0;
+    stop->diagEndReason = ELS_DIAG_GAP_OPEN;
     stop->diagSeq++;
     return;
   }

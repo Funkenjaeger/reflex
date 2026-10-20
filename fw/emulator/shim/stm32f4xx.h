@@ -22,7 +22,8 @@ extern "C" {
 #undef CR2
 #undef CR3
 
-/* Minimal USART register structure (only fields accessed by Modbus.c) */
+/* Minimal USART register structure (the emulator's Modbus transport,
+ * src/mb_hw_emu.cpp, models the receiver without it) */
 typedef struct {
     volatile uint32_t SR;    /* Status register */
     volatile uint32_t DR;    /* Data register */

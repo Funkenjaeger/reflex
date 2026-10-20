@@ -96,7 +96,11 @@ KNOWN_SERVO_T_SIZE = 36          # 34 bytes of fields + 2 trailing pad -> 4-alig
 # This is a fixed known-good number on purpose: it guards the hand-rolled
 # alignment oracle, so it must be re-derived when it moves rather than pointed
 # at whatever the oracle currently computes, which would make it unfalsifiable.
-KNOWN_ROOT_SIZE = 492
+#
+# 492 -> 500 (protocolVersion 13): command, commandResult, calBasisSteps and the
+# demoted clearRefSeq, four uint16s placed after bootSeq; commandSeq took
+# clearRefSeq's hot slot. Four registers of content, no pad.
+KNOWN_ROOT_SIZE = 500
 # 468 -> 488 (2026-09-07): the trigger-instant
 # snapshot appended 20 bytes to elsStop_t
 # (stopTriggerSeq + an explicit pad + four
@@ -463,10 +467,11 @@ def test_ui_recognises_no_schema_the_firmware_never_defined():
 
 # ── seq/payload ORDERING: why cal and diag need no torn-read guard ───────────
 #
-# THE MECHANISM, read rather than assumed (Modbus.c process_FC3):
+# THE MECHANISM, read rather than assumed (the FC 3 case of mbRtuHandle,
+# fw/modbus_rtu/mb_rtu.c):
 #
-#     for (i = u16StartAdd; i < u16StartAdd + u8regsno; i++)
-#         ... copy modH->u16regs[i] into the TX buffer ...
+#     for (uint16_t i = 0; i < count; i++)
+#         ... copy p[i] into the reply, high byte first ...
 #
 # Registers are copied into the response ONE AT A TIME, in ASCENDING ADDRESS
 # ORDER, and the ~100 kHz ISR can preempt that loop at any point. So within a
@@ -520,6 +525,10 @@ SEQ_SAFE_BY_LAYOUT = {
     "elsStop.takeupSeq":            ["elsStop.takeupResult",
                                      "elsStop.lastTakeupZDelta"],
     "elsStop.latchSeq":             [],   # acks a state change, carries no payload
+    # The ELS command channel (protocolVersion 13). commandSeq is hot (the UI
+    # edge-detects it in the tick snapshot) and commandResult cold, read live
+    # after the edge; cold is laid out after hot, so the order holds.
+    "elsStop.commandSeq":           ["elsStop.commandResult"],
     # The trigger-instant snapshot (2026-09-07). The seq is the ONLY thing
     # telling a host that a new capture arrived -- the payload has no other
     # freshness marker and a repeated pass can legitimately produce identical

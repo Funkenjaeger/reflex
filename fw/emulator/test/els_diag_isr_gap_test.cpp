@@ -55,13 +55,11 @@ HAL_StatusTypeDef HAL_TIM_Encoder_Start(TIM_HandleTypeDef *h, uint32_t ch) {
 }
 HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
 
-void ModbusInit(modbusHandler_t *m)  { (void)m; }
-void ModbusStart(modbusHandler_t *m) { (void)m; }
+void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { (void)r; (void)n; (void)id; }
+int mbAppService(void) { return 0; }
+uint16_t mbAppReplies(void) { return 0; }
+uint32_t HAL_GetTick(void) { return 0; }
 
-osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
-osThreadId_t osThreadNew(osThreadFunc_t f, void *arg, const osThreadAttr_t *a) {
-    (void)f; (void)arg; (void)a; return nullptr;
-}
 
 extern uint16_t servoCycles;
 extern uint16_t servoCyclesCounter;
@@ -231,9 +229,14 @@ int main()
         uint16_t seqBefore = s.diagSeq;
         check(worst(s) == 5 * NOM && over(s, 3) == 1, "window holds a late tick");
 
-        s.diagEndReason = ELS_DIAG_GAP_RESET_REQ;      /* the host's write */
+        check(s.diagEndReason == ELS_DIAG_GAP_OPEN, "an open window holds diagEndReason at OPEN");
+        uint32_t ticksBefore = ticks(s);
+        r.tick(NOM);
+        check(ticks(s) == ticksBefore + 1 && s.diagEndReason == ELS_DIAG_GAP_OPEN,
+              "a tick with no request measures as usual and leaves the window open");
+        s.diagEndReason = ELS_DIAG_GAP_RESET_REQ;      /* the host's write: 0 */
         r.tick(7 * NOM, 950);                          /* the reset tick itself */
-        check(s.diagEndReason == 0, "request is acknowledged by writing 0 back");
+        check(s.diagEndReason == ELS_DIAG_GAP_OPEN, "request is acknowledged by writing OPEN back");
         check(worst(s) == 0 && ticks(s) == 0 && over(s, 0) == 0 && over(s, 3) == 0,
               "worst, ticks and counts are cleared; the reset tick is not measured");
         check(w32(s, ELS_DIAG_GAP_W_MIN) == 0 && s.diagCaptureTicks == 0

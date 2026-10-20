@@ -58,6 +58,8 @@ class FakeHal:
         # reason the FSM has to promote it.
         self.servo_mode = 0
         self.mode_writes = []
+        # servoMode and syncEnable writes, in the order they were made.
+        self.writes = []
         self._fail_next_mode_read = False
         self._measured = list(measured)
         self._result = result
@@ -69,7 +71,7 @@ class FakeHal:
         self.limits = None
         self.backlash_written = None
         self.scale_index_written = None
-        self.cal_measured_written = None
+        self.cal_basis_written = None
         self._running = 0
 
         # Read-failure accounting with the PRODUCTION semantics (real int,
@@ -100,8 +102,8 @@ class FakeHal:
         self.scale_index_written = scale_index
         return True
 
-    def set_cal_measured(self, legs):
-        self.cal_measured_written = list(legs)
+    def set_cal_basis(self, steps):
+        self.cal_basis_written = int(steps)
 
     def request_calibration(self):
         # The firmware consumes and CLEARS the command in the same ISR pass.
@@ -132,6 +134,11 @@ class FakeHal:
     def set_servo_mode(self, mode):
         self.servo_mode = mode
         self.mode_writes.append(mode)
+        self.writes.append(("servoMode", mode))
+
+    def stop_sync(self):
+        self.writes.append(("syncEnable", 0))
+        return True
 
     # -- reads -------------------------------------------------------
     def read_cal_seq(self):
@@ -639,40 +646,82 @@ def test_no_z_axis_refuses_before_anything_is_written():
 
 
 # ── a failed run must not loosen the take-up gate (2026-08-23 finding) ─────
-# On EVERY calibration completion, success or failure, the firmware copies its
-# working measured[] into elsStop.calMeasured -- the same array the take-up
-# confirmation threshold derives from. A run that failed before measuring
-# anything copies ZEROS, silently dropping that gate to its 2-count floor for
-# every subsequent pass until the next successful calibration. The UI holds
-# the accepted record (els_cal_measured_legs), so a finished-but-failed run
-# re-teaches it immediately -- the same mechanism reconcile applies at connect.
+# Until protocolVersion 13 the firmware copied every run's working measured[]
+# into elsStop.calMeasured, the same array the take-up threshold derived from,
+# so a failed run's zeros dropped the gate to its floor and the UI re-taught
+# the stored legs after every failure. Since 13 the gate reads calBasisSteps,
+# which the firmware writes only on a SUCCESSFUL run: a failed run leaves it
+# alone and the UI writes nothing. What remains for the UI is the case the
+# firmware cannot see: a run it reported OK that the HOST rejects (spread too
+# wide), or that the operator never accepts. The firmware installed that run's
+# mean, so the UI puts the accepted record back.
 
-def test_failed_run_reteaches_the_stored_legs():
-    """MUTATION: drop the _reteach_stored_legs call on the result!=OK path and
-    the gate stays at the floor until the next connect."""
+def test_failed_run_leaves_the_basis_alone():
+    """MUTATION: put a basis write back on the result != OK path and this
+    fails. The firmware did not touch the basis; neither does the UI."""
     els = _els(els_cal_measured_legs=[365, 373, 366])
     hal = FakeHal(result=ELS_CAL_ERR_NO_MOTION, measured=(0, 0, 0))
     cal = BacklashCalibration(hal, els)
     cal.start()
 
     assert _run_to_completion(cal) == CalState.REFUSED
-    assert hal.cal_measured_written == [365, 373, 366]
+    assert hal.cal_basis_written is None
 
 
-def test_inconsistent_run_reteaches_the_stored_legs():
-    """INCONSISTENT means the firmware run SUCCEEDED -- its wide-spread legs
-    are already in calMeasured -- but the host just rejected them, so the gate
-    must keep deriving from the ACCEPTED record, not the rejected one."""
+def test_inconsistent_run_restores_the_accepted_basis():
+    """INCONSISTENT means the firmware run SUCCEEDED, so it installed its
+    wide-spread mean as the basis, and the host just rejected it: the gate
+    must keep deriving from the ACCEPTED record. 368 = (365+373+366) // 3."""
     els = _els(els_cal_measured_legs=[365, 373, 366])
     hal = FakeHal(measured=(100, 240, 98))
     cal = BacklashCalibration(hal, els)
     cal.start()
 
     assert _run_to_completion(cal) == CalState.INCONSISTENT
-    assert hal.cal_measured_written == [365, 373, 366]
+    assert hal.cal_basis_written == 368
 
 
-def test_timeout_reteaches_the_stored_legs():
+def test_inconsistent_run_with_no_record_clears_the_basis():
+    """No accepted record: the honest basis is none (0, the gate's floor),
+    not the mean the host just rejected."""
+    els = _els()
+    hal = FakeHal(measured=(100, 240, 98))
+    cal = BacklashCalibration(hal, els)
+    cal.start()
+
+    assert _run_to_completion(cal) == CalState.INCONSISTENT
+    assert hal.cal_basis_written == 0
+
+
+def test_cancel_after_an_uncommitted_pass_restores_the_accepted_basis():
+    """A passed run the operator closes without accepting: the firmware has
+    already installed its mean, but the record (and the commanded take-up)
+    is still the old one, so the basis goes back with it."""
+    els = _els(els_cal_measured_legs=[365, 373, 366])
+    hal = FakeHal(measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, els)
+    cal.start()
+
+    assert _run_to_completion(cal) == CalState.PASSED
+    cal.cancel()
+    assert hal.cal_basis_written == 368
+
+
+def test_commit_leaves_the_firmware_basis_as_the_run_set_it():
+    """Accepting is the case the firmware already got right: no write."""
+    els = _els(els_cal_measured_legs=[365, 373, 366])
+    hal = FakeHal(measured=(100, 101, 100))
+    cal = BacklashCalibration(hal, els)
+    cal.start()
+
+    assert _run_to_completion(cal) == CalState.PASSED
+    assert cal.commit()
+    assert hal.cal_basis_written is None
+
+
+def test_timeout_writes_no_basis():
+    """A stalled run has not finished: the firmware has not touched the
+    basis, so neither does the UI."""
     els = _els(els_cal_measured_legs=[365, 373, 366])
     hal = FakeHal(ticks_to_finish=10 ** 9)
     cal = BacklashCalibration(hal, els)
@@ -682,45 +731,44 @@ def test_timeout_reteaches_the_stored_legs():
         cal.poll()
 
     assert cal.state == CalState.REFUSED
-    assert hal.cal_measured_written == [365, 373, 366]
+    assert hal.cal_basis_written is None
 
 
 def test_failed_run_with_no_stored_record_tells_the_operator():
-    """Nothing to restore is a state the operator must hear about: the gate
-    sits at its bare motion floor until a calibration passes, and today
-    nothing says so. MUTATION: drop the message append and this fails."""
+    """Nothing accepted on file is a state the operator must hear about: the
+    gate sits at its bare motion floor until a calibration passes.
+    MUTATION: drop the message append and this fails."""
     els = _els()                          # legs [0, 0, 0]: never calibrated
     hal = FakeHal(result=ELS_CAL_ERR_NO_MOTION)
     cal = BacklashCalibration(hal, els)
     cal.start()
 
     assert _run_to_completion(cal) == CalState.REFUSED
-    assert hal.cal_measured_written is None      # zeros are not a record
+    assert hal.cal_basis_written is None
     assert "until a calibration passes" in cal.message
 
 
 def test_passed_run_does_not_repush_from_poll():
-    """Success needs no restoration: the firmware just wrote REAL legs, and
-    commit()/reconcile own persistence. A poll-side push on success would
-    overwrite the fresh measurement with the stale stored record."""
+    """Success needs no restoration: the firmware just installed the REAL
+    mean. A poll-side push would overwrite it with the stale stored record."""
     els = _els(els_cal_measured_legs=[365, 373, 366])
     hal = FakeHal(measured=(100, 101, 100))
     cal = BacklashCalibration(hal, els)
     cal.start()
 
     assert _run_to_completion(cal) == CalState.PASSED
-    assert hal.cal_measured_written is None
+    assert hal.cal_basis_written is None
 
 
 def test_start_refusal_does_not_repush():
-    """start() refusals never ran the firmware, so calMeasured was never
-    zeroed -- and on some refusals the hal is not even reachable."""
+    """start() refusals never ran the firmware, and on some refusals the hal
+    is not even reachable."""
     els = _els(els_cal_measured_legs=[365, 373, 366], z_input_index=None)
     hal = FakeHal()
     cal = BacklashCalibration(hal, els)
 
     assert cal.start() is False
-    assert hal.cal_measured_written is None
+    assert hal.cal_basis_written is None
 
 
 def test_commit_stores_the_three_legs_for_reconcile():
@@ -776,6 +824,43 @@ def test_cancel_restores_servo_mode():
     assert hal.servo_mode == 1
     cal.cancel()
     assert hal.servo_mode == 0, "cancel left the servo promoted"
+
+
+@pytest.mark.parametrize("finish", ["passed", "refused", "cancelled"])
+def test_sync_is_cleared_before_servo_mode_goes_back_to_0(finish):
+    """The restore to servo off clears sync FIRST. start()'s mode-1 write arms
+    spindle sync through the servoMode binding, and servoEnableTask puts the
+    mode back to 1 while any sync is armed and the stop is not held, so a
+    servoMode 0 written before sync is cleared can be undone within 100 ms
+    and stay undone (bench 2026-10-18: the divergence watchdog fired after a
+    passed run).
+
+    MUTATION: drop the stop_sync() in _restore_motion and this fails."""
+    result = ELS_CAL_ERR_NO_MOTION if finish == "refused" else ELS_CAL_OK
+    hal = FakeHal(ticks_to_finish=3 if finish != "cancelled" else 50,
+                  measured=(100, 101, 100), result=result)
+    cal = BacklashCalibration(hal, _els())
+    cal.start()
+    if finish == "cancelled":
+        cal.cancel()
+    else:
+        _run_to_completion(cal)
+    assert hal.servo_mode == 0
+    last_mode_write = max(i for i, w in enumerate(hal.writes)
+                          if w == ("servoMode", 0))
+    assert ("syncEnable", 0) in hal.writes[:last_mode_write], (
+        f"servoMode 0 was written before sync was cleared: {hal.writes}")
+
+
+def test_restoring_mode_1_leaves_sync_alone():
+    """An operator who was already in mode 1 keeps their sync: nothing is
+    being switched off, so there is no race to close."""
+    hal = FakeHal(ticks_to_finish=3, measured=(100, 101, 100))
+    hal.servo_mode = 1
+    cal = BacklashCalibration(hal, _els())
+    cal.start()
+    assert _run_to_completion(cal) == CalState.PASSED
+    assert ("syncEnable", 0) not in hal.writes
 
 
 def test_jog_mode_is_restored_not_clobbered():

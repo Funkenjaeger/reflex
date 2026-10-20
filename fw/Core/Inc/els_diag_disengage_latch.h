@@ -73,7 +73,7 @@ static inline void elsDiagInit(elsDiagCtx_t *ctx, elsStop_t *stop) {
   ctx->captureTick       = 0;
 }
 
-/* The ISR-side entry points are no-ops: this probe watches a FreeRTOS task, not
+/* The ISR-side entry points are no-ops: this probe watches a superloop job, not
  * the tick. Every probe implements the whole contract so Ramps.c never learns
  * which one it is calling. */
 static inline void elsDiagArm(elsDiagCtx_t *ctx, elsStop_t *stop) {

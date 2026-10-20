@@ -82,12 +82,13 @@ After any changes to `Core/Src/Ramps.c`, `Core/Inc/Ramps.h`, or other firmware s
 ### Key files
 - `Core/Src/Ramps.c` — core motion control (ISR, indexing, jog, ELS)
 - `Core/Inc/Ramps.h` — shared data structs, Modbus-mapped
-- `Core/Src/Modbus.c` — Modbus RTU slave (addr 17)
+- `Core/Src/mb_app.c` — Modbus RTU slave (addr 17): the shared core in `modbus_rtu/`, bound by `Core/mb_port/mb_rtu_port.h`
+- `Core/Src/mb_app_hw.c` — its USART1 transport, DMA both ways
 - `Core/Src/Scales.c` — encoder timer init
 
 ### Concurrency
 - TIM9 ISR (`SynchroRefreshTimerIsr`) handles all motion control at 20 µs ticks (50 kHz; rate and derived tick constants in `Core/Inc/els_isr_rate.h`)
-- FreeRTOS tasks handle Modbus, speed updates, motor enable
+- A superloop (`RampsPoll`, no RTOS) services Modbus and runs the speed-update, motor-enable and LED jobs
 - `rampsSharedData_t` is the shared state, memory-mapped to Modbus registers
 
 ### Servo modes

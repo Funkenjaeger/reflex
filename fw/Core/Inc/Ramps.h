@@ -19,9 +19,8 @@
 #define THIRD_PARTY_RAMPS_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "stm32f4xx_hal.h"
-#include "cmsis_os2.h"
-#include "Modbus.h"
 #include "Scales.h"
 #include "els_backlash_cal.h"
 #include "els_slip.h"
@@ -238,7 +237,7 @@ extern TIM_HandleTypeDef *ramps_timer_handles[SCALES_COUNT];
   /* EXPLICIT pad, not decoration. elsStop_t is 4-aligned (it holds int32/float),
    * so a lone trailing uint16 makes the compiler add two bytes of IMPLICIT
    * padding -- and this struct is cast wholesale into uint16 Modbus holding
-   * registers (RampsModbusData.u16regsize = sizeof(shared)/sizeof(uint16_t)),
+   * registers (mbAppInit is handed sizeof(shared)/sizeof(uint16_t) of them),
    * which turns invisible padding into a phantom register nobody declared and
    * reflex-ui cannot mirror. Naming it keeps both sides computing the same
    * size, which is exactly what the contract test caught here: firmware 436,
@@ -322,8 +321,7 @@ extern TIM_HandleTypeDef *ramps_timer_handles[SCALES_COUNT];
    *
    * WHY A PEAK AND NOT THE EXISTING COUNTER. executionCycles is measured every
    * tick, but the only copy anyone can see is fastData.cycles, which
-   * servoEnableTask samples once per ~10 ms osDelay -- about one tick in a
-   * thousand. The event worth measuring is cut-start, where take-up initiation,
+   * updateSpeedTask samples once per 50 ms -- about one tick in 2500. The event worth measuring is cut-start, where take-up initiation,
    * applyPhaseCorrection's float work and diagnostic arming land in the same
    * few ticks; a spot sampler will essentially never catch it. On 2026-08-23
    * the machine lost Modbus on 6 of 6 cuts, every one a TIMEOUT rather than a
@@ -488,7 +486,6 @@ typedef struct {
 
   // STM32 Related
   TIM_HandleTypeDef *synchroRefreshTimer;
-  UART_HandleTypeDef *modbusUart;
 
   deltaPosError_t scalesDeltaPos[SCALES_COUNT];
   deltaPosError_t scalesSyncDeltaPos[SCALES_COUNT];
@@ -512,8 +509,16 @@ typedef struct {
   int32_t  elsStopQuiescentZ;         // last Z scale position the quiescence tracker saw; any change resets elsStopQuiescentTicks
   int32_t  elsStopQuiescentTicks;     // consecutive ISR ticks with Z unchanged. The "has it STOPPED" input the confirmation gate never had; only consulted when ELS_REQUIRE_QUIESCENCE is set (see Ramps.c)
   uint16_t elsStopTakeupLatched;      // 1 once the Z confirmation window has closed on an unconfirmed takeup; further Z motion can no longer release the gate (see ELS_TAKEUP_CONFIRM_WINDOW_TICKS)
+  /* ELS command channel (els_command.h). Task-owned except elsCommandEndJob,
+   * which the task sets and the ISR clears once it has ended the job; the
+   * ack waits for that, so an ack never describes a machine still carrying
+   * motion. Non-Modbus. */
+  uint16_t elsCommandPending;         // ELS_CMD_* consumed and not yet acked; 0 = none
+  uint16_t elsCommandResult;          // 1 if a calibration was running when the command was consumed (decides OK_CAL_ABORTED at the ack)
+  volatile uint16_t elsCommandEndJob; // task -> ISR: run the end-of-job teardown on the next pass, then clear
   uint16_t elsStopCorrectOnConfirm;  // 1 if the take-up in flight is to be followed by applyPhaseCorrection() once CONFIRMED, i.e. a reference was latched and thread geometry was set at initiation. 0 on a first pass (no reference yet) and in turning (no pitch): those take-ups exist to prove coupling only. Set at initiation, read at confirmation, cleared with the job (2026-08-21).
   elsCalCtx_t elsCal;                 // backlash calibration run state; non-Modbus, the ISR owns it entirely (els_backlash_cal.h)
+  elsEnaSettle_t enaSettle;           // ENA as servoEnableTask last drove it and since when; task-owned, the ISR reads only .settled before a calibration's first step (els_backlash_cal.h, ELS_CAL_ENA_SETTLE_MS). Non-Modbus.
   /* Motion attribution for the Z confirmation gate: which of the Z counts seen
    * during a take-up arrived while the servo was actually driving. Non-Modbus,
    * ISR-owned, reset at take-up initiation (els_slip.h).
@@ -536,28 +541,40 @@ typedef struct {
   elsDiagCtx_t diag;
 } rampsHandler_t;
 
-extern modbusHandler_t RampsModbusData;
-
 void RampsStart(rampsHandler_t *rampsData);
 
 void SynchroRefreshTimerIsr(rampsHandler_t *data);
 
-_Noreturn void updateSpeedTask(void *argument);
+/* The superloop (Ramps.c). main() calls RampsPoll() forever after
+ * RampsStart(): each pass services the Modbus slave and runs at most one job
+ * that has fallen due. Each job call is one tick; the ...Task names are the
+ * ones the register schemas, the design docs and the UI cite. */
+void RampsPoll(rampsHandler_t *rampsData);
+void servoEnableTask(rampsHandler_t *rampsData);   /* 100 ms */
+void updateSpeedTask(rampsHandler_t *rampsData);   /*  50 ms */
+void userLedTask(void);                            /*  50 ms */
 
 /* Recompute the cached spindle-count period when the geometry registers move.
  * Lives in Ramps.c because the cache must be ONE object -- a static-inline
  * version in a header would give each translation unit its own copy, so the
- * producer would fill one and the ISR would read another. Called from
- * updateSpeedTask on hardware and mirrored in the emulator's main loop, which
- * does not run FreeRTOS tasks. Never call it from the ISR: it is double
- * arithmetic and this core has no FP64 hardware. */
+ * producer would fill one and the ISR would read another. Called from the
+ * updateSpeedTask job, in the emulator as on the chip. Never call it from the
+ * ISR: it is double arithmetic and this core has no FP64 hardware. */
 void elsRefreshSpindlePeriod(rampsSharedData_t *shared);
 /* bootCommand intake (Ramps.c), called from servoEnableTask every ~100 ms. */
 void elsBootCommandTick(rampsSharedData_t *shared);
 
-_Noreturn void userLedTask(__attribute__((unused)) void *argument);
-
-_Noreturn void servoEnableTask(void *argument);
+/* The ELS command channel (els_command.h), consumed in servoEnableTask, ~100 ms.
+ * Two halves of one tick, so the native tests can model the tick with the
+ * same two calls and ISR passes in between:
+ *   elsCommandIntake  FIRST in the tick. Consumes elsStop.command and carries
+ *                     out the task's part of it. Returns true while a command
+ *                     is in flight: the caller skips its servoMode re-assert.
+ *   elsCommandFinish  LAST before bootCommand, after the mode is published.
+ *                     Acks once the ISR has taken the teardown and the
+ *                     machine is inert: commandResult, then commandSeq. */
+bool elsCommandIntake(rampsHandler_t *data);
+void elsCommandFinish(rampsHandler_t *data);
 
 //static void timServoEnableOnCallback(xTimerHandle pxTimer);
 //static void timServoEnableOffCallback(xTimerHandle pxTimer);
@@ -568,6 +585,7 @@ _Noreturn void servoEnableTask(void *argument);
  * els_machine_mode.h needs rampsSharedData_t for the same reason, and must
  * precede els_diag.h because the mode-watch probe calls its function. */
 #include "els_machine_mode.h"
+#include "els_command.h"
 #include "els_diag.h"
 
 #endif

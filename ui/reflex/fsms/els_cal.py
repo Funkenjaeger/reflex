@@ -69,6 +69,26 @@ def cal_mean(measured) -> int:
     return (sum(vals) // len(vals)) if vals else 0
 
 
+def cal_basis(legs, table, gear):
+    """The take-up gate's basis (elsStop.calBasisSteps, protocolVersion 13)
+    for an accepted record, or None when there is no accepted record.
+
+    `legs` are stored in the reference gear (els_gear.py); each is converted
+    to `gear`'s steps, and the basis is their mean by the firmware's own rule
+    (elsCalMeanValid: every leg positive, integer mean rounded down), so the
+    threshold is exactly what it was when the firmware averaged the three
+    legs itself. One function for every writer: reconcile, a gear change, a
+    rejected or declined run.
+    """
+    vals = [int(v) for v in (legs or [])]
+    if len(vals) != 3 or not all(v > 0 for v in vals):
+        return None
+    steps = [table.steps_in_gear(v, gear) for v in vals]
+    if not all(v > 0 for v in steps):
+        return None
+    return sum(steps) // len(steps)
+
+
 def cal_is_consistent(measured, max_spread_steps) -> bool:
     """Whether a completed run's measurements agree closely enough to use.
 
@@ -303,9 +323,9 @@ class BacklashCalibration:
              seen. This is the exact elspi 2026-08-21 mechanism (takeupSeq 2
              -> 0 from a CRC-failed frame, read as a finished outcome) applied
              to calSeq/calResult/calMeasured instead of takeupSeq/takeupResult.
-             calMeasured feeding elsTakeupConfirmThreshold means a poisoned
-             value here lowers the take-up bar for every later cut, not just
-             this one calibration.
+             A poisoned value here, committed, becomes the take-up gate's
+             basis and lowers its bar for every later cut, not just this one
+             calibration.
 
         Neither branch needs the two-poll torn-snapshot guard 6c00072 proved
         unnecessary for calSeq/diagSeq (they are read seq-first, so a torn
@@ -339,9 +359,10 @@ class BacklashCalibration:
                     "a result. Make sure the servo is enabled and in sync/index "
                     "mode. Then try again.",
                 )
-                # A stalled run that eventually finishes will overwrite this;
-                # reconcile at the next connect is the backstop for that race.
-                self._reteach_stored_legs()
+                # A stalled run has not finished, so the firmware has not
+                # touched the take-up gate's basis (calBasisSteps moves only at
+                # the end of a successful run).
+                self._note_gate_after_failure()
             return self.state
 
         # Ack observed, and the read that produced it was clean -- only now is
@@ -364,7 +385,7 @@ class BacklashCalibration:
         if self.result_code != ELS_CAL_OK:
             self._fail(self.result_code, ELS_CAL_MESSAGES.get(
                 self.result_code, "Calibration failed."))
-            self._reteach_stored_legs()
+            self._note_gate_after_failure()
             return self.state
 
         if not cal_is_consistent(self.measured, self._els.els_cal_max_spread_steps):
@@ -379,10 +400,10 @@ class BacklashCalibration:
             )
             log.warning("els_cal: inconsistent %s spread=%d",
                         self.measured, spread)
-            # The firmware accepted this run, so calMeasured now holds legs
-            # the HOST just rejected; the gate must keep deriving from the
-            # accepted record, not the rejected one.
-            self._reteach_stored_legs()
+            # The firmware accepted this run, so it installed this run's mean
+            # as the take-up gate's basis, and the HOST just rejected it. The
+            # gate must keep deriving from the accepted record.
+            self._restore_accepted_basis()
             return self.state
 
         self.state = CalState.PASSED
@@ -404,10 +425,10 @@ class BacklashCalibration:
         if self.state != CalState.PASSED:
             return False
         self._els.els_cal_last_measured_steps = self.mean_steps
-        # The legs themselves, not just the mean: reconcile re-teaches them to
-        # firmware RAM after a power cycle so the take-up gate keeps its
-        # derived threshold instead of falling to the floor (see
-        # ElsStopRegisters.set_cal_measured).
+        # The legs themselves, not just the mean: reconcile re-teaches their
+        # mean to firmware RAM after a power cycle, in the engaged gear's
+        # steps, so the take-up gate keeps its derived threshold instead of
+        # falling to the floor (see ElsStopRegisters.set_cal_basis).
         self._els.els_cal_measured_legs = [int(v) for v in self.measured]
         self._els.els_backlash_steps = self.command_steps
         self._hal.set_backlash_steps(self.command_steps)
@@ -417,6 +438,13 @@ class BacklashCalibration:
 
     def cancel(self) -> None:
         self._restore_motion()
+        if self.state == CalState.PASSED:
+            # Closed (or retried) without accepting. The firmware installed
+            # this run's mean as the basis when it finished; the record, and
+            # the commanded take-up beside it, are still the old ones, so the
+            # basis goes back with them. After commit() the record IS this
+            # run, and the write is the same number.
+            self._restore_accepted_basis()
         self.state = CalState.IDLE
         self.message = ""
 
@@ -441,6 +469,17 @@ class BacklashCalibration:
             # established the link, so a 0 read here is a genuine "servo off"
             # and putting the operator back in it is the correct behaviour. The
             # untrustworthy case is filtered at save time, not here.
+            #
+            # SYNC OFF FIRST when leaving mode 1. start()'s mode-1 write armed
+            # spindle sync through the servoMode binding (dispatchers/els.py),
+            # and that binding clears it again only as a REACTION to this
+            # write, so syncEnable would be written last. In between,
+            # servoEnableTask (100 ms) sees sync armed with elsStop.active
+            # clear and puts servoMode back to 1, and nothing turns it off
+            # again (the UI's divergence watchdog then fires until the next
+            # disengage). Same race, same cure, as ElsStopRegisters.stop_sync.
+            if mode != 1:
+                self._hal.stop_sync()
             self._hal.set_servo_mode(mode)
 
     @property
@@ -477,38 +516,39 @@ class BacklashCalibration:
         return (self.mean_steps - previous) if previous else 0
 
     # ── internals ────────────────────────────────────────────────────
-    def _reteach_stored_legs(self) -> None:
-        """Restore the take-up gate's basis after a finished-but-failed run.
+    def _note_gate_after_failure(self) -> None:
+        """Say so when a failed run leaves the take-up gate at its floor.
 
-        The firmware copies its working measured[] into elsStop.calMeasured on
-        EVERY completion, success or failure — deliberate, so a partial run
-        leaves diagnostics — but the take-up confirmation threshold derives
-        from that same array, so a failed run's zeros silently drop the gate
-        to its bare motion floor for every subsequent pass (found 2026-08-23).
-        The partial values are already captured in self.measured and the log
-        by the time this runs, so restoring the last ACCEPTED record costs no
-        diagnostics; it is the same re-teaching reconcile does after a power
-        cycle, applied at the moment the corruption happens instead of at the
-        next connect.
+        Since protocolVersion 13 a failed run writes nothing the gate reads:
+        the firmware moves calBasisSteps only at the end of a SUCCESSFUL run,
+        so the gate keeps whatever basis it had and nothing is re-taught here
+        (until 13 the run's zeros landed in calMeasured, which the gate read,
+        and the stored legs were written back after every failure). What is
+        left is the case with no accepted record at all: the gate is at its
+        bare motion floor, and silently is the one way that must not happen.
         """
-        legs = [int(v) for v in (self._els.els_cal_measured_legs or [])]
-        if len(legs) == 3 and all(v > 0 for v in legs):
-            self._hal.set_cal_measured(legs)
-            log.warning(
-                "els_cal: failed run zeroed the firmware's calMeasured; "
-                "re-taught stored legs %s so the take-up gate keeps its "
-                "derived threshold", legs)
-        else:
-            # No accepted record exists (fresh machine, or never passed): the
-            # gate genuinely sits at its floor, and silently is the one way
-            # that must not happen.
-            self.message += (
-                " The take-up confirmation gate stays at its minimum "
-                "threshold until a calibration passes."
-            )
-            log.warning(
-                "els_cal: failed run with no stored calibration; take-up "
-                "confirmation gate is at its motion floor until a run passes")
+        if cal_basis(self._els.els_cal_measured_legs, self._gear_table(),
+                     self._gear()) is not None:
+            return
+        self.message += (
+            " The take-up confirmation gate stays at its minimum "
+            "threshold until a calibration passes."
+        )
+        log.warning(
+            "els_cal: failed run with no stored calibration; take-up "
+            "confirmation gate is at its motion floor until a run passes")
+
+    def _restore_accepted_basis(self) -> None:
+        """Put the take-up gate's basis back to the ACCEPTED record after the
+        firmware installed a run the host did not accept: rejected for its
+        spread, or passed and then closed without committing. With no record,
+        0: no calibration on file, the gate's floor, rather than the mean
+        nobody accepted."""
+        basis = cal_basis(self._els.els_cal_measured_legs, self._gear_table(),
+                          self._gear())
+        self._hal.set_cal_basis(0 if basis is None else basis)
+        log.warning("els_cal: run not accepted; take-up gate basis restored "
+                    "to %s", "none" if basis is None else f"{basis} steps")
 
     def _fail(self, code: int, message: str) -> None:
         self.state = CalState.REFUSED

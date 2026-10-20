@@ -376,7 +376,7 @@ typedef struct {
         The two blocks are adjacent -- fastData ends at register 104, where
         elsStop and its hot group begin -- and the firmware serves FC3 from
         rampsSharedData_t as one array, copying registers in ascending order
-        (process_FC3, fw/Core/Src/Modbus.c). So both are read as a single
+        (the FC 3 loop in fw/modbus_rtu/mb_rtu.c). So both are read as a single
         span of TICK_COUNT registers, where the tick used to make two
         requests. fastData is decoded here exactly as refresh() decodes it;
         the hot group's registers are returned RAW, because their decode has

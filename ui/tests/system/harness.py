@@ -227,6 +227,7 @@ class SystemHarness:
             "z jog <-1|0|1>" -> physics->jogCarriage(dir)
             "halfnut open"   -> physics->setHalfNutEngaged(False)
             "halfnut close"  -> physics->setHalfNutEngaged(True)
+            "spindle rpm <n>" -> physics->setTargetRPM(n)
 
         The z + halfnut commands together stage the machine state the emulator
         could not previously represent -- UNCOUPLED BUT MOVING ANYWAY, i.e. the

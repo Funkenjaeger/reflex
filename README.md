@@ -6,7 +6,7 @@ talking RS-485 Modbus RTU. One system, one repository.
 
 | Path | What it is |
 |---|---|
-| [`fw/`](fw/) | STM32F411 firmware: 50 kHz motion ISR, FreeRTOS, Modbus RTU slave. Includes a native Linux emulator that compiles the real firmware sources against simulated lathe physics. |
+| [`fw/`](fw/) | STM32F411 firmware: 50 kHz motion ISR, a superloop (no RTOS), Modbus RTU slave. Includes a native Linux emulator that compiles the real firmware sources against simulated lathe physics. |
 | [`ui/`](ui/) | Kivy DRO/ELS touchscreen app, Modbus master: Raspberry Pi at the machine, or desktop (Windows/macOS/Linux) for development. |
 
 **[User guide](https://funkenjaeger.github.io/reflex/)**. Installing:
@@ -205,9 +205,6 @@ with no upstream tracking: [what Reflex changes](https://funkenjaeger.github.io/
 MIT; see `LICENSE` (and `fw/LICENSE`, `ui/LICENSE` for each half). Reflex is a fork of
 Stefano Bertelli's rotary-controller projects, and those files carry his copyright line.
 Bundled third-party code keeps its own license: the STM32 drivers and CMSIS
-(`fw/Drivers/`), FreeRTOS (`fw/Middlewares/`), the firmware's Modbus RTU library
-(Alejandro Mera's Modbus-STM32-HAL-FreeRTOS, LGPL-2.1: `Modbus.c`, `Modbus.h`,
-`UARTCallback.c` and `ModbusConfig.h` under `fw/Core/`, text in
-`fw/Modbus-LGPL-2.1.txt`), and the UI fonts (SIL Open Font License 1.1, one
+(`fw/Drivers/`) and the UI fonts (SIL Open Font License 1.1, one
 `*-OFL.txt` per family in `ui/reflex/fonts/`). Issues and pull
 requests are welcome.

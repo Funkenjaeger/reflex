@@ -444,6 +444,9 @@ def _session(runner, tmp_path, **kw):
     restarts = []
     snapshots = []
     kw.setdefault("restart", lambda: restarts.append(1))
+    # Never the real os.sync; recorded in the runner's call list so a test can
+    # see where in the sequence it ran.
+    kw.setdefault("sync", lambda: runner.calls.append(["<sync>"]) if hasattr(runner, "calls") else None)
     # Never the real one: it writes the commissioning bundle into the
     # developer's own config dir (~/.config/reflex/ledger/snapshots).
     kw.setdefault("snapshot", lambda reason: (snapshots.append(reason),
@@ -1430,6 +1433,37 @@ def test_a_failed_restart_keeps_the_update_and_says_exit_application(tmp_path):
     assert "Exit application" in said and RELEASE.tag in said
 
 
+def test_an_install_is_synced_to_the_card_before_the_restart(tmp_path):
+    """The checkout, the venv and the manifest must survive a power cut the
+    moment the screen says the update is installed."""
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+    order = []
+    s = _session(r, tmp_path, restart=lambda: order.append(len(r.calls)))
+    assert s.run(RELEASE) is True
+    syncs = [i for i, c in enumerate(r.calls) if c == ["<sync>"]]
+    [uv] = [i for i, c in enumerate(r.calls) if c[0].endswith("uv") and "sync" in c]
+    assert syncs, "the install never synced"
+    assert syncs[-1] > uv, "synced before uv sync finished writing the venv"
+    assert order == [syncs[-1] + 1], "the restart came before the sync"
+
+
+def test_a_refused_restart_still_leaves_the_install_synced(tmp_path):
+    r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
+
+    def refuse():
+        raise updater.ServiceRestartFailed("`sudo -n ...` exited 1")
+    s = _session(r, tmp_path, restart=refuse)
+    assert s.run(RELEASE) is False
+    assert ["<sync>"] in r.calls
+
+
+def test_the_default_sync_is_the_os_one(monkeypatch):
+    calls = []
+    monkeypatch.setattr(updater.os, "sync", lambda: calls.append(1), raising=False)
+    updater.sync_filesystems()
+    assert calls == [1]
+
+
 def test_a_granted_restart_is_reported_as_restarting(tmp_path):
     r = FakeRunner(board_protocol_after=TARGET_PROTOCOL)
     s = _session(r, tmp_path)
@@ -1449,3 +1483,136 @@ def test_the_catalogue_keeps_the_newest_finals_behind_a_run_of_candidates(tmp_pa
     assert tags[0] == "v2.0.0-rc.12", "newest first"
     assert tags[-2:] == ["v1.1.0", "v1.0.1"]
     assert len(tags) == len(set(tags))
+
+
+# --------------------------------------------------------------------------
+# Firmware-only reinstall: the UI is already release X, the firmware is not
+# --------------------------------------------------------------------------
+# Typical case: a diagnostic image of the release commit, flashed by flash.sh.
+
+_DIAG = ('{"utc":"2026-10-17T14:02:11Z","variant":"diagnostic","probe":"isr-gap",'
+         '"rev":"43ac7c5","dirty":false,"md5":"0"}')
+_OTHER_RELEASE = ('{"utc":"2026-09-14T10:00:00Z","variant":"release","rev":"5d0e1aa",'
+                  '"via":"modbus","protocol":10,"tag":"v1.2.0-rc.2"}')
+_PROVISION_AT_RC3 = ('{"utc":"2026-09-20T09:00:00Z","variant":"provision","probe":null,'
+                     '"rev":"43ac7c5","dirty":false,"md5":"0"}')
+
+
+def test_the_release_image_on_the_board_needs_no_reinstall(tmp_path):
+    m = _manifest(tmp_path, _FLASH, _RELEASE)
+    assert updater.firmware_reinstall_reason(m, "v1.2.0-rc.3") is None
+
+
+def test_a_diagnostic_image_of_the_same_release_needs_a_reinstall(tmp_path):
+    """Same rev as the release image: a diagnostic build of the release
+    commit. The variant, not the rev, is what tells them apart."""
+    m = _manifest(tmp_path, _RELEASE, _DIAG)
+    reason = updater.firmware_reinstall_reason(m, "v1.2.0-rc.3")
+    assert reason is not None
+    assert "diagnostic firmware" in reason
+    assert "43ac7c5" in reason and "v1.2.0-rc.3" in reason
+
+
+def test_another_releases_image_needs_a_reinstall(tmp_path):
+    m = _manifest(tmp_path, _RELEASE, _OTHER_RELEASE)
+    reason = updater.firmware_reinstall_reason(m, "v1.2.0-rc.3")
+    assert reason is not None
+    # The release's own rev is known from its earlier record, and named.
+    assert "5d0e1aa" in reason and "43ac7c5" in reason
+
+
+def test_the_release_rev_from_git_decides_a_record_with_no_tag(tmp_path):
+    """A provisioned machine: no release record, but the tag is in the
+    checkout, so its commit names the release image's rev."""
+    m = _manifest(tmp_path, _PROVISION_AT_RC3)
+    assert updater.firmware_reinstall_reason(m, "v1.2.0-rc.3",
+                                             tag_rev="43ac7c5") is None
+    assert updater.firmware_reinstall_reason(m, "v1.2.0-rc.3",
+                                             tag_rev="9999999") is not None
+
+
+def test_a_dirty_build_at_the_release_rev_is_not_the_release_image(tmp_path):
+    dirty = _PROVISION_AT_RC3.replace('"dirty":false', '"dirty":true')
+    m = _manifest(tmp_path, dirty)
+    assert updater.firmware_reinstall_reason(m, "v1.2.0-rc.3",
+                                             tag_rev="43ac7c5") is not None
+
+
+def test_no_record_claims_nothing(tmp_path):
+    """A desktop, or a card nobody flashed from: nothing is offered."""
+    assert updater.firmware_reinstall_reason(tmp_path / "absent.json", "v1.2.0") is None
+
+
+def test_the_tag_rev_comes_from_the_checkout(tmp_path):
+    seen = []
+
+    def runner(argv, cwd=None, timeout=None, emit=None):
+        seen.append(([str(a) for a in argv], cwd))
+        return 0, "43ac7c5\n"
+    assert updater.tag_rev(tmp_path, "v1.2.0-rc.3", runner=runner) == "43ac7c5"
+    [(argv, cwd)] = seen
+    assert argv == ["git", "rev-parse", "--short=7", "v1.2.0-rc.3^{commit}"]
+    assert cwd == tmp_path
+    assert updater.tag_rev(tmp_path, "v9", runner=lambda *a, **k: (128, "")) is None
+
+
+def test_a_reinstall_flashes_and_leaves_the_checkout_alone(tmp_path):
+    """Fails if the reinstall goes through run(): git fetch, checkout, uv sync
+    and a restart appear."""
+    r = FakeRunner(board_protocol_after=CURRENT_PROTOCOL)
+    s = _session(r, tmp_path)
+    paused, resumed = [], []
+    verdict = s.reinstall_firmware(RELEASE, pause_link=lambda: paused.append(1),
+                                   resume_link=lambda: resumed.append(1))
+    [flash] = r.ran("modbus-flash.py", "reflex-app-1.2.0.bin")
+    assert flash[flash.index("--record-variant") + 1] == "release"
+    assert flash[flash.index("--record-tag") + 1] == RELEASE.tag
+    assert [c for c in r.calls if c[0] == "git" or c[0].endswith("uv")] == []
+    assert s.restarts == []
+    assert paused == [1] and resumed == [1]
+    assert s.snapshots == [f"pre-update-{RELEASE.tag}"]
+    assert verdict.identity.build_rev == IMAGE_REV
+
+
+def test_a_reinstall_is_synced_to_the_card_before_it_returns(tmp_path):
+    """The screen says "Firmware reinstalled" when reinstall_firmware
+    returns; the manifest record must be on the card by then, or a power
+    cycle soon after can lose it."""
+    r = FakeRunner(board_protocol_after=CURRENT_PROTOCOL)
+    resumed_at = []
+    s = _session(r, tmp_path)
+    s.reinstall_firmware(RELEASE, resume_link=lambda: resumed_at.append(len(r.calls)))
+    [flash] = [i for i, c in enumerate(r.calls)
+               if "modbus-flash.py" in " ".join(c) and "--identity" not in c]
+    syncs = [i for i, c in enumerate(r.calls) if c == ["<sync>"]]
+    assert syncs and syncs[-1] > flash
+    assert resumed_at and resumed_at[0] > syncs[-1]
+
+
+def test_a_refused_reinstall_is_not_reported_synced(tmp_path):
+    r = FakeRunner(board_protocol_after=CURRENT_PROTOCOL, image_valid=False)
+    s = _session(r, tmp_path)
+    with pytest.raises(UpdateRefused):
+        s.reinstall_firmware(RELEASE)
+    assert ["<sync>"] not in r.calls
+
+
+def test_a_reinstall_is_gated_on_this_uis_protocol(tmp_path):
+    """The UI that stays is the running one, so the flashed firmware must
+    speak ITS protocol. A mismatch puts the previous firmware back."""
+    r = FakeRunner(board_protocol_after=CURRENT_PROTOCOL + 1)
+    s = _session(r, tmp_path)
+    resumed = []
+    with pytest.raises(RolledBack):
+        s.reinstall_firmware(RELEASE, resume_link=lambda: resumed.append(1))
+    assert r.ran("modbus-flash.py", "--revert")
+    assert resumed == [1]
+    assert not r.touched_the_ui_half
+
+
+def test_a_reinstall_refuses_a_non_slotted_image_before_the_board(tmp_path):
+    r = FakeRunner(board_protocol_after=CURRENT_PROTOCOL, image_valid=False)
+    s = _session(r, tmp_path)
+    with pytest.raises(UpdateRefused):
+        s.reinstall_firmware(RELEASE)
+    assert r.ran("modbus-flash.py") == []

@@ -12,16 +12,17 @@
  * says `access: ro_firmware`. For mbRtuAccess_t (fw/modbus_rtu/mb_rtu.h):
  *
  *   static const uint8_t roBits[] = RAMPS_RO_FIRMWARE_BITS_INIT;
- *   mbRtuAccess_t acc = { 0, RAMPS_ACCESS_REGISTERS, roBits };
+ *   static const uint8_t resetBits[] = RAMPS_HOST_RESET_BITS_INIT;
+ *   mbRtuAccess_t acc = { 0, RAMPS_ACCESS_REGISTERS, roBits, resetBits };
  *
  * Registers 0..7, the head of rampsSharedData_t that no schema describes,
  * have no bit set. Interior and tail pads have none either. */
-#define RAMPS_ACCESS_REGISTERS 246u
+#define RAMPS_ACCESS_REGISTERS 250u
 
 #define RAMPS_RO_FIRMWARE_BITS_INIT { \
   0x00, 0x0c, 0xf0, 0xf0, 0x00, 0x0f, 0xf0, 0x00, 0x0f, 0xfc, 0xff, 0xff, \
-  0x3f, 0x00, 0xc0, 0xff, 0xff, 0xff, 0xff, 0xff, 0x06, 0xfe, 0xf0, 0xfd, \
-  0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x3f \
+  0x3f, 0x00, 0xc0, 0xff, 0xff, 0xff, 0xff, 0xff, 0x06, 0xd6, 0x0f, 0xdf, \
+  0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x03 \
 }
 
 /* The set bits, field by field:
@@ -55,7 +56,7 @@
  *   132..132 elsStop.protocolVersion
  *   133..133 elsStop.takeupSeq
  *   134..134 elsStop.takeupResult
- *   135..135 elsStop.clearRefSeq
+ *   135..135 elsStop.commandSeq
  *   136..137 elsStop.lastTakeupZDelta
  *   138..139 elsStop.takeupThreshCounts
  *   140..141 elsStop.stepPulseMinCycles
@@ -74,17 +75,35 @@
  *   161..161 elsStop.calSeq
  *   162..162 elsStop.calResult
  *   169..169 elsStop.bootSeq
- *   170..175 elsStop.calMeasured
- *   180..181 elsStop.executionCyclesPeak
- *   182..182 elsStop.diagSchema
- *   183..183 elsStop.diagBucketTicks
- *   184..184 elsStop.diagBucketCount
- *   186..187 elsStop.diagSettleTicks
- *   188..189 elsStop.diagNetCounts
- *   190..239 elsStop.diagTrace
- *   240..240 elsStop.diagCaptureTicks
- *   241..241 elsStop.diagEndReason
- *   242..245 elsStop.diagReserved
+ *   170..170 elsStop.clearRefSeq
+ *   172..172 elsStop.commandResult
+ *   174..179 elsStop.calMeasured
+ *   184..185 elsStop.executionCyclesPeak
+ *   186..186 elsStop.diagSchema
+ *   187..187 elsStop.diagBucketTicks
+ *   188..188 elsStop.diagBucketCount
+ *   190..191 elsStop.diagSettleTicks
+ *   192..193 elsStop.diagNetCounts
+ *   194..243 elsStop.diagTrace
+ *   244..244 elsStop.diagCaptureTicks
+ *   245..245 elsStop.diagEndReason
+ *   246..249 elsStop.diagReserved
+ */
+
+/* Which of those a host may reset: the same layout, a bit set only where the
+ * schema adds `host_reset: true`. A host write of 0 to such a register lands;
+ * any other value is refused like a write to the rest of the table. */
+#define RAMPS_HOST_RESET_BITS_INIT { \
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
+  0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, \
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00 \
+}
+
+/* The set bits, field by field:
+ *   140..141 elsStop.stepPulseMinCycles
+ *   142..143 elsStop.stepPulseRuntCount
+ *   184..185 elsStop.executionCyclesPeak
+ *   245..245 elsStop.diagEndReason
  */
 
 #endif /* RAMPS_ACCESS_GENERATED_H */

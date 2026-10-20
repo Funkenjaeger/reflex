@@ -298,14 +298,15 @@ def test_applying_a_table_persists_it_and_reteaches_the_engaged_factor():
     assert fsm.servo.gearbox_table == "A=1, B=4"
     assert fsm.engaged_gear() == "B"
     axis.push_sync_ratio.assert_called_once()
-    fsm.hal.set_cal_measured.assert_called_once_with([25, 30, 28])
+    # legs [100, 120, 110] at x4 are [25, 30, 28]; their mean is the basis
+    fsm.hal.set_cal_basis.assert_called_once_with(27)
 
 
 def test_a_table_without_the_stored_position_engages_the_reference():
     fsm, axis = _fsm_with_table_servo("A=1, B=2", "B")
     fsm.apply_gear_table(GearTable.parse("Lo=1, Hi=3/2"))
     assert fsm.engaged_gear() == "Lo"
-    fsm.hal.set_cal_measured.assert_called_once_with([100, 120, 110])
+    fsm.hal.set_cal_basis.assert_called_once_with(110)
 
 
 def test_clearing_the_table_reteaches_the_plain_leadscrew():
@@ -313,4 +314,4 @@ def test_clearing_the_table_reteaches_the_plain_leadscrew():
     fsm.apply_gear_table(NO_GEARBOX)
     assert fsm.servo.gearbox_table == ""
     assert fsm.engaged_gear() == ""
-    fsm.hal.set_cal_measured.assert_called_once_with([100, 120, 110])
+    fsm.hal.set_cal_basis.assert_called_once_with(110)

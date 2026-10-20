@@ -64,13 +64,11 @@ HAL_StatusTypeDef HAL_TIM_Encoder_Start(TIM_HandleTypeDef *h, uint32_t ch) {
 }
 HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
 
-void ModbusInit(modbusHandler_t *m)  { (void)m; }
-void ModbusStart(modbusHandler_t *m) { (void)m; }
+void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { (void)r; (void)n; (void)id; }
+int mbAppService(void) { return 0; }
+uint16_t mbAppReplies(void) { return 0; }
+uint32_t HAL_GetTick(void) { return 0; }
 
-osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
-osThreadId_t osThreadNew(osThreadFunc_t f, void *arg, const osThreadAttr_t *a) {
-    (void)f; (void)arg; (void)a; return nullptr;
-}
 
 extern uint16_t servoCycles;
 extern uint16_t servoCyclesCounter;
@@ -128,6 +126,11 @@ struct Rig {
     void init(int32_t motionThresh, bool coupled, int32_t lashSteps = 60,
               int32_t ceilingSteps = 400) {
         std::memset(&data, 0, sizeof(data));
+        /* This rig never runs servoEnableTask, the only thing that drives ENA,
+         * so mark the drive as enabled long ago: a calibration waits for that
+         * before its first step (ELS_CAL_ENA_SETTLE_MS). */
+        data.enaSettle.on      = 1;
+        data.enaSettle.settled = 1;
         std::memset(tim,  0, sizeof(tim));
         std::memset(htim, 0, sizeof(htim));
         spindleCnt = 0;

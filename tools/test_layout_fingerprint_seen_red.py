@@ -63,11 +63,13 @@ try:
     rc, out = run("--check")
     expect("0. unmodified copy --check green", rc == 0, out)
 
-    # 1. A pure reorder of the first two uint16 fields: same size, every
+    # 1. A pure reorder of two adjacent 16-bit fields: same size, every
     #    downstream consumer regenerated, static_asserts rewritten to agree.
-    #    Exactly the edit nothing but the fingerprint can catch.
+    #    Exactly the edit nothing but the fingerprint can catch. Not enable:
+    #    since 2026-10-17 it is an exported offset, and moving it trips the
+    #    flasher-table check before the fingerprint is reached.
     edit("registers/els_stop.yaml",
-         r"^(  - \{id: 1,  name: enable,.*\n)(  - \{id: 2,  name: scaleIndex,.*\n)", r"\2\1")
+         r"^(  - \{id: 4,  name: stopDirection,.*\n)(  - \{id: 5,  name: active,.*\n)", r"\2\1")
     rc, out = run()
     expect("1. reorder without bump: regenerate exits nonzero naming the bump",
            rc != 0 and "WITHOUT A protocol_version BUMP" in out, out)
@@ -86,7 +88,7 @@ try:
                                 encoding="utf-8").read(), re.M).group(1))
     exported = json.load(io.open(os.path.join(ROOT, "registers/offsets.json"),
                                  encoding="utf-8"))["protocol_versions"][str(ver)]
-    boot, seq = exported["bootCommand"], exported["bootSeq"]
+    boot, seq, enable = exported["bootCommand"], exported["bootSeq"], exported["enable"]
     edit("registers/els_stop.yaml", r"^protocol_version:\s*%d\b" % ver,
          "protocol_version: %d" % (ver + 1))
     edit("fw/scripts/modbus-flash.py", r"^(APP_BOOT_COMMAND_REG\s*=\s*\{[^}]*)\}",
@@ -94,6 +96,9 @@ try:
     # The bootSeq table is checked the same way since 2026-09-25.
     edit("fw/scripts/modbus-flash.py", r"^(APP_BOOT_SEQ_REG\s*=\s*\{[^}]*)\}",
          r"\1, %d: %d}" % (ver + 1, seq))
+    # And elsStop.enable, read before a reboot request since 2026-10-17.
+    edit("fw/scripts/modbus-flash.py", r"^(APP_ELS_ENABLE_REG\s*=\s*\{[^}]*)\}",
+         r"\1, %d: %d}" % (ver + 1, enable))
     rc, out = run()
     expect("3. bumped but not yet pinned: regenerate still nonzero (no pin)",
            rc != 0 and "no pinned layout fingerprint" in out, out)

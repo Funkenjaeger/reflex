@@ -18,10 +18,14 @@ watching the scenario that pins it go red.
   M6 "no refusal check": enter_bootloader's recognition of a REFUSED reboot
      (bootCommand consumed, bootSeq unmoved -- an ELS job engaged, 2026-09-25)
      never matches, so the flasher waits out its 10 s and says only "timed
-     out". Scenario "engaged" must go red.
+     out". Scenario "engagedrace" must go red.
   M7 "refusal without the ack": the refusal check armed even when the reboot
      request went unacknowledged, so a request that may never have arrived is
      reported as refused. Scenario "engagedunacked" must go red.
+  M8 "no early read": enter_bootloader no longer reads elsStop.enable before
+     the reboot request (2026-10-17), so an engaged job is found only by the
+     firmware's refusal, after the request went out. Scenario "engaged" must
+     go red.
 
 Each mutation is made on a scratch copy of fw/scripts (never on the tree),
 its anchor is asserted present exactly once BEFORE the edit and the edit is
@@ -65,13 +69,17 @@ MUTANTS = [
      '                     f"  {POWER_CYCLE_STEP}\\n"\n',
      '                     f""\n'),
     # 2026-09-25: the ELS-engaged refusal is not recognised.
-    ("M6 no refusal check", "engaged",
+    ("M6 no refusal check", "engagedrace",
      "        if cmd == 0 and seq == seq_before:\n",
      "        if False:\n"),
     # ... or is claimed on an unacknowledged request.
     ("M7 refusal without the ack", "engagedunacked",
      "    if acked and seq_before is not None:\n",
      "    if seq_before is not None:\n"),
+    # 2026-10-17: the early read of elsStop.enable is skipped.
+    ("M8 no early read", "engaged",
+     "    _refuse_if_els_engaged(bus, ident)\n",
+     ""),
 ]
 
 

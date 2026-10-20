@@ -84,8 +84,8 @@ static EmuConfig makeConfig(double initial_mm) {
 
 /* Mirrors Ramps.c:387-390 exactly: cast the raw-counter delta to int16_t,
  * then accumulate -- this IS the firmware's DRO-seeding logic, replicated
- * so the test can assert on it without linking Ramps.c/Modbus.c/the Modbus
- * register map. */
+ * so the test can assert on it without linking Ramps.c, the Modbus slave or
+ * the register map. */
 struct FirmwareDroSim {
     int32_t oldPosition = 0;
     int32_t position = 0;

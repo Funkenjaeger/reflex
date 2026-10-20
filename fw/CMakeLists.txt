@@ -49,11 +49,18 @@ else ()
     add_compile_options(-Og -g)
 endif ()
 
-include_directories(Core/Inc Drivers/STM32F4xx_HAL_Driver/Inc Drivers/STM32F4xx_HAL_Driver/Inc/Legacy Middlewares/Third_Party/FreeRTOS/Source/include Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F Drivers/CMSIS/Device/ST/STM32F4xx/Include Drivers/CMSIS/Include)
+include_directories(Core/Inc Drivers/STM32F4xx_HAL_Driver/Inc Drivers/STM32F4xx_HAL_Driver/Inc/Legacy Drivers/CMSIS/Device/ST/STM32F4xx/Include Drivers/CMSIS/Include)
 
 add_definitions(-DDEBUG -DUSE_HAL_DRIVER -DSTM32F411xE)
 
-file(GLOB_RECURSE SOURCES "Core/*.*" "Middlewares/*.*" "Drivers/*.*")
+file(GLOB_RECURSE SOURCES "Core/*.*" "Drivers/*.*")
+
+# The Modbus RTU core the bootloader also compiles (modbus_rtu/), bound to this
+# image by its port header in Core/mb_port/, and the bootloader's DMA ring
+# arithmetic the app's receiver shares (Core/Src/mb_app_hw.c). Core/mb_port is
+# its own directory so no other image's include path can pick up this port.
+include_directories(modbus_rtu Core/mb_port)
+list(APPEND SOURCES modbus_rtu/mb_rtu.c bootloader/core/bl_rxring.c)
 
 # WHERE THE APP IS LINKED. The default is the legacy layout -- the app owns
 # the whole flash from 0x08000000, no bootloader, no image header -- and the

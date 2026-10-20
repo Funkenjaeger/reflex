@@ -8,7 +8,8 @@ lathe as a plausible wrong number:
      header (a drifted index reads a neighbor's value);
   2. its absolute register addresses equal docs/reference/register-map.md;
   3. decode() of a known block;
-  4. the read/reset flow against a fake board: refusals, the reset handshake.
+  4. the read/reset flow against a fake board: refusals, the reset handshake,
+     and the engaged-job warning that comes before a revert would be refused.
 
     python3 scripts/lib/isr-gap-test.py      (from fw/)
 """
@@ -66,7 +67,8 @@ class FakeExceptionResponse(Exception):
 class FakeBoard:
     """The application's holding registers, with the ISR's reset handshake."""
 
-    def __init__(self, gs, schema=8, protocol=12, stage=2, ack=True, refuse=False):
+    def __init__(self, gs, schema=8, protocol=13, stage=2, ack=True, refuse=False,
+                 engaged=False, probe_open=True):
         self.gs = gs
         self.refuse = refuse
         self.regs = {}
@@ -77,6 +79,8 @@ class FakeBoard:
         self.regs[gs.REG_BLOCK + gs.B_TRACE + gs.W_WINDOW] = 0
         self.regs[gs.REG_BLOCK + gs.B_WORST] = 4100
         self.regs[gs.REG_DIAG_SEQ] = 5
+        self.regs[gs.REG_ENABLE] = int(engaged)
+        self.regs[gs.REG_RESET] = gs.WINDOW_OPEN if probe_open else 0
         self.ident = types.SimpleNamespace(magic=0x454C, stage=stage, app_protocol=protocol,
                                                rev_str="abcdef0")
 
@@ -95,6 +99,7 @@ class FakeBoard:
                     self.regs.pop(gs.REG_BLOCK + i, None)
             self.regs[gs.REG_BLOCK + gs.B_TRACE + gs.W_NOMINAL] = 2000
             self.regs[gs.REG_BLOCK + gs.B_TRACE + gs.W_WINDOW] = 1
+            self.regs[gs.REG_RESET] = gs.WINDOW_OPEN
             self.regs[gs.REG_DIAG_SEQ] += 1
         elif addr == gs.REG_RESET:
             self.regs[addr] = value
@@ -136,8 +141,11 @@ def main() -> int:
     check(sid is not None and gs.SCHEMA_ISR_GAP == int(sid.group(1)), "schema id matches Ramps.h")
     req = re.search(r"^#define\s+ELS_DIAG_GAP_RESET_REQ\s+(\d+)u?", HEADER.read_text(), re.M)
     check(req is not None and gs.RESET_REQ == int(req.group(1)), "reset request value matches")
+    opn = re.search(r"^#define\s+ELS_DIAG_GAP_OPEN\s+(\d+)u?", HEADER.read_text(), re.M)
+    check(opn is not None and gs.WINDOW_OPEN == int(opn.group(1)), "open-window value matches")
 
     print("-- 2. absolute addresses match the register map --")
+    check(gs.REG_ENABLE == regmap_abs("enable"), "enable (an ELS job is engaged)")
     check(gs.REG_DIAG_SEQ == regmap_abs("diagSeq"), "diagSeq")
     check(gs.REG_BLOCK == regmap_abs("diagSchema"), "diagSchema (block start)")
     check(gs.REG_RESET == regmap_abs("diagEndReason"), "diagEndReason (reset request)")
@@ -192,11 +200,15 @@ def main() -> int:
     check(rc == 0 and "worst gap     4100 cycles" in out, "read prints the window")
     b = FakeBoard(gs)
     rc, out, err = run_main(gs, b, ["--reset"])
-    check(rc == 0 and b.writes == [(gs.REG_RESET, 1)], "reset writes 1 to diagEndReason, once")
+    check(rc == 0 and b.writes == [(gs.REG_RESET, 0)], "reset writes 0 to diagEndReason, once")
     check("window 0 -> 1" in out and "worst gap     0 cycles" in out,
           "reset waits for the acknowledgement and prints the fresh window")
     rc, out, err = run_main(gs, FakeBoard(gs, ack=False), ["--reset"])
     check(rc == 1 and "not acknowledged" in err, "an unacknowledged reset is a failure")
+    b = FakeBoard(gs, probe_open=False)
+    rc, out, err = run_main(gs, b, ["--reset"])
+    check(rc == 1 and b.writes == [] and "predates the 0-write reset" in err,
+          "a probe that does not hold the window open is refused before any write")
     rc, out, err = run_main(gs, FakeBoard(gs, refuse=True), ["--reset"])
     check(rc == 1 and "refused the reset write" in err and "Traceback" not in err,
           "a refused reset write is reported, not a traceback")
@@ -207,12 +219,27 @@ def main() -> int:
     b = FakeBoard(gs, schema=7)
     rc, out, err = run_main(gs, b, ["--reset"])
     check(rc == 2 and b.writes == [], "another probe's schema is refused before any write")
-    b = FakeBoard(gs, protocol=13)
+    b = FakeBoard(gs, protocol=12)
     rc, out, err = run_main(gs, b, ["--reset"])
     check(rc == 2 and b.writes == [], "an unknown register layout is refused before any write")
     b = FakeBoard(gs, stage=1)
     rc, out, err = run_main(gs, b, [])
     check(rc == 2 and "not a running application" in err, "the bootloader is refused")
+
+    # 2026-10-17: the revert after the read was refused because the stop and
+    # retract cycle was still armed, and nothing in the read said so.
+    rc, out, err = run_main(gs, FakeBoard(gs), [])
+    check(rc == 0 and "ENGAGED" not in out + err, "an idle board: no engaged-job warning")
+    b = FakeBoard(gs, engaged=True)
+    rc, out, err = run_main(gs, b, [])
+    check(rc == 0 and "worst gap     4100 cycles" in out, "an engaged job: the window still reads")
+    check("ELS JOB ENGAGED" in out and "press Disengage at the touchscreen" in out,
+          "an engaged job: the read says so, and to disengage at the touchscreen")
+    check(b.writes == [] and b.regs[gs.REG_ENABLE] == 1, "an engaged job: nothing is written")
+    rc, out, err = run_main(gs, FakeBoard(gs, engaged=True), ["--json"])
+    check(rc == 0 and '"els_job_engaged": true' in out and "ELS JOB ENGAGED" in err
+          and "ENGAGED" not in out.replace("els_job_engaged", ""),
+          "--json: the flag in the JSON, the warning on stderr")
 
     print(f"=== {'ALL PASS' if failures == 0 else 'FAILURES'} ===")
     return 0 if failures == 0 else 1

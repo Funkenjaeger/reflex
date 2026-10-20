@@ -24,8 +24,18 @@
  *   E. the generated table against the COMPILER's layout: offsetof() on the
  *      generated structs places a sample of fields, independently of the
  *      generator's own arithmetic, and their bits must agree with the schema.
+ *   F. host reset (RAMPS_HOST_RESET_BITS_INIT): every register of the map
+ *      written 0 with FC 6 and with a one-register FC 16; a host-resettable
+ *      one lands, every other firmware-owned one is refused. An FC 16 block of
+ *      zeros over a whole resettable field lands; one that also reaches a
+ *      firmware-owned register without the flag, or that carries a nonzero
+ *      word for a resettable one, is refused whole. Sections D and E run with
+ *      the reset table installed, so a nonzero value is refused there too.
  *
- * MUTATIONS (seen red 2026-10-16, each applied alone and reverted):
+ * MUTATIONS (seen red 2026-10-16, each applied alone and reverted). The counts
+ * below are as recorded then. calMeasured (6 registers) was host-writable
+ * under protocolVersion 12 and is firmware-owned again under 13, which also
+ * adds commandSeq and commandResult, so the firmware-owned total is now 168:
  *   M1 mb_rtu.c without the FC 6 access check -> 166 checks fail, one per
  *      firmware-owned register (D1)
  *   M2 touchesReadOnly testing only the first register of the range -> 13
@@ -37,6 +47,10 @@
  *   M5 the FC 16 access check moved after the registers are written -> 190
  *      fail (D3, D6, D8): the exception is still sent, but over a write
  *      that already landed
+ * Seen red 2026-10-19, with the host-reset table:
+ *   M6 writeRefused letting any value through to a host-resettable register
+ *      -> 24 fail (D1 and D3 on its 7 registers, F4, F10)
+ *   M7 writeRefused ignoring the reset table -> 15 fail (F2, F3, F8)
  */
 #include <cstdio>
 #include <cstring>
@@ -121,6 +135,10 @@ struct Board {
 static bool isRo(uint16_t r) {
     static const uint8_t bits[] = RAMPS_RO_FIRMWARE_BITS_INIT;
     return r < RAMPS_ACCESS_REGISTERS && (bits[r >> 3] & (1u << (r & 7)));
+}
+static const uint8_t resetBits[] = RAMPS_HOST_RESET_BITS_INIT;
+static bool isReset(uint16_t r) {
+    return r < RAMPS_ACCESS_REGISTERS && (resetBits[r >> 3] & (1u << (r & 7)));
 }
 
 /* ---- A. frame handling -------------------------------------------------- */
@@ -224,7 +242,7 @@ static void sectionC() {
 
 static void sectionD() {
     static const uint8_t bits[] = RAMPS_RO_FIRMWARE_BITS_INIT;
-    const mbRtuAccess_t acc = { 0, RAMPS_ACCESS_REGISTERS, bits };
+    const mbRtuAccess_t acc = { 0, RAMPS_ACCESS_REGISTERS, bits, resetBits };
     const uint16_t N = RAMPS_ACCESS_REGISTERS;
     check(sizeof bits == (N + 7u) / 8u, "D0 the table covers every register of the map");
 
@@ -250,7 +268,7 @@ static void sectionD() {
             checkf(a16.size() == 8 && m.main[r] == 0x6666, "D4 FC 16 to host-writable register %u lands", r);
         }
     }
-    checkf(ro == 166, "D5 166 firmware-owned registers in the map (got %u)", ro);
+    checkf(ro == 168, "D5 168 firmware-owned registers in the map (got %u)", ro);
 
     /* Blocks that reach into a firmware-owned register from below and from
      * above: a writable register on one side, the firmware-owned one on the
@@ -269,10 +287,10 @@ static void sectionD() {
 
     {   /* A long block across a whole firmware-owned field, writable on both sides. */
         Board b(N, &acc);
-        auto a = ask(&b.t, fc16(166, std::vector<uint16_t>(12, 0x3333)));   /* 166..177 spans calMeasured 170..175 */
+        auto a = ask(&b.t, fc16(166, std::vector<uint16_t>(12, 0x3333)));   /* 166..177 spans bootSeq 169 */
         bool untouched = true;
         for (uint16_t r = 166; r < 178; r++) if (b.main[r] != (uint16_t)(0x1000 + r)) untouched = false;
-        check(excOf(a, 16) == 2 && untouched, "D8 FC 16 over 166..177 (calMeasured inside) is refused, nothing written");
+        check(excOf(a, 16) == 2 && untouched, "D8 FC 16 over 166..177 (bootSeq inside) is refused, nothing written");
     }
     {   /* A block over host-writable fields only lands, as before. */
         Board b(N, &acc);
@@ -295,7 +313,7 @@ static void sectionD() {
 
 /* ---- E. the table against the compiler's layout ------------------------ */
 
-struct Probe { const char *name; unsigned reg; unsigned regs; bool ro; };
+struct Probe { const char *name; unsigned reg; unsigned regs; bool ro; bool reset; };
 
 static void sectionE() {
     /* Struct bases from the parent (Ramps.h, asserted by the compiler through
@@ -304,38 +322,112 @@ static void sectionE() {
     const unsigned SERVO = 8, SCALES = 26, SCALE_REGS = sizeof(input_t) / 2, FAST = 74, ELS = 104;
 #define AT(base, T, f) (unsigned)((base) + offsetof(T, f) / 2), (unsigned)(sizeof(((T *)0)->f) / 2)
     const Probe probes[] = {
-        { "servo.maxSpeed",         AT(SERVO, servo_t, maxSpeed),         false },
-        { "servo.currentSpeed",     AT(SERVO, servo_t, currentSpeed),     true  },
-        { "servo.stepsToGo",        AT(SERVO, servo_t, stepsToGo),        false },
-        { "servo.currentSteps",     AT(SERVO, servo_t, currentSteps),     true  },
-        { "servo.desiredSteps",     AT(SERVO, servo_t, desiredSteps),     true  },
-        { "scales[0].position",     AT(SCALES, input_t, position),        true  },
-        { "scales[3].position",     AT(SCALES + 3 * SCALE_REGS, input_t, position), true },
-        { "scales[3].speed",        AT(SCALES + 3 * SCALE_REGS, input_t, speed),    true },
-        { "scales[2].syncRatioNum", AT(SCALES + 2 * SCALE_REGS, input_t, syncRatioNum), false },
-        { "scales[1].timerHandleSlot", AT(SCALES + SCALE_REGS, input_t, timerHandleSlot), false },
-        { "fastData.scaleCurrent",  AT(FAST, fastData_t, scaleCurrent),   true  },
-        { "fastData.servoMode",     AT(FAST, fastData_t, servoMode),      false },
-        { "elsStop.enable",         AT(ELS, elsStop_t, enable),           false },
-        { "elsStop.protocolVersion",AT(ELS, elsStop_t, protocolVersion),  true  },
-        { "elsStop.calCommand",     AT(ELS, elsStop_t, calCommand),       false },
-        { "elsStop.calMeasured",    AT(ELS, elsStop_t, calMeasured),      true  },
-        { "elsStop.calCeilingSteps",AT(ELS, elsStop_t, calCeilingSteps),  false },
-        { "elsStop.executionCyclesPeak", AT(ELS, elsStop_t, executionCyclesPeak), true },
-        { "elsStop.clearRefCommand",AT(ELS, elsStop_t, clearRefCommand),  false },
-        { "elsStop.diagTrace",      AT(ELS, elsStop_t, diagTrace),        true  },
+        { "servo.maxSpeed",         AT(SERVO, servo_t, maxSpeed), false, false },
+        { "servo.currentSpeed",     AT(SERVO, servo_t, currentSpeed), true, false },
+        { "servo.stepsToGo",        AT(SERVO, servo_t, stepsToGo), false, false },
+        { "servo.currentSteps",     AT(SERVO, servo_t, currentSteps), true, false },
+        { "servo.desiredSteps",     AT(SERVO, servo_t, desiredSteps), true, false },
+        { "scales[0].position",     AT(SCALES, input_t, position), true, false },
+        { "scales[3].position",     AT(SCALES + 3 * SCALE_REGS, input_t, position), true, false },
+        { "scales[3].speed",        AT(SCALES + 3 * SCALE_REGS, input_t, speed), true, false },
+        { "scales[2].syncRatioNum", AT(SCALES + 2 * SCALE_REGS, input_t, syncRatioNum), false, false },
+        { "scales[1].timerHandleSlot", AT(SCALES + SCALE_REGS, input_t, timerHandleSlot), false, false },
+        { "fastData.scaleCurrent",  AT(FAST, fastData_t, scaleCurrent), true, false },
+        { "fastData.servoMode",     AT(FAST, fastData_t, servoMode), false, false },
+        { "elsStop.enable",         AT(ELS, elsStop_t, enable), false, false },
+        { "elsStop.protocolVersion",AT(ELS, elsStop_t, protocolVersion), true, false },
+        { "elsStop.calCommand",     AT(ELS, elsStop_t, calCommand), false, false },
+        { "elsStop.bootSeq",        AT(ELS, elsStop_t, bootSeq), true, false },
+        { "elsStop.calMeasured",    AT(ELS, elsStop_t, calMeasured), true, false },
+        { "elsStop.calBasisSteps",  AT(ELS, elsStop_t, calBasisSteps), false, false },
+        { "elsStop.command",        AT(ELS, elsStop_t, command), false, false },
+        { "elsStop.commandSeq",     AT(ELS, elsStop_t, commandSeq), true, false },
+        { "elsStop.commandResult",  AT(ELS, elsStop_t, commandResult), true, false },
+        { "elsStop.calCeilingSteps",AT(ELS, elsStop_t, calCeilingSteps), false, false },
+        { "elsStop.executionCyclesPeak", AT(ELS, elsStop_t, executionCyclesPeak), true, true },
+        { "elsStop.clearRefCommand",AT(ELS, elsStop_t, clearRefCommand), false, false },
+        { "elsStop.diagTrace",      AT(ELS, elsStop_t, diagTrace), true, false },
+        { "elsStop.stepPulseMinCycles", AT(ELS, elsStop_t, stepPulseMinCycles), true, true },
+        { "elsStop.stepPulseRuntCount", AT(ELS, elsStop_t, stepPulseRuntCount), true, true },
+        { "elsStop.diagEndReason",  AT(ELS, elsStop_t, diagEndReason),    true, true  },
+        { "elsStop.diagCaptureTicks", AT(ELS, elsStop_t, diagCaptureTicks), true, false },
+        { "elsStop.diagSeq",        AT(ELS, elsStop_t, diagSeq),          true, false },
     };
 #undef AT
     for (const Probe &p : probes) {
         bool all = true;
-        for (unsigned r = p.reg; r < p.reg + p.regs; r++) if (isRo((uint16_t)r) != p.ro) all = false;
+        for (unsigned r = p.reg; r < p.reg + p.regs; r++)
+            if (isRo((uint16_t)r) != p.ro || isReset((uint16_t)r) != p.reset) all = false;
         char buf[160];
         snprintf(buf, sizeof buf, "E %s (registers %u..%u) is %s in the table", p.name, p.reg,
-                 p.reg + p.regs - 1, p.ro ? "firmware-owned" : "host-writable");
+                 p.reg + p.regs - 1,
+                 p.reset ? "firmware-owned, host-resettable" : p.ro ? "firmware-owned" : "host-writable");
         check(all, buf);
     }
     check(!isRo(0) && !isRo(7), "E registers 0..7, described by no schema, carry no bit");
     pass("E the table against the compiler's layout");
+}
+
+/* ---- F. host reset ------------------------------------------------------ */
+
+static void sectionF() {
+    static const uint8_t bits[] = RAMPS_RO_FIRMWARE_BITS_INIT;
+    const mbRtuAccess_t acc = { 0, RAMPS_ACCESS_REGISTERS, bits, resetBits };
+    const uint16_t N = RAMPS_ACCESS_REGISTERS;
+    check(sizeof resetBits == sizeof bits, "F0 the reset table has the access table's layout");
+
+    unsigned resets = 0;
+    for (uint16_t r = 0; r < N; r++) {
+        checkf(!isReset(r) || isRo(r), "F1 host-resettable register %u is also firmware-owned", r);
+        if (!isRo(r)) continue;
+        if (isReset(r)) resets++;
+        Board b(N, &acc);
+        auto q = fc6(r, 0);
+        auto a = ask(&b.t, q);
+        Board m(N, &acc);
+        auto a16 = ask(&m.t, fc16(r, { 0 }));
+        if (isReset(r)) {
+            checkf(a == q && b.main[r] == 0 && b.t.commands == 1,
+                   "F2 FC 6 of 0 to host-resettable register %u lands", r);
+            checkf(a16.size() == 8 && m.main[r] == 0 && m.t.commands == 1,
+                   "F3 FC 16 of 0 to host-resettable register %u lands", r);
+            Board n(N, &acc);
+            checkf(excOf(ask(&n.t, fc6(r, 1)), 6) == 2 && n.main[r] == (uint16_t)(0x1000 + r),
+                   "F4 FC 6 of 1 to host-resettable register %u is refused", r);
+        } else {
+            checkf(excOf(a, 6) == 2 && b.main[r] == (uint16_t)(0x1000 + r) && b.t.commands == 0,
+                   "F5 FC 6 of 0 to firmware-owned register %u (no host reset) is refused", r);
+            checkf(excOf(a16, 16) == 2 && m.main[r] == (uint16_t)(0x1000 + r),
+                   "F6 FC 16 of 0 to firmware-owned register %u (no host reset) is refused", r);
+        }
+    }
+    checkf(resets == 7, "F7 7 host-resettable registers in the map (got %u)", resets);
+
+    {   /* stepPulseMinCycles and stepPulseRuntCount are adjacent: 140..143. */
+        Board b(N, &acc);
+        auto a = ask(&b.t, fc16(140, { 0, 0, 0, 0 }));
+        check(a.size() == 8 && b.main[140] == 0 && b.main[143] == 0 && b.t.commands == 1,
+              "F8 FC 16 of zeros over 140..143 (two resettable fields) lands");
+    }
+    {   /* ...and diagSeq (144) is firmware-owned without the flag. */
+        Board b(N, &acc);
+        auto a = ask(&b.t, fc16(142, { 0, 0, 0 }));
+        check(excOf(a, 16) == 2 && b.main[142] == 0x1000 + 142 && b.main[144] == 0x1000 + 144,
+              "F9 FC 16 of zeros over 142..144 (diagSeq inside) is refused, nothing written");
+    }
+    {
+        Board b(N, &acc);
+        auto a = ask(&b.t, fc16(184, { 0, 7 }));
+        check(excOf(a, 16) == 2 && b.main[184] == 0x1000 + 184 && b.main[185] == 0x1000 + 185,
+              "F10 FC 16 over executionCyclesPeak with a nonzero high word is refused whole");
+    }
+    {   /* Without a reset table the 0 is refused like any other value. */
+        const mbRtuAccess_t noReset = { 0, RAMPS_ACCESS_REGISTERS, bits, nullptr };
+        Board b(N, &noReset);
+        check(excOf(ask(&b.t, fc6(245, 0)), 6) == 2 && b.main[245] == 0x1000 + 245,
+              "F11 with no reset table, FC 6 of 0 to diagEndReason is refused");
+    }
+    pass("F host reset");
 }
 
 int main() {
@@ -344,6 +436,7 @@ int main() {
     sectionC();
     sectionD();
     sectionE();
+    sectionF();
     if (failures) {
         printf("mb_rtu_test: %d check(s) FAILED\n", failures);
         return 1;

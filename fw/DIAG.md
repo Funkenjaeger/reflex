@@ -219,9 +219,9 @@ stop-trigger hook, so the `dZ`/`dServo` arithmetic always runs, against a
 
 ### `isr-gap` (schema 8)
 
-How late the motion ISR starts. TIM9 runs at NVIC priority 5, equal to
-`configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY`, so FreeRTOS critical sections
-and same-priority interrupts (the Modbus UART among them) can hold a tick back.
+How late the motion ISR starts. TIM9 runs at NVIC priority 0 and nothing
+raises BASEPRI, so a tick is held back only by its own previous pass running
+long, or by code that disables interrupts outright.
 `executionCyclesPeak` measures only how long the ISR runs.
 This probe peak-holds the gap between ISR entries (`executionInterval`, DWT
 cycles) over a window.
@@ -234,7 +234,7 @@ and again on every host reset. The hook is `elsDiagTickTail`, every tick.
 | `diagSettleTicks` | **worst gap**, CPU cycles |
 | `diagNetCounts` | ticks measured in the window (uint32; wraps after ~23.8 h at 50 kHz) |
 | `diagCaptureTicks` | longest ISR run in the window, cycles, saturating at 65535. Window-scoped, unlike `executionCyclesPeak` |
-| `diagEndReason` | **reset request**, written by the host: `1` starts a fresh window; the ISR writes `0` back as the acknowledgement |
+| `diagEndReason` | **reset request**: the ISR holds it at `1` while a window is open; a host write of `0` starts a fresh window, and the ISR writes `1` back as the acknowledgement. `0` is the only value a host may write here (`host_reset` in `registers/els_stop.yaml`) |
 | `diagBucketTicks` / `diagBucketCount` | 0 / 24: no time buckets; 24 `diagTrace` words in use |
 | `diagTrace[0..1]` | shortest gap, uint32 |
 | `diagTrace[2..9]` | late-tick counts, four uint32s: gaps strictly above +5%, +25%, +50% and 2x nominal, cumulative |
@@ -305,7 +305,9 @@ python3 scripts/isr-gap.py --port /dev/serial0 --reset
 # 4. Start the UI and run the session to be measured.
 sudo systemctl start reflex-ui.service
 
-# 5. Stop the UI and read the window.
+# 5. Press Disengage at the touchscreen (the button then reads Engage), stop
+#    the UI, and read the window. If the read prints ELS JOB ENGAGED, step 6
+#    will be refused: start the UI, disengage, and stop it again.
 sudo systemctl stop reflex-ui.service
 python3 scripts/isr-gap.py --port /dev/serial0
 python3 scripts/isr-gap.py --port /dev/serial0 --json > isr-gap-$(date +%F-%H%M).json
@@ -323,6 +325,15 @@ threading passes); a reset is the boundary. `--revert` goes back one step
 only; if it refuses, flash the release RUN-slot image instead
 (`build-slot/reflex-fw.bin` built from the release commit, or the release's
 own `reflex-fw.bin`).
+
+**Disengage before step 6.** The firmware will not reboot into its bootloader
+while `elsStop.enable` is set, and a stop or a stop-and-retract cycle stays
+armed after its last pass. `modbus-flash.py` reads `elsStop.enable` before it
+sends the reboot request, for `--revert` and for a plain flash alike, and with
+a job engaged it refuses with nothing written. Neither script clears it:
+disengaging ends the operator's job, so it is done at the touchscreen, where
+the job and its stop can be seen. With the UI stopped, start it, press
+**Disengage**, stop it, and run step 6 again.
 
 ### Retired ids
 

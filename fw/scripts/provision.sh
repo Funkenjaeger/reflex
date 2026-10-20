@@ -334,7 +334,7 @@ echo "programming the application into RUN (${RUN_SLOT_BASE})"
 # put it there. `variant` says provision so the two are distinguishable.
 STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 MANIFEST="{\"utc\":\"$STAMP\",\"variant\":\"provision\",\"probe\":null,\"rev\":\"$REV\",\"dirty\":$DIRTY,\"md5\":\"$APP_MD5\",\"blMd5\":\"$BL_MD5\"}"
-"${RUN[@]}" "printf '%s\n' '$MANIFEST' >> ~/firmware/flashed.json"
+"${RUN[@]}" "printf '%s\n' '$MANIFEST' >> ~/firmware/flashed.json && sync"
 
 echo
 echo "written  BOOTLOADER + APPLICATION  rev ${REV}$([ "$DIRTY" = true ] && echo " (dirty)")"

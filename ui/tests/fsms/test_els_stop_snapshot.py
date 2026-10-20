@@ -262,8 +262,11 @@ def test_the_whole_block_refresh_is_still_two_requests(els_stop_device):
     and is what forced the split.
     """
     device, transport = els_stop_device
-    assert device.size == 142, (
-        f"elsStop is {device.size} registers, not the 142 this case was "
+    # protocolVersion 13: 146 registers (the command channel and
+    # calBasisSteps added four), so two requests need a chunk of 73, which
+    # MAX_REGISTERS_PER_READ became; 73 is still under the 60%-of-125 cap.
+    assert device.size == 146, (
+        f"elsStop is {device.size} registers, not the 146 this case was "
         f"reasoned about -- re-check the chunk arithmetic, do not just "
         f"update the number")
 
@@ -271,7 +274,7 @@ def test_the_whole_block_refresh_is_still_two_requests(els_stop_device):
 
     base = device.base_address
     assert len(transport.requests) == 2
-    assert transport.requests == [(base, 72), (base + 72, 70)]
+    assert transport.requests == [(base, 73), (base + 73, 73)]
 
 
 def test_the_block_still_fits_in_two_requests_with_room_to_spare(els_stop_device):
@@ -318,11 +321,9 @@ def test_the_chunk_size_keeps_real_headroom_against_the_firmware():
     """The number, checked against the firmware's own arithmetic.
 
     An FC3 response is 5 + 2N bytes and the firmware assembles it in a
-    256-byte buffer (MAX_BUFFER, fw/Core/Inc/ModbusConfig.h) whose length it
-    tracks in a uint8_t, with NO bounds check in the copy loop
-    (process_FC3, fw/Core/Src/Modbus.c). Both limits put the ceiling at
-    N = 125, and every way of exceeding it fails silently -- a buffer overrun
-    into whatever follows, or a wrapped length field.
+    256-byte buffer (MB_RTU_MAX_FRAME, fw/modbus_rtu/mb_rtu.h), refusing a
+    count above 125 with exception 3. Both limits put the ceiling at
+    N = 125.
 
     So this is not "assert 64 == 64". It asserts the chunk stays at most half
     of BOTH limits, which is what "conservative" was decided to mean here, and
@@ -364,8 +365,9 @@ def test_the_chunk_size_keeps_real_headroom_against_the_firmware():
     from reflex.utils.communication import ConnectionManager
     size = ConnectionManager(serial_device="/dev/null")['Global']['elsStop'].size
     floor = -(-size // 2)          # ceil, so two requests still cover the block
-    assert floor == 71, (
-        f"the two-request floor is now {floor}, not the 71 that 142 registers "
+    # 13 grew the block to 146 registers, so the floor is 73.
+    assert floor == 73, (
+        f"the two-request floor is now {floor}, not the 73 that 146 registers "
         f"gives -- re-derive the chunk size rather than editing this number")
     assert n >= floor, (
         f"chunking at {n} registers puts elsStop ({size} registers) back above "
@@ -392,7 +394,7 @@ def test_the_tick_read_keeps_its_stated_margin_against_the_firmware():
     """
     from reflex.utils import devices
     ceiling = 125                       # see the chunk test above for the derivation
-    buffer_bytes = 256                  # MAX_BUFFER, fw/Core/Inc/ModbusConfig.h
+    buffer_bytes = 256                  # MB_RTU_MAX_FRAME, fw/modbus_rtu/mb_rtu.h
 
     n = devices.TICK_COUNT
     assert n == 86, (

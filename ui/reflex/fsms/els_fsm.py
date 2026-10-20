@@ -2,12 +2,14 @@ from kivy.logger import Logger
 from transitions import Machine
 
 from reflex.dispatchers import els, board
-from reflex.fsms import els_adopt
-from reflex.fsms.els_gear import GearTable, table_of
+from reflex.fsms import els_adopt, els_command
+from reflex.fsms.els_cal import cal_basis
+from reflex.fsms.els_gear import GearTable, drive_position_of, table_of
 from reflex.fsms.els_mode_watch import mode_name
 from reflex.fsms.els_stop_registers import ElsStopRegisters
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
-from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
+from reflex.utils.notices import NOTICE_WARNING
+from reflex.utils.operator_notice import notify_operator
 
 import math
 from fractions import Fraction
@@ -79,18 +81,12 @@ class ElsFsm:
         {'trigger': 'fault', 'source': '*', 'dest': 'alarm'},
     ]
 
-    def __init__(self, els: els, board: board, hal: ElsStopRegisters, controller,
-                 diag_recorder=None):
+    def __init__(self, els: els, board: board, hal: ElsStopRegisters, controller):
         self.els = els
         self.board = board
         self.servo = board.servo
         self.hal = hal
         self.controller = controller
-        # How the (dark) rung-3 adopt path learns which diagnostic probe THIS
-        # connection's firmware carries -- the recorder's learned schema is the
-        # gate, so no second diagSchema read is ever issued. Optional: None
-        # simply keeps the adopt gates failed (see _read_adoptable_mode).
-        self.diag_recorder = diag_recorder
         # The arming attempt in flight. Incremented per attempt so a batch
         # result or a timeout belonging to an abandoned one is ignored.
         self._arming_seq = 0
@@ -118,12 +114,26 @@ class ElsFsm:
         # on_enter_stopped know to arm ELS with a fresh stopPosition.
         self._engaging = False
 
-        # Set by reconcile_firmware_on_connect when it finds the firmware was
-        # driving the carriage at connect and stops it. Holds the register
-        # snapshot so the UI can tell the operator WHAT it interrupted; None
-        # means no pass was interrupted this session. Read once and cleared by
-        # whoever presents it.
+        # Set by reconcile_firmware_on_connect when it finds work in flight at
+        # connect: either it stopped a moving carriage (teardown=True), or the
+        # adopt plan left live work running untouched (teardown=False, with the
+        # published mode). Holds the register snapshot so the UI can tell the
+        # operator what it found and what it did; None means nothing to report
+        # this session. Read once and cleared by whoever presents it.
         self.interrupted_pass = None
+
+        # THE ELS COMMAND CHANNEL (els_command.py, protocolVersion 13).
+        # A DISENGAGE written and not yet acknowledged, as {'baseline': the
+        # commandSeq it is measured against, 'polls': board ticks waited,
+        # 'reissued': whether it has been written a second time}; None when
+        # nothing is in flight. It deliberately outlives a dropped link: a
+        # session that reconnects with one unacked issues it again instead of
+        # consulting the adopt table (reconcile_firmware_on_connect).
+        self._disengage_pending = None
+        # commandSeq as last read cleanly: at connect (a fresh session's
+        # baseline), before each write, and at each ack. Stands in as the
+        # baseline when the live read before a write fails.
+        self.command_seq_baseline = None
 
 
     # ——— transition side effects ———
@@ -132,6 +142,16 @@ class ElsFsm:
         """Mark that we're entering stopped from disabled so on_enter_stopped
         can arm ELS with a fresh stopPosition."""
         self._engaging = True
+        if self._disengage_pending is not None:
+            # The operator engaged a new job with a DISENGAGE still unacked.
+            # Stop waiting for it, and above all do not issue it again at a
+            # later reconnect, where it would end THIS job. The firmware
+            # consumes a command within ~100 ms or not at all, so nothing of
+            # the old one is left in flight.
+            log.warning("engage: dropping an unacknowledged DISENGAGE "
+                        f"({self._disengage_pending})")
+            self._disengage_pending = None
+            self.board.unbind(update_tick=self._poll_command_ack)
 
     def on_enter_retracting(self):
         # Frozen leadscrew encoder captured when the operator set retract_z
@@ -360,51 +380,152 @@ class ElsFsm:
         # so conservatively assume the next retract needs full takeup.
         self._retract_backlash_applied = False
         self.board.unbind(update_tick=self._on_board_update)
-        # Safety: disengaging ELS removes the stop that was gating the feed, so
-        # also stop any running sync feed — otherwise a spindle-synced feed keeps
-        # driving the carriage with no auto-stop (audit H6). Idempotent.
+        # THE FIRMWARE DOES THE TEARDOWN (protocolVersion 13). One write,
+        # DISENGAGE; the firmware clears sync on every scale, then servoMode,
+        # then enable, cancels the job's motion through the ISR's end-of-job
+        # block, and only then bumps commandSeq. The ordering lives in one
+        # place, the firmware.
         #
-        # SYNC OFF FIRST, THEN ENABLE, THEN FEED. Not cosmetic ordering.
-        # Dropping enable clears elsStop.active in firmware, and the firmware's
-        # servoEnableTask turns the feed back ON whenever it sees
-        # (any syncEnable) && !active. So between "enable = 0" and "syncEnable =
-        # 0" there is a window in which that task re-asserts servoMode = 1 —
-        # and nothing in firmware ever clears it again.
-        #
-        # Previously syncEnable was cleared only as a side effect of the
-        # servoMode binding in dispatchers/els.py, which by construction fires
-        # AFTER servoMode changes, so the window was always open. Measured at
-        # ~1 disengage in 7-10 leaving the carriage feeding — 1.825 mm in 3 s and
-        # still going — with the ELS stop simultaneously disarmed, because the
-        # firmware gates the stop check on enable. Feed running, backstop gone.
-        feed_was_on = self.board.servo.servoMode != 0
-        # ONE BATCH: every syncEnable, then enable. Back to back with nothing
-        # able to get between them -- for as long as any syncEnable is still
-        # set after enable has gone to 0, the firmware's servoEnableTask is
-        # entitled to switch the feed back on and nothing will switch it off
-        # again. A verdict per write, so the enable-off succeeding cannot hide
-        # the sync-off having failed.
-        #
-        # BLOCKING, deliberately. This is the safety stop; the operator has
-        # asked for motion to end, and the few milliseconds it costs are not
-        # worth handing back a UI that says disengaged before it is.
-        if self.board.connected:
-            try:
-                writes_ok = self.hal.disengage()
-            except Exception as e:                       # noqa: BLE001
-                log.error(f"on_enter_disabled: the disengage raised: {e}")
-                writes_ok = False
+        # The session is 'disabled' from the WRITE, not the ack: a session
+        # still in 'stopped' while it waits would take a reconnect inside the
+        # wait for a link blip and re-arm the stop.
+        self._issue_disengage()
+
+    # ——— the ELS command channel: DISENGAGE ———
+    DISENGAGE_UNCONFIRMED = (
+        "The controller did not confirm the disengage. Check that the "
+        "carriage is stopped and the Sync Enable light is off.")
+
+    @property
+    def disengage_unacked(self) -> bool:
+        """A DISENGAGE has been written (or could not be) and not acked."""
+        return self._disengage_pending is not None
+
+    def _issue_disengage(self, *, reissue: bool = False):
+        """Write DISENGAGE and start watching commandSeq for its ack.
+
+        The baseline is read LIVE just before the write, so an edge this
+        session did not wait for is never taken as the ack; a failed read
+        falls back to the last clean value (at worst the connect baseline).
+        Nothing else is written to elsStop or syncEnable until the ack: the
+        firmware's consumption is a read-then-write sequence that a write
+        landing inside it would undo.
+        """
+        if not self.board.connected:
+            log.error("disengage: no link, so DISENGAGE was not written; it "
+                      "is issued at reconnect")
+            self._disengage_pending = {'baseline': self.command_seq_baseline,
+                                       'polls': 0, 'reissued': reissue}
+            return
+        baseline = self._read_command_baseline()
+        written = self.hal.request_disengage()
+        self._disengage_pending = {'baseline': baseline, 'polls': 0,
+                                   'reissued': reissue}
+        if not written:
+            log.error("disengage: the DISENGAGE write was not acknowledged; "
+                      "waiting for commandSeq all the same")
+        log.info(f"disengage: DISENGAGE written (commandSeq baseline "
+                 f"{baseline}{', reissued' if reissue else ''})")
+        self.board.unbind(update_tick=self._poll_command_ack)
+        self.board.bind(update_tick=self._poll_command_ack)
+
+    def _read_command_baseline(self):
+        reads = self.hal.reads_baseline()
+        seq = self.hal.read_command_seq()
+        if self.hal.reads_fabricated_since(reads):
+            return self.command_seq_baseline
+        self.command_seq_baseline = int(seq)
+        return self.command_seq_baseline
+
+    def _poll_command_ack(self, *_args):
+        """Board-tick poller: has commandSeq moved off the baseline?
+
+        commandSeq is in the tick snapshot; commandResult is cold, so it is
+        read live once the edge is seen. A fabricated read of either is not
+        judged: the seq counts toward the timeout, and an edge whose result
+        read failed is looked at again next tick (the seq stays moved).
+        """
+        pend = self._disengage_pending
+        if pend is None:
+            self.board.unbind(update_tick=self._poll_command_ack)
+            return
+        reads = self.hal.reads_baseline()
+        seq = int(self.hal.tick.command_seq())
+        if self.hal.reads_fabricated_since(reads):
+            self._count_unacked_poll(pend)
+            return
+        if pend['baseline'] is None:
+            # No clean baseline was ever read. Take this one; an ack that had
+            # already landed is missed, and the timeout reissues (DISENGAGE is
+            # idempotent).
+            pend['baseline'] = seq
+            self._count_unacked_poll(pend)
+            return
+        if seq == pend['baseline']:
+            self._count_unacked_poll(pend)
+            return
+        reads = self.hal.reads_baseline()
+        result = int(self.hal.read_command_result())
+        if self.hal.reads_fabricated_since(reads):
+            return
+        self.command_seq_baseline = seq
+        self._disengage_pending = None
+        self.board.unbind(update_tick=self._poll_command_ack)
+        if els_command.result_is_ok(result):
+            self._on_disengage_acked(result)
         else:
-            writes_ok = False
+            self._on_disengage_refused(result)
+
+    def _count_unacked_poll(self, pend):
+        pend['polls'] += 1
+        if pend['polls'] < els_command.ACK_TIMEOUT_POLLS:
+            return
+        if not pend['reissued']:
+            # A missing ack is a link fault, and DISENGAGE is idempotent: the
+            # answer is to issue it again, once.
+            log.warning("disengage: no ack within "
+                        f"{els_command.ACK_TIMEOUT_POLLS} ticks; issuing "
+                        "DISENGAGE again")
+            self._issue_disengage(reissue=True)
+            return
+        log.error("disengage: DISENGAGE written twice and never acknowledged; "
+                  "it is issued again at reconnect")
+        notify_operator(self.DISENGAGE_UNCONFIRMED, NOTICE_WARNING)
+        self.board.unbind(update_tick=self._poll_command_ack)
+
+    def _on_disengage_acked(self, result):
+        """The firmware has torn the job down. Bring the UI's mirrors into
+        line with what it did, writing nothing: servoMode (and the watchdog's
+        idea of what was commanded) and every axis's syncEnable."""
+        log.info(f"disengage: acknowledged ({els_command.result_name(result)})")
+        self.board.servo.adopt_feed_off()
+        for axis in self.board.axes:
+            axis.syncEnable = False
+
+    def _on_disengage_refused(self, result):
+        """No DISENGAGE refusal exists in firmware that speaks this protocol
+        (it is legal from every mode), so a refusal means a firmware this UI
+        does not understand. Say so, and make the machine inert with the
+        writes on_enter_alarm uses: the session is already 'disabled', so
+        doing nothing would leave the job armed while the screen says it is
+        not.
+
+        SYNC OFF FIRST, THEN THE FEED, THEN ENABLE: dropping enable clears
+        elsStop.active, and servoEnableTask turns the feed back on whenever
+        any syncEnable is set with active clear (see stop_sync)."""
+        name = els_command.result_name(result)
+        log.error(f"disengage: the controller refused DISENGAGE ({name}); "
+                  f"turning sync, the feed and the stop off from the UI")
+        notify_operator(f"The controller refused the disengage ({name}). "
+                        f"The UI turned sync and the stop off itself.",
+                        NOTICE_WARNING)
+        sync_off = self.hal.stop_sync()
         feed_off = self.board.servo.stop_feed()
-        if feed_was_on and not (writes_ok and feed_off):
-            # A stop-feed write was attempted but not acknowledged (link down).
-            # Nothing more software can do to stop it here — surface it loudly.
-            # (Only when the feed was actually on, so an offline idle disengage
-            # doesn't cry wolf.)
-            log.error("on_enter_disabled: a disengage write was NOT "
-                      f"acknowledged (batch={writes_ok} feed_off={feed_off}) "
-                      "— sync feed may still be running")
+        enable_off = self.hal.set_enable(False)
+        if not (sync_off and feed_off and enable_off):
+            log.error("disengage: a teardown write after the refusal was NOT "
+                      f"acknowledged (sync={sync_off} feed={feed_off} "
+                      f"enable={enable_off}); the feed may still be running")
 
     def _raise_stop_write_fault(self):
         """Top-level fault after an unacknowledged cut-stop write (scheduled from
@@ -418,8 +539,9 @@ class ElsFsm:
         # the stop, and detach the move poller. Reached e.g. when a cut's stop
         # writes weren't acknowledged (on_enter_cutting).
         self.board.unbind(update_tick=self._on_board_update)
-        # SYNC OFF FIRST, explicitly, for the same reason as on_enter_disabled
-        # and reconcile_firmware_on_connect: set_enable(False) clears
+        # SYNC OFF FIRST, explicitly, for the same reason as
+        # reconcile_firmware_on_connect and the firmware's own DISENGAGE
+        # (els_command.h): set_enable(False) clears
         # elsStop.active in firmware, and active == 1 is what HOLDS the carriage
         # (Ramps.c:815 only accumulates sync steps while active == 0; clearing it
         # 1->0 is the resume trigger, Ramps.c:826).
@@ -635,12 +757,14 @@ class ElsFsm:
           blindly rewriting could disarm a stop that is actively protecting the
           cut. (Full link-loss-mid-cut recovery is a known separate gap.)
 
-        A DARK rung-3 path sits ahead of these branches: when
-        els_adopt.ELS_ADOPT_ON_CONNECT is flipped and the mode-watch probe
-        (diag schema 4) is present, the policy keys on the firmware-published
-        machine mode (els_adopt.adopt_plan) instead of this session's state.
-        The flag ships False, so today every connect takes the branches above
-        unchanged; see els_adopt.py for the policy and what earns the flip.
+        The rung-3 adopt path sits ahead of these branches. When this session
+        holds no job ('disabled', which is every session after a UI restart)
+        the policy keys on the machine mode the firmware publishes in
+        elsStop.machineMode (els_adopt.adopt_plan) instead of on this session's
+        state, which says nothing about the machine after a restart. An
+        engaged or alarmed session keeps the branches above: it holds the job,
+        so a reconnect there is a link blip, not a restart. A failed mode read
+        also falls back to them. See els_adopt.py for the policy.
         """
         # Push the calibration limits FIRST, in every state, before any
         # state-specific policy below.
@@ -663,23 +787,17 @@ class ElsFsm:
         # 2026-08-25 power cycle exposed four faces of this defect: scaleIndex
         # sent a calibration watching the SPINDLE (fixed at cal start), the
         # sync ratio and thread geometry muted an instrumented bench test for
-        # fifteen minutes, and calMeasured drops the take-up gate to its floor
-        # every boot. The arm path now teaches the job's own premises; these
+        # fifteen minutes, and the take-up gate's calibration basis (then
+        # calMeasured, calBasisSteps since protocolVersion 13) drops to the
+        # floor every boot. The arm path now teaches the job's own premises; these
         # two are the session-wide ones nothing else re-teaches.
         #
-        # The calibration legs: only a real record, never zeros -- an absent
-        # calibration must stay absent, and the firmware's all-legs-positive
-        # validity rule means a zero push would be indistinguishable from it
-        # anyway. Stale-but-real raises the gate's bar above the floor; if the
+        # The calibration basis: only from a real record, never zero -- an
+        # absent calibration must stay absent (0 is the firmware's 'no
+        # calibration on file'). Stale-but-real raises the gate's bar above the floor; if the
         # machine's lash has since shrunk enough to over-tighten it, the gate
         # refuses LOUDLY and the fix (recalibrate) is in the message.
-        legs = [int(v) for v in self.els.els_cal_measured_legs]
-        if len(legs) == 3 and all(v > 0 for v in legs):
-            # Stored in the reference gear, like the take-up they are
-            # compared against (els_gear.py).
-            self.hal.set_cal_measured(
-                [self.gear_table().steps_in_gear(v, self.engaged_gear())
-                 for v in legs])
+        self._teach_cal_basis("connect")
 
         # Sync ratios, every axis: the firmware registers are written only by
         # a property-CHANGE binding, so an unchanged UI setting is never
@@ -693,13 +811,31 @@ class ElsFsm:
         # it. Never raises -- a diagnostic must not block a safety teardown.
         flight = self.hal.read_motion_in_flight()
 
-        # RUNG-3 ADOPT PATH, DARK. With ELS_ADOPT_ON_CONNECT at its shipped
-        # False this evaluates one module attribute and falls through -- every
-        # gate below stays byte-for-byte today's behavior. When the census
-        # earns the flip, connect becomes a READ: the plan keys on the
-        # firmware's published mode, not on which state THIS session happens
-        # to be in (which after a restart is always 'disabled' -- the
-        # unreachable-branch class the 2026-08-16 review §4.4 documents).
+        # RUNG-3 ADOPT PATH. For a session with no job, connect is a READ: the
+        # plan keys on the firmware's published mode, not on which state THIS
+        # session happens to be in (which after a restart is always 'disabled'
+        # -- the unreachable-branch class the 2026-08-16 review §4.4
+        # documents). None from the read falls through to the state-keyed
+        # branches below, unchanged.
+        # THE COMMAND CHANNEL'S BASELINE, read at connect by a session with no
+        # job (every fresh session), so it never takes an edge it did not
+        # wait for as an ack. An engaged session reconnecting after a link
+        # blip keeps the one it has; every DISENGAGE also reads a fresh one
+        # just before its write.
+        if self.state == 'disabled':
+            self._read_command_baseline()
+
+        # A DISENGAGE this session wrote and never saw acked goes out again
+        # INSTEAD of the adopt table. If it never landed, the mode is whatever
+        # the session disengaged from, and that can be a hands-off row
+        # (FEEDING with the spindle stopped is one disengage_refusal()
+        # allows), which would leave the job running. It is idempotent.
+        if self._disengage_pending is not None and self.state == 'disabled':
+            log.warning("reconcile_firmware_on_connect: a DISENGAGE was never "
+                        "acknowledged; issuing it again")
+            self._issue_disengage()
+            return
+
         mode = self._read_adoptable_mode()
         if mode is not None:
             self._adopt_on_connect(mode, flight)
@@ -753,7 +889,7 @@ class ElsFsm:
                     f"carriage at connect ({flight}) — sync disabled and stop "
                     f"cleared; a pass was interrupted"
                 )
-                self.interrupted_pass = flight
+                self.interrupted_pass = dict(flight, teardown=True)
                 bus.publish("els_pass_interrupted")
         elif state == 'stopped':
             self.hal.set_stop_direction(
@@ -789,19 +925,28 @@ class ElsFsm:
         gate passes. Any None keeps reconcile on the state-keyed branches
         unchanged. Gates, in order:
 
-        - els_adopt.ELS_ADOPT_ON_CONNECT, read live off the module so the
-          eventual flip (and tests) reach the real setting;
-        - the diag recorder has recognized the mode-watch probe (schema 4) on
-          THIS connection. read_current_mode is a scratchpad register that
-          means something else entirely under any other schema, so the
-          recorder's learned schema is the gate -- never a bare read;
-        - the read itself succeeds. A raising diagnostic read must degrade to
-          the state-keyed reconcile, never take connect down with it.
+        - els_adopt.ELS_ADOPT_ON_CONNECT, read live off the module so tests
+          (and a revert of the flip) reach the real setting;
+        - this session holds no job ('disabled'). That is every session after
+          a UI restart, and the one state whose branch below cannot tell what
+          the machine is doing. An engaged session ('stopped', 'arming',
+          'cutting', 'retracting') reconnects after a link blip, not a
+          restart: it still holds the committed stop, the direction and the
+          pass in flight, and its own branches act on them. 'alarm' keeps its
+          teardown. The link drops on a single failed scan, so without this
+          gate one bad read mid-cut would drop the session to 'disabled';
+        - the read itself succeeds. A raising read must degrade to the
+          state-keyed reconcile, never take connect down with it.
+
+        No diagnostic-schema gate: read_current_mode reads the permanent
+        machineMode register, which every build publishes (its docstring says
+        callers must not add one). Until 2026-10-17 this gate required the
+        retired mode-watch probe (schema 4), which no firmware can be built
+        with, so the adopt path could never run.
         """
         if not els_adopt.ELS_ADOPT_ON_CONNECT:
             return None
-        recorder = self.diag_recorder
-        if recorder is None or recorder.schema != ELS_DIAG_SCHEMA_MODE_WATCH:
+        if self.state != 'disabled':
             return None
         try:
             return int(self.hal.read_current_mode())
@@ -838,12 +983,13 @@ class ElsFsm:
                 f"notifying the operator of interrupted work"
             )
             self.interrupted_pass = dict(
-                flight, mode=mode, mode_name=mode_name(mode))
+                flight, mode=mode, mode_name=mode_name(mode),
+                teardown=plan.teardown)
             bus.publish("els_pass_interrupted")
         if self.state != plan.state:
             # ADOPTION, not a transition: set_state fires no callbacks, which
             # is the point -- on_enter_stopped would arm a fresh stop and
-            # on_enter_disabled would run its own teardown, and the plan has
+            # on_enter_disabled would issue a DISENGAGE, and the plan has
             # already decided both. Broadcast manually so the controller
             # mirrors the adopted state exactly as it would a transition.
             self.fsm.set_state(plan.state)
@@ -1286,10 +1432,44 @@ class ElsFsm:
 
     def engaged_gear(self) -> str:
         """The gearbox position the controller currently believes is engaged:
-        the stored position if it is in the table, else the reference, and ""
-        with no gearbox (a stored position is then ignored)."""
-        return self.gear_table().resolve(
-            getattr(self.servo, "gearbox_position", ""))
+        the position being measured while a gearbox measurement runs, else
+        the stored position; either one only if it is in the table, else the
+        reference, and "" with no gearbox (a stored position is then
+        ignored)."""
+        return self.gear_table().resolve(drive_position_of(self.servo))
+
+    def measured_gear(self) -> str:
+        """The position a gearbox measurement is driving in, or ""."""
+        m = getattr(self.servo, "gearbox_measuring", "")
+        return m if isinstance(m, str) else ""
+
+    def drive_for_measurement(self, position: str) -> None:
+        """Drive in `position` while its factor is measured, or in the stored
+        position again with "".
+
+        The lever is in the measured position for every pass of a gearbox
+        measurement (els_gear_survey.py), so the take-up, the retract, the
+        sync ratio and the calibration basis must be in its steps. They take
+        its NOMINAL factor from the gearbox table, the one the measurement
+        checks against, which is within the scatter of the measured one.
+
+        The position must be in the table (the measurement refuses one that
+        is not); a name that is not reads as the reference, as everywhere
+        else. Nothing is persisted: the servo's gearbox_measuring is not a
+        saved setting. Re-teaches what a gear adoption does, and clears a
+        latched thread reference when the factor changes.
+        """
+        if self.measured_gear() == position:
+            return
+        previous = self.engaged_gear()
+        factor_before = self.gear_table().factor(previous)
+        self.servo.gearbox_measuring = position
+        self._reteach_gear("gear change, measuring" if position
+                           else "gear change, measurement ended")
+        log.warning(f"gearbox measurement: driving in {self.engaged_gear() or '-'} "
+                    f"(was {previous or '-'})")
+        if self.gear_table().factor(self.engaged_gear()) != factor_before:
+            self._clear_reference_for_gear_change()
 
     def z_mm_per_count(self):
         """Z scale resolution in mm per count, or None if unknown."""
@@ -1338,6 +1518,16 @@ class ElsFsm:
         if not mm_per_count or servo_ratio == 0:
             return None
         return mm_per_count / float(servo_ratio)
+
+    def steps_per_reference_z_count(self):
+        """Commanded steps per Z count in the REFERENCE position, or None.
+
+        From the leadscrew and the scale alone (overshoot_binding), never
+        from a position's factor: what a gearbox measurement's meter reads a
+        pass against, so the factor it measures cannot be the one it was
+        driven at."""
+        binding = self.overshoot_binding()
+        return float(binding.steps_per_count) if binding is not None else None
 
     def adopt_gear(self, gear: str) -> None:
         """Make `gear` the engaged gearbox position, and re-teach the firmware
@@ -1393,17 +1583,44 @@ class ElsFsm:
         self.hal.request_clear_reference()
         log.warning("thread reference cleared for the gear change")
 
-    def _reteach_gear(self) -> None:
+    def _reteach_gear(self, why: str = "gear change") -> None:
         """Push what the engaged position changes: the sync ratios (firmware
         RAM written only on a property CHANGE) and the calibration legs in the
         engaged position's steps, as on connect."""
         for axis in self.board.axes:
             axis.push_sync_ratio()
-        legs = [int(v) for v in self.els.els_cal_measured_legs]
-        if len(legs) == 3 and all(v > 0 for v in legs):
-            table, gear = self.gear_table(), self.engaged_gear()
-            self.hal.set_cal_measured(
-                [table.steps_in_gear(v, gear) for v in legs])
+        self._teach_cal_basis(why)
+
+    def cal_basis_steps(self):
+        """The take-up gate's basis for the engaged gear, or None with no
+        accepted calibration on file (els_cal.cal_basis)."""
+        return cal_basis(self.els.els_cal_measured_legs, self.gear_table(),
+                         self.engaged_gear())
+
+    def _teach_cal_basis(self, why: str) -> None:
+        """Write the basis (calBasisSteps, protocolVersion 13) when there is
+        an accepted record. Only a real record, never zero: an absent
+        calibration stays absent. A basis too large for the uint16 register
+        is not written (a clamped one would be a number nobody measured); the
+        gate keeps the basis it has.
+
+        One INFO line either way, naming `why` (connect, gear change): a feed
+        pass's take-up threshold is the floor with or without a basis, so no
+        pass can show whether the basis was re-taught after a power cycle.
+        It runs on connect and on a gear change only, never per pass."""
+        basis = self.cal_basis_steps()
+        if basis is None:
+            log.info(f"calibration basis not taught: no accepted calibration "
+                     f"on file ({why})")
+            return
+        if basis > 0xFFFF:
+            log.error(f"calibration basis {basis} steps does not fit the "
+                      f"register; not written ({why})")
+            return
+        self.hal.set_cal_basis(basis)
+        gear = self.engaged_gear()
+        where = f" in gear {gear}" if gear else ""
+        log.info(f"calibration basis taught: {basis} steps{where} ({why})")
 
     def engaged_backlash_steps(self) -> int:
         """The commanded take-up in the ENGAGED gear's motor steps.

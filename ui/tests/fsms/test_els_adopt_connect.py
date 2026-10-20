@@ -1,20 +1,27 @@
-"""The rung-3 adopt-on-connect wiring, which ships DARK.
+"""The rung-3 adopt-on-connect wiring, live since 2026-10-17.
 
-Two properties, and the first one matters more: with any gate failed --
-flag off (the shipped state), no recorder, wrong schema, or a raising mode
-read -- reconcile_firmware_on_connect must be BYTE-FOR-BYTE today's
-state-keyed behavior, pinned here by comparing whole HAL call lists against
-a freshly recorded baseline rig. And with every gate passed, each policy
-cell of els_adopt.adopt_plan must land as the right HAL call sequence:
-sync-first where the teardown runs (the ordering idiom from
-test_els_reconnect_teardown), and NOTHING beyond the unconditional reads
-where it does not.
+Until then the path was dark behind a gate that required the retired
+mode-watch probe (diag schema 4), which no firmware can be built with, so it
+could never run. The mode now comes from the permanent machineMode register.
 
-The pre-existing reconcile tests (test_els_reconnect_teardown.py) stay
-untouched and green -- they pin the state-keyed branches themselves; this
-file pins the gates around them and the adopt path beside them.
+Three properties are pinned here:
+
+- WHEN it runs: only for a session with no job ('disabled', every session
+  after a UI restart). An engaged or alarmed session keeps the state-keyed
+  reconcile byte-for-byte, because a reconnect there is a link blip and the
+  session still holds the job. A raising mode read, or the flag off, also
+  gives byte-for-byte today's state-keyed behavior, compared as whole HAL
+  call lists against a freshly recorded baseline rig.
+- WHAT each policy cell of els_adopt.adopt_plan does: sync-first where the
+  teardown runs (the ordering idiom from test_els_reconnect_teardown), and
+  NOTHING beyond the unconditional reads where it does not.
+- That no diagnostic schema is consulted: the recorder's learned schema used
+  to be the gate, and the reconnect path resets it to None just before
+  reconcile runs.
+
+The state-keyed branches themselves are pinned by test_els_reconnect_teardown
+and test_els_fsm.
 """
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,7 +38,6 @@ from reflex.fsms.els_mode_watch import (
     MODE_CAL,
 )
 from reflex.fsms.fsm_event_bus import fsm_event_bus as bus
-from reflex.utils.devices import ELS_DIAG_SCHEMA_MODE_WATCH
 
 from tests.fsms.test_els_fsm import _build_fsm
 from tests.fsms.test_els_reconnect_teardown import _fsm_in_stopped, _reconnect
@@ -39,89 +45,152 @@ from tests.fsms.test_els_reconnect_teardown import _fsm_in_stopped, _reconnect
 
 # The only HAL traffic a hands-off cell may produce: the unconditional
 # cal-limits push, the pre-teardown snapshot, and the mode read itself.
-READS_ONLY = {'set_cal_limits', 'read_motion_in_flight', 'read_current_mode'}
+READS_ONLY = {'set_cal_limits', 'read_motion_in_flight', 'read_current_mode',
+              # protocolVersion 13: a session with no job reads the command
+              # channel's baseline at connect, through the fabricated-read
+              # guard.
+              'reads_baseline', 'read_command_seq', 'reads_fabricated_since'}
 
 
-def _adopt_fsm(*, schema=ELS_DIAG_SCHEMA_MODE_WATCH, mode=MODE_IDLE):
-    """FSM rigged with a recorder stub and a readable published mode."""
-    fsm = _build_fsm(hal=MagicMock())
-    fsm.diag_recorder = SimpleNamespace(schema=schema)
+def _hal():
+    """A MagicMock HAL whose read-failure accounting answers like the real
+    one: no failures. The connect-time commandSeq read passes its baseline
+    through reads_fabricated_since, and a MagicMock baseline differs per
+    instance, which would make two recordings of the same reconcile unequal
+    for no reason."""
+    hal = MagicMock()
+    hal.reads_baseline.return_value = 0
+    hal.reads_fabricated_since.return_value = False
+    hal.read_command_seq.return_value = 0
+    return hal
+
+
+def _adopt_fsm(*, mode=MODE_IDLE):
+    """A fresh session ('disabled') reading a given published mode."""
+    fsm = _build_fsm(hal=_hal())
     fsm.hal.read_current_mode.return_value = mode
     return fsm
 
 
-def _baseline_calls(*, moving, active=False, enable=True):
-    """Today's state-keyed reconcile, recorded fresh off an unrigged FSM.
-    Whole mock_calls (names AND arguments), so a comparison against it is
-    the byte-for-byte pin the dark wiring promises."""
-    fsm = _build_fsm(hal=MagicMock())
-    _reconnect(fsm, moving=moving, active=active, enable=enable)
-    return fsm.hal.mock_calls
+def _baseline_calls(*, moving, active=False, enable=True, state=None):
+    """Today's state-keyed reconcile, recorded fresh with the adopt path off.
+    Whole mock_calls (names AND arguments), so a comparison against it is the
+    byte-for-byte pin."""
+    saved = els_adopt.ELS_ADOPT_ON_CONNECT
+    els_adopt.ELS_ADOPT_ON_CONNECT = False
+    try:
+        fsm = _fsm_in(state)
+        fsm.hal.reset_mock()
+        _reconnect(fsm, moving=moving, active=active, enable=enable)
+        return fsm.hal.mock_calls
+    finally:
+        els_adopt.ELS_ADOPT_ON_CONNECT = saved
 
 
-# ─── darkness pins: any failed gate is exactly today ────────────────────────
+def _fsm_in(state):
+    """An FSM in `state`. 'stopped' is reached by a real engage; the others are
+    set directly, which is all reconcile reads of them."""
+    if state == 'stopped':
+        return _fsm_in_stopped()
+    fsm = _build_fsm(hal=_hal())
+    if state not in (None, 'disabled'):
+        fsm.fsm.set_state(state)
+    return fsm
 
-def test_flag_ships_off():
-    """The whole point of 'dark'. Flipping it is a decision the rung-2
-    census earns on hardware, not something a refactor may do in passing."""
-    assert els_adopt.ELS_ADOPT_ON_CONNECT is False
+
+# ─── when the adopt path runs ───────────────────────────────────────────────
+
+def test_flag_is_on():
+    """Rung 3 is live. Turning it back off is a decision, not a refactor."""
+    assert els_adopt.ELS_ADOPT_ON_CONNECT is True
 
 
 @pytest.mark.parametrize("moving", [False, True])
-def test_flag_off_with_schema_4_present_is_byte_for_byte_today(moving):
-    """THE DARKNESS PIN. Schema 4 recognized, mode readable, machine moving
-    or not -- with the shipped flag False none of it may matter: same calls,
-    same arguments, same order as a rig with no adopt wiring engaged, and
-    the mode register is never even read."""
-    fsm = _adopt_fsm()
+def test_flag_off_is_byte_for_byte_the_state_keyed_reconcile(monkeypatch, moving):
+    """The flag is the revert switch: off, the mode register is never read and
+    every call matches the state-keyed reconcile."""
+    monkeypatch.setattr(els_adopt, 'ELS_ADOPT_ON_CONNECT', False)
+    fsm = _adopt_fsm(mode=MODE_FEEDING)
     _reconnect(fsm, moving=moving)
     assert fsm.hal.mock_calls == _baseline_calls(moving=moving)
     fsm.hal.read_current_mode.assert_not_called()
 
 
-@pytest.mark.parametrize("schema", [None, 2])
-def test_flag_on_without_mode_watch_schema_is_today(monkeypatch, schema):
-    """Flag on but the recorder learned no probe (None) or a different one:
-    read_current_mode means something else under any other schema, so the
-    gate must refuse and the state-keyed reconcile run unchanged."""
-    monkeypatch.setattr(els_adopt, 'ELS_ADOPT_ON_CONNECT', True)
-    fsm = _adopt_fsm(schema=schema)
+def test_no_diagnostic_schema_is_consulted():
+    """The gate that kept rung 3 dark: adoption required the diag recorder to
+    have learned schema 4, a retired probe. The FSM no longer holds a recorder
+    at all, and a fresh session reads the mode straight away."""
+    fsm = _adopt_fsm(mode=MODE_FEEDING)
+    assert not hasattr(fsm, 'diag_recorder')
     _reconnect(fsm, moving=True)
-    assert fsm.hal.mock_calls == _baseline_calls(moving=True)
-    fsm.hal.read_current_mode.assert_not_called()
+    fsm.hal.read_current_mode.assert_called_once_with()
+    assert fsm.interrupted_pass is not None and fsm.interrupted_pass['mode'] == MODE_FEEDING
 
 
-def test_flag_on_with_no_recorder_wired_is_today(monkeypatch):
-    """An owner that never handed the FSM a recorder (diag_recorder=None)
-    keeps the gates failed rather than crashing or guessing."""
-    monkeypatch.setattr(els_adopt, 'ELS_ADOPT_ON_CONNECT', True)
-    fsm = _build_fsm(hal=MagicMock())
-    assert fsm.diag_recorder is None
-    _reconnect(fsm, moving=True)
-    assert fsm.hal.mock_calls == _baseline_calls(moving=True)
-
-
-def test_mode_read_raising_degrades_to_today(monkeypatch):
-    """The new path must never break connect. A raising read falls back to
+def test_mode_read_raising_degrades_to_the_state_keyed_reconcile():
+    """The adopt path must never break connect. A raising read falls back to
     the state-keyed reconcile -- identical behavior modulo the one read that
     raised, including the interrupted-pass notice for a moving machine."""
-    monkeypatch.setattr(els_adopt, 'ELS_ADOPT_ON_CONNECT', True)
     fsm = _adopt_fsm()
     fsm.hal.read_current_mode.side_effect = RuntimeError("boom")
     _reconnect(fsm, moving=True)
     survivors = [c for c in fsm.hal.mock_calls if c[0] != 'read_current_mode']
     assert survivors == _baseline_calls(moving=True)
     assert fsm.interrupted_pass is not None
+    assert fsm.interrupted_pass['teardown'] is True
 
 
-# ─── the policy cells, gates all passed ─────────────────────────────────────
+ENGAGED_OR_ALARMED = ['stopped', 'arming', 'cutting', 'retracting', 'alarm']
+
+
+@pytest.mark.parametrize("state", ENGAGED_OR_ALARMED)
+@pytest.mark.parametrize("mode", [MODE_FEEDING, MODE_HELD, MODE_OFF])
+def test_a_session_holding_a_job_keeps_the_state_keyed_reconcile(state, mode):
+    """A RECONNECT WHILE ENGAGED. board.connected drops on a single failed scan
+    and comes back on the next good one, so reconcile runs mid-session after
+    any link blip. The session still holds the job -- committed stop,
+    direction, the pass in flight -- so it must not be re-keyed on the
+    published mode: a mid-cut blip reading FEEDING would otherwise drop the
+    session to 'disabled' and tell the operator their own pass was found
+    running. The mode register is not even read."""
+    fsm = _fsm_in(state)
+    fsm.hal.reset_mock()
+    fsm.hal.read_current_mode.return_value = mode
+    moving = state in ('cutting', 'retracting')
+    _reconnect(fsm, moving=moving, active=(state == 'stopped'))
+
+    fsm.hal.read_current_mode.assert_not_called()
+    assert fsm.hal.mock_calls == _baseline_calls(
+        moving=moving, active=(state == 'stopped'), state=state)
+    assert fsm.state == state
+
+
+def test_mid_cut_reconnect_stays_cutting_with_no_notice():
+    """The case the gate above exists for, end to end: no writes beyond the
+    unconditional pushes, still 'cutting', no operator notice."""
+    events = []
+    unsub = bus.subscribe("els_pass_interrupted", lambda **kw: events.append(kw))
+    try:
+        fsm = _fsm_in('cutting')
+        fsm.hal.reset_mock()
+        fsm.hal.read_current_mode.return_value = MODE_FEEDING
+        _reconnect(fsm, moving=True)
+    finally:
+        unsub()
+    names = {c[0] for c in fsm.hal.method_calls}
+    assert not names & {'stop_sync', 'set_enable', 'set_active'}, names
+    assert fsm.state == 'cutting'
+    assert fsm.interrupted_pass is None
+    assert events == []
+
+
+# ─── the policy cells, for a fresh session ──────────────────────────────────
 
 @pytest.mark.parametrize("mode", [MODE_OFF, MODE_IDLE, MODE_JOG])
-def test_at_rest_mode_tears_down_sync_first_and_adopts_disabled(monkeypatch, mode):
+def test_at_rest_mode_tears_down_sync_first_and_adopts_disabled(mode):
     """OFF / IDLE / JOG: the standard teardown runs, and the ordering
     contract carries over from the state-keyed branch verbatim -- snapshot
     before anything is torn down, sync cleared before enable and active."""
-    monkeypatch.setattr(els_adopt, 'ELS_ADOPT_ON_CONNECT', True)
     fsm = _adopt_fsm(mode=mode)
     _reconnect(fsm, moving=False, active=True)
 
@@ -142,44 +211,23 @@ def test_at_rest_mode_tears_down_sync_first_and_adopts_disabled(monkeypatch, mod
     assert fsm.interrupted_pass is None
 
 
-def test_held_adopts_stopped_and_writes_nothing(monkeypatch):
-    """HELD: the machine is legitimately holding at a shoulder, and the hold
-    IS active == 1 -- any teardown would release it. Reads only, and the
-    session adopts 'stopped' (broadcast included, so the controller mirrors
-    it like any transition). The cell today's state-keyed code can never
-    reach after a restart."""
-    monkeypatch.setattr(els_adopt, 'ELS_ADOPT_ON_CONNECT', True)
-    states = []
-    unsub = bus.subscribe("state_changed", lambda state: states.append(state))
-    try:
-        fsm = _adopt_fsm(mode=MODE_HELD)
-        _reconnect(fsm, moving=False, active=True)
-    finally:
-        unsub()
-
-    assert {c[0] for c in fsm.hal.method_calls} == READS_ONLY, (
-        f"HELD must be hands-off, got: {[c[0] for c in fsm.hal.method_calls]}"
-    )
-    assert fsm.state == 'stopped'
-    assert states == ['stopped'], "adoption must broadcast like a transition"
-    assert fsm.interrupted_pass is None
-
-
-def test_held_on_a_mid_session_reconnect_does_not_rearm(monkeypatch):
-    """Same cell from an engaged session: the state-keyed 'stopped' branch
-    would rewrite direction/hysteresis and re-arm, and with the adopt path
-    gated in it must NOT -- the plan keys on the machine's mode, not on
-    which state this session happens to be in."""
-    monkeypatch.setattr(els_adopt, 'ELS_ADOPT_ON_CONNECT', True)
-    fsm = _fsm_in_stopped()
-    fsm.diag_recorder = SimpleNamespace(schema=ELS_DIAG_SCHEMA_MODE_WATCH)
-    fsm.hal.read_current_mode.return_value = MODE_HELD
+def test_held_on_a_fresh_session_tears_down_sync_first():
+    """HELD: a fresh session must not inherit the previous session's armed
+    stop (the 2026-08-01 rule, tests/system/test_warm_firmware.py), so the
+    hold is torn down as it always was: sync first, so releasing active moves
+    nothing. No notice: nothing was moving."""
+    fsm = _adopt_fsm(mode=MODE_HELD)
     _reconnect(fsm, moving=False, active=True)
 
-    assert {c[0] for c in fsm.hal.method_calls} == READS_ONLY, (
-        f"HELD must be hands-off, got: {[c[0] for c in fsm.hal.method_calls]}"
+    names = [c[0] for c in fsm.hal.method_calls]
+    assert 'stop_sync' in names, "HELD teardown never cleared sync"
+    assert names.index('stop_sync') < names.index('set_enable') < names.index('set_active'), (
+        f"sync, then enable, then active; got: {names}"
     )
-    assert fsm.state == 'stopped'
+    fsm.hal.set_enable.assert_called_once_with(False)
+    fsm.hal.set_active.assert_called_once_with(False)
+    assert fsm.state == 'disabled'
+    assert fsm.interrupted_pass is None
 
 
 def _assert_hands_off_and_announced(fsm, events, mode):
@@ -190,16 +238,17 @@ def _assert_hands_off_and_announced(fsm, events, mode):
     assert fsm.state == 'disabled'
     assert fsm.interrupted_pass is not None, "operator notice payload missing"
     assert fsm.interrupted_pass['mode'] == mode
+    assert fsm.interrupted_pass['teardown'] is False, (
+        "the notice must know nothing was stopped")
     assert fsm.interrupted_pass['moving'] is True   # snapshot rides along
     assert events, "els_pass_interrupted was never published"
 
 
 @pytest.mark.parametrize("mode", [MODE_FEEDING, MODE_MOVING, MODE_TAKEUP, MODE_CAL])
-def test_live_work_mode_is_hands_off_and_announced(monkeypatch, mode):
+def test_live_work_mode_is_hands_off_and_announced(mode):
     """FEEDING / MOVING / TAKEUP / CAL: work is in flight with its own
-    protection armed. No writes at all -- unlike today's accepted-cost
-    interrupt -- and the operator is told what was found."""
-    monkeypatch.setattr(els_adopt, 'ELS_ADOPT_ON_CONNECT', True)
+    protection armed. No writes at all -- unlike the state-keyed
+    accepted-cost interrupt -- and the operator is told what was found."""
     events = []
     unsub = bus.subscribe("els_pass_interrupted", lambda **kw: events.append(kw))
     try:
@@ -211,11 +260,10 @@ def test_live_work_mode_is_hands_off_and_announced(monkeypatch, mode):
 
 
 @pytest.mark.parametrize("mode", [8, 99])
-def test_unknown_mode_is_hands_off_and_announced(monkeypatch, mode):
+def test_unknown_mode_is_hands_off_and_announced(mode):
     """A mode value newer than this UI fails toward not-touching: same
     behavior as the live-work row, asserted separately because 'unknown'
     is its own policy cell, not an accident of the others."""
-    monkeypatch.setattr(els_adopt, 'ELS_ADOPT_ON_CONNECT', True)
     events = []
     unsub = bus.subscribe("els_pass_interrupted", lambda **kw: events.append(kw))
     try:

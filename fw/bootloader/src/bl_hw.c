@@ -429,10 +429,11 @@ void blHwJump(uint32_t appBase)
   /* Receive DMA off BEFORE the UART, so no request is left outstanding and
    * nothing is still writing into rxRing when the app takes the SRAM back.
    * Then UART off and reset; drain nothing -- the last reply was waited to
-   * TC. DMA2 goes back through its peripheral reset with its clock off,
-   * because the app configures no DMA at all (Core/Src/Ramps.c sets
-   * xTypeHW = USART_HW, so its Modbus receives one byte per USART interrupt)
-   * and would therefore never undo anything left behind here. */
+   * TC. DMA2 goes back through its peripheral reset with its clock off, so
+   * the app finds it in its reset state whatever it does with it: the app's
+   * Modbus transport (Core/Src/mb_app_hw.c) programs the two streams it uses
+   * from scratch, and older apps configured no DMA at all and would never
+   * have undone anything left behind here. */
   USART1->CR3 &= ~USART_CR3_DMAR;
   DMA2_Stream2->CR &= ~DMA_SxCR_EN;
   while (DMA2_Stream2->CR & DMA_SxCR_EN) { }

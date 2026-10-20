@@ -61,13 +61,11 @@ HAL_StatusTypeDef HAL_TIM_Encoder_Start(TIM_HandleTypeDef *h, uint32_t ch) {
 }
 HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
 
-void ModbusInit(modbusHandler_t *m)  { (void)m; }
-void ModbusStart(modbusHandler_t *m) { (void)m; }
+void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { (void)r; (void)n; (void)id; }
+int mbAppService(void) { return 0; }
+uint16_t mbAppReplies(void) { return 0; }
+uint32_t HAL_GetTick(void) { return 0; }
 
-osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
-osThreadId_t osThreadNew(osThreadFunc_t f, void *arg, const osThreadAttr_t *a) {
-    (void)f; (void)arg; (void)a; return nullptr;
-}
 
 extern uint16_t servoCycles;
 extern uint16_t servoCyclesCounter;
@@ -135,6 +133,11 @@ struct Rig {
     void init(uint32_t backlashSteps, int32_t motionThresh, bool coupled = true,
               int32_t lashSteps = 60) {
         std::memset(&data, 0, sizeof(data));
+        /* This rig never runs servoEnableTask, the only thing that drives ENA,
+         * so mark the drive as enabled long ago: a calibration waits for that
+         * before its first step (ELS_CAL_ENA_SETTLE_MS). */
+        data.enaSettle.on      = 1;
+        data.enaSettle.settled = 1;
         std::memset(tim,  0, sizeof(tim));
         std::memset(htim, 0, sizeof(htim));
         spindleCnt = 0;
@@ -581,7 +584,7 @@ int main() {
      * threshold. The ramp overshoots slightly past the take-up target, and each
      * overshoot step is extra carriage motion, so a case sitting one or two
      * counts from the boundary measures the overshoot rather than the guard.
-     * calMeasured 65, commanded 105 (margin 40), zPerStep 0.5, floor 2
+     * calBasisSteps 65, commanded 105 (margin 40), zPerStep 0.5, floor 2
      *   => expected 40*0.5 + 2 = 22 counts, threshold 11. */
     printf("\n-- PARTIAL ENGAGEMENT: carriage moves, but less than it should --\n");
     {
@@ -591,7 +594,7 @@ int main() {
         rig.lash.stepsPerZCount = 2;
         rig.data.shared.elsStop.zCountsPerPitch =
             rig.data.shared.elsStop.threadPitchSteps / 2.0f;
-        for (int i = 0; i < 3; i++) rig.data.shared.elsStop.calMeasured[i] = 65;
+        rig.data.shared.elsStop.calBasisSteps = 65;   /* the gate's basis (protocolVersion 13) */
 
         rig.armAndTrigger();
         rig.step(Z_CLEAR);
@@ -621,7 +624,7 @@ int main() {
         rig.lash.stepsPerZCount = 2;
         rig.data.shared.elsStop.zCountsPerPitch =
             rig.data.shared.elsStop.threadPitchSteps / 2.0f;
-        for (int i = 0; i < 3; i++) rig.data.shared.elsStop.calMeasured[i] = 65;
+        rig.data.shared.elsStop.calBasisSteps = 65;   /* the gate's basis (protocolVersion 13) */
 
         rig.armAndTrigger();
         rig.step(Z_CLEAR);
@@ -647,7 +650,7 @@ int main() {
         rig.lash.stepsPerZCount = 2;
         rig.data.shared.elsStop.zCountsPerPitch =
             rig.data.shared.elsStop.threadPitchSteps / 2.0f;
-        for (int i = 0; i < 3; i++) rig.data.shared.elsStop.calMeasured[i] = 65;
+        rig.data.shared.elsStop.calBasisSteps = 65;   /* the gate's basis (protocolVersion 13) */
 
         rig.armAndTrigger();
         rig.step(Z_CLEAR);

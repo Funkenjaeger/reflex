@@ -49,7 +49,13 @@ PTY_PATH_RE = re.compile(r"Modbus serial: (/dev/pts/\d+)")
 # under emulator/src and emulator/CMakeLists.txt) -- checked for staleness
 # so the fixture rebuilds when firmware code changes underneath the tests,
 # not just when the binary is missing outright.
-_FW_SRC_NAMES = ("Ramps.c", "Modbus.c", "Scales.c", "UARTCallback.c")
+_FW_SRC_NAMES = ("Ramps.c", "Scales.c", "mb_app.c")
+# ...and the ones outside Core/Src, relative to the firmware tree: the Modbus
+# RTU core, the app's port of it, and the receive-ring arithmetic it shares
+# with the bootloader.
+_FW_OTHER_SRCS = ("modbus_rtu/mb_rtu.c", "modbus_rtu/mb_rtu.h",
+                  "Core/mb_port/mb_rtu_port.h",
+                  "bootloader/core/bl_rxring.c", "bootloader/core/bl_rxring.h")
 
 
 def _reflex_fw_sha() -> str:
@@ -99,6 +105,11 @@ def _emulator_sources_newer_than(mtime: float) -> bool:
     fw_src_dir = REFLEX_FW_DIR / "Core" / "Src"
     for name in _FW_SRC_NAMES:
         path = fw_src_dir / name
+        if path.is_file():
+            candidates.append(path)
+
+    for rel in _FW_OTHER_SRCS:
+        path = REFLEX_FW_DIR / rel
         if path.is_file():
             candidates.append(path)
 

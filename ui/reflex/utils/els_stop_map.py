@@ -7,9 +7,9 @@ emitted into the format strings below, which is the whole point.
 
 import struct
 
-PROTOCOL_VERSION = 12
+PROTOCOL_VERSION = 13
 ELS_STOP_BASE = 104
-TOTAL_REGISTERS = 142
+TOTAL_REGISTERS = 146
 
 HOT_BASE = 0
 HOT_COUNT = 56
@@ -35,7 +35,7 @@ HOT_FIELDS = [
     "protocolVersion",
     "takeupSeq",
     "takeupResult",
-    "clearRefSeq",
+    "commandSeq",
     "lastTakeupZDelta",
     "takeupThreshCounts",
     "stepPulseMinCycles",
@@ -73,7 +73,7 @@ HOT_LAYOUT = [
     ("protocolVersion", 1),
     ("takeupSeq", 1),
     ("takeupResult", 1),
-    ("clearRefSeq", 1),
+    ("commandSeq", 1),
     ("lastTakeupZDelta", 1),
     ("takeupThreshCounts", 1),
     ("stepPulseMinCycles", 1),
@@ -92,8 +92,8 @@ HOT_LAYOUT = [
 ]
 
 COLD_BASE = 56
-COLD_COUNT = 86
-COLD_FORMAT = "<HHHHHhiHH3iiiIHHHHii50hHH4H"
+COLD_COUNT = 90
+COLD_FORMAT = "<HHHHHhiHHHHHH3iiiIHHHHii50hHH4H"
 COLD_FIELDS = [
     "calCommand",
     "calSeq",
@@ -104,6 +104,10 @@ COLD_FIELDS = [
     "phaseOffsetPending",
     "bootCommand",
     "bootSeq",
+    "clearRefSeq",
+    "command",
+    "commandResult",
+    "calBasisSteps",
     "calMeasured",
     "calCeilingSteps",
     "calMotionThreshCounts",
@@ -129,6 +133,10 @@ COLD_LAYOUT = [
     ("phaseOffsetPending", 1),
     ("bootCommand", 1),
     ("bootSeq", 1),
+    ("clearRefSeq", 1),
+    ("command", 1),
+    ("commandResult", 1),
+    ("calBasisSteps", 1),
     ("calMeasured", 3),
     ("calCeilingSteps", 1),
     ("calMotionThreshCounts", 1),
@@ -166,7 +174,7 @@ OFFSETS = {
     "protocolVersion": 28,
     "takeupSeq": 29,
     "takeupResult": 30,
-    "clearRefSeq": 31,
+    "commandSeq": 31,
     "lastTakeupZDelta": 32,
     "takeupThreshCounts": 34,
     "stepPulseMinCycles": 36,
@@ -191,20 +199,24 @@ OFFSETS = {
     "phaseOffsetPending": 62,
     "bootCommand": 64,
     "bootSeq": 65,
-    "calMeasured": 66,
-    "calCeilingSteps": 72,
-    "calMotionThreshCounts": 74,
-    "executionCyclesPeak": 76,
-    "diagSchema": 78,
-    "diagBucketTicks": 79,
-    "diagBucketCount": 80,
-    "clearRefCommand": 81,
-    "diagSettleTicks": 82,
-    "diagNetCounts": 84,
-    "diagTrace": 86,
-    "diagCaptureTicks": 136,
-    "diagEndReason": 137,
-    "diagReserved": 138,
+    "clearRefSeq": 66,
+    "command": 67,
+    "commandResult": 68,
+    "calBasisSteps": 69,
+    "calMeasured": 70,
+    "calCeilingSteps": 76,
+    "calMotionThreshCounts": 78,
+    "executionCyclesPeak": 80,
+    "diagSchema": 82,
+    "diagBucketTicks": 83,
+    "diagBucketCount": 84,
+    "clearRefCommand": 85,
+    "diagSettleTicks": 86,
+    "diagNetCounts": 88,
+    "diagTrace": 90,
+    "diagCaptureTicks": 140,
+    "diagEndReason": 141,
+    "diagReserved": 142,
 }
 
 
@@ -260,7 +272,7 @@ typedef struct {
   uint16_t protocolVersion;
   uint16_t takeupSeq;
   uint16_t takeupResult;
-  uint16_t clearRefSeq;
+  uint16_t commandSeq;
   int32_t lastTakeupZDelta;
   int32_t takeupThreshCounts;
   uint32_t stepPulseMinCycles;
@@ -285,6 +297,10 @@ typedef struct {
   int32_t phaseOffsetPending;
   uint16_t bootCommand;
   uint16_t bootSeq;
+  uint16_t clearRefSeq;
+  uint16_t command;
+  uint16_t commandResult;
+  uint16_t calBasisSteps;
   int32_t calMeasured[3];
   int32_t calCeilingSteps;
   int32_t calMotionThreshCounts;

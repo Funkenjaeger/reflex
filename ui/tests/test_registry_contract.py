@@ -10,6 +10,11 @@ by hand:
   probe registered on one side and forgotten on
   the other passes CI green and fails silently at the lathe (the recorder
   goes dormant against an id it does not recognise).
+- **ELS command channel values** — ``fw/Core/Inc/els_command.h``
+  ``ELS_CMD_*`` (command ids and ``ELS_CMD_RESULT_*`` outcomes) versus
+  ``ui/reflex/fsms/els_command.py`` ``CMD_*``. A result code the UI does not
+  know is shown as a refusal by range, so a drift here would turn a success
+  into a fallback teardown, or a refusal into a silent success.
 - **Machine-mode wire values** — ``fw/Core/Inc/els_machine_mode.h``
   ``ELS_MMODE_*`` versus ``ui/reflex/fsms/els_mode_watch.py`` ``MODE_*``.
   Both sides pin their own copy as literals; until this test, nothing
@@ -115,6 +120,45 @@ def test_known_schemas_are_defined_ids_and_never_none():
     assert devices.ELS_DIAG_SCHEMA_NONE not in KNOWN_SCHEMAS, (
         "0 means 'no probe'; recording under it would store meaningless zeros"
     )
+
+
+# ── ELS command channel values ──────────────────────────────────────────
+
+
+def _fw_command_values():
+    text = (FW_DIR / "Core" / "Inc" / "els_command.h").read_text(encoding="utf-8")
+    return _parse_defines(text, "ELS_CMD_")
+
+
+def test_command_values_match_exactly_in_both_directions():
+    import reflex.fsms.els_command as els_command
+    fw = _fw_command_values()
+    assert {"NONE", "DISENGAGE", "RESULT_OK"} <= set(fw), (
+        "parsed too few ELS_CMD_* defines -- parser or header moved")
+    ui = {
+        n.removeprefix("CMD_"): getattr(els_command, n)
+        for n in dir(els_command)
+        if n.startswith("CMD_") and isinstance(getattr(els_command, n), int)
+    }
+    assert ui == fw, (
+        f"command channel registries diverged (append, never renumber):\n"
+        f"  firmware: {dict(sorted(fw.items(), key=lambda kv: kv[1]))}\n"
+        f"  ui:       {dict(sorted(ui.items(), key=lambda kv: kv[1]))}"
+    )
+
+
+def test_every_result_is_classified_by_its_range():
+    """Successes are below 0x100 and refusals at or above it; the UI's
+    result_is_ok is that rule, so a code it does not know still lands on the
+    right side."""
+    import reflex.fsms.els_command as els_command
+    for name, value in _fw_command_values().items():
+        if not name.startswith("RESULT_"):
+            continue
+        want = name.startswith("RESULT_OK")
+        assert els_command.result_is_ok(value) is want, (name, value)
+    assert set(els_command.RESULT_NAMES) == {
+        v for n, v in _fw_command_values().items() if n.startswith("RESULT_")}
 
 
 # ── machine-mode wire values ───────────────────────────────────────────

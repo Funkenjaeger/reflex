@@ -14,13 +14,17 @@
 #include <pty.h>
 #include <termios.h>
 #include <errno.h>
+#include <chrono>
 
 extern "C" {
 #include "emulator_state.h"
-#include "stm32f4xx_hal_uart.h"
-extern UART_HandleTypeDef huart1;
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
 }
+#include "mb_hw_emu.h"
+
+/* How long the line must be quiet before the emulated USART raises IDLE. The
+ * chip's is one character time (87 us at 115200); a host write reaches the
+ * PTY in one piece, so anything short works, and 1 ms is the poll's grain. */
+static constexpr auto IDLE_AFTER = std::chrono::milliseconds(1);
 
 Transport::Transport(const EmuConfig &cfg)
     : pty_enabled(cfg.pty_enabled), tcp_enabled(cfg.tcp_enabled), tcp_port(cfg.tcp_port),
@@ -136,16 +140,21 @@ void Transport::sendToClients(const uint8_t *data, uint16_t size) {
 }
 
 void Transport::injectByte(uint8_t byte) {
-    /* Feed byte into firmware's Modbus UART RX path */
-    if (emu_hw.uart_rx_armed && emu_hw.uart_rx_buf) {
-        *emu_hw.uart_rx_buf = byte;
-        emu_hw.uart_rx_armed = 0;
-        HAL_UART_RxCpltCallback(&huart1);
-    }
+    /* Into the firmware's receive ring, as the chip's DMA would land it. */
+    mbEmuRxByte(byte);
 }
 
 void Transport::pollLoop() {
+    bool rxPending = false;   /* bytes received since the last IDLE */
+    auto lastRx = std::chrono::steady_clock::now();
+
     while (running.load()) {
+        /* IDLE: the line has been quiet since the last byte. */
+        if (rxPending && std::chrono::steady_clock::now() - lastRx >= IDLE_AFTER) {
+            mbEmuRxIdle();
+            rxPending = false;
+        }
+
         struct pollfd fds[3];
         int nfds = 0;
 
@@ -172,7 +181,7 @@ void Transport::pollLoop() {
             continue;
         }
 
-        int ret = poll(fds, nfds, 10 /* 10ms timeout */);
+        int ret = poll(fds, nfds, rxPending ? 1 : 10 /* ms */);
         if (ret <= 0) continue;
 
         for (int i = 0; i < nfds; i++) {
@@ -186,6 +195,8 @@ void Transport::pollLoop() {
                     for (ssize_t j = 0; j < n; j++) {
                         injectByte(buf[j]);
                     }
+                    rxPending = true;
+                    lastRx = std::chrono::steady_clock::now();
                 }
             } else if (fds[i].fd == tcp_listen_fd) {
                 /* New TCP connection */
@@ -210,6 +221,8 @@ void Transport::pollLoop() {
                     for (ssize_t j = 0; j < n; j++) {
                         injectByte(buf[j]);
                     }
+                    rxPending = true;
+                    lastRx = std::chrono::steady_clock::now();
                 }
             }
         }

@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Firmware source directory
 set(FW_DIR ${CMAKE_SOURCE_DIR}/..)
 
-# --- Shim headers come FIRST so they override the real HAL/FreeRTOS ---
+# --- Shim headers come FIRST so they override the real HAL ---
 include_directories(
     ${CMAKE_SOURCE_DIR}/shim
     ${CMAKE_SOURCE_DIR}/src
@@ -58,15 +58,15 @@ add_compile_options(-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initi
 # --- Firmware C sources (compiled against our shim) ---
 set(FW_SOURCES
     ${FW_DIR}/Core/Src/Ramps.c
-    ${FW_DIR}/Core/Src/Modbus.c
     ${FW_DIR}/Core/Src/Scales.c
-    ${FW_DIR}/Core/Src/UARTCallback.c
+    ${FW_DIR}/Core/Src/mb_app.c
+    ${FW_DIR}/modbus_rtu/mb_rtu.c
+    ${FW_DIR}/bootloader/core/bl_rxring.c
 )
 
 # --- Shim implementations ---
 set(SHIM_SOURCES
     ${CMAKE_SOURCE_DIR}/shim/hal_shim.c
-    ${CMAKE_SOURCE_DIR}/shim/freertos_shim.cpp
 )
 
 # --- Emulator C++ sources ---
@@ -76,6 +76,7 @@ set(EMU_SOURCES
     ${CMAKE_SOURCE_DIR}/src/transport.cpp
     ${CMAKE_SOURCE_DIR}/src/dashboard.cpp
     ${CMAKE_SOURCE_DIR}/src/config.cpp
+    ${CMAKE_SOURCE_DIR}/src/mb_hw_emu.cpp
 )
 
 add_executable(lathe-emulator
@@ -88,7 +89,23 @@ target_link_libraries(lathe-emulator
     pthread
     m
 )
+# The application's Modbus slave: the RTU core and the app's port of it
+# (Core/mb_port, kept off every other target's path so the native tests and
+# the bootloader core keep resolving their own mb_rtu_port.h).
+target_include_directories(lathe-emulator PRIVATE ${FW_DIR}/modbus_rtu ${FW_DIR}/Core/mb_port)
 add_dependencies(lathe-emulator reflex_build_rev)
+
+# The same emulator with the isr-gap probe compiled in, the way the bench
+# builds it (fw/DIAG.md, isr-gap), for host_reset_pty_test below.
+add_executable(lathe-emulator-isr-gap
+    ${FW_SOURCES}
+    ${SHIM_SOURCES}
+    ${EMU_SOURCES}
+)
+target_link_libraries(lathe-emulator-isr-gap pthread m)
+target_include_directories(lathe-emulator-isr-gap PRIVATE ${FW_DIR}/modbus_rtu ${FW_DIR}/Core/mb_port)
+target_compile_definitions(lathe-emulator-isr-gap PRIVATE ELS_DIAG_PROBE=ELS_DIAG_SCHEMA_ISR_GAP)
+add_dependencies(lathe-emulator-isr-gap reflex_build_rev)
 
 # Allow C++ files to include C headers
 set_source_files_properties(${FW_SOURCES} PROPERTIES LANGUAGE C)
@@ -182,7 +199,7 @@ add_test(NAME els_halfnut_test COMMAND els_halfnut_test)
 # First-tick boot-delta int16 wrap guard: exercises LathePhysics directly
 # (same link shape as els_halfnut_test) and replays Ramps.c's own per-tick
 # int16-cast-and-accumulate DRO logic against it, so it proves the guard
-# without linking Ramps.c/Modbus.c or the Modbus register map.
+# without linking Ramps.c, the Modbus slave or the register map.
 add_executable(els_boot_delta_test ${CMAKE_SOURCE_DIR}/test/els_boot_delta_test.cpp
     ${CMAKE_SOURCE_DIR}/src/physics.cpp
     ${CMAKE_SOURCE_DIR}/src/config.cpp)
@@ -191,8 +208,8 @@ add_test(NAME els_boot_delta_test COMMAND els_boot_delta_test)
 
 # KNOWN-FAILING REPRODUCTION: ELS stop resume re-latch defect.
 # Drives the REAL Core/Src/Ramps.c ISR (SynchroRefreshTimerIsr) directly; the
-# test file stubs every Ramps.c external (HAL GPIO/TIM, Modbus, CMSIS-RTOS,
-# emu_hw/emu_log_trace/emu_dwt), so neither hal_shim.c nor Modbus.c is linked.
+# test file stubs every Ramps.c external (HAL GPIO/TIM/tick, Modbus,
+# emu_hw/emu_log_trace/emu_dwt), so neither hal_shim.c nor mb_app.c is linked.
 # Contains a defect case (resume without retracting) that FAILS on purpose and
 # a control case (resume after retracting) that passes -- the pair is what
 # distinguishes a real defect from a broken test. Expect this target RED until
@@ -292,6 +309,18 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
 target_link_libraries(els_cal_nudge_refusal_test m pthread)
 add_test(NAME els_cal_nudge_refusal_test COMMAND els_cal_nudge_refusal_test)
+
+# A taken calibration request must not step until the drive has been enabled
+# for ELS_CAL_ENA_SETTLE_MS (servoEnableTask's enaSettle.settled). Replays a
+# failing sequence seen on the machine -- a job, DISENGAGE, five calibrations,
+# enable jolts and a carriage shifted with the drive off -- against a drive
+# that drops every pulse for 880 ms after ENA goes on, and covers aborts
+# during the wait.
+add_executable(els_cal_ena_settle_test
+    ${CMAKE_SOURCE_DIR}/test/els_cal_ena_settle_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+target_link_libraries(els_cal_ena_settle_test m pthread)
+add_test(NAME els_cal_ena_settle_test COMMAND els_cal_ena_settle_test)
 
 # Diagnostic scratchpad leak guard. The source asserts the OPPOSITE thing in
 # each configuration: a release build must advertise no probe (diagSchema == 0),
@@ -575,6 +604,17 @@ add_executable(mb_rtu_test ${CMAKE_SOURCE_DIR}/test/mb_rtu_test.cpp ${FW_DIR}/mo
 target_include_directories(mb_rtu_test PRIVATE ${CMAKE_SOURCE_DIR}/test/mb_rtu_port ${FW_DIR}/modbus_rtu)
 add_test(NAME mb_rtu_test COMMAND mb_rtu_test)
 
+# The application's binding of that core (Core/Src/mb_app.c and its port,
+# Core/mb_port/mb_rtu_port.h) over the real rampsSharedData_t and the
+# generated access table, through a scripted transport: what a host sees of
+# the map, the identity window, the bootloader window and ro_firmware, and
+# the reply counter the boot-attempt clear rides on.
+add_executable(mb_app_test ${CMAKE_SOURCE_DIR}/test/mb_app_test.cpp
+    ${FW_DIR}/Core/Src/mb_app.c ${FW_DIR}/modbus_rtu/mb_rtu.c)
+target_include_directories(mb_app_test PRIVATE ${FW_DIR}/modbus_rtu ${FW_DIR}/Core/mb_port)
+set_source_files_properties(${FW_DIR}/Core/Src/mb_app.c PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+add_test(NAME mb_app_test COMMAND mb_app_test)
+
 # The address resolver both stages share (header-only).
 add_executable(modbus_window_test ${CMAKE_SOURCE_DIR}/test/modbus_window_test.cpp)
 add_test(NAME modbus_window_test COMMAND modbus_window_test)
@@ -611,7 +651,7 @@ add_executable(bl_core_test ${CMAKE_SOURCE_DIR}/test/bl_core_test.cpp ${BL_CORE_
 target_include_directories(bl_core_test PRIVATE ${BL_CORE_DIR} ${FW_DIR}/modbus_rtu)
 add_test(NAME bl_core_test COMMAND bl_core_test)
 
-# The identity window END TO END: the real lathe-emulator (real Modbus.c,
+# The identity window END TO END: the real lathe-emulator (real mb_app.c,
 # real Ramps.c) on a PTY, read by the real host client
 # (scripts/modbus-flash.py --identity) -- plus the app's exception-2 answer
 # at the bootloader window. Skips (not fails) without pyserial.
@@ -622,6 +662,16 @@ if (REFLEX_TEST_PYTHON)
                 $<TARGET_FILE:lathe-emulator> ${FW_DIR}/scripts/modbus-flash.py ${REFLEX_BUILD_REV_H}
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     set_tests_properties(identity_window_pty_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+    # Host resets END TO END: scripts/isr-gap.py --reset against the probe
+    # build, and the release build's resettable counters, over the real slave
+    # and its generated access tables. Skips (not fails) without pyserial.
+    add_test(NAME host_reset_pty_test
+        COMMAND ${REFLEX_TEST_PYTHON} ${CMAKE_SOURCE_DIR}/test/host_reset_pty_test.py
+                $<TARGET_FILE:lathe-emulator-isr-gap> $<TARGET_FILE:lathe-emulator>
+                ${FW_DIR}/scripts/isr-gap.py ${FW_DIR}/scripts/modbus-flash.py
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(host_reset_pty_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
 
     # The host client's bounded retry (scripts/modbus-flash.py), against a fake
     # board that drops requests and replies on demand. Asserts on how many times
@@ -645,3 +695,39 @@ set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
     PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
 target_link_libraries(els_boot_command_test m pthread)
 add_test(NAME els_boot_command_test COMMAND els_boot_command_test)
+
+# The ELS command channel (protocolVersion 13): every machine mode x
+# DISENGAGE, on the real ISR, with servoEnableTask's tick modeled around
+# elsCommandIntake / elsCommandFinish (Ramps.c). Also pins the ack waiting for
+# the ISR's pass, a host syncEnable write landing inside the consumption, the
+# unknown-command refusal and one-command-in-flight.
+add_executable(els_command_test
+    ${CMAKE_SOURCE_DIR}/test/els_command_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_command_test m pthread)
+add_test(NAME els_command_test COMMAND els_command_test)
+
+# The calMeasured split (protocolVersion 13): calBasisSteps moves only on a
+# successful run, and the take-up threshold derives from it, not from
+# calMeasured. Real ISR, the Lash/Rig pair from els_cal_isr_attribution_test.
+add_executable(els_cal_basis_test
+    ${CMAKE_SOURCE_DIR}/test/els_cal_basis_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_cal_basis_test m pthread)
+add_test(NAME els_cal_basis_test COMMAND els_cal_basis_test)
+
+# fastData.stepsToGo, the host's view of the commanded-move backlog, equals
+# servo.stepsToGo after every ISR pass, including after the paths that set
+# servo.stepsToGo directly (a calibration ending, the end-of-job block).
+# Real ISR, the Lash/Rig pair from els_cal_isr_attribution_test.
+add_executable(els_stepstogo_mirror_test
+    ${CMAKE_SOURCE_DIR}/test/els_stepstogo_mirror_test.cpp
+    ${FW_DIR}/Core/Src/Ramps.c)
+set_source_files_properties(${FW_DIR}/Core/Src/Ramps.c
+    PROPERTIES LANGUAGE C COMPILE_FLAGS "-std=gnu11")
+target_link_libraries(els_stepstogo_mirror_test m pthread)
+add_test(NAME els_stepstogo_mirror_test COMMAND els_stepstogo_mirror_test)
