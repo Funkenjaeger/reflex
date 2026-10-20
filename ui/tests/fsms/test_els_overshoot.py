@@ -897,3 +897,54 @@ def test_the_controller_wires_the_guard_to_the_cue_and_the_result():
     src = inspect.getsource(ElsUiController.__init__)
     assert "cue=self._set_measure_cue" in src
     assert "self._open_overshoot_result()" in src
+
+
+
+class _OutcomeOwner:
+    """What _poll_stop_outcome and the strip tap touch, without a full
+    ElsUiController (see _CueOwner)."""
+
+    def __init__(self, rpm=342.0, sweep=True):
+        from types import SimpleNamespace
+        from reflex.fsms.ui_controller import ElsUiController as C
+        self.feed_name, self.feed_unit = "0.020", "in/rev"
+        self.calls = []
+        self.opened = []
+        self._board = SimpleNamespace(formats=SimpleNamespace(factor=1))
+        self._stop_outcome = SimpleNamespace(poll=lambda: "an outcome")
+        self._els = SimpleNamespace(get_spindle_speed=rpm)
+        self._overshoot = SimpleNamespace(
+            on_outcome=lambda o, f, s=None: self.calls.append((o, f, s)),
+            sweep_running=sweep)
+        self._poll_stop_outcome = C._poll_stop_outcome.__get__(self)
+        self._stop_setting = C._stop_setting.__get__(self)
+        self.measure_cue_tapped = C.measure_cue_tapped.__get__(self)
+
+    def _open_overshoot_result(self):
+        self.opened.append(True)
+
+
+def test_each_stop_goes_to_the_guard_with_the_feed_and_the_rpm():
+    from reflex.fsms.els_overshoot_survey import Setting
+    c = _OutcomeOwner(rpm=lambda: -342.0)
+    c._poll_stop_outcome()
+    assert c.calls == [("an outcome", 1.0, Setting("0.020", "in/rev", -342.0))]
+
+
+def test_an_unreadable_rpm_still_labels_the_stop_with_the_feed():
+    def broken():
+        raise AttributeError("no spindle axis")
+    c = _OutcomeOwner(rpm=broken)
+    c._poll_stop_outcome()
+    assert c.calls[0][2].feed == "0.020" and c.calls[0][2].rpm is None
+
+
+def test_a_tap_on_the_strip_opens_the_measure_window_only_during_a_sweep():
+    c = _OutcomeOwner(sweep=True)
+    assert c.measure_cue_tapped() is True
+    _pump_clock()
+    assert c.opened == [True]
+    c = _OutcomeOwner(sweep=False)
+    assert c.measure_cue_tapped() is False
+    _pump_clock()
+    assert c.opened == []

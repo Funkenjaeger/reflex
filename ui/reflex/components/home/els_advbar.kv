@@ -608,9 +608,14 @@
       #    The next step of a Detect or Sweep (fsms/els_overshoot_survey.py),
       #    driven by controller.measure_cue. Shown until the next pass starts,
       #    not on a timer; accent tint, because it is guidance, not a warning.
-      #    Same 65-character text contract as the strips above.
-      BoxLayout:
+      #    Same text budget as the strips above (CUE_BUDGET_PX in
+      #    els_overshoot_survey.py). While a sweep runs, a tap opens the
+      #    Measure window with the tally, but only while the strip lies over
+      #    the status gutter (els_advbar.MeasureCueStrip).
+      MeasureCueStrip:
         id: measure_cue
+        gutter: status_gutter
+        controller: root.controller
         orientation: 'horizontal'
         size_hint_y: None
         spacing: dp(8)
