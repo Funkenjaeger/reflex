@@ -17,6 +17,7 @@ from reflex.fsms.els_mode_watch import (ElsModeWatch, MODE_FEEDING, MODE_MOVING,
                                          MODE_TAKEUP, MODE_CAL)
 from reflex.fsms.els_overshoot import OffsetWriteLimiter, StopOffsetCorrector
 from reflex.fsms.els_overshoot_guard import OvershootGuard
+from reflex.fsms.els_overshoot_survey import Setting
 from reflex.fsms.els_stop_outcome import StopOutcomeWatch
 from reflex.fsms import els_ratio
 from reflex.fsms.els_ratio import RatioWatch
@@ -163,6 +164,11 @@ class ElsUiController(EventDispatcher):
     retract_enabled     = BooleanProperty(False)
     wizard_enabled      = BooleanProperty(False)
     els_forward         = BooleanProperty(True)
+    # The feed selected on the ELS bar, its name as the bar shows it
+    # ("0.020") and its table's unit ("in/rev"), mirrored by ElsAdvancedBar.
+    # Read at each stop to label the overshoot sweep's groups.
+    feed_name           = StringProperty("")
+    feed_unit           = StringProperty("")
 
     # ── Hardware-state mirrors (kv binds to these) ─────────────────────
     engaged             = BooleanProperty(False)   # True iff domain FSM not in 'disabled'
@@ -677,7 +683,8 @@ class ElsUiController(EventDispatcher):
     def _open_overshoot_result(self) -> None:
         """A sweep ended: open its result for Save or Discard (first run on
         the development lathe, 2026-10-11: the app should open the window
-        itself).
+        itself). Also opens it on a tap of the strip while a sweep runs
+        (measure_cue_tapped), which then shows the tally.
         Imported here, as _on_pass_interrupted imports its popup: the
         controller must stay importable without the widget tree."""
         try:
@@ -1137,9 +1144,31 @@ class ElsUiController(EventDispatcher):
             if outcome is not None:
                 factor = float(getattr(getattr(self._board, "formats", None),
                                        "factor", 1) or 1)
-                self._overshoot.on_outcome(outcome, factor)
+                self._overshoot.on_outcome(outcome, factor, self._stop_setting())
         except Exception as e:
             log.warning(f"stop outcome tick failed: {e}")
+
+    def _stop_setting(self) -> Setting:
+        """How the stop that just settled was made: the feed on the ELS bar
+        and the spindle rpm the UI measures. Read on the tick the stop
+        settles, about 100 ms after it fired; the spindle does not change
+        speed in that time. An unknown rpm (no spindle axis) is None."""
+        try:
+            rpm = float(self._els.get_spindle_speed())
+        except Exception as e:
+            log.warning(f"spindle speed for the stop label not read: {e}")
+            rpm = None
+        return Setting(self.feed_name, self.feed_unit, rpm)
+
+    def measure_cue_tapped(self) -> bool:
+        """The measurement strip on the ELS bar was tapped. While an
+        overshoot sweep runs, open the Measure window, which shows the
+        tally; True when it did. Otherwise False, and the tap is the strip's
+        to pass on."""
+        if not self._overshoot.sweep_running:
+            return False
+        Clock.schedule_once(lambda _dt: self._open_overshoot_result(), 0)
+        return True
 
     def _poll_ratio_check(self, *args):
         """Feed the coupling-ratio check this tick's snapshot.

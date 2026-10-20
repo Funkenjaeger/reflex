@@ -332,3 +332,23 @@ def test_save_refuses_without_a_fitted_result():
     assert r.guard.survey.state == sv.REFUSED
     assert isinstance(r.guard.save_survey(), str)
     assert r.stored_text() == ""
+
+
+def test_the_setting_reaches_the_sweep_and_labels_its_group():
+    r = Rig(False)
+    r.guard.start_survey(sv.SWEEP)
+    at = sv.Setting("0.020", "in/rev", 342.0)
+    r.guard.on_outcome(out(coast=3, offset=0, rate=600.0), 1.0, at)
+    assert r.guard.survey.groups[0].setting == at
+    assert r.cues[-1] == "0.020 @ 340 rpm: 1/3 \u00b7 3 speeds left"
+
+
+def test_sweep_running_is_only_a_running_sweep():
+    r = Rig(False)
+    assert not r.guard.sweep_running
+    r.guard.start_survey(sv.DETECT)
+    assert not r.guard.sweep_running
+    r.guard.start_survey(sv.SWEEP)
+    assert r.guard.sweep_running
+    feed_sweep(r)
+    assert r.guard.survey.state == sv.FITTED and not r.guard.sweep_running

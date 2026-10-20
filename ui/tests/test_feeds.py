@@ -180,3 +180,12 @@ class TestTable:
         for key, entries in table.items():
             for fc in entries:
                 assert isinstance(fc, FeedConfiguration)
+
+
+
+def test_feed_unit_names_each_feed_tables_unit():
+    from reflex.feeds import feed_unit
+    assert feed_unit("Feed IN") == "in/rev"
+    assert feed_unit("Feed MM") == "mm/rev"
+    assert feed_unit("Thread MM") == "" and feed_unit("Thread IN") == ""
+    assert feed_unit("no such table") == ""

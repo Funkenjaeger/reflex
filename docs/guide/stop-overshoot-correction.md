@@ -58,17 +58,17 @@ result and the next step.
   coasted more than 2 counts), *no* (2 counts or less, at that feed), or
   *unknown*. It never reports a zero overshoot with confidence: a slow feed or a
   stop with steps still queued gives *unknown*.
-- **Sweep** is 3 passes at each of 4 feeds, about five minutes. Start with the
-  slowest feed you use and end with the fastest: the fastest becomes the top of
-  the table. The sweep refuses to make a table when the 3 passes at one feed
-  coast more than 3 counts apart, because the correction relies on the coast
-  repeating.
+- **Sweep** is 3 passes at each of 4 carriage speeds, about five minutes, in
+  any order. Use speeds from your slowest turning feed to faster than your
+  fastest: the fastest becomes the top of the table. The sweep refuses to make
+  a table when the 3 passes at one speed coast more than 3 counts apart,
+  because the correction relies on the coast repeating.
 
 When the sweep is complete, open **Measure** again and press **Save**. Saving
 does not turn the correction on.
 
-The table keeps, for each feed, the **worst** coast of its 3 passes, and
-the correction adds the margin to that. Between standstill and the slowest feed
+The table keeps, for each speed, the **worst** coast of its 3 passes, and
+the correction adds the margin to that. Between standstill and the slowest speed
 it is a straight line, which over-estimates the coast there: the safe side.
 
 ## What the table is bound to
@@ -124,7 +124,7 @@ Do this at each feed you intend to use, because the overshoot grows with speed.
 
 ## Faster than it was measured
 
-The table stops at the fastest feed of its sweep: on the development lathe about
+The table stops at the fastest speed of its sweep: on the development lathe about
 3,500 counts per second of Z travel, roughly 40 in/min on a 5 µm scale. Faster
 than that, the correction holds at its largest value and says so once per pass:
 

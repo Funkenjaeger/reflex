@@ -6,7 +6,10 @@ with the ELS bar as usual. So this popup only STARTS a measurement and then
 closes, together with Advanced ELS Settings underneath it, to give the ELS
 bar back. Each stop's result shows in a strip on the ELS bar until the next
 pass starts; open the popup again to see where the measurement is or stop it.
-At the end of a sweep the controller opens it by itself, for Save or Discard.
+While a sweep runs it shows the tally, one row per speed with its feed, rpm
+and count, and a tap on the strip opens it (ElsUiController.measure_cue_tapped).
+At the end of a sweep the controller opens it by itself, for Save or Discard,
+with the table under the same labels.
 The prompt carries a link and a QR code to the step-by-step guide on the docs
 site (first run on the development lathe, 2026-10-11: more instructions, but not more UI). The
 rules are in reflex/fsms/els_overshoot_survey.py.
@@ -26,7 +29,9 @@ load_kv(__file__)
 PROMPT_TEXT = (
     "Measure how far the carriage coasts after the stop fires.\n\n"
     "Detect: 1 pass. Does this machine need the correction?\n"
-    "Sweep: 3 passes at each of 4 feeds, about 5 minutes.\n\n"
+    "Sweep: 12 passes, 3 at each of 4 speeds, from your slowest to faster "
+    "than your fastest turning. These are test speeds, not cutting settings. "
+    "The guide has suggested settings.\n\n"
     "Feed mode, stop on, tool clear: every pass is in air."
 )
 
@@ -36,8 +41,8 @@ GUIDE_TEXT = "Step-by-step guide:\nfunkenjaeger.github.io/reflex/guide/measuring
 
 RUNNING_TEXT = (
     "Cut each pass to the stop. The strip on the ELS bar shows each result.\n\n"
-    "Sweep: 3 passes at each feed, slowest feed first. The fastest feed is "
-    "the top of the table."
+    "Sweep: 3 passes at each of 4 speeds, in any order. The fastest speed is "
+    "the top of the table. Tap the strip to open this window."
 )
 
 
@@ -119,7 +124,10 @@ class OvershootSurveyPopup(Popup):
             self.title = ("Detecting overshoot" if s.kind == sv.DETECT
                           else "Overshoot sweep")
             self.body_text = RUNNING_TEXT
-            self.detail_text = s.message
+            if s.kind == sv.SWEEP:
+                self.detail_text = "\n".join(s.tally() + [s.message])
+            else:
+                self.detail_text = s.message
         elif s.state == sv.FITTED:
             self.state = "fitted"
             self.title = "Sweep complete"

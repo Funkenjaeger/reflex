@@ -28,6 +28,7 @@ class _FakeElsBar(EventDispatcher):
     Kivy binding -- exercising the actual wiring, not just calling the
     handler by hand."""
     mode_name = StringProperty("Feed MM")
+    feed_name = StringProperty("0.10")
     els_forward = BooleanProperty(True)
 
 
@@ -246,6 +247,16 @@ def test_sync_is_threading_rebinds_live_when_mode_name_changes(advbar_factory, r
     assert bar.controller.is_threading is False
 
 
+def test_the_feed_rebinds_live_when_the_els_bar_changes(advbar_factory, running_app):
+    """The real `els_bar.bind(feed_name=..., mode_name=...)` wiring: the
+    controller reads these at each stop to label the overshoot sweep."""
+    fake_bar = _FakeElsBar(mode_name="Feed MM", feed_name="0.10")
+    bar = advbar_factory(els_bar=fake_bar)
+    assert (bar.controller.feed_name, bar.controller.feed_unit) == ("0.10", "mm/rev")
+    fake_bar.mode_name, fake_bar.feed_name = "Feed IN", "0.020"
+    assert (bar.controller.feed_name, bar.controller.feed_unit) == ("0.020", "in/rev")
+
+
 # ── Active gear readout ─────────────────────────────────────────────────────
 
 class _FakeServo(EventDispatcher):
@@ -328,3 +339,82 @@ def test_the_kv_gear_label_reads_the_live_text():
     a label bound to a constant would pass the property test above."""
     _kv, block = _label_gear_block()
     assert "text: root.gear_text" in block
+
+
+
+# ── the overshoot sweep's strip and feed ───────────────────────────────
+
+class _TapController:
+    def __init__(self, takes=True):
+        self.takes = takes
+        self.taps = 0
+
+    def measure_cue_tapped(self):
+        self.taps += 1
+        return self.takes
+
+
+def _strip(y, takes=True):
+    from types import SimpleNamespace
+    from kivy.uix.widget import Widget
+    from reflex.components.home.els_advbar import MeasureCueStrip
+    gutter = Widget(size_hint=(None, None), pos=(107, 230), size=(917, 26))
+    ctl = _TapController(takes)
+    strip = MeasureCueStrip(size_hint=(None, None), pos=(107, y), size=(917, 26),
+                            gutter=gutter, controller=ctl)
+    touch = SimpleNamespace(pos=(566, y + 13), x=566, y=y + 13,
+                            grab_current=None, ud={})
+    return strip, ctl, touch
+
+
+def test_a_tap_on_the_cue_strip_over_the_gutter_opens_the_measure_window():
+    strip, ctl, touch = _strip(230)
+    assert strip.on_touch_down(touch) is True
+    assert ctl.taps == 1
+
+
+def test_a_tap_with_no_sweep_running_is_passed_on():
+    strip, ctl, touch = _strip(230, takes=False)
+    assert not strip.on_touch_down(touch)
+    assert ctl.taps == 1
+
+
+def test_a_tap_on_the_cue_strip_over_the_control_row_is_passed_on():
+    """With another strip up above it, the cue strip lies over the control
+    row's top, where a tap belongs to the button under it."""
+    strip, ctl, touch = _strip(204)
+    assert not strip.on_touch_down(touch)
+    assert ctl.taps == 0
+
+
+def test_a_collapsed_cue_strip_takes_no_tap():
+    """No cue: the kv collapses the strip to zero height and disables it."""
+    strip, ctl, touch = _strip(230)
+    strip.height = 0
+    strip.disabled = True
+    assert not strip.on_touch_down(touch)
+    assert ctl.taps == 0
+
+
+def test_the_kv_cue_strip_is_the_tappable_one_and_knows_the_gutter():
+    from pathlib import Path
+    import reflex.components.home.els_advbar as mod
+    kv = (Path(mod.__file__).parent / "els_advbar.kv").read_text(encoding="utf-8")
+    block = kv[kv.index("id: measure_cue") - 40:]
+    block = block[:block.index("\n\n")]
+    assert "MeasureCueStrip:" in block
+    assert "gutter: status_gutter" in block
+    assert "controller: root.controller" in block
+
+
+def test_the_feed_on_the_els_bar_is_mirrored_into_the_controller():
+    from types import SimpleNamespace
+    from reflex.components.home.els_advbar import ElsAdvancedBar
+    bar = SimpleNamespace(
+        els_bar=SimpleNamespace(feed_name="0.020", mode_name="Feed IN"),
+        controller=SimpleNamespace(feed_name="", feed_unit=""))
+    ElsAdvancedBar._sync_feed(bar)
+    assert (bar.controller.feed_name, bar.controller.feed_unit) == ("0.020", "in/rev")
+    bar.els_bar.mode_name, bar.els_bar.feed_name = "Feed MM", "0.10"
+    ElsAdvancedBar._sync_feed(bar)
+    assert (bar.controller.feed_name, bar.controller.feed_unit) == ("0.10", "mm/rev")

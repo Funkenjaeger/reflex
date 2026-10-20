@@ -42,20 +42,26 @@ the two passes disagree, the result is unknown.
 
 ## Sweep
 
-Cut 3 passes at each of 4 feeds: 12 passes. Start with the slowest feed
-you use. End with the fastest. **The fastest feed is the top of the
+Cut 3 passes at each of 4 carriage speeds: 12 passes. Use speeds from
+your slowest turning feed to faster than your fastest. These are test
+speeds, not cutting settings. **The fastest speed is the top of the
 table.** Above it, the correction holds its top value and a notice tells
-you so.
+you so. The guide has example settings.
 
-Keep the feed the same for the 3 passes. A pass at a different speed is
-not counted, and the strip asks you to cut it again.
+Do the speeds in any order. Each pass is counted at the speed it ran at.
+The strip names each speed by its feed and spindle speed, for example
+**0.020 @ 340 rpm**, with its count. You can leave a speed and finish it
+later at the same setting. A pass at a fifth speed is not counted. During
+the sweep, touch the strip to see each speed and its count, when no other
+strip is above it.
 
 The sweep **refuses** to make a table if:
 
-- the 3 passes at one feed coast more than 3 counts apart. The coast is not
-  repeatable, and the correction needs a repeatable coast. Examine the
+- the 3 passes at one speed coast more than 3 counts apart. The coast is
+  not repeatable, and the correction needs a repeatable coast. Examine the
   drive and the drivetrain.
-- two feeds give the same speed. Use 4 different feeds.
+- the average speeds of two groups are within 10 %. Use 4 speeds more
+  than 10 % apart.
 
 When the sweep is complete, open **Overshoot table → Measure** and press
 **Save**. The table then is this machine's. Save does not turn the
