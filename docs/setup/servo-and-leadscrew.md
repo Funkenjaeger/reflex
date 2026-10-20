@@ -71,6 +71,9 @@ That is the development lathe's gearbox, used as the example in these docs.
   reference, as a decimal or a fraction, between 1/8 and 8, and any two at
   least 1.2 times apart.
 
+To measure a factor instead of typing it from the gear plate, see
+[Measuring the gearbox factor](../guide/measuring-gearbox-factor.md).
+
 Then set **Gearbox position** to the position the lever is in. The coupling
 check can catch a lever moved since; see the setting's help.
 

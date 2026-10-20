@@ -36,6 +36,19 @@ If an entry breaks a rule, the controller refuses it and shows the reason
 on the status bar. The table in effect stays as it was. The table cannot
 change during a pass.
 
+## Measure gearbox factor
+
+This measures one position's factor, so you do not have to trust the
+number on the gear plate. Put the lever in the position, press
+**Measure**, choose the position and press **Start**. Then cut 3 passes
+in air to the stop with the ELS bar, in Feed mode. The factor is read over
+each whole pass. When the passes agree, the window opens with the factor
+for **Save** or **Discard**. Save changes only that position in the
+table. The reference position is not measured: its factor is 1.
+
+The step-by-step guide is on the docs site:
+funkenjaeger.github.io/reflex/guide/measuring-gearbox-factor
+
 ## Gearbox position
 
 This shows only when there is a gearbox table. It tells the controller

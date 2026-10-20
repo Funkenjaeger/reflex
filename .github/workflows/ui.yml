@@ -1,6 +1,8 @@
 # UI default suite. Triggers include fw/Core/Inc because the cross-half
 # contract tests (register map, schema/mode registries) read the firmware
-# headers — a firmware-side header change must rerun them.
+# headers — a firmware-side header change must rerun them. It also checks the
+# refusal catalog (docs/guide/when-it-refuses.md), which imports the app's
+# message tables and so needs this job's venv; docs.yml defers it to here.
 name: ui
 
 on:
@@ -8,11 +10,15 @@ on:
     paths:
       - "ui/**"
       - "fw/Core/Inc/**"
+      - "tools/gen_refusal_catalogue.py"
+      - "docs/guide/when-it-refuses.md"
       - ".github/workflows/ui.yml"
   pull_request:
     paths:
       - "ui/**"
       - "fw/Core/Inc/**"
+      - "tools/gen_refusal_catalogue.py"
+      - "docs/guide/when-it-refuses.md"
       - ".github/workflows/ui.yml"
 
 jobs:
@@ -29,6 +35,12 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           uv venv
           uv sync
+      # Fails when a refusal string or its advice changed and the page was
+      # not regenerated, or the page was edited by hand. Verified, not
+      # regenerated: see docs.yml's header for why.
+      - name: The refusal catalog is current
+        working-directory: ui
+        run: uv run --frozen python ../tools/gen_refusal_catalogue.py --check
       - name: Run the default (non-system) suite
         working-directory: ui
         env:
