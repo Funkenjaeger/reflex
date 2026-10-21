@@ -35,14 +35,23 @@ After each stop, a strip on the ELS bar says what happened and what to do next. 
 stays until the next pass starts, so there is no need to wait for it or hurry to
 read it. Between passes, press **Retract**, then **Cut**.
 
+During a sweep the strip names each speed by the feed and the spindle speed of
+its first pass, for example **0.020 @ 340 rpm**: the feed as the ELS bar shows it,
+and the rpm rounded.
+
 | The strip says | Do this |
 |---|---|
 | … **Proceed with the next pass.** | Retract, then Cut again at the same setting. |
-| … **Proceed to the next faster setting.** | Retract, choose the next faster feed (or raise the spindle speed once the feed is at its maximum), then Cut. |
-| **Speed changed.** … **Repeat it at the same setting.** | The pass ran at a different speed from the others in its group. Go back to the group's setting and cut it again. |
-| **Pass** N **not counted.** … | That stop could not be measured. Cut the pass again. |
+| **0.020 @ 340 rpm: 2/3 · 3 speeds left** | The pass is counted at that speed. Cut the next pass at the same setting, or at a different one. |
+| **New speed: 0.040 @ 700 rpm, 1/3 · 0.020 @ 340 needs 1 more** | The pass started a new speed, and another speed is not finished. You can finish either first. |
+| **0.040 @ 700 rpm: 3/3 · 0.020 @ 340 needs 1 more** | That speed is finished. Go back to the setting the strip names. |
+| **Pass not counted: 4 speeds already open** | The pass was at a fifth speed. Use one of the four settings already started. |
+| **Pass not counted: 0.020 @ 340 rpm already has 3/3** | That speed is finished. Use a different setting. |
+| **Pass not counted.** … | That stop could not be measured. Cut the pass again. |
 
 Open **Measure** at any time to see where the measurement is, or to stop it.
+During a sweep, you can also touch the strip to open it, when no other strip is
+above it. It shows each speed started, with its feed, spindle speed and count.
 
 ## Detect
 
@@ -62,34 +71,53 @@ A coast close to the limit asks for a second pass first.
 
 ## Sweep
 
-Twelve passes: three at each of four settings, from the slowest you use to the
-fastest. **The fastest setting becomes the top of the table.** Above it, the
-correction holds its top value and says so.
+Twelve passes: three at each of four speeds. The speed is the carriage speed,
+which is the feed multiplied by the spindle speed. Do the speeds in any order.
+You can leave a speed before it has three passes and finish it later: set the
+feed and the spindle speed that the strip or **Measure** names for it.
 
-The four settings on the development lathe, as an example:
+Use four speeds from your slowest turning feed to faster than your fastest.
+**The fastest speed becomes the top of the table.** Above it, the correction
+holds its top value, and says so after a second there, but a faster stop coasts
+more than that. A light feed at a high spindle speed can move the carriage
+faster than a heavy feed at a low one. So the fastest test speed is faster than
+any carriage speed you use to turn to a shoulder. Count threading too: thread
+passes move the carriage fastest, so make the fastest test speed faster than the
+fastest thread pass you will run. These are test speeds, not cutting settings.
 
-| Group | Feed | Spindle |
+### A lathe with spindle speed control
+
+The four settings on the development lathe:
+
+| Feed | Spindle | Carriage speed |
 |---|---|---|
-| 1 | 0.010 in/rev | ~340 rpm |
-| 2 | 0.020 in/rev | ~340 rpm |
-| 3 | 0.040 in/rev | ~340 rpm |
-| 4 | 0.040 in/rev | ~700 rpm |
+| 0.010 in/rev | ~340 rpm | about 1.4 mm/s |
+| 0.020 in/rev | ~340 rpm | about 2.9 mm/s |
+| 0.040 in/rev | ~340 rpm | about 5.8 mm/s |
+| 0.040 in/rev | ~700 rpm | about 11.9 mm/s |
 
-The feed table stops at 0.040 in/rev, so the last group raises the spindle speed
-instead. That is what "the next faster setting" means.
+The feed table stops at 0.040 in/rev, so the fastest speed uses a higher spindle
+speed instead.
+
+### A lathe without spindle speed control
+
+On a lathe with belt or gear speeds only, use the feed table at the spindle
+speeds you have, over the same range. Keep the four speeds more than 10 % apart:
+the sweep counts a pass at a speed within 10 % of one already started as that
+speed.
 
 When the last pass is done, the **Measure** window opens by itself with the worst
-coast at each setting:
+coast at each speed, labeled with its feed and spindle speed:
 
 - **Save** makes it this machine's overshoot table. Saving does not turn the
   correction on: turn it on in **Advanced ELS settings**, then check it at a
   shoulder.
 - **Discard** keeps the table you had.
 
-The sweep **refuses** to make a table when the three passes at one setting coast
+The sweep **refuses** to make a table when the three passes at one speed coast
 more than 3 counts apart: the correction needs a coast that repeats, so examine the
-drive and the drivetrain first. It also refuses when two settings give the same
-speed.
+drive and the drivetrain first. It also refuses, which is rare, when the average
+speeds of two groups are within 10 %. Use speeds more than 10 % apart.
 
 ## After saving
 

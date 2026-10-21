@@ -210,7 +210,7 @@ def test_reopened_during_a_sweep_shows_progress_and_stop_cancels_it():
     g.survey.add(_stop(3, 600.0, 1))
     p._refresh()
     assert p.state == "running" and p.body_text == RUNNING_TEXT
-    assert p.detail_text == g.survey.message
+    assert p.detail_text.splitlines()[-1] == g.survey.message
     p.stop()
     assert g.survey is None and p.state == "prompt"
 
@@ -246,3 +246,36 @@ def test_closing_a_fitted_sweep_keeps_it_for_saving():
     _full_sweep(g.survey)
     p.close()
     assert g.survey is not None and g.survey.state == sv.FITTED
+
+
+
+def test_during_a_sweep_the_window_shows_the_tally_with_labels():
+    p = _Bare()
+    p.start("sweep")
+    g = p.app.els_uic.overshoot
+    g.survey.add(_stop(14, 1158.0, 1), sv.Setting("0.040", "in/rev", 342.0))
+    g.survey.add(_stop(15, 1158.0, 2), sv.Setting("0.040", "in/rev", 342.0))
+    g.survey.add(_stop(2, 290.0, 3), sv.Setting("0.010", "in/rev", 342.0))
+    p._refresh()
+    assert p.detail_text.splitlines() == [
+        "0.040 in/rev, ~340 rpm, 5.8 mm/s: 2/3, coasts 14, 15",
+        "0.010 in/rev, ~340 rpm, 1.4 mm/s: 1/3, coasts 2",
+        "2 more speeds to start.",
+        "New speed: 0.010 @ 340 rpm, 1/3 \u00b7 0.040 @ 340 needs 1 more",
+    ]
+
+
+def test_a_detection_window_shows_its_line_not_a_tally():
+    p = _Bare()
+    p.start("detect")
+    g = p.app.els_uic.overshoot
+    g.survey.add(_stop(3, 1200.0, 1))
+    p._refresh()
+    assert p.state == "running" and p.detail_text == g.survey.message
+
+
+def test_the_texts_say_any_order_and_test_speeds():
+    assert "slowest feed first" not in RUNNING_TEXT
+    assert "any order" in RUNNING_TEXT
+    assert "test speeds, not cutting settings" in PROMPT_TEXT
+    assert "guide" in PROMPT_TEXT

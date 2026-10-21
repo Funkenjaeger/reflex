@@ -198,8 +198,11 @@ class OvershootGuard:
 
     # ── each stop ───────────────────────────────────────────────────────
 
-    def on_outcome(self, o: StopOutcome, factor: float) -> None:
-        """A stop settled. `factor` is display units per mm."""
+    def on_outcome(self, o: StopOutcome, factor: float,
+                   setting: Optional[survey_mod.Setting] = None) -> None:
+        """A stop settled. `factor` is display units per mm; `setting` how
+        the stop was made (feed and spindle rpm), which labels a sweep's
+        groups."""
         live = self._binding()
         k = float(live.mm_per_count) if live is not None else 0.0
         log.info(f"ELS stop #{o.seq}: offset {o.offset}, rate "
@@ -207,7 +210,9 @@ class OvershootGuard:
                  f"past {o.past:+d}, coast {o.overshoot}, steps to go {o.steps_to_go}")
         s = self.survey
         if s is not None and not s.done:
-            self._cue(s.add(o))
+            if setting is not None:
+                log.info(f"ELS stop #{o.seq} made at {setting.long() or 'no setting'}")
+            self._cue(s.add(o, setting))
             if s.done and s.kind == survey_mod.SWEEP:
                 self._on_result(s)
             return
@@ -241,6 +246,12 @@ class OvershootGuard:
         log.info(f"overshoot {kind} started")
         self._cue(self.survey.message)
         return None
+
+    @property
+    def sweep_running(self) -> bool:
+        """True while an overshoot sweep is collecting stops."""
+        s = self.survey
+        return s is not None and not s.done and s.kind == survey_mod.SWEEP
 
     def cancel_survey(self) -> None:
         if self.survey is not None and not self.survey.done:

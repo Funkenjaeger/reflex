@@ -166,6 +166,19 @@ RATE_MAX_GAP_S = 0.3
 #: that a real slow-down is followed within a second or two.
 FALL_HOLD_S = 1.0
 
+#: The above-range notice waits until the live rate has stayed past the
+#: table's top point this long, continuously. The correction does not wait:
+#: the offset rises to the top value on the first above-range tick. Only the
+#: notice does, because a short excursion is not what the stop approaches
+#: at. On 2026-10-20 a thread pass at a steady ~1850 counts/s, against a top
+#: point of 2319, ran its window rate to 2366 for well under a second in the
+#: sync catch-up just after Cut; the stop fired 2.3 s later inside the table
+#: and landed short like every other pass, but the notice had already shown
+#: and read as a fault. The same length as FALL_HOLD_S, for the same reason
+#: in the other direction: a rate is the new steady state only once it has
+#: held for a second.
+ABOVE_RANGE_NOTICE_AFTER_S = FALL_HOLD_S
+
 #: Operator notice when the live rate is past the table's top point.
 ABOVE_RANGE_NOTICE = ("Z rate is above the calibrated range ({top} counts/s). "
                       "Correction is held at its top value.")
@@ -416,6 +429,8 @@ class StopOffsetCorrector:
         self.window = window or ZRateWindow()
         self.hold = hold or OffsetHold()
         self._notified_this_pass = False
+        # Start of the current continuous above-range stretch, or None.
+        self._above_since: Optional[float] = None
         self._was_active: Optional[bool] = None
         self._scale_index: Optional[int] = None
         self.last_rate: Optional[float] = None
@@ -433,6 +448,7 @@ class StopOffsetCorrector:
         self.window.clear()
         self._was_active = None
         self._notified_this_pass = False
+        self._above_since = None
 
     def _sample(self, now: float, active: bool) -> None:
         """File this tick's Z position into the rate window.
@@ -467,6 +483,7 @@ class StopOffsetCorrector:
         table = self._table() if self._enabled() else None
         if not table or not armed:
             self._notified_this_pass = False
+            self._above_since = None
             self.hold.reset()
             return self._write(self.limiter.force_zero(now))
         if active:
@@ -487,20 +504,36 @@ class StopOffsetCorrector:
             # low stretch in the hold ends here: nothing measured while held
             # says the next pass is slower.
             self._notified_this_pass = False
+            self._above_since = None
             self.hold.interrupt()
             if self.limiter.last_written is not None:
                 return None
         rate = self.window.rate()
         self.last_rate = rate
         if rate is None:
+            # The window started over: whatever stretch was above the table
+            # is no longer known to be continuous.
+            self._above_since = None
             return None
         c = correction(rate, self._margin(), table)
         self.last_correction = c
-        if c.above_range and not self._notified_this_pass:
-            self._notified_this_pass = True
-            self._notify(ABOVE_RANGE_NOTICE.format(top=round(float(table[-1][0]))))
+        self._note_above_range(c.above_range, now, table)
         target = self.hold.update(c.offset, now)
         return self._write(self.limiter.update(target, now))
+
+    def _note_above_range(self, above: bool, now: float,
+                          table: Sequence[Tuple[float, float]]) -> None:
+        """Post the above-range notice once per pass, and only after the rate
+        has stayed past the top point for ABOVE_RANGE_NOTICE_AFTER_S."""
+        if not above:
+            self._above_since = None
+            return
+        if self._above_since is None:
+            self._above_since = now
+        if (not self._notified_this_pass
+                and now - self._above_since >= ABOVE_RANGE_NOTICE_AFTER_S):
+            self._notified_this_pass = True
+            self._notify(ABOVE_RANGE_NOTICE.format(top=round(float(table[-1][0]))))
 
     def _write(self, value: Optional[int]) -> Optional[int]:
         if value is None:

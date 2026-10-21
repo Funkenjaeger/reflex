@@ -109,6 +109,15 @@ table = {
 #   3 = feed, imperial (in/rev converted to mm)
 #   4 = feed, metric (mm/rev)
 THREADING_MODES = {1, 2}
+#: The unit each feed mode's names are in, as the overshoot sweep labels them.
+FEED_UNITS = {3: "in/rev", 4: "mm/rev"}
+
+
+def feed_unit(name: str) -> str:
+    """The unit of the named feeds table's entries ("in/rev", "mm/rev"), or
+    "" for a threading table, a mixed one or an unknown name."""
+    modes = {c.mode for c in table.get(name) or []}
+    return FEED_UNITS.get(modes.pop(), "") if len(modes) == 1 else ""
 
 
 def is_threading_table(name: str) -> bool:
