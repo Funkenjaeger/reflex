@@ -78,10 +78,12 @@ feed and the spindle speed that the strip or **Measure** names for it.
 
 Use four speeds from your slowest turning feed to faster than your fastest.
 **The fastest speed becomes the top of the table.** Above it, the correction
-holds its top value and says so, but a faster stop coasts more than that. A
-light feed at a high spindle speed can move the carriage faster than a heavy
-feed at a low one. So the fastest test speed is faster than any carriage speed
-you use to turn to a shoulder. These are test speeds, not cutting settings.
+holds its top value, and says so after a second there, but a faster stop coasts
+more than that. A light feed at a high spindle speed can move the carriage
+faster than a heavy feed at a low one. So the fastest test speed is faster than
+any carriage speed you use to turn to a shoulder. Count threading too: thread
+passes move the carriage fastest, so make the fastest test speed faster than the
+fastest thread pass you will run. These are test speeds, not cutting settings.
 
 ### A lathe with spindle speed control
 

@@ -618,6 +618,9 @@ def test_an_unacknowledged_write_is_forgotten():
 
 
 def test_above_range_posts_one_notice_per_pass():
+    """CHANGED 2026-10-20: the second pass runs 2 s, not 1 s. The notice now
+    waits for ABOVE_RANGE_NOTICE_AFTER_S of continuous above-range rate, and
+    1 s of ticks leaves only ~0.7 s of it once the window has filled."""
     r = _rig()
     _ticks(r, 60, rate=5010)
     assert r.notices == [ABOVE_RANGE_NOTICE.format(top=3529)]
@@ -625,8 +628,103 @@ def test_above_range_posts_one_notice_per_pass():
     assert r.hal.writes == [("stopOffset", 44)]
     # stop fires, carriage held at the shoulder, then the next pass
     _ticks(r, 10, rate=0, active=1)
-    _ticks(r, 30, rate=5010, active=0)
+    _ticks(r, 60, rate=5010, active=0)
     assert len(r.notices) == 2, "a new pass earns its own notice"
+
+
+#: A table whose top is the 2026-10-20 sweep's: 2319 counts/s, 22 counts of
+#: coast, so the top offset is 23 at the rig's 1-count margin.
+TOP_2319_TABLE = ((0, 0), (1185, 9), (2319, 22))
+
+
+def _above_flags(r, n, rate=None):
+    """_ticks one at a time, returning whether each tick's rate was above
+    the table, as the corrector saw it (None before the window has a rate)."""
+    flags = []
+    for i in range(n):
+        _ticks(r, 1, rate=rate if i == 0 else None)
+        c = r.cor.last_correction
+        flags.append(None if c is None else c.above_range)
+    return flags
+
+
+def _longest_true_run(flags):
+    best = run = 0
+    for f in flags:
+        run = run + 1 if f else 0
+        best = max(best, run)
+    return best
+
+
+def test_a_brief_excursion_above_the_table_posts_no_notice():
+    """The 2026-10-20 thread pass: steady at ~1850 counts/s, but the sync
+    catch-up right after Cut pushed the window rate just past the table's
+    2319 for well under a second. The stop fired 2.3 s later inside the table
+    and landed short like the others; the yellow banner read as a fault.
+    Here: 1860 counts/s, 0.9 s at 2370, back to 1860."""
+    r = _rig()
+    r.settings["table"] = TOP_2319_TABLE
+    flags = _above_flags(r, 60, rate=1860)
+    flags += _above_flags(r, 27, rate=2370)
+    flags += _above_flags(r, 60, rate=1860)
+    assert any(flags), "the excursion must reach past the table to test anything"
+    assert _longest_true_run(flags) * DT < eo.ABOVE_RANGE_NOTICE_AFTER_S
+    assert r.notices == []
+
+
+def test_a_brief_excursion_still_raises_the_offset_to_the_top_value():
+    """Only the notice waits. The correction takes every above-range tick at
+    once: a bigger offset lands shorter, the safe side."""
+    r = _rig()
+    r.settings["table"] = TOP_2319_TABLE
+    _ticks(r, 60, rate=1860)
+    assert _offsets(r) == [18]
+    _ticks(r, 27, rate=2370)
+    assert _offsets(r)[-1] == 23 == correction(2370, 1, TOP_2319_TABLE).offset
+    assert r.notices == []
+
+
+def test_a_sustained_rate_above_the_table_posts_one_notice_after_the_hold():
+    """Held past the top for more than ABOVE_RANGE_NOTICE_AFTER_S: one
+    notice, posted when the stretch reaches that length and not before."""
+    r = _rig()
+    r.settings["table"] = TOP_2319_TABLE
+    flags = _above_flags(r, 60, rate=1860)
+    assert not any(flags)
+    flags = _above_flags(r, 90, rate=2400)
+    first = flags.index(True)
+    assert r.notices == [ABOVE_RANGE_NOTICE.format(top=2319)]
+    # Replay the same pass up to the tick one short of the hold (k ticks
+    # after the first above-range one, k * DT < the hold), then two more:
+    # the clock is a running float sum, so exactly 1.0 s may land either side.
+    k = round(eo.ABOVE_RANGE_NOTICE_AFTER_S / DT) - 1
+    r2 = _rig()
+    r2.settings["table"] = TOP_2319_TABLE
+    _ticks(r2, 60, rate=1860)
+    _ticks(r2, first + k + 1, rate=2400)
+    assert r2.notices == [], "not yet: above the table for less than the hold"
+    _ticks(r2, 2)
+    assert len(r2.notices) == 1
+
+
+def test_the_notice_hold_restarts_when_the_rate_comes_back_under_the_top():
+    """Continuous means continuous: two stretches above the table, each
+    shorter than the hold, with the rate back inside it between them."""
+    r = _rig()
+    r.settings["table"] = TOP_2319_TABLE
+    flags = _above_flags(r, 60, rate=1860)
+    for _ in range(2):
+        flags += _above_flags(r, 33, rate=2400)
+        flags += _above_flags(r, 20, rate=1860)
+    run = _longest_true_run(flags)
+    assert run * DT < eo.ABOVE_RANGE_NOTICE_AFTER_S
+    assert sum(1 for f in flags if f) * DT > eo.ABOVE_RANGE_NOTICE_AFTER_S, (
+        "together the stretches are longer than the hold")
+    assert r.notices == []
+
+
+def test_the_notice_hold_is_the_offset_fall_hold():
+    assert eo.ABOVE_RANGE_NOTICE_AFTER_S == eo.FALL_HOLD_S == 1.0
 
 
 def test_held_at_the_shoulder_the_offset_is_held():
