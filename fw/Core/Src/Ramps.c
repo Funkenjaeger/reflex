@@ -22,17 +22,20 @@
 #include "els_phase.h"
 #include "els_identity.h"
 #include "els_boot.h"
+#include "mb_app.h"
+#include "Ramps_access_generated.h"
 
 /* Post-takeup settle dwell: after the backlash takeup reaches its commanded
  * target step count, the step/dir servo may still be closing following error /
  * settling. Snapshotting the Z DRO then yields a takeup-speed-dependent (hence
  * backlash-dependent) phase error. Hold position for this many ISR ticks before
- * sampling Z in applyPhaseCorrection. ISR runs at ~100 kHz (TIM9, 10 us/tick),
- * so 100000 ticks ~= 1 s. The settling hypothesis was REFUTED on hardware (the
- * 1 s dwell changed nothing) and in the emulator (the carriage genuinely doesn't
- * move during a lash-absorbed takeup, so there is nothing to settle), so this is
- * now a short, behaviour-neutral guard rather than a real settle window. Keep it
- * small so the emulator's bounded-guard scenario loop doesn't time out. */
+ * sampling Z in applyPhaseCorrection. ISR ran at ~100 kHz (TIM9, 10 us/tick)
+ * when this was tried, so 100000 ticks was ~1 s. The settling hypothesis was
+ * REFUTED on hardware (the 1 s dwell changed nothing) and in the emulator (the
+ * carriage genuinely doesn't move during a lash-absorbed takeup, so there is
+ * nothing to settle), so this is now a short, behaviour-neutral guard rather
+ * than a real settle window. Keep it small so the emulator's bounded-guard
+ * scenario loop doesn't time out. */
 #define ELS_SETTLE_TICKS            ELS_US_TO_TICKS(500)     /* 0.5 ms */
 
 /* ---- QUIESCENCE: has the carriage actually STOPPED? --------------------
@@ -63,8 +66,8 @@
  * ELS_QUIESCENT_TICKS is sized against the EMULATOR, not that field data --
  * those single counts arrive scattered across the whole window and may be drift
  * rather than settle. Treat it as provisional and commission it with the
- * inter-pulse-gap measurement (todo.md), the same way ELS_SLIP_SETTLE_TICKS
- * must be. The confirm window still bounds the wait, so a machine that never
+ * inter-pulse-gap measurement, on the machine, the same way
+ * ELS_SLIP_SETTLE_TICKS was. The confirm window still bounds the wait, so a machine that never
  * goes quiet aborts rather than hangs. */
 #ifndef ELS_REQUIRE_QUIESCENCE
 #define ELS_REQUIRE_QUIESCENCE 0
@@ -79,7 +82,7 @@
  * and that is the maintainer's call to make rather than a refactor. */
 
 /* Backstop for a backlash takeup that never reaches its commanded target. ISR
- * runs at ~100 kHz (TIM9, 10 us/tick), so this is ~5 s — far longer than any
+ * runs at ~50 kHz (TIM9, 20 us/tick), so this is ~5 s — far longer than any
  * legitimate takeup (tens to low hundreds of steps) even at a slow maxSpeed, and
  * deliberately generous because tripping it early would be worse than not having
  * it. It is a DIAGNOSTIC, not a control: it does not release the sync gate (see
@@ -88,7 +91,7 @@
 #define ELS_TAKEUP_TIMEOUT_TICKS    ELS_MS_TO_TICKS(5000)    /* 5 s */
 
 /* How long the Z confirmation gate keeps LOOKING after the commanded take-up
- * motion has finished, before latching its verdict. ISR is ~100 kHz, so this is
+ * motion has finished, before latching its verdict. ISR is ~50 kHz, so this is
  * ~250 ms.
  *
  * Neither extreme is safe. Re-evaluating FOREVER (the original behaviour) means
@@ -108,7 +111,7 @@
  * (sub-millimetre moves, heavy carriage, high friction) and well below the time
  * it takes a person to reach a handwheel. It bounds the exposure; it does not
  * eliminate it — only correlating Z motion against commanded steps does that,
- * and that is the real fix (see todo.md).
+ * and that is the real fix.
  *
  * THAT FIX NOW EXISTS (els_slip.h), and it changed what this constant is FOR.
  * The window no longer carries the safety property — attribution does. What is
@@ -155,9 +158,9 @@
  * which is what the hold exists to make possible.
  *
  * Constraints any replacement value must satisfy:
- *  - MUST exceed ELS_SETTLE_TICKS (50). The gate's first evaluation happens that
- *    many ticks after the last pulse; a shorter horizon rejects the inertial
- *    settle this whole mechanism exists to accept.
+ *  - MUST exceed ELS_SETTLE_TICKS (25 at 50 kHz). The gate's first evaluation
+ *    happens that many ticks after the last pulse; a shorter horizon rejects
+ *    the inertial settle this whole mechanism exists to accept.
  *  - MUST exceed the live pulse pacing period (servoCycles), or genuine coupled
  *    motion mid-burst is discarded and a HEALTHY machine refuses to start. Not
  *    left to this constant — elsSlipSettleTicks() floors it at runtime — but a
@@ -226,14 +229,20 @@ static int32_t  emu_step6_prev_change_sign = 0;
 #endif
 
 
-// This variable is the handler for the modbus communication
-modbusHandler_t RampsModbusData;
+/* The Modbus slave serves rampsSharedData_t as registers 0..N-1 and checks
+ * host writes against the generated access table, which has one bit per
+ * register of exactly this struct; and its port answers the address the host
+ * is configured for. A drift in either fails the build here. */
+_Static_assert(sizeof(rampsSharedData_t) / sizeof(uint16_t) == RAMPS_ACCESS_REGISTERS,
+               "Ramps_access_generated.h does not cover rampsSharedData_t: rerun tools/genregs.py");
+_Static_assert(MODBUS_ADDRESS == MB_APP_ADDRESS,
+               "mb_app.h answers a different slave address");
 
 /* The identity window (els_identity.h): magic, stage = application, window
  * layout version, the git short rev this binary was built from (from the
  * generated reflex_build_rev.h; 0 + dirty if that header was absent), and
  * the protocolVersion of the struct above. Const, so it lives in flash and
- * a torn read of it is impossible. Registered with the Modbus handler in
+ * a torn read of it is impossible. Handed to the Modbus slave in
  * RampsStart(). */
 const uint16_t rampsIdentityWindow[ELS_ID_SIZE] =
     ELS_ID_WINDOW_INIT(ELS_ID_STAGE_APP, ELS_PROTOCOL_VERSION);
@@ -247,28 +256,48 @@ uint16_t servoCyclesCounter = 0;
 TIM_HandleTypeDef *ramps_timer_handles[SCALES_COUNT] = {0};
 
 
-//osThreadId_t userLedTaskHandler;
-const osThreadAttr_t ledTaskAttributes = {
-.name = "UpdateLedTask",
-.stack_size = 128 * 4,
-.priority = (osPriority_t) osPriorityLow,
+/* ---- The superloop's jobs ---------------------------------------------
+ *
+ * main() calls RampsPoll() forever. Each pass services the Modbus slave once
+ * and then runs at most ONE job that has fallen due, so frames are serviced
+ * between jobs and a host write can never land inside one. The ISR preempts
+ * everything here, jobs and Modbus alike. The jobs are named ...Task because
+ * the register schemas, the design docs and the UI cite them by those names:
+ *
+ *   servoEnableTask   100 ms  command intake, re-assert, mode publish, ENA,
+ *                             command ack, bootCommand
+ *   updateSpeedTask    50 ms  spindle period, fastData mirrors, servoCycles,
+ *                             scale speeds
+ *   userLedTask        50 ms  LED blink, watchdog kick, boot-attempt clear
+ *
+ * When several fall due in the same millisecond, servoEnableTask goes first:
+ * it is the one that consumes DISENGAGE. Periods are kept on average (each
+ * run is scheduled one period after the previous one was DUE, not after it
+ * ran), because updateSpeedTask's speeds and servoEnableTask's servoSpeed
+ * divide by the nominal period; a pass that finds a job more than a period
+ * late runs it once and restarts its schedule rather than running it in a
+ * burst. */
+#define RAMPS_SERVO_ENABLE_PERIOD_MS 100u
+#define RAMPS_LED_PERIOD_MS          50u
+#define RAMPS_LED_PULSE_MS           25u
 
-};
+typedef struct {
+  uint32_t due;      /* HAL tick the job next falls due at */
+  uint32_t period;   /* ms */
+} rampsJob_t;
 
-//osThreadId_t updateSpeedTaskHandler;
-const osThreadAttr_t speedTaskAttributes = {
-.name = "updateSpeedTask",
-.stack_size = 128 * 4,
-.priority = (osPriority_t) osPriorityLow,
-};
+static rampsJob_t servoEnableJob = { 0u, RAMPS_SERVO_ENABLE_PERIOD_MS };
+static rampsJob_t speedJob       = { 0u, 50u };   /* updateSpeedTaskTicks */
+static rampsJob_t ledJob         = { 0u, RAMPS_LED_PERIOD_MS };
 
-//osThreadId_t updateServoEnableTaskHandler;
-const osThreadAttr_t servoEnableTaskAttributes = {
-.name = "servoEnableTask",
-.stack_size = 128 * 4,
-.priority = (osPriority_t) osPriorityLow,
-};
-
+/* Nonzero once, when `job` has fallen due at `now`. Wrap-safe: HAL ticks are
+ * compared by signed difference. */
+static int rampsJobDue(rampsJob_t *job, uint32_t now) {
+  if ((int32_t)(now - job->due) < 0) return 0;
+  job->due += job->period;
+  if ((int32_t)(now - job->due) >= 0) job->due = now + job->period;
+  return 1;
+}
 
 void configureOutputPin(GPIO_TypeDef *Port, uint16_t Pin) {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -353,7 +382,21 @@ void RampsStart(rampsHandler_t *rampsData) {
    * each trigger used. Both sit in slots that were alignment pads under 10, so
    * nothing else moved -- bootCommand is still register 168. From here on the
    * version is bound to the layout by registers/layout-fingerprints.json, which
-   * genregs --check enforces. */
+   * genregs --check enforces.
+   *
+   * 12: clearRefCommand / clearRefSeq, the host's clear of the thread
+   * reference (reflex-ui writes it when it adopts a gearbox position with a
+   * reference latched). Both sit in slots that were alignment pads under 11:
+   * clearRefSeq in hot before lastTakeupZDelta, clearRefCommand in cold before
+   * diagSettleTicks. Nothing else moved; bootCommand is still register 168.
+   *
+   * 13: the ELS command channel (command / commandSeq / commandResult, and
+   * DISENGAGE, its first command; els_command.h) and the calMeasured split:
+   * calMeasured is the last run's result again, and the take-up gate reads
+   * calBasisSteps, which only a successful run or the host writes. commandSeq
+   * took clearRefSeq's hot slot and clearRefSeq moved to cold, so the hot
+   * group (and the board tick) did not grow; the new cold registers sit after
+   * bootSeq, so bootCommand is still register 168. */
   rampsData->shared.elsStop.protocolVersion = ELS_PROTOCOL_VERSION;
   /* Diagnostic scratchpad. diagSchema is the ONLY thing that tells a reader what
    * the rest of the block means, so it is set here in BOTH configurations —
@@ -374,6 +417,14 @@ void RampsStart(rampsHandler_t *rampsData) {
   rampsData->shared.elsStop.executionCyclesPeak = 0;
   rampsData->shared.elsStop.bootCommand = 0;
   rampsData->shared.elsStop.bootSeq     = 0;
+  rampsData->shared.elsStop.clearRefCommand = 0;
+  rampsData->shared.elsStop.clearRefSeq     = 0;
+  rampsData->shared.elsStop.command         = ELS_CMD_NONE;
+  rampsData->shared.elsStop.commandSeq      = 0;
+  rampsData->shared.elsStop.commandResult   = ELS_CMD_RESULT_OK;
+  rampsData->shared.elsStop.calBasisSteps   = 0;   /* no calibration on file until a run or the host says so */
+  rampsData->elsCommandPending = ELS_CMD_NONE;
+  rampsData->elsCommandEndJob  = 0;
   rampsData->shared.elsStop.calResult    = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupResult = ELS_CAL_OK;
   rampsData->shared.elsStop.takeupSeq    = 0;
@@ -387,10 +438,13 @@ void RampsStart(rampsHandler_t *rampsData) {
   configureOutputPin(SPARE_2_GPIO_PORT, SPARE_2_PIN);
   configureOutputPin(SPARE_3_GPIO_PORT, SPARE_3_PIN);
 
-  // Configure tasks
-  osThreadNew(userLedTask, rampsData, &ledTaskAttributes);
-  osThreadNew(updateSpeedTask, rampsData, &speedTaskAttributes);
-  osThreadNew(servoEnableTask, rampsData, &servoEnableTaskAttributes);
+  /* Schedule the jobs. Each first falls due one period from now. */
+  {
+    uint32_t now = HAL_GetTick();
+    servoEnableJob.due = now + servoEnableJob.period;
+    speedJob.due       = now + speedJob.period;
+    ledJob.due         = now + ledJob.period;
+  }
 
 
   // Initialize and start encoder timer, reset the sync flags
@@ -404,28 +458,15 @@ void RampsStart(rampsHandler_t *rampsData) {
   DWT->CYCCNT = 0;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
-  // Start Modbus
-  RampsModbusData.uModbusType = MB_SLAVE;
-  RampsModbusData.port = rampsData->modbusUart;
-  RampsModbusData.u8id = MODBUS_ADDRESS;
-  RampsModbusData.u16timeOut = 1000;
-  RampsModbusData.EN_Port = NULL;
-  RampsModbusData.u16regs = (uint16_t *) (&rampsData->shared);
-  RampsModbusData.u16regsize = sizeof(rampsData->shared) / sizeof(uint16_t);
-  RampsModbusData.xTypeHW = USART_HW;
-  /* The identity window, served OUTSIDE rampsSharedData_t at ELS_ID_BASE so
-   * the write-protected bootloader answers the same registers at the same
-   * address no matter how the struct above grows. Read-only. The bootloader
-   * control window at ELS_BL_BASE is deliberately NOT registered: the app
-   * answers exception 2 there, which is the client's "this is the app"
-   * signal alongside idStage. */
-  RampsModbusData.windows[0].base     = ELS_ID_BASE;
-  RampsModbusData.windows[0].size     = ELS_ID_SIZE;
-  RampsModbusData.windows[0].regs     = (uint16_t *)rampsIdentityWindow;
-  RampsModbusData.windows[0].readOnly = 1;
-  RampsModbusData.windowCount = 1;
-  ModbusInit(&RampsModbusData);
-  ModbusStart(&RampsModbusData);
+  /* Start Modbus. The identity window is served OUTSIDE rampsSharedData_t at
+   * ELS_ID_BASE, so the write-protected bootloader answers the same registers
+   * at the same address however the struct grows. Read-only. The bootloader
+   * control window at ELS_BL_BASE is deliberately NOT served: the app answers
+   * exception 2 there, which is the client's "this is the app" signal
+   * alongside idStage (Core/mb_port/mb_rtu_port.h). */
+  mbAppInit((uint16_t *)&rampsData->shared,
+            (uint16_t)(sizeof(rampsData->shared) / sizeof(uint16_t)),
+            rampsIdentityWindow);
 
   // Start synchro interrupt
   HAL_TIM_Base_Start_IT(rampsData->synchroRefreshTimer);
@@ -489,7 +530,6 @@ static inline void updateIndexingPosition(rampsHandler_t *data) {
     data->rampsDeltaPos.error = ((int32_t)((float)shared->servo.currentSpeed * (float)shared->executionInterval + (float)data->rampsDeltaPos.error) % 100000000);
     shared->servo.desiredSteps += positionIncrement;
     shared->servo.stepsToGo -= positionIncrement;
-    shared->fastData.stepsToGo = shared->servo.stepsToGo;
   }
 }
 
@@ -568,7 +608,7 @@ static inline void updateJogPosition(rampsHandler_t *data) {
  *
  * THE KEY IS CARRIED WITH THE VALUE, and applyPhaseCorrection re-checks it
  * rather than trusting the refresh to have happened. A cache whose producer
- * runs on a 50 ms task and whose consumer runs at 100 kHz has a staleness
+ * runs on a 50 ms task and whose consumer runs at 50 kHz has a staleness
  * window by construction; the key check closes it. On a mismatch the ISR
  * passes 0, which means "do not reduce" -- the pre-04dd1f9 path -- so a stale
  * cache degrades gracefully instead of reducing by a period from the previous
@@ -582,8 +622,8 @@ static int32_t elsPeriodKeyNum     = 0;
 static int32_t elsPeriodKeyDen     = 0;
 static float   elsPeriodKeyTps     = 0.0f;
 
-/* Called from updateSpeedTask (and mirrored in the emulator's main loop --
- * the emulator does not run FreeRTOS tasks). Cheap when nothing changed. */
+/* Called from the updateSpeedTask job, in the emulator as on the chip.
+ * Cheap when nothing changed. */
 void elsRefreshSpindlePeriod(rampsSharedData_t *shared) {
   int32_t num = shared->scales[0].syncRatioNum;
   int32_t den = shared->scales[0].syncRatioDen;
@@ -683,6 +723,18 @@ static inline void applyPhaseCorrection(rampsSharedData_t *shared) {
  * SAFETY: refuses to run unless elsStop.enable == 0 (no live job, so sync is not
  * driving the leadscrew and the spindle cannot fight the measurement) and
  * servoMode == 1 (otherwise stepsToGo is never consumed and the run would hang).
+ *
+ * A TAKEN REQUEST WAITS FOR THE DRIVE (ELS_CAL_WAIT_DRIVE). The host writes
+ * servoMode = 1 and calCommand back to back, so the request usually arrives
+ * before servoEnableTask has even asserted ENA, and the closed-loop drive
+ * ignores STEP for about a second after that. Pulses sent then are counted
+ * here and never turned, and they used to land in the SEAT leg, or in MEASURE
+ * leg 1 when the enable jolt ended SEAT early (2026-10-19: legs of 567 and
+ * 963 against a 395-step lash, and a NO_MOTION). So the first step waits
+ * until ENA has been on for ELS_CAL_ENA_SETTLE_MS (enaSettle.settled, decided
+ * by servoEnableTask, which owns the pin). The wait is a phase of the run:
+ * the machine mode reads CAL, sync stays gated, and the aborts below apply
+ * throughout it, so a run aborted while waiting commands no step at all.
  * Total travel is a few lash widths — well under a millimetre — but it IS
  * bidirectional carriage motion with the half-nut engaged, so the operator-facing
  * modal owns "tool clear of the work, spindle stopped". */
@@ -720,10 +772,7 @@ static inline void elsCalUpdate(rampsHandler_t *data) {
         }
         shared->servo.stepsToGo    = 0;
         shared->servo.currentSpeed = 0;
-        elsCalStart(&data->elsCal, cuttingDir,
-                    (int32_t)shared->servo.currentSteps,
-                    shared->scales[shared->elsStop.scaleIndex].position);
-        shared->servo.stepsToGo = data->elsCal.driveSign * shared->elsStop.calCeilingSteps;
+        elsCalRequest(&data->elsCal, cuttingDir);
       }
     }
   }
@@ -740,6 +789,17 @@ static inline void elsCalUpdate(rampsHandler_t *data) {
     shared->elsStop.calResult  = ELS_CAL_ERR_ABORTED;
     shared->elsStop.calSeq++;
     return;
+  }
+
+  /* ---- The drive wait. Nothing is commanded until ENA has settled; then the
+   * run starts from where the leadscrew and Z are NOW, and the SEAT burst goes
+   * out in this same pass, as it did straight from intake before the wait. */
+  if (data->elsCal.phase == ELS_CAL_WAIT_DRIVE) {
+    if (!data->enaSettle.settled) return;
+    elsCalStart(&data->elsCal, data->elsCal.driveSign,
+                (int32_t)shared->servo.currentSteps,
+                shared->scales[shared->elsStop.scaleIndex].position);
+    shared->servo.stepsToGo = data->elsCal.driveSign * shared->elsStop.calCeilingSteps;
   }
 
   elsCalAction_t act = elsCalTick(&data->elsCal,
@@ -762,6 +822,21 @@ static inline void elsCalUpdate(rampsHandler_t *data) {
      * error code, and the host already knows how many to trust from calResult. */
     for (int32_t i = 0; i < ELS_CAL_CYCLES; i++) {
       shared->elsStop.calMeasured[i] = data->elsCal.measured[i];
+    }
+    /* THE TAKE-UP GATE'S BASIS MOVES ONLY ON SUCCESS (protocolVersion 13).
+     * Until 13 the gate derived its threshold from calMeasured itself, so a
+     * failed run's partial values (zeros) dropped it to the bare motion floor
+     * for every later pass until the host wrote the legs back. calBasisSteps
+     * is a separate register: a failed run leaves it alone, and a successful
+     * one installs its mean, exactly the number the gate used to take from
+     * calMeasured. A mean too large for the uint16 register is left out
+     * rather than clamped -- a clamped basis would be a number nobody
+     * measured -- and the gate keeps whatever basis it had. */
+    if (data->elsCal.result == ELS_CAL_OK) {
+      int32_t mean = elsCalMeanValid(data->elsCal.measured, ELS_CAL_CYCLES);
+      if (mean > 0 && mean <= (int32_t)UINT16_MAX) {
+        shared->elsStop.calBasisSteps = (uint16_t)mean;
+      }
     }
     shared->elsStop.calResult = data->elsCal.result;
     shared->elsStop.calSeq++;
@@ -841,8 +916,22 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
     shared->elsStop.phaseOffsetSteps = 0;
   }
 
-  // Auto-clear active when enable is deasserted
-  if (data->elsStopPreviousEnable && !shared->elsStop.enable) {
+  // Auto-clear active when enable is deasserted.
+  //
+  // ALSO RUN ON DISENGAGE'S REQUEST (elsCommandEndJob, set by servoEnableTask
+  // in elsCommandIntake, protocolVersion 13). DISENGAGE clears enable, which
+  // makes the falling edge -- but only when enable was 1. With enable already
+  // 0 there is no edge, and a commanded move (MOVING), a jog's ramp, a take-up
+  // started from a hold with enable 0, or an active left set would survive an
+  // ack that says the machine is inert. So the command asks for this block
+  // directly. It is the same teardown the edge runs, in the same place,
+  // ahead of the resume detector: clearing active here consumes the edge it
+  // makes, which the task could not do from outside the ISR. Running it on
+  // both the edge and the request in one pass is harmless (every write is to
+  // the same value). The flag is cleared last, and the task acks only once it
+  // reads 0, so the ack follows this pass.
+  if ((data->elsStopPreviousEnable && !shared->elsStop.enable)
+      || data->elsCommandEndJob) {
     shared->elsStop.active = 0;
     /* Consume the 1->0 active edge this handler just created. The resume
      * detector further down runs LATER IN THIS SAME PASS (its shadow copy
@@ -881,6 +970,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
     data->elsStopTakeupTicks      = 0;
     data->elsStopTakeupLatched    = 0;
     data->elsStopCorrectOnConfirm = 0;
+    data->elsCommandEndJob        = 0;
   }
 
   data->elsStopPreviousEnable = shared->elsStop.enable;
@@ -917,6 +1007,28 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   if (shared->fastData.servoMode == 0u && shared->elsStop.referenceLatched) {
     shared->elsStop.referenceLatched = 0;
     shared->elsStop.phaseOffsetSteps = 0;
+  }
+
+  /* Host clear of the thread reference. Does exactly what the custody rule
+   * above does -- referenceLatched and phaseOffsetSteps to 0 -- and nothing
+   * else: enable, servoMode and sync are untouched, so the drive keeps custody
+   * and the job stays armed. The host uses it when the reference stops being
+   * valid without custody being lost, which is a gearbox lever moved under a
+   * held leadscrew: the datum was measured in the old gear.
+   *
+   * Always accepted, so clearRefSeq acks every consumed command and there is
+   * no refusal channel. Safe at any point in a job because nothing moves: the
+   * stop-trigger block below re-latches at the next trigger while
+   * referenceLatched == 0, and the pass after that latch makes no correction,
+   * exactly like the first pass of a new job.
+   *
+   * Placed BEFORE the manual latch, so a latch requested in the same pass
+   * still lands. */
+  if (shared->elsStop.clearRefCommand != 0u) {
+    shared->elsStop.clearRefCommand  = 0u;
+    shared->elsStop.referenceLatched = 0;
+    shared->elsStop.phaseOffsetSteps = 0;
+    shared->elsStop.clearRefSeq++;
   }
 
   /* Manual reference latch (interactive re-sync to an existing thread). Same
@@ -997,7 +1109,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
      * TODAY's behaviour and must go red the day this changes.
      *
      * COMPILED OUT ENTIRELY when the flag is off, not merely ignored. The
-     * comparison is cheap, but this is the ~100 kHz ISR whose execution time is
+     * comparison is cheap, but this is the ~50 kHz ISR whose execution time is
      * itself a published register, and a release build should carry no cost at
      * all for a feature it does not use. Leaving it in cost 64 bytes of flash
      * and made the claim "a release build is bit-for-bit the old gate" false,
@@ -1030,11 +1142,12 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
       /* elsDiagExtraDwell() is ZERO in every release build and in every probe
        * but takeup-settle-v3, so this comparison is bit-for-bit the old one
        * unless that probe is compiled in. It exists because the settle this
-       * dwell precedes cannot be MEASURED in 50 ticks: the gate confirms, the
-       * phase-correction jog drives, and any capture ends. Holding the dwell
-       * open is the only way to watch the carriage stop. See
-       * els_diag_takeup_settle.h. The same term is added to the abort
-       * threshold below so the confirm window keeps its full length. */
+       * dwell precedes cannot be MEASURED in 25 ticks (ELS_SETTLE_TICKS at
+       * 50 kHz): the gate confirms, the phase-correction jog drives, and any
+       * capture ends. Holding the dwell open is the only way to watch the
+       * carriage stop. See els_diag_takeup_settle.h. The same term is added
+       * to the abort threshold below so the confirm window keeps its full
+       * length. */
       if (data->elsStopSettleCount
           < ELS_SETTLE_TICKS + elsDiagExtraDwell(&data->diag)) {
         data->elsStopSettleCount++;        // dwell after commanded-complete
@@ -1088,7 +1201,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
          * wanted, not just that it refused. */
         shared->elsStop.takeupThreshCounts = elsTakeupConfirmThreshold(
             (int32_t)shared->elsStop.backlashSteps,
-            elsCalMeanValid(shared->elsStop.calMeasured, ELS_CAL_CYCLES),
+            (int32_t)shared->elsStop.calBasisSteps,
             shared->elsStop.threadPitchSteps,
             shared->elsStop.zCountsPerPitch,
             shared->elsStop.calMotionThreshCounts);
@@ -1444,7 +1557,7 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
      *   mode 2 (JOG): unrescuable. The one thing that would fix it is the one
      *     thing that refuses to. Fail fast, here.
      *   mode 0: transient and legitimate. The task runs at ~100 ms while this
-     *     ISR runs at ~100 kHz, so a resume can genuinely land on a tick where
+     *     ISR runs at ~50 kHz, so a resume can genuinely land on a tick where
      *     the mode has not been promoted YET. Refusing here would break normal
      *     cuts to guard a case that fixes itself within one task tick; the
      *     ~5 s ELS_TAKEUP_TIMEOUT_TICKS backstop covers the residue where it
@@ -1544,6 +1657,16 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
 
   if (shared->fastData.servoMode == 1) updateIndexingPosition(data);
   if (shared->fastData.servoMode == 2) updateJogPosition(data);
+
+  /* THE PUBLISHED BACKLOG, once per pass, after the last writer of
+   * servo.stepsToGo in it: the end-of-job block, the take-up paths, the phase
+   * correction, elsCalUpdate and the ramp above all run earlier in this
+   * pass. Publishing it anywhere earlier, or only while the ramp steps, would
+   * leave a stale remainder after the paths that set servo.stepsToGo directly
+   * and hide a move banked with servoMode != 1. One 32-bit store per
+   * pass. Host writes to servo.stepsToGo appear here on the next pass.
+   * Emulator: els_stepstogo_mirror_test. */
+  shared->fastData.stepsToGo = shared->servo.stepsToGo;
 
   /* Bracket the pulse generator to recover THIS TICK's signed commanded step
    * delta. The generator's own `direction` is a local that dies at the end of
@@ -1648,18 +1771,16 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   }
 
   /* Divide-by-zero guard. The zero window is REACHABLE, not theoretical:
-   * servoCycles is 0 from reset (Ramps.c:64) and its only writer is
-   * updateSpeedTask (Ramps.c:613), but RampsStart() enables the 100 kHz TIM9
-   * interrupt as its last act (HAL_TIM_Base_Start_IT, Ramps.c:165) and main.c
-   * only reaches osKernelStart() afterwards, so this ISR runs before the
-   * scheduler exists at all, and updateSpeedTask then sleeps osDelay(50) before
-   * its first assignment. That is >5000 ISR ticks at 10 us with servoCycles == 0.
+   * servoCycles is 0 from reset and its only writer is updateSpeedTask, but
+   * RampsStart() enables the 50 kHz TIM9 interrupt as its last act
+   * (HAL_TIM_Base_Start_IT) and the updateSpeedTask job first falls due 50 ms
+   * later: >2500 ISR ticks at 20 us with servoCycles == 0.
    * It goes unnoticed on hardware because Cortex-M4 UDIV-by-zero yields 0 with
    * DIV_0_TRP clear (never set here) and servoMode is still 0 so no pulses are
    * emitted; it is still C undefined behavior, and the emulator's x86 build
    * takes SIGFPE on this line. Substituting 0 reproduces the observed hardware
    * result without the UB. Nonzero servoCycles behaves exactly as before.
-   * COUPLED WITH updateSpeedTask's newPeriod clamp (Ramps.c:610-613): that
+   * COUPLED WITH updateSpeedTask's newPeriod clamp: that
    * clamp now floors at 1, not 0, so the boot window above is the only
    * remaining source of servoCycles == 0. This guard must stay regardless —
    * it is what makes that window survivable. */
@@ -1696,6 +1817,13 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   }
 #endif
 
+  /* Diagnostic ISR-tail hook, every tick. THIS placement: after all of the
+   * tick's work, so a probe here sees the tick complete, and BEFORE
+   * executionCycles is taken, so shared->executionCycles still holds the
+   * PREVIOUS tick's duration and the probe's own cost lands in this tick's
+   * executionCycles, where executionCyclesPeak can see it on the machine. */
+  elsDiagTickTail(&data->diag, shared);
+
   shared->executionCycles = DWT->CYCCNT - start;
   /* Peak-hold. Three instructions, and the only reason the cut-start spike is
    * visible at all -- see the executionCyclesPeak comment in Ramps.h. */
@@ -1704,148 +1832,266 @@ void SynchroRefreshTimerIsr(rampsHandler_t *data) {
   }
 }
 
-_Noreturn void userLedTask(__attribute__((unused)) void *argument) {
-  uint16_t oldInCnt = 0;
-  uint8_t blinkInterval = 0;
+/* LED pulse state: set when a reply edge pulls the LED low, cleared when
+ * RampsPoll restores it RAMPS_LED_PULSE_MS later. */
+static uint32_t ledPulseStart;
+static uint8_t  ledPulseActive;
 
-  for (;;) {
-    osDelay(50);
-    blinkInterval = (blinkInterval + 1) % 10;
-    if (blinkInterval == 0) {
-      HAL_GPIO_TogglePin(USR_LED_GPIO_Port, USR_LED_Pin);
-    }
+void userLedTask(void) {
+  static uint16_t oldReplies = 0;
+  static uint8_t blinkInterval = 0;
 
-    /* The bootloader arms the IWDG (~32 s) before jumping here and it cannot
-     * be stopped, so this 50 ms loop refreshes it. It proves the scheduler is
-     * alive, nothing more; a hung app is reset and counted as a strike by
-     * the boot-attempt counter. No-op in the legacy (no-bootloader) build. */
-    elsBootWatchdogKick();
-
-    if (oldInCnt != RampsModbusData.u16InCnt) {
-      /* MODBUS IS LIVE: the first frame the handler counted is the app's
-       * proof of life to the bootloader. Clears the boot-attempt counter
-       * (els_boot.h); without this, three boots strike out and the
-       * bootloader swaps the previous image back. Once per boot is enough,
-       * but the write is cheap and idempotent, so it rides every edge. */
-      elsBootAttemptsClear();
-      oldInCnt = RampsModbusData.u16InCnt;
-      HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_RESET);
-      osDelay(25);
-      HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_SET);
-    }
+  blinkInterval = (blinkInterval + 1) % 10;
+  if (blinkInterval == 0) {
+    HAL_GPIO_TogglePin(USR_LED_GPIO_Port, USR_LED_Pin);
   }
 
+  /* The bootloader arms the IWDG (~32 s) before jumping here and it cannot
+   * be stopped, so this 50 ms job refreshes it. It proves the superloop is
+   * alive, nothing more; a hung app is reset and counted as a strike by
+   * the boot-attempt counter. No-op in the legacy (no-bootloader) build. */
+  elsBootWatchdogKick();
+
+  if (oldReplies != mbAppReplies()) {
+    /* MODBUS IS LIVE: the first reply the slave sent is the app's
+     * proof of life to the bootloader. Clears the boot-attempt counter
+     * (els_boot.h); without this, three boots strike out and the
+     * bootloader swaps the previous image back. Once per boot is enough,
+     * but the write is cheap and idempotent, so it rides every edge. */
+    elsBootAttemptsClear();
+    oldReplies = mbAppReplies();
+    HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_RESET);
+    ledPulseStart  = HAL_GetTick();
+    ledPulseActive = 1;
+  }
 }
 
 const int32_t updateSpeedTaskTicks = 50;
 
-_Noreturn void updateSpeedTask(void *argument) {
-  rampsHandler_t *rampsData = (rampsHandler_t *) argument;
+void updateSpeedTask(rampsHandler_t *rampsData) {
+  /* Keep the spindle period current. Off the ISR deliberately: the
+   * computation is double-precision and there is no FP64 hardware on this
+   * core. Cheap when the geometry has not moved, which is almost always. */
+  elsRefreshSpindlePeriod(&rampsData->shared);
 
-  for (;;) {
+  // Update fast access variables
+  rampsData->shared.fastData.cycles = rampsData->shared.executionCycles;
+  rampsData->shared.fastData.servoCurrent = rampsData->shared.servo.currentSteps;
+  rampsData->shared.fastData.servoDesired = rampsData->shared.servo.desiredSteps;
 
-    // Update the current speed
-    osDelay(updateSpeedTaskTicks);
+  // If maximum speed has been changed, update the motor timer accordingly
+  float clock_freq = 100000000.0f / ((float) rampsData->synchroRefreshTimer->Init.Prescaler + 1) /
+                     (float) (rampsData->synchroRefreshTimer->Init.Period + 1);
 
-    /* Keep the spindle period current. Off the ISR deliberately: the
-     * computation is double-precision and there is no FP64 hardware on this
-     * core. Cheap when the geometry has not moved, which is almost always. */
-    elsRefreshSpindlePeriod(&rampsData->shared);
+  // Clamping value for max speed to the maximum allowed by the current timer refresh rate from the sync routine
+  if (rampsData->shared.servo.maxSpeed > 100000) {
+    rampsData->shared.servo.maxSpeed = 100000;
+  }
 
-    // Update fast access variables
-    rampsData->shared.fastData.cycles = rampsData->shared.executionCycles;
-    rampsData->shared.fastData.servoCurrent = rampsData->shared.servo.currentSteps;
-    rampsData->shared.fastData.servoDesired = rampsData->shared.servo.desiredSteps;
+  float newPeriod = floorf(clock_freq / rampsData->shared.servo.maxSpeed);
+  if (newPeriod > (float) UINT16_MAX) {
+    newPeriod = 65535;
+  }
+  if (newPeriod < 1) {
+    // Never clamp to 0: a period of 0 has no meaningful semantics (it
+    // would encode "too fast to subdivide" as an impossible state), and
+    // the only thing that makes a zero survivable is the ISR divide-by-
+    // zero guard in SynchroRefreshTimerIsr. Floor at 1 (the fastest representable
+    // subdivision) so this writer stops relying on that guard.
+    newPeriod = 1;
+  }
+  servoCycles = (uint16_t) newPeriod;
 
-    // If maximum speed has been changed, update the motor timer accordingly
-    float clock_freq = 100000000.0f / ((float) rampsData->synchroRefreshTimer->Init.Prescaler + 1) /
-                       (float) (rampsData->synchroRefreshTimer->Init.Period + 1);
-
-    // Clamping value for max speed to the maximum allowed by the current timer refresh rate from the sync routine
-    if (rampsData->shared.servo.maxSpeed > 100000) {
-      rampsData->shared.servo.maxSpeed = 100000;
-    }
-
-    float newPeriod = floorf(clock_freq / rampsData->shared.servo.maxSpeed);
-    if (newPeriod > (float) UINT16_MAX) {
-      newPeriod = 65535;
-    }
-    if (newPeriod < 1) {
-      // Never clamp to 0: a period of 0 has no meaningful semantics (it
-      // would encode "too fast to subdivide" as an impossible state), and
-      // the only thing that makes a zero survivable is the ISR divide-by-
-      // zero guard at Ramps.c:513. Floor at 1 (the fastest representable
-      // subdivision) so this writer stops relying on that guard.
-      newPeriod = 1;
-    }
-    servoCycles = (uint16_t) newPeriod;
-
-    for (int i = 0; i < SCALES_COUNT; i++) {
-      // Update scale/spindle speed value
-      deltaPositionAndError(
-        rampsData->shared.scales[i].position,
-        1000,
-        updateSpeedTaskTicks,
-        &rampsData->scalesSpeed[i]
-      );
-      rampsData->shared.scales[i].speed = rampsData->scalesSpeed[i].scaledDelta;
-      rampsData->shared.fastData.scaleSpeed[i] = rampsData->scalesSpeed[i].scaledDelta;
-    }
+  for (int i = 0; i < SCALES_COUNT; i++) {
+    // Update scale/spindle speed value
+    deltaPositionAndError(
+      rampsData->shared.scales[i].position,
+      1000,
+      updateSpeedTaskTicks,
+      &rampsData->scalesSpeed[i]
+    );
+    rampsData->shared.scales[i].speed = rampsData->scalesSpeed[i].scaledDelta;
+    rampsData->shared.fastData.scaleSpeed[i] = rampsData->scalesSpeed[i].scaledDelta;
   }
 }
 
-_Noreturn void servoEnableTask(void *argument) {
-  rampsHandler_t *rampsData = (rampsHandler_t *) argument;
+void servoEnableTask(rampsHandler_t *rampsData) {
   rampsSharedData_t *shared = (rampsSharedData_t *) &rampsData->shared;
-  uint32_t previousPosition = 0;
+  static uint32_t previousPosition = 0;
 
-  for (;;) {
-    osDelay(100);
+  /* The command channel goes FIRST in the tick (els_command.h). While a
+   * command is in flight the re-assert below is skipped: DISENGAGE has just
+   * cleared sync and servoMode, and the re-assert is a read followed by a
+   * write that must not land between them. */
+  bool commandInFlight = elsCommandIntake(rampsData);
 
-    bool anySyncMotionEnabled = false;
-    for (int i = 0; i < SCALES_COUNT; i++) {
-      anySyncMotionEnabled = anySyncMotionEnabled || (shared->scales[i].syncEnable != 0);
-    }
-
-    /* The re-assert. elsDiagServoGate is a no-op returning false in every
-     * release build; a diagnostic probe may refuse the assert and record that
-     * it did (see els_diag_disengage_latch.h, which exists precisely because
-     * this line can switch the feed back on after a disengage). */
-    if (anySyncMotionEnabled && !shared->elsStop.active && rampsData->shared.fastData.servoMode != 2) {
-      if (!elsDiagServoGate(&rampsData->diag, &shared->elsStop,
-                            rampsData->shared.fastData.servoMode)) {
-        rampsData->shared.fastData.servoMode = 1;
-      }
-    }
-
-    rampsData->shared.fastData.servoSpeed = (float)(int32_t)(rampsData->shared.servo.currentSteps - previousPosition) * 10;
-    previousPosition = rampsData->shared.servo.currentSteps;
-
-    /* THE MACHINE MODE, published unconditionally -- release builds included.
-     *
-     * Derived here rather than in the ISR because it is a ~100 ms question
-     * about what the machine is doing, and the ISR has no business spending
-     * cycles on it. Written before the probe hook below so a mode-watch probe
-     * and this register can never disagree about the same tick.
-     *
-     * This used to happen ONLY inside that probe. See the machineMode comment
-     * in Ramps.h for why that made the rung-2 census uncollectable in any
-     * build the operator would actually cut with. */
-    elsPublishMachineMode(shared, (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
-
-    /* Probe hook: a mode-watch probe derives and publishes the machine mode
-     * once per task tick. No code in a release build or any other probe.
-     * AFTER the re-assert above, so the published mode reflects this tick's
-     * decision rather than last tick's. */
-    elsDiagTaskTick(&rampsData->diag, shared,
-                    (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
-
-    if (shared->fastData.servoMode != 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_RESET);
-    if (shared->fastData.servoMode == 0) HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, GPIO_PIN_SET);
-
-    /* Boot command intake, once per task tick. */
-    elsBootCommandTick(shared);
+  bool anySyncMotionEnabled = false;
+  for (int i = 0; i < SCALES_COUNT; i++) {
+    anySyncMotionEnabled = anySyncMotionEnabled || (shared->scales[i].syncEnable != 0);
   }
+
+  /* The re-assert. elsDiagServoGate is a no-op returning false in every
+   * release build; a diagnostic probe may refuse the assert and record that
+   * it did (see els_diag_disengage_latch.h, which exists because
+   * this line can switch the feed back on after a disengage). */
+  if (!commandInFlight && anySyncMotionEnabled && !shared->elsStop.active
+      && rampsData->shared.fastData.servoMode != 2) {
+    if (!elsDiagServoGate(&rampsData->diag, &shared->elsStop,
+                          rampsData->shared.fastData.servoMode)) {
+      rampsData->shared.fastData.servoMode = 1;
+    }
+  }
+
+  rampsData->shared.fastData.servoSpeed = (float)(int32_t)(rampsData->shared.servo.currentSteps - previousPosition) * 10;
+  previousPosition = rampsData->shared.servo.currentSteps;
+
+  /* THE MACHINE MODE, published unconditionally -- release builds included.
+   *
+   * Derived here rather than in the ISR because it is a ~100 ms question
+   * about what the machine is doing, and the ISR has no business spending
+   * cycles on it. Written before the probe hook below so a mode-watch probe
+   * and this register can never disagree about the same tick. */
+  elsPublishMachineMode(shared, (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
+
+  /* Probe hook: a mode-watch probe derives and publishes the machine mode
+   * once per task tick. No code in a release build or any other probe.
+   * AFTER the re-assert above, so the published mode reflects this tick's
+   * decision rather than last tick's. */
+  elsDiagTaskTick(&rampsData->diag, shared,
+                  (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
+
+  /* ENA, and how long it has been on: a calibration does not step until the
+   * drive has had ELS_CAL_ENA_SETTLE_MS to wake (elsCalUpdate). */
+  bool enaOn = (shared->fastData.servoMode != 0);
+  HAL_GPIO_WritePin(ENA_GPIO_PORT, ENA_PIN, enaOn ? GPIO_PIN_RESET : GPIO_PIN_SET);
+  elsEnaSettleTick(&rampsData->enaSettle, enaOn, HAL_GetTick(), ELS_CAL_ENA_SETTLE_MS);
+
+  /* The command ack, after the mode is published and ENA driven, so the
+   * mode a host reads beside the new commandSeq describes the result. */
+  elsCommandFinish(rampsData);
+
+  /* Boot command intake, once per task tick. */
+  elsBootCommandTick(shared);
+}
+
+/* One pass of the superloop (see the job table above RampsStart). */
+void RampsPoll(rampsHandler_t *rampsData) {
+  uint32_t now = HAL_GetTick();
+
+  (void)mbAppService();
+
+  if (rampsJobDue(&servoEnableJob, now)) {
+    servoEnableTask(rampsData);
+  } else if (rampsJobDue(&speedJob, now)) {
+    updateSpeedTask(rampsData);
+  } else if (rampsJobDue(&ledJob, now)) {
+    userLedTask();
+  }
+
+  /* The reply-edge LED pulse userLedTask started, ended on time. Signed:
+   * the job stamps the start with a later tick than `now` when the HAL tick
+   * moves during this pass, and an unsigned difference would end the pulse
+   * at once. */
+  if (ledPulseActive && (int32_t)(now - ledPulseStart) >= (int32_t)RAMPS_LED_PULSE_MS) {
+    HAL_GPIO_WritePin(USR_LED_GPIO_Port, USR_LED_Pin, GPIO_PIN_SET);
+    ledPulseActive = 0;
+  }
+}
+
+/* ---- The ELS command channel (els_command.h, protocolVersion 13) ----------
+ *
+ * Consumed in servoEnableTask, not in the ISR, for the reason the design doc
+ * gives (docs/design/els-command-channel.md, "Where the command is
+ * consumed"): the task's re-assert reads syncEnable and then writes
+ * servoMode, and an ISR consumption landing between the two would be
+ * overwritten, leaving servoMode = 1 behind an OFF ack. Consuming in the same
+ * task, ahead of the re-assert, and skipping the re-assert while a command is
+ * in flight, closes that.
+ *
+ * DISENGAGE, in order:
+ *   1. syncEnable = 0 on every scale -- the motion source off first, so
+ *      nothing can re-promote servoMode behind the rest;
+ *   2. servoMode = 0 -- no pulses from the next ISR pass, and ENA high (drive
+ *      off) later in this same task tick;
+ *   3. enable = 0, and elsCommandEndJob = 1: the ISR's end-of-job block
+ *      clears active, consumes the resume edge it makes so no take-up starts,
+ *      abandons a take-up in flight and cancels the pending motion, whether
+ *      or not enable was 1 (see that block in SynchroRefreshTimerIsr). From
+ *      CAL, servoMode 0 is the calibration's abort condition, so the same ISR
+ *      pass ends the run with ELS_CAL_ERR_ABORTED on calSeq;
+ *   4. the ack (elsCommandFinish): commandResult, then commandSeq, only once
+ *      the ISR has cleared elsCommandEndJob, no calibration is running and the
+ *      machine still reads inert. Otherwise it waits for the next tick, so an
+ *      ack never describes a machine still carrying motion.
+ *
+ * Legal from every mode, so DISENGAGE has no refusal. Frames are serviced
+ * between superloop jobs, never inside one, so a host write cannot land
+ * within a tick; one that lands between the consuming tick and the ack and
+ * reopens sync, servoMode or enable holds the ack back, and the next intake
+ * applies the teardown again.
+ */
+static bool elsDisengageInert(const rampsHandler_t *data) {
+  const rampsSharedData_t *shared = &data->shared;
+  for (int i = 0; i < SCALES_COUNT; i++) {
+    if (shared->scales[i].syncEnable != 0u) return false;
+  }
+  return shared->fastData.servoMode == 0u && shared->elsStop.enable == 0u;
+}
+
+static void elsDisengageTeardown(rampsHandler_t *data) {
+  rampsSharedData_t *shared = &data->shared;
+  for (int i = 0; i < SCALES_COUNT; i++) {
+    shared->scales[i].syncEnable = 0;
+  }
+  shared->fastData.servoMode = 0;
+  shared->elsStop.enable     = 0;
+  data->elsCommandEndJob     = 1;
+}
+
+bool elsCommandIntake(rampsHandler_t *data) {
+  rampsSharedData_t *shared = &data->shared;
+
+  if (data->elsCommandPending != ELS_CMD_NONE) {
+    /* In flight. A command written meanwhile stays in the register until
+     * this one is acked: one command in flight, one ack each. */
+    if (!elsDisengageInert(data)) {
+      elsDisengageTeardown(data);
+    }
+    return true;
+  }
+
+  uint16_t cmd = shared->elsStop.command;
+  if (cmd == ELS_CMD_NONE) return false;
+  shared->elsStop.command = ELS_CMD_NONE;
+
+  if (cmd != ELS_CMD_DISENGAGE) {
+    shared->elsStop.commandResult = ELS_CMD_RESULT_ERR_UNKNOWN;
+    shared->elsStop.commandSeq++;
+    return false;
+  }
+
+  /* Whether a calibration was running when the command was consumed. The
+   * result is decided at the ack from this and calResult, so a run that
+   * happened to finish on its own in the same instant is not reported as
+   * aborted by us. */
+  data->elsCommandResult  = (data->elsCal.phase != ELS_CAL_IDLE) ? 1u : 0u;
+  data->elsCommandPending = cmd;
+  elsDisengageTeardown(data);
+  return true;
+}
+
+void elsCommandFinish(rampsHandler_t *data) {
+  rampsSharedData_t *shared = &data->shared;
+  if (data->elsCommandPending == ELS_CMD_NONE) return;
+  if (data->elsCommandEndJob != 0u) return;              /* the ISR has not run the teardown yet */
+  if (data->elsCal.phase != ELS_CAL_IDLE) return;         /* abort not taken yet */
+  if (!elsDisengageInert(data)) return;                   /* a host write reopened it */
+
+  shared->elsStop.commandResult =
+      (data->elsCommandResult != 0u && shared->elsStop.calResult == ELS_CAL_ERR_ABORTED)
+      ? ELS_CMD_RESULT_OK_CAL_ABORTED : ELS_CMD_RESULT_OK;
+  shared->elsStop.commandSeq++;
+  data->elsCommandPending = ELS_CMD_NONE;
 }
 
 /* The calCommand hand-off for bootCommand (see Ramps.h). Consumed and cleared

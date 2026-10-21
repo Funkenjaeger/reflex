@@ -1,49 +1,27 @@
 ELS Thread Pitch
 ================
 
-Selects the thread pitch (or feed-per-revolution) that the carriage
-follows for one full spindle revolution. The selected pitch is
-written to the spindle's sync ratio so the servo tracks the spindle
-at the right ratio during a cut.
+The thread pitch (or feed per revolution) is the distance the carriage
+moves for one full spindle revolution. The controller writes the selected
+pitch to the spindle sync ratio. The servo then follows the spindle at the
+correct ratio during a cut.
 
-## Metric Mode
+Choose the pitch with the **FEED/THREAD** control on the ELS bar. It opens
+the **Select feed** list. The list shows the tables for the current display
+unit, MM or IN.
 
-Switches the pitch dropdown between metric and imperial tables.
+## Thread type
 
-- **ON** — pitches listed in millimeters (e.g. `1.00`, `1.50`,
-  `2.00` mm/rev).
-- **OFF** — pitches listed in threads-per-inch (TPI; e.g. `20`,
-  `16`, `13` threads per inch).
+Thread type is the only control in Advanced ELS settings. It records the
+thread profile family, for the operator's reference. It is for information
+only. It does not affect motion, and nothing else reads it. The choices
+follow the display unit:
 
-Switching this setting reloads the Pitch dropdown and resets the
-Thread Type to a value compatible with the new unit system.
-
-## Pitch
-
-Chooses one entry from the current table.
-
-- **Metric:** the value is the linear travel of the carriage per
-  spindle revolution (e.g. M10×1.5 → pitch `1.50`).
-- **Imperial:** the value is threads per inch (e.g. 1/4-20 → pitch
-  `20`).
-
-The pitch you select drives the spindle sync ratio used during a
-cut. To cut a thread not in the table, add an entry to the feeds
-table in the source.
-
-## Thread Type
-
-Documents the thread profile family for operator reference. Currently
-informational — it does not affect motion. Available values depend
-on Metric Mode:
-
-- **Metric:** ISO Metric, ACME
-- **Imperial:** Unified, Whitworth, ACME
+- **MM:** ISO Metric, ACME
+- **IN:** Unified, Whitworth, ACME
 
 ## Notes
 
-- The pitch selection is shared with the visible ELS bar. Changing
-  it on either bar updates the other.
-- For power feeding (continuous feed, no thread), use the feed
-  table on the visible ELS bar instead — the advanced bar only
-  exposes thread pitches.
+- The ELS bar has the FEED/THREAD control, the pitch value, and the up and
+  down steppers. All of them select from the Select feed tables.
+- The advanced bar has no pitch or feed table control.

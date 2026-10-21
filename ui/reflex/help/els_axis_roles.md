@@ -1,38 +1,38 @@
-ELS Axis Roles
+ELS axis roles
 ==============
 
-Assigns which configured axes serve as the spindle, saddle (Z),
-and cross slide (X) for Electronic Lead Screw operation.
+Sets which configured axes act as the spindle, the saddle (Z) and the
+cross slide (X) for Electronic Lead Screw operation.
 
-## Axis Roles
+## Axis roles
 
-### Spindle Axis
-The rotational reference input. This axis must be connected to
-a spindle encoder and should have Spindle Mode enabled.
-The ELS system reads the spindle speed and position from this axis
-to synchronize the servo feeds.
+### Spindle axis
+The rotational reference input. This axis must connect to a spindle
+encoder, and it should have Spindle mode turned on. The ELS system reads
+the spindle speed and position from this axis to synchronize the servo
+feeds.
 
-### Saddle Axis (Z)
-The longitudinal axis — typically the carriage/saddle on a lathe.
-When ELS is active, this axis follows the spindle at the selected
-thread pitch or feed rate for longitudinal cuts and threading.
+### Saddle axis (Z)
+The longitudinal axis, usually the carriage/saddle on a lathe. When ELS
+is active, this axis follows the spindle at the selected thread pitch or
+feed rate, for longitudinal cuts and threading.
 
-### Cross Slide Axis (X)
-The transverse axis — typically the cross slide on a lathe.
-When ELS is active, this axis can be synchronized for facing
-operations or taper turning.
+### Cross slide axis (X)
+The transverse axis, usually the cross slide on a lathe. When ELS is
+active, this axis can be synchronized for facing operations or taper
+turning.
 
 ## Configuration
 
-- Select axis names from the dropdowns (or "None" to leave
-  unassigned)
-- Each role must be assigned to a different axis
-- The spindle axis must be configured before Z or X can operate
-  in ELS mode
+- Select axis names from the dropdowns (or "None" to leave a role
+  unassigned).
+- Assign each role to a different axis.
+- Z and X cannot operate in ELS mode until the spindle axis is
+  configured.
 
 ## Notes
 
-- Axes are listed by their configured names from the Axes setup
-- If no axes are configured yet, set them up in the Axes screen first
-- You can leave X or Z as "None" if your setup only needs one
-  synchronized axis
+- The dropdowns list axes by the names configured in the Axes setup.
+- If no axes are configured yet, set them up in the Axes screen first.
+- You can leave X or Z as "None" if your setup needs only one
+  synchronized axis.

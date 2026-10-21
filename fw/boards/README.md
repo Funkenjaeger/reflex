@@ -40,5 +40,6 @@ lands, `--check-handwritten` retires, since hand-copy drift becomes impossible
 by construction.
 
 The respin board (STM32F413VGT6) is added the same way once its schematic is
-retargeted in `kicad-reflex` and `pinout/respin.json` exists there -- it is not
-committed yet.
+retargeted in `kicad-reflex` and `pinout/respin.json` exists there. As of
+2026-10-10 that export does not exist, so no `fw/boards/respin/` directory is
+vendored.

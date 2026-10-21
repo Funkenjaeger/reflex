@@ -64,8 +64,8 @@ class ElsBar(BoxLayout, SavingDispatcher):
 
     # The words the operator sees when ADV refuses. A constant so the test
     # asserts on the string that ships, not a paraphrase.
-    HIDE_REFUSED_NOTICE = ("ELS stop is engaged — disengage before hiding the "
-                           "advanced bar")
+    HIDE_REFUSED_NOTICE = ("ELS stop is engaged. Disengage to hide the "
+                           "advanced bar.")
 
     def toggle_advanced(self) -> bool:
         """Show or hide the advanced ELS bar; refuse to HIDE while engaged.

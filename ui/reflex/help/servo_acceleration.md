@@ -1,22 +1,23 @@
 Acceleration (Steps/s²)
 =======================
 
-How quickly the motor ramps up to maximum speed, expressed in
-steps per second squared.
+The rate at which the motor increases to maximum speed, in steps per
+second squared.
 
 ## How It Works
 
 The servo uses a trapezoidal motion profile:
-1. Accelerate at this rate until reaching max speed
-2. Cruise at max speed
+1. Accelerate at this rate until it gets to max speed
+2. Move at max speed
 3. Decelerate at this rate to stop at the target
 
 ## Guidelines
 
-- Higher values = snappier response but more stress on the
+- Higher values = faster response but more stress on the
   mechanical system
-- Lower values = smoother motion but slower overall moves
-- Start conservative and increase until you find the sweet spot
+- Lower values = smoother motion but slower moves
+- Start with a low value. Increase it until the motion is fast
+  and smooth
 
 ## Typical Ranges
 
@@ -29,7 +30,7 @@ The servo uses a trapezoidal motion profile:
 ## Notes
 
 - Value must be a positive integer
-- Too high acceleration with heavy loads causes missed steps
-- Too low acceleration makes the system feel sluggish
-- The same acceleration value is used for both speeding up and
-  slowing down
+- Acceleration that is too high with heavy loads causes missed steps
+- Acceleration that is too low makes the system slow to respond
+- The servo uses the same acceleration value to increase and to
+  decrease speed

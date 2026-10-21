@@ -1,7 +1,7 @@
 #: import NumberItem reflex.components.widgets.number_item
 
 <CirclePopup>:
-    title: "Circle Pattern Parameters"
+    title: "Circle pattern parameters"
     size_hint: 0.8, 0.8
     auto_dismiss: False
 
@@ -23,7 +23,7 @@
                     value: root.ref.origin_y
                     on_value: root.ref.origin_y = self.value
                 NumberItem:
-                    name: "Holes Count"
+                    name: "Holes count"
                     value: root.ref.holes_count
                     on_value: root.ref.holes_count = self.value
                 NumberItem:
@@ -31,11 +31,11 @@
                     value: root.ref.diameter
                     on_value: root.ref.diameter = self.value
                 NumberItem:
-                    name: "Start Angle"
+                    name: "Start angle"
                     value: root.ref.start_angle
                     on_value: root.ref.start_angle = self.value
                 NumberItem:
-                    name: "End Angle"
+                    name: "End angle"
                     value: root.ref.end_angle
                     on_value: root.ref.end_angle = self.value
         BoxLayout:

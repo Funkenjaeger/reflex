@@ -15,6 +15,9 @@ drive train.
 2. **Move the tool clear** of the workpiece and the chuck.
 3. **Stop the spindle.**
 
+On a lathe with a gearbox table, it runs only with **Gearbox position** set
+to the reference position, the first in the table.
+
 The controller refuses to run while the ELS stop is engaged, and it pauses
 spindle sync for the duration, so the leadscrew is moved by the calibration and
 by nothing else.
@@ -67,7 +70,7 @@ Cut nothing, but run the confirmation both ways:
 1. Engage, close the half nut, press **Cut**. The pass should start.
 2. Open the half nut and press **Cut** again. It should refuse:
 
-> Cut aborted — is the half-nut engaged?
+> Carriage did not move. Close the half nut.
 
 If it refuses with the half nut closed, or **starts with it open**, stop and
 find out why before threading anything. That check is the machine's core safety

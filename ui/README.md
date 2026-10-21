@@ -142,7 +142,7 @@ reflex/
 │   └── board.py               # Board/device event dispatcher
 ├── fsms/                      # State machines
 │   ├── els_fsm.py             # ELS state machine
-│   ├── els_stop_hal.py        # ELS stop hardware abstraction
+│   ├── els_stop_registers.py   # ELS stop register facade
 │   ├── els_mode_watch.py      # Firmware-mode census/divergence sampler
 │   ├── fsm_event_bus.py       # Event bus for FSM communication
 │   ├── ui_controller.py       # UI controller (mediates UI and FSM)
@@ -170,7 +170,7 @@ reflex/
 
 * **FSM architecture pattern:** [`kivy-fsm-design-pattern.md`](kivy-fsm-design-pattern.md)
 * **ELS shoulder-stop orchestration:** [`ELS_STOP.md`](ELS_STOP.md)
-* **Repo structure ADR:** [`decisions/repo-structure-monorepo.md`](../decisions/repo-structure-monorepo.md)
+* **Repo structure decision:** [`docs/design/decisions.md`](../docs/design/decisions.md)
 
 ---
 

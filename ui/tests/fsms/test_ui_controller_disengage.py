@@ -90,7 +90,7 @@ def test_sync_armed_with_the_spindle_turning_names_sync_enable(ctrl):
 def test_a_running_cycle_names_the_cycle(ctrl):
     in_a_cycle(ctrl)
     assert ctrl.disengage_refusal() == DISENGAGE_REFUSED_CYCLE
-    assert "Stop the cycle" in DISENGAGE_REFUSED_CYCLE
+    assert "Press Stop" in DISENGAGE_REFUSED_CYCLE
 
 
 # ─── disengage() obeys them, and toggle_engage goes through it ───────────────
@@ -124,7 +124,7 @@ def test_a_stale_disengage_tap_is_info(ctrl):
     ctrl._els_fsm = MagicMock()
     ctrl._els_fsm.may_disable.return_value = False
     ctrl._els_fsm.state = "disabled"
-    assert ctrl.disengage() == "Disengage ignored — ELS is disabled"
+    assert ctrl.disengage() == "ELS is disabled. Disengage ignored."
     ctrl._els_fsm.disable.assert_not_called()
     assert ctrl.notice_severity == NOTICE_INFO
 
@@ -163,11 +163,30 @@ def test_firmware_els_enable_reads_the_snapshot_honestly(ctrl, snapshot, expecte
 def test_reconnect_after_a_ui_disengage_clears_rather_than_re_arms(ctrl):
     """After the 08:32 failure the journal showed `re-asserted engaged-idle
     (armed=True)` on reconnect -- the FSM was still 'stopped'. After a
-    disengage it is 'disabled', and reconcile takes the clear branch."""
+    disengage it is 'disabled', and once its DISENGAGE has been acknowledged
+    reconcile takes the clear branch."""
     engaged_idle(ctrl)
     assert ctrl.disengage() is None
+    assert ctrl._els_fsm.state == "disabled"
+    # The ack, as the poller records it (nothing acks on this rig).
+    ctrl._els_fsm._disengage_pending = None
     hal = ctrl._els_fsm.hal = MagicMock(wraps=ctrl._els_fsm.hal)
     with patch.object(ctrl._els_fsm, "arm_idle_stop") as arm:
         ctrl._els_fsm.reconcile_firmware_on_connect()
     arm.assert_not_called()
     hal.set_enable.assert_called_with(False)
+
+
+def test_reconnect_with_the_disengage_unacked_issues_it_again(ctrl):
+    """protocolVersion 13: a DISENGAGE never acknowledged is issued again at
+    reconnect, before the adopt table is consulted, and nothing re-arms."""
+    engaged_idle(ctrl)
+    assert ctrl.disengage() is None
+    assert ctrl._els_fsm.disengage_unacked
+    ctrl._els_fsm.board.connected = True        # the link is back
+    hal = ctrl._els_fsm.hal = MagicMock(wraps=ctrl._els_fsm.hal)
+    with patch.object(ctrl._els_fsm, "arm_idle_stop") as arm:
+        ctrl._els_fsm.reconcile_firmware_on_connect()
+    arm.assert_not_called()
+    hal.request_disengage.assert_called_once_with()
+    hal.set_enable.assert_not_called()

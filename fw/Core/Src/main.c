@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "cmsis_os.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -45,12 +44,13 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-rampsHandler_t RampsData;
+/* The one motion-control instance. RampsStart() takes it from here, and the
+ * TIM9 vector in stm32f4xx_it.c hands it to the ISR. */
+rampsHandler_t rampsInstance;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -95,37 +95,30 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM9_Init();
   /* USER CODE BEGIN 2 */
-  // htim1 is used in encoder mode
-  // htim2 is used in encoder mode
-  // htim3 is used in encoder mode
-  // htim4 is used in encoder mode
-  // htim9 is used to generate the synchro motion
+  /* Peripheral roles: TIM1-TIM4 decode the four scales (Scales.c sets their
+   * mode), TIM9 paces the motion ISR, USART1 carries Modbus to the host. */
 
   TIM_HandleTypeDef *scale_htims[SCALES_COUNT] = { &htim1, &htim2, &htim3, &htim4 };
   for (int i = 0; i < SCALES_COUNT; i++) {
-    RampsData.shared.scales[i].timerHandleSlot = (uint32_t)i;
+    rampsInstance.shared.scales[i].timerHandleSlot = (uint32_t)i;
     ramps_timer_handles[i] = scale_htims[i];
   }
-  RampsData.synchroRefreshTimer = &htim9;
-  RampsData.modbusUart = &huart1;
-  RampsStart(&RampsData);
+  rampsInstance.synchroRefreshTimer = &htim9;
+
+  /* Starts the encoders, the Modbus slave and the TIM9 motion interrupt, and
+   * schedules the superloop's jobs. The interrupt runs from here on. */
+  RampsStart(&rampsInstance);
 
   /* USER CODE END 2 */
 
-  /* Init scheduler */
-  osKernelInitialize();
-
-  /* Call init function for freertos objects (in freertos.c) */
-  MX_FREERTOS_Init();
-
-  /* Start scheduler */
-  osKernelStart();
-
-  /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  /* The superloop: no RTOS. Each pass services the Modbus slave and runs at
+   * most one job that has fallen due (Ramps.c RampsPoll); the TIM9 motion
+   * interrupt preempts all of it. */
   while (1)
   {
+    RampsPoll(&rampsInstance);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

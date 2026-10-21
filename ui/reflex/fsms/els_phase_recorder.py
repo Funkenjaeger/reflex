@@ -287,7 +287,13 @@ class PhaseLiveTracker:
             self._note_idle(
                 "latched job but the sync ratio is unreadable or zero in "
                 "firmware; no samples recorded")
-            return                              # unreadable this tick; retried
+            # The failed attempt cost two live reads, so it takes the sample
+            # slot and the retry comes one sample interval later. Without
+            # this, a ratio that reads 0 (never re-taught after a power cycle)
+            # was re-read on every board tick until it was taught. The gated
+            # skips above cost no traffic and deliberately leave the slot free.
+            self._last_sample = now
+            return
         self._note_idle(None)
         num, den = ratio
 

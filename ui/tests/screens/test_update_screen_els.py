@@ -342,7 +342,7 @@ def test_a_running_cycle_offers_no_disengage(rig):
     install(rig)
     [d] = rig.dialogs
     assert [b.text for b in d.buttons] == ["OK"]
-    assert "Stop the cycle" in d.body
+    assert "Press Stop" in d.body
     d.button("OK").press()
     assert rig.ctrl._els_fsm.state == "stopped"
     rig.do_install.assert_not_called()
@@ -355,7 +355,7 @@ def test_the_pre_release_question_comes_first_and_disengages_nothing(rig):
     install(rig, RC)
     [pre] = rig.dialogs
     assert pre.title == "Pre-release"
-    pre.button("Install Anyway").press()
+    pre.button("Install anyway").press()
     assert rig.ctrl._els_fsm.state == "stopped", "nothing disengaged yet"
     assert [d.title for d in rig.dialogs] == ["Pre-release", "ELS job engaged"]
     rig.do_install.assert_not_called()
@@ -386,3 +386,38 @@ def test_a_refused_reboot_is_what_the_status_box_says(rig):
     assert any(line.startswith("The update did not start") and FLASHER_REFUSED_ELS in line
                for line in rig.status), rig.status
     assert rig.screen.busy is False
+
+
+# ─── a firmware-only reinstall takes the same gate ───────────────────────────
+
+def reinstall(r, release=FINAL):
+    r.screen.current_release = release.tag
+    r.screen.firmware_mismatch = "The controller runs diagnostic firmware."
+    r.screen.selected_release = release.tag
+    assert r.screen.firmware_only, "precondition: the reinstall is offered"
+    r.screen.install_release()
+
+
+def test_a_reinstall_over_an_engaged_job_offers_disengage_and_install(rig):
+    engaged_idle(rig.ctrl)
+    reinstall(rig)
+    [d] = rig.dialogs
+    assert d.title == "ELS job engaged"
+    assert [b.text for b in d.buttons] == ["Cancel", "Disengage and Install"]
+    assert f"Reinstalling the {FINAL.tag} firmware reboots the controller" in d.body
+    rig.do_install.assert_not_called()
+
+
+def test_a_blocked_reinstall_names_its_own_button(rig):
+    engaged_idle(rig.ctrl, sync=True, spindle=True)
+    reinstall(rig)
+    [d] = rig.dialogs
+    assert [b.text for b in d.buttons] == ["OK"]
+    assert "Then press Reinstall firmware again." in d.body
+
+
+def test_a_reinstall_not_engaged_starts_with_no_dialog(rig):
+    reinstall(rig)
+    assert rig.dialogs == []
+    rig.do_install.assert_called_once_with(FINAL)
+    assert rig.screen._firmware_only_install is True

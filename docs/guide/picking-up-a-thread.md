@@ -17,9 +17,10 @@ at that instant. From then on every pass follows the existing groove.
 ## Where to find it
 
 Both advanced features live behind the **gear** on the advanced ELS bar, at the
-bottom of the ELS settings:
+bottom of **Advanced ELS settings**. The same settings also open from **Setup →
+ELS → Advanced ELS settings**:
 
-![The ELS settings popup](../screenshots/flow/wt_settings_popup.png)
+![The Advanced ELS settings popup](../screenshots/flow/wt_settings_popup.png)
 
 ## 1 — Seat the carriage
 
@@ -76,9 +77,9 @@ meant to be. From the seat onward, the carriage position *is* the reference.
 The same free play that lets you seat the carriage also lets it creep toward the
 cut. If Z leaves tolerance, the screen switches to a re-seat:
 
-> The carriage has crept off its seated position. Nudge it **back** by hand —
-> the **anti-cutting** direction, the same way you seated it — until it seats
-> firmly, then press Re-seated.
+> The carriage moved off its seated position. Push it **back** by hand in the
+> **anti-cutting** direction, the same direction you used to seat it. Stop when
+> it seats firmly. Press Re-seated.
 
 The frame above shows +0.0022 in of drift against a ±0.0006 in tolerance: under
 three thousandths, and already too much.

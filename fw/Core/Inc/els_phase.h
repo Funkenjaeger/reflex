@@ -18,8 +18,7 @@
  * cuttingDir, so droSign is how a cutting-direction servo move changes the DRO).
  * phaseError = idealAdvance - droSign * actualAdvance handles BOTH polarities.
  *
- * PHASE OFFSET (primitive landed 2026-08-21; the register/UI half is in
- * todo.md). offsetSteps is an additive term, in leadscrew steps, for a
+ * PHASE OFFSET. offsetSteps is an additive term, in leadscrew steps, for a
  * persistent phase offset applied ON TOP of the latched reference. The
  * operator-entered groove-widening offset and the X-depth-derived
  * compound-infeed offset are two sources of this ONE term. It is
@@ -208,7 +207,7 @@ typedef struct {
  * WHICH WAY IT FAILS, DELIBERATELY. A refused pair returns deltaSpindle
  * UNREDUCED -- exactly the pre-04dd1f9 behaviour, which shipped for months and
  * degrades gracefully -- rather than asserting or clamping. This runs on the
- * resume edge off the 100 kHz ISR's path; there is nothing useful to trap to,
+ * resume edge off the 50 kHz ISR's path; there is nothing useful to trap to,
  * and reducing by a wrong period is strictly worse than not reducing. So a
  * tolerance that is slightly too TIGHT costs the fix's benefit on a machine
  * that deserved it, while one slightly too LOOSE costs a scrapped thread. The
@@ -334,7 +333,7 @@ static inline int32_t elsReduceDeltaSpindleBy(int32_t deltaSpindle,
   return r;
 }
 
-/* ---- the 100 kHz ISR's path carries no library calls ------------------
+/* ---- the 50 kHz ISR's path carries no library calls ------------------
  *
  * elsComputePhaseCorrection runs from applyPhaseCorrection, on the resume edge
  * -- which is cut-start, which is when the Modbus link died on 2026-08-23.
@@ -350,8 +349,8 @@ static inline int32_t elsReduceDeltaSpindleBy(int32_t deltaSpindle,
  * tick in the ISR got more expensive the longer the machine had been cutting.
  *
  * WHY THIS WORK IS MADE CHEAPER IN PLACE RATHER THAN DEFERRED TO A TASK.
- * todo.md lists applyPhaseCorrection first among things to move OUT of the
- * ISR. It must not be. The correction it computes is added to servo.stepsToGo
+ * applyPhaseCorrection is the obvious first candidate to move OUT of the ISR.
+ * It must not be. The correction it computes is added to servo.stepsToGo
  * and has to be fully executed BEFORE the pass starts feeding; handing it to a
  * task means the pass can begin while the correction is still queued, which is
  * precisely the out-of-phase-cut signature under investigation. The step pulse

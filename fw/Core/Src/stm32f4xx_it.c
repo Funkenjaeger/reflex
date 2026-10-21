@@ -41,7 +41,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
-extern rampsHandler_t RampsData;
+extern rampsHandler_t rampsInstance;  /* defined in main.c */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -173,7 +173,10 @@ void TIM1_BRK_TIM9_IRQHandler(void)
   HAL_TIM_IRQHandler(&htim1);
   HAL_TIM_IRQHandler(&htim9);
   /* USER CODE BEGIN TIM1_BRK_TIM9_IRQn 1 */
-    SynchroRefreshTimerIsr(&RampsData);
+  /* TIM9's update event is the motion tick. The vector is shared with the
+   * TIM1 break interrupt, which is never enabled, so every entry is a TIM9
+   * tick, its flag already cleared by the HAL handler above. */
+  SynchroRefreshTimerIsr(&rampsInstance);
   /* USER CODE END TIM1_BRK_TIM9_IRQn 1 */
 }
 

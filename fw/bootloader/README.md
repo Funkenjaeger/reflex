@@ -4,7 +4,7 @@ Flash the application over the RS-485 Modbus link the UI already holds, so the
 ST-Link is needed only for virgin boards, option bytes, and disaster recovery.
 The register contract, flash geometry and image format are in
 `../Core/Inc/els_identity.h` and recorded in
-`../../decisions/els-modbus-register-map.md`.
+`../../docs/design/decisions.md`.
 
 Verified on hardware, including field flashing and the anti-brick swap-back.
 
@@ -64,8 +64,9 @@ python3 scripts/modbus-flash.py --identity --port /dev/ttyUSB0
 python3 scripts/modbus-flash.py build-slot/reflex-fw.bin --port /dev/ttyUSB0
 ```
 
-The client refuses unless `idMagic` matches, has the app jump into the
-bootloader (`bootCommand` = 1), erases STAGING, streams 200 bytes per FC16,
+The client refuses unless `idMagic` matches and no ELS job is engaged (it reads
+`elsStop.enable` first; the app also refuses the jump while it is set), has the
+app jump into the bootloader (`bootCommand` = 1), erases STAGING, streams 200 bytes per FC16,
 verifies, applies (RUN to BACKUP, STAGING to RUN, journaled in flash), jumps,
 and polls until the app reports the image's build rev. `--dry-run` skips the
 writes.

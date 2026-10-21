@@ -1,7 +1,7 @@
 /*
  * Diagnostic scratchpad: the probe must not leak into an unflagged build.
  *
- * THE RULE THIS ENFORCES. No build that reaches dev-staging, dev or main may
+ * THE RULE THIS ENFORCES. No build that reaches dev or main may
  * define ELS_DIAG_SCRATCH. That rule is meant to be structural rather than
  * documentary -- release builds omit the flag, so the writes do not exist and
  * diagSchema reads 0 -- and this test is what makes the claim checkable instead
@@ -65,13 +65,11 @@ HAL_StatusTypeDef HAL_TIM_Encoder_Start(TIM_HandleTypeDef *h, uint32_t ch) {
 }
 HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
 
-void ModbusInit(modbusHandler_t *m)  { (void)m; }
-void ModbusStart(modbusHandler_t *m) { (void)m; }
+void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { (void)r; (void)n; (void)id; }
+int mbAppService(void) { return 0; }
+uint16_t mbAppReplies(void) { return 0; }
+uint32_t HAL_GetTick(void) { return 0; }
 
-osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
-osThreadId_t osThreadNew(osThreadFunc_t f, void *arg, const osThreadAttr_t *a) {
-    (void)f; (void)arg; (void)a; return nullptr;
-}
 
 } /* extern "C" */
 
@@ -104,7 +102,6 @@ int main(void)
          * on (the diag block) is left at 0xA5. */
         data.shared.scales[i].timerHandleSlot = (uint32_t)i;
     }
-    data.modbusUart = nullptr;
 
     RampsStart(&data);
 
@@ -127,8 +124,13 @@ int main(void)
      * correction, placed in two of 10's alignment pads so nothing else moved.
      * A layout change all the same, and since this bump the version is bound
      * to the layout by registers/layout-fingerprints.json. */
-    check(data.shared.elsStop.protocolVersion == 11,
-          "protocolVersion is 11 (stopOffset / stopTriggerOffset)");
+    /* 11 -> 12: clearRefCommand / clearRefSeq, the host's clear of the thread
+     * reference, in the last two alignment pads. Nothing else moved. */
+    /* 12 -> 13: the ELS command channel (command / commandSeq /
+     * commandResult) and calBasisSteps, the calMeasured split. The hot group
+     * grew, so every cold register moved by two. */
+    check(data.shared.elsStop.protocolVersion == 13,
+          "protocolVersion is 13 (command channel, calBasisSteps)");
     check(data.shared.elsStop.protocolVersion == ELS_PROTOCOL_VERSION,
           "RampsStart publishes the ELS_PROTOCOL_VERSION macro, not a drifting literal");
 
@@ -223,11 +225,29 @@ int main(void)
      * the only one that exercises behavior, so restore what the suppression
      * wrote before falling through to it. */
     data.shared.elsStop.diagEndReason = 0;
+#elif ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_ISR_GAP
+    check(data.shared.elsStop.diagSchema == 8,
+          "isr gap publishes wire schema 8");
+    check(data.shared.elsStop.diagBucketCount == ELS_DIAG_GAP_WORDS,
+          "isr gap publishes its trace word count");
+    check((uint16_t)data.shared.elsStop.diagTrace[ELS_DIAG_GAP_W_NOMINAL]
+              == ELS_ISR_CYCLE_BUDGET,
+          "isr gap publishes the nominal tick, so no reader assumes the rate");
+    /* RampsStart must leave a clean window over the 0xA5 poison: diagEndReason
+     * is this probe's reset request, and anything but OPEN there would wipe
+     * the first tick's window. */
+    check(data.shared.elsStop.diagSettleTicks == 0
+              && data.shared.elsStop.diagNetCounts == 0,
+          "isr gap starts with no worst gap and no ticks");
+    check(data.shared.elsStop.diagEndReason == ELS_DIAG_GAP_OPEN,
+          "isr gap starts with its window open (diagEndReason == OPEN)");
 #else
 #error "this probe has no assertions in els_diag_scratch_test.cpp -- add an arm above"
 #endif
+#if ELS_DIAG_PROBE != ELS_DIAG_SCHEMA_ISR_GAP   /* there it is the reset request, checked above */
     check(data.shared.elsStop.diagEndReason == 0,
           "end reason starts cleared (no stale verdict beside a fresh trace)");
+#endif
 #if ELS_DIAG_PROBE == ELS_DIAG_SCHEMA_TAKEUP_SETTLE_V3
     check(data.shared.elsStop.diagBucketTicks > 0,
           "trace probe publishes bucket width (host must not assume the ISR rate)");

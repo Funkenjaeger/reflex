@@ -32,7 +32,7 @@ class FeedsTablePopup(Popup):
         from reflex.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
         super().__init__(**kwargs)
-        self.title = f"Select Feed"
+        self.title = f"Select feed"
         self.title_size = "20sp"
         self.size_hint = (0.8, 0.8)
         self.auto_dismiss = False

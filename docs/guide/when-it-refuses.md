@@ -17,39 +17,39 @@ build fails.
 
 ## Take-up refusals
 
-Shown across the status gutter when a pass is stopped before it starts. Every one of these begins with **Cut aborted**, because the first thing an operator needs to know is the state of the machine, not the name of the fault.
+Shown across the status gutter when a pass is stopped before it starts. Each one says what happened, then what to do. The Cut button comes back underneath, which shows that the pass did not start.
 
-> Cut aborted — is the half-nut engaged?
+> Carriage did not move. Close the half nut.
 
 The controller drove the leadscrew through its backlash and the Z scale did not move, so the carriage did not. **Close the half nut and press Cut again** — that is the whole recovery, and it is the fault this check exists to catch. If the half nut *was* closed, look for a slipping coupling, a disconnected Z scale, or a servo that is not enabled.
 
-> Cut aborted — WRONG-way motion. Check the Z scale direction.
+> Carriage moved the WRONG way. Examine the Z scale direction.
 
 The carriage moved, but the **wrong way**. This is a wiring or scale-direction fault, not a matter of not moving far enough, and it will corrupt every other ELS operation the same way. Check the Z scale direction in setup before doing anything else.
 
-> Cut aborted — servo in jog mode. Leave jog and press Cut again.
+> Servo is in jog mode. Leave jog mode to cut.
 
 The servo is in jog mode, where the take-up is never consumed. **Leave jog and press Cut again.** Nothing is wrong with the machine.
 
-> Cut aborted — take-up did not complete. Re-engage the stop.
+> Take-up did not complete. Re-engage the stop.
 
 The take-up was commanded and never reached its target — the usual cause is the servo not being in sync mode at all. **Pressing Cut again will not clear this**: the motion gate stays shut until the ELS stop is disengaged and re-engaged.
 
-> Cut aborted — take-up stuck. Re-engage; the reference is lost.
+> Take-up did not complete. Re-engage the stop. Reference is lost.
 
 The same fault, shown when you have a thread reference to lose. The remedy is forced — only the disengage/re-engage cycle releases the gate — and that cycle starts a new job, which clears the thread reference and any phase offset. There is no way around it; the message exists so it is not a surprise.
 
-> Cut aborted — backlash take-up failed.
+> Unknown take-up fault. Make sure the software versions match.
 
-The controller reported a take-up result this screen does not recognise, which usually means the UI is older than the firmware. Check the versions match.
+The controller reported a take-up result this screen does not recognize, which usually means the UI is older than the firmware. Check the versions match.
 
 ## Backlash calibration refusals
 
 Shown in the calibration dialog. None of these move the machine.
 
-> Disengage the ELS stop before calibrating.
+> ELS stop is engaged. Disengage it to calibrate.
 
-Re-engaging afterwards starts a new job, which clears the thread reference and any phase offset. Finish the thread first if you still need them.
+When you engage again, a new job starts. This clears the thread reference and any phase offset. If you need them, complete the thread first.
 
 A threading job is armed. **Disengage first** — but note the cost: re-engaging afterwards starts a new job, which clears the thread reference and any phase offset. Finish the thread before calibrating.
 
@@ -61,39 +61,63 @@ The servo is not in sync/index mode. The calibration normally puts it there itse
 
 The calibration's limits are not configured. Set the ceiling and the motion threshold in setup; a zero motion threshold makes the firmware fail closed and is never a usable default.
 
-> Carriage did not move — is the half-nut engaged?
+> Carriage did not move. Close the half nut.
 
 The calibration drove its full ceiling and the carriage never moved. Same physical fault as a refused take-up, and the same first check: **is the half nut engaged?**
 
-> Calibration aborted — conditions changed mid-run.
+> Calibration stopped. Conditions changed during the run.
 
 Conditions changed while the calibration was running — the ELS stop was engaged, or the servo mode changed. Re-run it undisturbed.
+
+> Gearbox position is B. Calibration runs only in gearbox position A.
+
+Only on a lathe with a gearbox table. Calibration results are stored as measured in the reference position (the first one in the table, A in this example), so it only runs there. Move the lever to it, set **Gearbox position** to it in Advanced ELS settings, and calibrate.
+
+## Coupling check
+
+Shown across the status gutter when the coupling check stops a pass partway, and only when **Coupling check acts** is on in Advanced ELS settings (it is off by default, which only logs). The check compares how far the Z scale moved with how far the servo was told to move it. Red strips change nothing. The yellow ones appear only on a lathe with a gearbox table, and name a position the next Cut or Retract adopts; they are shown here for the development lathe's table, A=1, B=2, C=1/2, and use the names in your own table.
+
+> Carriage decoupled. Close the half nut or examine the drivetrain.
+
+The servo kept turning the leadscrew and the Z scale stopped moving partway through the pass. **Close the half nut and press Cut again.** If it was closed, look for a slipping coupling or a Z scale that stopped reading.
+
+> Detected gearbox position B. Press Cut to continue.
+
+The carriage moved at the rate of another position in the gearbox table, here twice as far per step as expected: the lever is in **B**. Nothing is wrong. **Press Cut (or Retract)** and the controller switches to B, with feeds and pitches right for it. If the lever was meant to be where it was, move it back first; the next pass will notice and switch back.
+
+> Detected gearbox position C. Press Cut to continue.
+
+The same for a slower position, here half as far per step: the lever is in **C**. **Press Cut (or Retract)** to switch to it, or move the lever back first.
+
+> Carriage speed is incorrect. Examine the drivetrain.
+
+The carriage moved at a rate that matches no position in the gearbox table or, on a lathe with no gearbox table, not at the leadscrew's rate. Something in the drivetrain is not doing what it is told. Nothing is changed, and **pressing Cut again will fail the same way** until the cause is found: a slipping coupling, a half nut riding and skipping, a lever between positions, a gearbox table that does not match the machine, or wrong servo settings. If the lathe has a gearbox between the servo and the leadscrew and no table, enter it as **Gearbox table** in Advanced ELS settings.
 
 ## Thread phase offset refusals
 
 Shown in the phase-offset dialog. Nothing is applied when one of these appears — the total on screen is still whatever the controller held before you pressed Apply.
 
-> Not connected to the controller, so there is nothing to apply the offset to. Reconnect and try again.
+> Controller is not connected, so no offset can be applied. Reconnect. Then try again.
 
 The link to the controller is down, so there is nothing holding the offset. Reconnect and try again; nothing was applied.
 
-> No threading job is engaged, and the controller discards the offset when one starts. Engage the ELS stop first.
+> No threading job is engaged. When a job starts, the controller deletes the offset. Engage the ELS stop first.
 
 No threading job is engaged. The controller discards a phase offset when a job starts, so it declines to hold one that would evaporate. Engage the ELS stop first.
 
-> No thread pitch is set — turning has no thread phase to shift. Choose a threading mode and a pitch first.
+> No thread pitch is set. Turning has no thread phase to shift. Choose a threading mode and a pitch first.
 
 Turning has no thread phase to shift. Choose a threading mode and a pitch before setting an offset.
 
-> The machine geometry that turns a distance into leadscrew steps is missing or zero. Check the servo gearing in setup.
+> The machine geometry that changes a distance into leadscrew steps is missing or zero. Examine the servo gearing in Setup > Servo.
 
 The servo gearing that converts a distance into leadscrew steps is missing or zero, so the offset cannot be expressed in steps. Fix the gearing in setup — and note that everything else the ELS commands is wrong by the same factor until you do.
 
-> A minus sign does not back the phase up — it becomes a forward move that opens the wrong side of the groove. Enter the distance without the sign, or press Clear.
+> A minus sign does not move the phase back. It becomes a forward move that opens the wrong side of the groove. Enter the distance without the sign, or press Clear.
 
 A minus sign does not back the phase up: it becomes a forward move that opens the *wrong* side of the groove. Enter the distance without the sign, or press Clear.
 
-> That is a full pitch or more, which lands back in the groove you started at. Type a smaller offset, or press Clear.
+> This is one full pitch or more. It puts the tool back in the groove you started at. Enter a smaller offset, or press Clear.
 
 A full pitch lands back in the groove you started at, so it is not a widening at all. Type a smaller offset, or press Clear. Note the field is **absolute** — the whole offset from the original groove, not an amount to add to what is already set.
 

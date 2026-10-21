@@ -52,11 +52,11 @@ void elsBootWatchdogKick(void)
  * no interrupts enabled or pending, its own USART1/DMA2/GPIOA setup ORed
  * onto reset-state registers, PWR clock off until it turns it on. The
  * sequence below is blHwJump's, which does the same thing in the other
- * direction, plus the app's own extras (FreeRTOS, PLL from HSE, the DWT
- * cycle counter, the FPU).
+ * direction, plus the app's own extras (PLL from HSE, the DWT cycle
+ * counter, the FPU).
  *
- * Runs from the ramps task: thread mode, privileged (configENABLE_MPU is
- * 0), on the process stack. Nothing here returns.
+ * Runs from the superloop's servoEnableTask job: thread mode, privileged,
+ * on the main stack. Nothing here returns.
  *
  * What a jump cannot undo: the IWDG (fine: the bootloader re-arms and kicks
  * it within microseconds of Reset_Handler) and the reset flags in RCC->CSR
@@ -74,7 +74,7 @@ static void enterBootloader(void)
   __disable_irq();
 
   /* Core: SysTick off, every NVIC line disabled and unpended, PendSV and
-   * SysTick unpended. FreeRTOS never runs again. */
+   * SysTick unpended. The app runs no SysTick; stopping it costs nothing. */
   SysTick->CTRL = 0u;
   SysTick->LOAD = 0u;
   SysTick->VAL  = 0u;
@@ -134,8 +134,8 @@ static void enterBootloader(void)
   FLASH->ACR = 0u;
   FLASH->CR |= FLASH_CR_LOCK;
 
-  /* Reset-state core registers: BASEPRI and FAULTMASK clear (FreeRTOS
-   * critical sections use BASEPRI), FPU access off as at reset, and the
+  /* Reset-state core registers: BASEPRI and FAULTMASK clear (the app sets
+   * neither; the bootloader assumes reset state), FPU access off as at reset, and the
    * vector table where the bootloader's already is -- so what 0x00000000
    * aliases to, which is the very thing BOOT0 decides, no longer matters. */
   __set_BASEPRI(0u);

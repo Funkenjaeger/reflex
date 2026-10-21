@@ -19,10 +19,12 @@
  * confirms, clears takeupPending, and releases sync — starting the cut — while
  * the carriage is still moving from the take-up.
  *
- * fw/todo.md ("The gate's dwell and the attribution horizon disagree by 20x")
- * states the two constants: ELS_SETTLE_TICKS is 50 and ELS_SLIP_SETTLE_TICKS is
- * 1000, the same physical settle, 20x apart, and nobody has measured which is
- * right. This file does not answer that. It shows what the CURRENT gate does in
+ * The gate's dwell and the attribution horizon describe the same physical
+ * settle and are an order of magnitude apart: ELS_SETTLE_TICKS is how long the
+ * gate waits after the last take-up pulse before deciding, ELS_SLIP_SETTLE_TICKS
+ * is how long later motion is still credited to the servo. Only the horizon has
+ * been commissioned against the machine. This file does not answer what the
+ * dwell should be. It shows what the CURRENT gate does in
  * the long-settle branch of the question, so that whichever way the measurement
  * lands, the consequence is already written down.
  *
@@ -115,13 +117,11 @@ HAL_StatusTypeDef HAL_TIM_Encoder_Start(TIM_HandleTypeDef *h, uint32_t ch) {
 }
 HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
 
-void ModbusInit(modbusHandler_t *m)  { (void)m; }
-void ModbusStart(modbusHandler_t *m) { (void)m; }
+void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { (void)r; (void)n; (void)id; }
+int mbAppService(void) { return 0; }
+uint16_t mbAppReplies(void) { return 0; }
+uint32_t HAL_GetTick(void) { return 0; }
 
-osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
-osThreadId_t osThreadNew(osThreadFunc_t f, void *arg, const osThreadAttr_t *a) {
-    (void)f; (void)arg; (void)a; return nullptr;
-}
 
 extern uint16_t servoCycles;
 extern uint16_t servoCyclesCounter;
@@ -438,8 +438,8 @@ int main() {
               "released");
 
         /* The residual outlasts the entire dwell by a wide margin. This is the
-         * number that matters for the todo.md question: waiting the dwell is
-         * not close to waiting for the carriage. */
+         * number that matters for the dwell-versus-horizon question: waiting
+         * the dwell is not close to waiting for the carriage. */
         check(longTail.residualTicks > FW_ELS_SETTLE_TICKS,
               "DEFECT: the motion the gate missed outlasts the whole dwell it "
               "did wait");

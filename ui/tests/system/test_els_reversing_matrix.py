@@ -31,8 +31,8 @@ def _run_stop_only_cut(h):
     z_start = h.z_scaled_position()
     margin = h.safety_margin()
     # Real mm (the fixture commissions the reference geometry): clear the
-    # ~3.49 mm safety margin but stay inside the 5 mm of physical -Z travel
-    # from the reference machine's Z=0 start (lathe.toml min_position_mm=-5).
+    # ~7 mm safety margin but stay inside the 20 mm of physical -Z travel
+    # from the reference machine's Z=0 start (lathe.toml min_position_mm=-20).
     span = margin + 1.0
     stop_z = z_start - span
 

@@ -2,102 +2,110 @@ Thread Phase Offset (Widening a Groove)
 =======================================
 
 Cuts a thread groove **wider than the tool that cuts it**. Cut the
-groove with the cutter you have, tell the controller to advance the
-thread phase by a small step-over, and cut again — the tool re-enters
-the same groove a fraction of a millimeter further along and takes the
-side off it. Repeat until the groove is as wide as you want. The
-workpiece is never re-indexed and the thread datum is never
-re-established.
+groove with the cutter you have. Then enter a small offset to shift the
+thread phase, and cut again. The tool re-enters the same groove a
+fraction of a millimeter further along and cuts material off its side.
+Enter a larger offset and cut again, until the groove has the width you
+want. The workpiece is never
+re-indexed, and the thread datum is never set again.
 
-The offset is a distance, entered the same way every other distance on
-this machine is, and it accumulates. **How big a step to take is your
-decision, not the machine's** — it depends on the width of the cutter in
-the toolpost, which nothing in this controller knows. There are no
-preset amounts on the screen for that reason.
+The offset is a distance. You enter it the same way as every other
+distance on this machine. **The entry is the whole offset from the
+original groove.** Apply *sets* the offset. It does not add to the offset
+that is already there. The box opens with the current offset, so Apply
+without an edit changes nothing. To widen the groove by a further 0.1 mm
+when the offset is 0.3 mm, enter 0.4 mm.
 
-Every step-over goes the same way — you open one side of the groove and
-keep going until it is wide enough — so the running total on screen **is
-the widening**. Not a controller number that stands in for it: the
-distance the groove has actually grown past the width of your cutter,
-which you can go and measure on the part. That is the headline.
+**How big an offset to enter is your decision, not the machine's.** It
+depends on the width of the cutter in the toolpost, and this controller
+does not know that width. For that reason, the screen has no preset
+amounts.
 
-Under it, smaller, is the same total as a share of one pitch, written
-`0.333 x pitch`. That is not a width — it is the limit gauge. Offsets
-alias at one pitch, and this is what says how much of that budget is
-spent. On a widening job it should stay small; a value creeping up toward
-1.000 means the entries are not what you think they are.
+Every offset goes in the same direction. You open one side of the groove
+and continue until it is wide enough. Thus the offset on screen **is the
+widening**. It is not a controller number that stands in
+for the widening. It is the distance that the groove has actually grown
+past the width of your cutter, and you can measure it on the part. That
+is the main number on the screen.
+
+Under it, in smaller text, is the same offset as a fraction of one pitch,
+written `0.333 x pitch`. That is not a width. It is the limit gauge.
+Offsets alias at one pitch, and this number shows how much of that budget
+is used. On a widening job, it should stay small. If the value increases
+toward 1.000, the entries are not what you think they are.
 
 ## Applying an Offset Does Not Move Anything
 
-Nothing happens on the machine when you press Apply. The offset changes
-the correction the controller works out the next time the tool re-enters
-the thread, so it is safe to apply at any point in a job, mid-pass
-included. The effect shows up on the next resume.
+Nothing moves on the machine when you press Apply. The offset changes the
+correction that the controller calculates the next time the tool
+re-enters the thread. Thus you can safely apply it at any point in a job,
+mid-pass included. The effect occurs on the next resume.
 
-That also means the ordinary threading discipline still applies. Before
-cutting metal at a new offset, back the tool clear in X and run an air
-pass — the same check the pick-up-existing-thread wizard asks for, for
-the same reason. Software cannot tell you the phase landed where you
-pictured it; the air pass can.
+The usual threading discipline thus still applies. Before you cut metal at
+a new offset, move the tool clear in X. Then run an air pass. The Pick up
+existing thread wizard asks for the same check, for the same reason.
+Software cannot tell you that the phase landed where you pictured it. The
+air pass can.
 
-## Entry Only Advances
+## The Entry Only Goes Forward
 
-There is no minus sign because the work does not have one. Widening runs
-in a single direction away from the groove you cut first — step over,
-cut, step over, cut — and you are opening one side of the groove, not
-working outward from a centerline. An unsigned distance is exactly the
-control the job calls for.
+There is no minus sign because the work does not have one. Widening goes
+in one direction, away from the groove you cut first: enter an offset,
+cut, enter a larger offset, cut. You open one side of the groove. You do not work outward
+from a centerline. An unsigned distance is exactly the control this job
+needs.
 
-The keypad does have a sign key, so a minus can be typed, and the
-controller refuses it. That refusal is catching a slip, not fencing off
-half a feature — and it matters that it catches it. A negative offset does
-not step the phase backwards by the amount you type. The controller biases
-phase corrections forward, so a negative entry would become a *forward*
-move of one pitch minus your number: a real cut, in the same groove (a
-whole pitch is one full turn of the same helix), taking material off the
-side you were not opening.
+The keypad has a sign key, so you can type a minus. The controller
+refuses it. That refusal catches a slip. It does not block half of a
+feature, and it is important that it catches the slip. A negative offset
+does not move the phase backward by the amount you type. The controller
+biases phase corrections forward. Thus a negative entry becomes a
+*forward* move of one pitch minus your number. That is a real cut, in the
+same groove (a whole pitch is one full turn of the same helix). It
+removes material from the side you were not opening.
 
-**Clear** returns the total to zero, which puts the tool back on the
-groove the job began on. Clear is not an undo of the last entry; it is
-an entry of zero, and the controller treats it exactly like any other.
+**Clear** sets the offset to zero. This puts the tool back on the groove
+the job began on. Clear does not undo the last entry. It is an entry of
+zero, and the controller treats it exactly like any other entry.
 
 ## What It Refuses, and Why
 
-**At or past one pitch.** A total of exactly one pitch puts the tool
-back where it started, one turn along, and one and a half pitches cannot
-be told apart from a half — so the controller refuses instead of quietly
-wrapping. A wrapped offset would put the cut somewhere other than where
-you asked, in metal, before anything looked wrong. Clear the total and
-build it again.
+**At or past one pitch.** An offset of exactly one pitch puts the tool back
+where it started, one turn along. One and a half pitches cannot be told
+apart from a half. Thus the controller refuses the entry. It does not
+wrap the entry silently. A wrapped offset puts the cut in a different
+place from where you asked, in metal, before anything looks wrong. Enter
+a smaller offset.
 
 **No job engaged.** The offset belongs to a threading job, and the
-controller wipes it the moment a job starts. One entered outside a job
-would evaporate at the next engage without a word, so it is refused up
-front instead.
+controller erases it when a job starts. An offset entered outside a job
+would be lost at the next engage, with no message. Thus the controller
+refuses it at entry.
 
 **Not threading, or no pitch set.** A phase offset shifts where the tool
 re-enters the thread. Turning has no thread phase to shift.
 
-**No acknowledgement.** Every entry is confirmed by the controller before
-this screen calls it applied. If the confirmation does not arrive, the
-offset did *not* go in — usually because the job disengaged between the
-button press and the write. The total on screen is still the truth; check
-the ELS stop is engaged and try again.
+**No acknowledgement.** The controller confirms every entry before this
+screen shows it as applied. If the confirmation does not arrive, the
+offset did *not* go in. The usual cause is that the job disengaged
+between the button press and the write. The offset on screen is still
+the last one that went in. Make sure the ELS stop is engaged. Then try again.
 
 ## Notes
 
-- The total lives in the controller and is cleared when a job is engaged.
-  Disengage and re-engage and the groove is back at its original width
-  and position, whatever this screen last showed you.
-- Widening is one-directional. Decide which side of the groove you are
-  opening before the first pass — it is set by where you cut the first
-  groove, and it is not something the offset can change afterwards.
-- On a machine whose carriage travels the other way, a given entry opens
-  up the **opposite flank** from the one you pictured. The groove still
-  ends up wider by the amount you entered — it grows the other way from
-  the original cut. Entering more does not correct that; it widens
-  further on the same wrong side. Confirm the direction with an air pass
-  on the first step-over of a job.
-- Precision beyond a couple of display digits is not required here. Phase
-  error of that size cleans up over the first cutting passes, exactly as
-  it does when picking up an existing thread.
+- The controller keeps the offset, and it clears the offset when a job is
+  engaged. If you disengage and engage again, the groove is back at its
+  original width and position. This is true whatever this screen last
+  showed you.
+- Widening goes in one direction. Decide which side of the groove you will
+  open before the first pass. Where you cut the first groove sets the
+  side, and the offset cannot change it afterward.
+- On a machine whose carriage travels the other way, an entry opens the
+  **opposite flank** from the one you pictured. The groove still becomes
+  wider by the amount you entered, but it grows the other way from the
+  original cut. A larger entry does not correct that. It widens the groove
+  further on the same wrong side. On the first offset of a job, run an
+  air pass to confirm the direction.
+- Precision beyond a couple of display digits is not necessary here. A
+  phase error of that size cleans up in the first cutting passes. This is
+  exactly the same as when you pick up an existing thread.

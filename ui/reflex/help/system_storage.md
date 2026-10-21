@@ -2,7 +2,7 @@ System Storage
 ==============
 
 **Free space** is the space left on the controller's SD card. The
-flight recorder and the settings history are written there, so a card
-that is nearly full is worth knowing about.
+flight recorder and the settings history write to this card. For this
+reason, take note when the card is nearly full.
 
-The figure is re-read each time this screen is opened.
+The value is read again each time you open this screen.

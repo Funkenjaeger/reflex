@@ -24,6 +24,7 @@ from kivy.properties import BooleanProperty, ObjectProperty, StringProperty
 from kivy.uix.popup import Popup
 
 from reflex.fsms.els_cal import BacklashCalibration, CalState
+from reflex.fsms.els_gear import drive_position_of, table_of
 from reflex.utils.kv_loader import load_kv
 
 log = Logger.getChild(__name__)
@@ -32,13 +33,13 @@ load_kv(__file__)
 
 
 PROMPT_TEXT = (
-    "This will move the carriage a short distance back and forth to measure "
-    "leadscrew backlash.\n\n"
-    "Before starting:\n"
-    "  1.  Engage the half-nut.\n"
+    "Calibration moves the carriage a short distance back and forth to "
+    "measure leadscrew backlash.\n\n"
+    "Before you start:\n"
+    "  1.  Close the half nut.\n"
     "  2.  Move the tool clear of the workpiece and the chuck.\n"
     "  3.  Stop the spindle.\n\n"
-    "Travel is under a millimetre, but the carriage WILL move."
+    "Travel is less than 1 mm, but the carriage WILL move."
 )
 
 
@@ -55,7 +56,10 @@ class BacklashCalPopup(Popup):
         super().__init__(**kv)
         from reflex.app import MainApp
         self.app = MainApp.get_running_app()
-        self._cal = BacklashCalibration(self.app.els_uic.hal, self.app.els)
+        self._cal = BacklashCalibration(
+            self.app.els_uic.hal, self.app.els,
+            gear=lambda: drive_position_of(self.app.servo),
+            gear_table=lambda: table_of(self.app.servo))
         self._poll_ev = None
         self._refresh()
 
@@ -131,7 +135,7 @@ class BacklashCalPopup(Popup):
         elif self.state == "running":
             self.title = "Calibrating…"
             self.body_text = (
-                "Measuring backlash — three reversals.\n\n"
+                "Measuring backlash. The carriage reverses three times.\n\n"
                 "Keep clear of the carriage."
             )
             self.detail_text = ""
@@ -143,8 +147,8 @@ class BacklashCalPopup(Popup):
             self.title = "Calibration not accepted"
             self.body_text = self._cal.message
             self.detail_text = (
-                "This usually means something in the drivetrain is not "
-                "repeatable. It is worth finding before cutting a thread."
+                "Usually, a part of the drivetrain does not repeat. Find "
+                "the cause before you cut a thread."
             )
         else:
             self.title = "Calibration failed"
@@ -184,6 +188,6 @@ class BacklashCalPopup(Popup):
                 f"measurement.")
         threshold = int(self.app.els.els_cal_drift_notice_steps or 0)
         if threshold and abs(drift) > threshold:
-            text += (f" That is more than the {threshold}-step spread this "
-                     f"machine is held to within a run — worth investigating.")
+            text += (f" That is more than the {threshold}-step spread "
+                     f"allowed in one run. Investigate the cause.")
         return text

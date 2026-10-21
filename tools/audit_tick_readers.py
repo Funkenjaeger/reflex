@@ -10,7 +10,7 @@ field names to describe themselves.
 FOUR SOURCES, all of which read Board.els_stop_values (the once-per-tick
 snapshot):
 
-  1. TickReads in fsms/els_stop_hal.py  -- the deliberate, visible tick API
+  1. TickReads in fsms/els_stop_registers.py  -- the deliberate, visible tick API
   2. dispatchers/board.py               -- protocolVersion at connect
   3. fsms/els_flight_recorder.py        -- 30 Hz rows + context on change
   4. fsms/els_phase_recorder.py         -- identity + context on change
@@ -46,7 +46,7 @@ def tuple_literal(text, name):
 
 sources = {}
 
-hal = read("ui/reflex/fsms/els_stop_hal.py")
+hal = read("ui/reflex/fsms/els_stop_registers.py")
 tick_cls = re.search(r"^class TickReads.*?^class ", hal, re.M | re.S)
 if not tick_cls:
     raise SystemExit("GATE FAILED: TickReads class not found")

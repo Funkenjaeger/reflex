@@ -46,12 +46,12 @@
     # SetupButtons (they beep on press themselves). Start/Stop keeps its
     # green/red meaning in the ink rather than a tint of Kivy's stock grey.
     SetupButton:
-      text: "Stop Profiling" if root.is_profiling else "Start Profiling"
+      text: "Stop profiling" if root.is_profiling else "Start profiling"
       font_size: 22
       color: app.theme.danger_text if root.is_profiling else app.theme.success_text
       on_release: root.toggle_profiling()
     SetupButton:
-      text: "Reset Stats"
+      text: "Reset stats"
       font_size: 22
       on_release: root.reset_stats()
 

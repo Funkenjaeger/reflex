@@ -37,7 +37,7 @@
 # =============================================================================
 
 schema_version: 1
-protocol_version: 11          # 10 -> 11: stopOffset + stopTriggerOffset (stop-overshoot correction). Bump on any layout change.
+protocol_version: 13          # 12 -> 13: command / commandSeq / commandResult (DISENGAGE) and the calMeasured split (calBasisSteps). Bump on any layout change.
                               # ENFORCED: genregs --check fails if the layout no longer matches
                               # registers/layout-fingerprints.json's pin for this version.
 
@@ -113,7 +113,9 @@ types:
 fields:
 
   # --- job setup: written by the UI when a job is configured -----------------
-  - {id: 1,  name: enable,            type: uint16, access: sw_write,   group: hot, doc: "SW write: 1 = enable ELS stop feature"}
+  # export_offset: modbus-flash.py reads it by absolute register before a
+  # reboot request (APP_ELS_ENABLE_REG), since the firmware refuses one while it is set.
+  - {id: 1,  name: enable,            type: uint16, access: sw_write,   group: hot, export_offset: true, doc: "SW write: 1 = enable ELS stop feature"}
   - {id: 2,  name: scaleIndex,        type: uint16, access: sw_write,   group: hot, doc: "SW write: which scale (0\u20133) is the position reference (Z axis)"}
   - {id: 3,  name: stopPosition,      type: int32,  access: sw_write,   group: hot, doc: "SW write: threshold in encoder counts"}
   - {id: 4,  name: stopDirection,     type: int16,  access: sw_write,   group: hot, doc: "SW write: 1 = stop when pos >= threshold, -1 = stop when pos <= threshold"}
@@ -147,6 +149,15 @@ fields:
   # `invariants.seq_precedes_payload` makes it un-regressable.
   - {id: 22, name: takeupSeq,         type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [takeupResult, lastTakeupZDelta], doc: "READ-ONLY (firmware-owned): increments once per take-up outcome; lets SW tell completed-normally from host-cleared, which takeupPending alone cannot"}
   - {id: 23, name: takeupResult,      type: uint16, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): outcome of the last take-up. ELS_CAL_*/ELS_TAKEUP_* in els_backlash_cal.h; 0 = OK. Distinguishes \"carriage never moved\" from \"never reached target\""}
+  # protocolVersion 13: commandSeq, the ack of the ELS command channel, in the
+  # slot clearRefSeq held under 12 (a uint16 before lastTakeupZDelta), so the
+  # hot group neither grows nor moves and the board tick stays 86 registers
+  # (tests/fsms/test_els_stop_snapshot.py pins that margin at 70% of the FC3
+  # ceiling; growing hot by two would cross it). clearRefSeq moved to cold:
+  # it acks no payload and no tick reader reads it (tools/audit_tick_readers.py).
+  # commandResult, its payload, is cold too, at a higher address, so the
+  # seq still precedes what it counts.
+  - {id: 61, name: commandSeq,        type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [commandResult], doc: "READ-ONLY (firmware-owned): increments once per consumed command, AFTER commandResult is written and only once the ISR has taken the teardown, so the mode published on the ack tick already describes the result. Edge-detect it; a fresh session takes its value at connect as the baseline"}
   - {id: 24, name: lastTakeupZDelta,  type: int32,  access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): signed Z counts moved across the last take-up, projected onto the take-up direction. Negative means the carriage moved the wrong way, a distinct fault from \"didn't move\""}
 
   # --- PROMOTED BY THE READER AUDIT, 2026-09-07 -----------------------------
@@ -155,9 +166,9 @@ fields:
   # snapshot and each of these turned up in one; the audit now runs as a gate,
   # so this class of mistake fails instead of shipping. See the audit output in
   # the wiki journal 2026-09-07.
-  - {id: 42, name: takeupThreshCounts, type: int32, access: sw_write, group: hot, doc: "READ-ONLY (firmware-derived, not operator-set): Z counts the last take-up had to move to be confirmed. Derived from (backlashSteps - mean(calMeasured)) via elsTakeupConfirmThreshold(); falls back to calMotionThreshCounts with no calibration on file or in turning mode. Published so the UI can say \"moved 3, needed 4\""}
-  - {id: 44, name: stepPulseMinCycles, type: uint32, access: ro_firmware, group: hot, doc: "READ-ONLY except for reset: narrowest STEP pulse since host wrote 0. 0 = nothing measured yet"}
-  - {id: 45, name: stepPulseRuntCount, type: uint32, access: ro_firmware, group: hot, doc: "READ-ONLY except for reset: pulses narrower than ELS_STEP_RUNT_CYCLES since host wrote 0"}
+  - {id: 42, name: takeupThreshCounts, type: int32, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-derived, not operator-set): Z counts the last take-up had to move to be confirmed. Derived from (backlashSteps - calBasisSteps) via elsTakeupConfirmThreshold(); falls back to calMotionThreshCounts with no calibration on file or in turning mode. Published so the UI can say \"moved 3, needed 4\""}
+  - {id: 44, name: stepPulseMinCycles, type: uint32, access: ro_firmware, host_reset: true, group: hot, doc: "READ-ONLY except for reset: narrowest STEP pulse since host wrote 0. 0 = nothing measured yet"}
+  - {id: 45, name: stepPulseRuntCount, type: uint32, access: ro_firmware, host_reset: true, group: hot, doc: "READ-ONLY except for reset: pulses narrower than ELS_STEP_RUNT_CYCLES since host wrote 0"}
   - {id: 47, name: diagSeq,           type: uint16, access: ro_firmware, group: hot, kind: seq, acks: [diagBucketTicks, diagBucketCount, diagSettleTicks, diagNetCounts, diagTrace, diagCaptureTicks, diagEndReason], doc: "READ-ONLY (firmware-owned): increments once per completed capture. Edge-detect it; there is no \"capture in progress\" register to poll. Ordering invariant: must stay at a lower address than the capture payload it counts, or a host can read a torn capture"}
 
   # --- operator-facing mode + the interactive command/ack pairs -------------
@@ -198,17 +209,36 @@ fields:
   - {id: 37, name: stopTriggerStepsToGo, type: int32, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): servo.stepsToGo at the trigger. Nonzero means the firmware was still commanding motion, so the overshoot is not purely mechanical coast"}
   - {id: 38, name: stopTriggerSpindleSpeed, type: int32, access: ro_firmware, group: hot, doc: "READ-ONLY (firmware-owned): scales[0].speed at the trigger, counts/s; with the sync ratio, enough for a host to reconstruct the commanded feed of a threading pass"}
 
+  # --- ELS command channel and the demoted clearRefSeq (protocolVersion 13) --
+  # docs/design/els-command-channel.md. The calCommand idiom generalized to the
+  # registers that move the carriage: the host writes `command`, the firmware
+  # consumes and clears it in servoEnableTask, writes commandResult, and bumps
+  # commandSeq (hot, above) LAST. These cold fields sit right after bootSeq,
+  # so bootCommand keeps absolute register 168; every cold field after them
+  # moves by four.
+  - {id: 59, name: clearRefSeq,       type: uint16, access: ro_firmware, group: cold, kind: seq, acks: [], doc: "READ-ONLY (firmware-owned): increments once per consumed clearRefCommand, in the same ISR pass that cleared the reference; the ack for clearRefCommand"}
+  - {id: 60, name: command,           type: uint16, access: bidirectional, group: cold, kind: command, ack: commandSeq, doc: "bidirectional: SW writes ELS_CMD_* (els_command.h); 1 = DISENGAGE. Consumed and cleared by servoEnableTask (~100 ms). One command in flight: write nothing to elsStop or syncEnable until commandSeq moves"}
+  - {id: 62, name: commandResult,     type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): outcome of the command counted by commandSeq; read it live once commandSeq has moved (cold, so not in the tick snapshot). ELS_CMD_RESULT_* in els_command.h: 0 = OK, 1 = OK and a calibration run was aborted by it, 0x100 and up = refusals"}
+
   # ===========================================================================
   # COLD. Nothing below is read on the tick path.
   # ===========================================================================
 
   # --- calibration results + machine-specific limits ------------------------
-  - {id: 39, name: calMeasured,       type: int32, count: 3, access: ro_firmware, group: cold, audit: unverified, doc: "READ-ONLY (firmware-owned): lash measured at each of the 3 reversals, in servo steps. The host judges whether the spread is acceptable"}
+  # protocolVersion 13 split calMeasured in two. calMeasured is the last run's
+  # RESULT again (ro_firmware, partial values on failure). calBasisSteps is
+  # what the take-up gate derives its threshold from: the host writes it, and
+  # the firmware copies a successful run's mean into it, so a failed run can
+  # no longer drop the gate to its floor. One mean, not three legs: the gate
+  # only ever used the mean, and a single uint16 is one atomic register, so the
+  # ISR can never read a basis half-written by the host.
+  - {id: 63, name: calBasisSteps,     type: uint16, access: bidirectional, group: cold, doc: "bidirectional: the calibrated lash the take-up confirmation threshold derives from (elsTakeupConfirmThreshold), servo steps in the engaged gear; 0 = no calibration on file, which keeps the gate at its floor. The host writes it (after a power cycle, a gear change, an accepted run); the firmware copies the mean of calMeasured into it at the end of a SUCCESSFUL run only, so a failed run leaves it untouched. Firmware RAM: a power cycle zeroes it"}
+  - {id: 39, name: calMeasured,       type: int32, count: 3, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): lash measured at each of the 3 reversals of the last calibration run, in servo steps. Written at the end of every run, partial values on a failed one; only trust it when calResult is OK. The host judges whether the spread is acceptable. The take-up gate does NOT read it; see calBasisSteps"}
   - {id: 40, name: calCeilingSteps,   type: int32,  access: sw_write, group: cold, doc: "SW write: per-leg hard ceiling in servo steps. Driving this far without Z moving is the open-half-nut / uncoupled failure. Machine-specific; size it comfortably past the largest credible lash"}
   - {id: 41, name: calMotionThreshCounts, type: int32, access: sw_write, group: cold, doc: "SW write: Z scale counts that count as real motion. Machine-specific: ~2 counts on a 200 counts/mm scale (1 count \u2248 2.5 servo steps); the emulator is 400 counts/mm. 0 disables detection and fails closed (never confirms)"}
 
   # --- performance counters: diagnostic, monotonic, never urgent ------------
-  - {id: 43, name: executionCyclesPeak, type: uint32, access: ro_firmware, group: cold, audit: unverified, doc: "READ-ONLY except for reset: highest executionCycles since the host last wrote 0 here. Compare against ELS_ISR_CYCLE_BUDGET (els_isr_rate.h), one tick at the 100 MHz core clock: 2000 cycles at the 50 kHz hardware tick"}
+  - {id: 43, name: executionCyclesPeak, type: uint32, access: ro_firmware, host_reset: true, group: cold, doc: "READ-ONLY except for reset: highest executionCycles since the host last wrote 0 here. Compare against ELS_ISR_CYCLE_BUDGET (els_isr_rate.h), one tick at the 100 MHz core clock: 2000 cycles at the 50 kHz hardware tick"}
 
   # --- the diagnostic scratchpad: 64 registers, ZERO in any release build ----
   #     Reserved in every build, written only under ELS_DIAG_SCRATCH. This is
@@ -218,11 +248,21 @@ fields:
   - {id: 46, name: diagSchema,        type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): identifies the probe compiled into the block. 0 = none; do not interpret anything below it, and never assume a schema you did not read"}
   - {id: 48, name: diagBucketTicks,   type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ISR ticks summed into each diagTrace bucket. Published so the host never has to assume the ISR rate"}
   - {id: 49, name: diagBucketCount,   type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): populated diagTrace entries, for the same reason"}
+  # protocolVersion 12: NOT a diagnostic field. It sits in the slot that was
+  # the generator's alignment pad before diagSettleTicks, the only cold slot
+  # left that moves nothing (bootCommand keeps absolute register 168, and the
+  # block stays 142 registers). It reads zero except for the one ISR pass
+  # between the host's write and its consumption, so a release build's
+  # scratchpad still reads zero. No probe may use it.
+  - {id: 58, name: clearRefCommand,   type: uint16, access: bidirectional, group: cold, kind: command, ack: clearRefSeq, doc: "bidirectional: SW writes 1 to clear the thread reference: referenceLatched and phaseOffsetSteps go to 0, as the servoMode == 0 rule does, and nothing else changes (enable, servoMode and sync untouched). Always accepted; the next stop trigger latches a fresh reference. Written by reflex-ui when it adopts a gearbox position with a reference latched"}
   - {id: 50, name: diagSettleTicks,   type: int32,  access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ticks from capture start to the last tick that saw nonzero dZ: the measurement ELS_SLIP_SETTLE_TICKS estimates. Meaningful in v2, where the capture stops before the pass starts"}
   - {id: 51, name: diagNetCounts,     type: int32,  access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): signed Z counts summed across the capture"}
   - {id: 52, name: diagTrace,         type: int16, count: ELS_DIAG_TRACE_BUCKETS, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): per-bucket signed sum of dZ. Signed so encoder dither cancels and real motion does not, which is what a quiescence test needs"}
   - {id: 53, name: diagCaptureTicks,  type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ticks the capture actually ran, i.e. how long the servo stayed silent after the take-up. Distinct from diagSettleTicks, which is when Z last moved"}
-  - {id: 54, name: diagEndReason,     type: uint16, access: ro_firmware, group: cold, doc: "READ-ONLY (firmware-owned): ELS_DIAG_END_*. A window-full capture did not finish measuring; treat its tail as a floor, not a result"}
+  # host_reset: the isr-gap probe (schema 8) reads a host's 0 here as a request
+  # to open a fresh window. Every other probe overwrites the register on its
+  # next capture, and a release build never reads it.
+  - {id: 54, name: diagEndReason,     type: uint16, access: ro_firmware, host_reset: true, group: cold, doc: "READ-ONLY except for reset: ELS_DIAG_END_*. A window-full capture did not finish measuring; treat its tail as a floor, not a result. Under the isr-gap probe (schema 8) the firmware holds it at 1 while a window is open, and a host write of 0 requests a fresh window"}
   - {id: 55, name: diagReserved,      type: uint16, count: 4, access: ro_firmware, group: cold, kind: reserved, doc: "pads the block to a fixed 128 bytes so its size never depends on which probe is in it"}
 
 # -----------------------------------------------------------------------------
@@ -248,14 +288,29 @@ constants:
 # test, so a refactor that silently changes the layout goes red.
 #
 #   hot   56 registers  (elsStop 0..55)    -> ONE FC3 request  (budget 75)
-#   cold  86 registers  (elsStop 56..141)  -> fetched on demand
-#   total 142 registers (protocolVersion 9 was 140; 10 and 11 are both 142)
+#   cold  90 registers  (elsStop 56..145)  -> fetched on demand
+#   total 146 registers (protocolVersion 9 was 140; 10, 11 and 12 were 142)
+#
+# protocolVersion 13 kept the hot group at 56. The next hot field would have
+# made the board tick 88 registers, past the 70% of the FC3 ceiling the tick
+# margin was decided at (tests/fsms/test_els_stop_snapshot.py). So commandSeq
+# took clearRefSeq's slot, and clearRefSeq, the one hot field that acks no
+# payload and that no tick reader reads, moved to cold. No hot register moved.
+# The four new cold registers (clearRefSeq, command, commandResult,
+# calBasisSteps, four uint16s) sit right after bootSeq: bootCommand keeps
+# absolute register 168, and every cold field after them moved by four.
+#
+# protocolVersion 12 FILLED the last two interior pads (clearRefSeq before
+# lastTakeupZDelta in hot, clearRefCommand before diagSettleTicks in cold), so
+# again no group grew and bootCommand stayed at absolute register 168. There
+# are now NO interior pads: the next field grows a group, and growing hot moves
+# every cold register including bootCommand.
 #
 # protocolVersion 11 FILLED two of the four interior pads protocolVersion 10
 # had (stopTriggerOffset before stopTriggerZ in hot, stopOffset before
 # phaseOffsetPending in cold), so no group grew and bootCommand stayed at
-# absolute register 168. Two generator-emitted interior pads remain: before
-# lastTakeupZDelta (hot) and before diagSettleTicks (cold). Under
+# absolute register 168. That left two generator-emitted interior pads:
+# before lastTakeupZDelta (hot) and before diagSettleTicks (cold). Under
 # protocolVersion 10 there were four. Under protocolVersion 9 the
 # padding was hand-placed fields named machineModeReserved and
 # stopTriggerReserved; it is now the generator's business and vanishes from
@@ -266,8 +321,9 @@ constants:
 # Tick cost: fastData (30 regs, 1 request) + elsStop hot (56 regs, 1 request)
 #            = 2 exchanges per tick, down from 3. A 33% cut in the quantity that
 #            actually causes comms loss.
-# Headroom:  19 registers of hot growth before a second hot request. Auto-start
-#            is planned at ~10.
+# Headroom:  19 registers of hot growth before a second hot request, but the
+#            tick margin (above) is spent: the next hot field needs that
+#            margin re-decided first. Auto-start is planned at ~10.
 # =============================================================================
 
 # =============================================================================

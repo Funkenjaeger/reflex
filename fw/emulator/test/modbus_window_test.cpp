@@ -36,7 +36,7 @@ int main() {
     uint16_t idRegs[ELS_ID_SIZE] = ELS_ID_WINDOW_INIT(ELS_ID_STAGE_APP, ELS_PROTOCOL_VERSION_TEST);
     uint16_t blRegs[ELS_BL_SIZE];
     mbWindow_t appWins[1] = { { ELS_ID_BASE, ELS_ID_SIZE, idRegs, 1 } };
-    /* As bootloader/core/bl_modbus.c registers them since 2026-09-23: the
+    /* As bootloader/core/mb_rtu_port.h registers them since 2026-09-23: the
      * writable control window stops at blDiag, which is its own read-only
      * window (els_identity.h). */
     mbWindow_t blWins[3]  = { { ELS_ID_BASE, ELS_ID_SIZE, idRegs, 1 },

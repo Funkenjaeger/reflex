@@ -3,7 +3,7 @@
 Commissioning a controller board for the Modbus field bootloader: program it
 over SWD once, then prove each path before relying on it. What the bootloader
 is, how to build it and how to update over Modbus are in
-[`fw/bootloader/README.md`](https://github.com/Funkenjaeger/reflex/blob/integration/fw/bootloader/README.md).
+[`fw/bootloader/README.md`](https://github.com/Funkenjaeger/reflex/blob/main/fw/bootloader/README.md).
 
 ## Before you start
 
@@ -16,7 +16,7 @@ clone. The operator does the power cycles.
 ## Procedure
 
 1. **Build both images in the scratch clone** (the commands under
-    [Building](https://github.com/Funkenjaeger/reflex/blob/integration/fw/bootloader/README.md#building)).
+    [Building](https://github.com/Funkenjaeger/reflex/blob/main/fw/bootloader/README.md#building)).
     Record `git rev-parse --short=7 HEAD`; the identity window will report it.
     Note the bootloader size printed by the link (`FLASH: ... 16 KB`).
 

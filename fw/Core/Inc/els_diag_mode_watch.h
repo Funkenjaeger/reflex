@@ -156,4 +156,9 @@ static inline int32_t elsDiagExtraDwell(const elsDiagCtx_t *ctx) {
   return 0;
 }
 
+/* ISR-tail hook (every tick, schema 8+) -- not this probe's concern. */
+static inline void elsDiagTickTail(elsDiagCtx_t *ctx, rampsSharedData_t *shared) {
+  (void)ctx; (void)shared;
+}
+
 #endif /* ELS_DIAG_MODE_WATCH_H */

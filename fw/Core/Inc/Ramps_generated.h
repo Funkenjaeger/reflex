@@ -186,7 +186,7 @@ typedef struct {
   uint32_t servoDesired;
 
   /* reg 4 READ-ONLY (firmware-owned): mirror of servo.stepsToGo (signed:
-   * negative on reverse moves), updated by ramp algorithm
+   * negative on reverse moves), published by the ISR at the end of every pass
    */
   int32_t stepsToGo;
 
@@ -238,14 +238,14 @@ static_assert(FAST_DATA_ALL_REG_COUNT <= 75, "all group exceeds its FC3 request 
 
 /* ======== elsStop_t -- from registers/els_stop.yaml ======== */
 
-#define ELS_STOP_PROTOCOL_VERSION 11u
-#define ELS_STOP_TOTAL_REGS 142u
+#define ELS_STOP_PROTOCOL_VERSION 13u
+#define ELS_STOP_TOTAL_REGS 146u
 #define ELS_STOP_HOT_REG_BASE 0u
 #define ELS_STOP_HOT_REG_COUNT 56u
 #define ELS_STOP_COLD_REG_BASE 56u
-#define ELS_STOP_COLD_REG_COUNT 86u
+#define ELS_STOP_COLD_REG_COUNT 90u
 
-/* elsStop_t occupies registers 104..245 of rampsSharedData_t. */
+/* elsStop_t occupies registers 104..249 of rampsSharedData_t. */
 typedef struct {
 
   /* ---- HOT ----
@@ -348,7 +348,14 @@ typedef struct {
    * never moved" from "never reached target"
    */
   uint16_t takeupResult;
-  uint16_t _pad1;        /* generator-emitted alignment, before lastTakeupZDelta */
+
+  /* reg 31 READ-ONLY (firmware-owned): increments once per consumed command,
+   * AFTER commandResult is written and only once the ISR has taken the
+   * teardown, so the mode published on the ack tick already describes the
+   * result. Edge-detect it; a fresh session takes its value at connect as the
+   * baseline Monotonic ack; edge-detect it. Sits below everything it counts.
+   */
+  uint16_t commandSeq;
 
   /* reg 32 READ-ONLY (firmware-owned): signed Z counts moved across the last
    * take-up, projected onto the take-up direction. Negative means the
@@ -358,7 +365,7 @@ typedef struct {
 
   /* reg 34 READ-ONLY (firmware-derived, not operator-set): Z counts the last
    * take-up had to move to be confirmed. Derived from (backlashSteps -
-   * mean(calMeasured)) via elsTakeupConfirmThreshold(); falls back to
+   * calBasisSteps) via elsTakeupConfirmThreshold(); falls back to
    * calMotionThreshCounts with no calibration on file or in turning mode.
    * Published so the UI can say "moved 3, needed 4"
    */
@@ -516,79 +523,122 @@ typedef struct {
    */
   uint16_t bootSeq;
 
-  /* reg 66 READ-ONLY (firmware-owned): lash measured at each of the 3
-   * reversals, in servo steps. The host judges whether the spread is
-   * acceptable
+  /* reg 66 READ-ONLY (firmware-owned): increments once per consumed
+   * clearRefCommand, in the same ISR pass that cleared the reference; the ack
+   * for clearRefCommand Monotonic ack; edge-detect it. Sits below everything
+   * it counts.
+   */
+  uint16_t clearRefSeq;
+
+  /* reg 67 bidirectional: SW writes ELS_CMD_* (els_command.h); 1 = DISENGAGE.
+   * Consumed and cleared by servoEnableTask (~100 ms). One command in flight:
+   * write nothing to elsStop or syncEnable until commandSeq moves CLEARED BY
+   * FIRMWARE ON CONSUME -- poll commandSeq, never this.
+   */
+  uint16_t command;
+
+  /* reg 68 READ-ONLY (firmware-owned): outcome of the command counted by
+   * commandSeq; read it live once commandSeq has moved (cold, so not in the
+   * tick snapshot). ELS_CMD_RESULT_* in els_command.h: 0 = OK, 1 = OK and a
+   * calibration run was aborted by it, 0x100 and up = refusals
+   */
+  uint16_t commandResult;
+
+  /* reg 69 bidirectional: the calibrated lash the take-up confirmation
+   * threshold derives from (elsTakeupConfirmThreshold), servo steps in the
+   * engaged gear; 0 = no calibration on file, which keeps the gate at its
+   * floor. The host writes it (after a power cycle, a gear change, an
+   * accepted run); the firmware copies the mean of calMeasured into it at the
+   * end of a SUCCESSFUL run only, so a failed run leaves it untouched.
+   * Firmware RAM: a power cycle zeroes it
+   */
+  uint16_t calBasisSteps;
+
+  /* reg 70 READ-ONLY (firmware-owned): lash measured at each of the 3
+   * reversals of the last calibration run, in servo steps. Written at the end
+   * of every run, partial values on a failed one; only trust it when
+   * calResult is OK. The host judges whether the spread is acceptable. The
+   * take-up gate does NOT read it; see calBasisSteps
    */
   int32_t calMeasured[3];
 
-  /* reg 72 SW write: per-leg hard ceiling in servo steps. Driving this far
+  /* reg 76 SW write: per-leg hard ceiling in servo steps. Driving this far
    * without Z moving is the open-half-nut / uncoupled failure.
    * Machine-specific; size it comfortably past the largest credible lash
    */
   int32_t calCeilingSteps;
 
-  /* reg 74 SW write: Z scale counts that count as real motion.
+  /* reg 78 SW write: Z scale counts that count as real motion.
    * Machine-specific: ~2 counts on a 200 counts/mm scale (1 count ≈ 2.5 servo
    * steps); the emulator is 400 counts/mm. 0 disables detection and fails
    * closed (never confirms)
    */
   int32_t calMotionThreshCounts;
 
-  /* reg 76 READ-ONLY except for reset: highest executionCycles since the host
+  /* reg 80 READ-ONLY except for reset: highest executionCycles since the host
    * last wrote 0 here. Compare against ELS_ISR_CYCLE_BUDGET (els_isr_rate.h),
    * one tick at the 100 MHz core clock: 2000 cycles at the 50 kHz hardware
    * tick
    */
   uint32_t executionCyclesPeak;
 
-  /* reg 78 READ-ONLY (firmware-owned): identifies the probe compiled into the
+  /* reg 82 READ-ONLY (firmware-owned): identifies the probe compiled into the
    * block. 0 = none; do not interpret anything below it, and never assume a
    * schema you did not read
    */
   uint16_t diagSchema;
 
-  /* reg 79 READ-ONLY (firmware-owned): ISR ticks summed into each diagTrace
+  /* reg 83 READ-ONLY (firmware-owned): ISR ticks summed into each diagTrace
    * bucket. Published so the host never has to assume the ISR rate
    */
   uint16_t diagBucketTicks;
 
-  /* reg 80 READ-ONLY (firmware-owned): populated diagTrace entries, for the
+  /* reg 84 READ-ONLY (firmware-owned): populated diagTrace entries, for the
    * same reason
    */
   uint16_t diagBucketCount;
-  uint16_t _pad2;        /* generator-emitted alignment, before diagSettleTicks */
 
-  /* reg 82 READ-ONLY (firmware-owned): ticks from capture start to the last
+  /* reg 85 bidirectional: SW writes 1 to clear the thread reference:
+   * referenceLatched and phaseOffsetSteps go to 0, as the servoMode == 0 rule
+   * does, and nothing else changes (enable, servoMode and sync untouched).
+   * Always accepted; the next stop trigger latches a fresh reference. Written
+   * by reflex-ui when it adopts a gearbox position with a reference latched
+   * CLEARED BY FIRMWARE ON CONSUME -- poll clearRefSeq, never this.
+   */
+  uint16_t clearRefCommand;
+
+  /* reg 86 READ-ONLY (firmware-owned): ticks from capture start to the last
    * tick that saw nonzero dZ: the measurement ELS_SLIP_SETTLE_TICKS
    * estimates. Meaningful in v2, where the capture stops before the pass
    * starts
    */
   int32_t diagSettleTicks;
 
-  /* reg 84 READ-ONLY (firmware-owned): signed Z counts summed across the
+  /* reg 88 READ-ONLY (firmware-owned): signed Z counts summed across the
    * capture
    */
   int32_t diagNetCounts;
 
-  /* reg 86 READ-ONLY (firmware-owned): per-bucket signed sum of dZ. Signed so
+  /* reg 90 READ-ONLY (firmware-owned): per-bucket signed sum of dZ. Signed so
    * encoder dither cancels and real motion does not, which is what a
    * quiescence test needs
    */
   int16_t diagTrace[ELS_DIAG_TRACE_BUCKETS];
 
-  /* reg 136 READ-ONLY (firmware-owned): ticks the capture actually ran, i.e.
+  /* reg 140 READ-ONLY (firmware-owned): ticks the capture actually ran, i.e.
    * how long the servo stayed silent after the take-up. Distinct from
    * diagSettleTicks, which is when Z last moved
    */
   uint16_t diagCaptureTicks;
 
-  /* reg 137 READ-ONLY (firmware-owned): ELS_DIAG_END_*. A window-full capture
-   * did not finish measuring; treat its tail as a floor, not a result
+  /* reg 141 READ-ONLY except for reset: ELS_DIAG_END_*. A window-full capture
+   * did not finish measuring; treat its tail as a floor, not a result. Under
+   * the isr-gap probe (schema 8) the firmware holds it at 1 while a window is
+   * open, and a host write of 0 requests a fresh window
    */
   uint16_t diagEndReason;
 
-  /* reg 138 pads the block to a fixed 128 bytes so its size never depends on
+  /* reg 142 pads the block to a fixed 128 bytes so its size never depends on
    * which probe is in it
    */
   uint16_t diagReserved[4];
@@ -615,6 +665,7 @@ static_assert(offsetof(elsStop_t, lastCorrection) == 52, "lastCorrection moved: 
 static_assert(offsetof(elsStop_t, protocolVersion) == 56, "protocolVersion moved: schema says register 28");
 static_assert(offsetof(elsStop_t, takeupSeq) == 58, "takeupSeq moved: schema says register 29");
 static_assert(offsetof(elsStop_t, takeupResult) == 60, "takeupResult moved: schema says register 30");
+static_assert(offsetof(elsStop_t, commandSeq) == 62, "commandSeq moved: schema says register 31");
 static_assert(offsetof(elsStop_t, lastTakeupZDelta) == 64, "lastTakeupZDelta moved: schema says register 32");
 static_assert(offsetof(elsStop_t, takeupThreshCounts) == 68, "takeupThreshCounts moved: schema says register 34");
 static_assert(offsetof(elsStop_t, stepPulseMinCycles) == 72, "stepPulseMinCycles moved: schema says register 36");
@@ -639,20 +690,25 @@ static_assert(offsetof(elsStop_t, stopOffset) == 122, "stopOffset moved: schema 
 static_assert(offsetof(elsStop_t, phaseOffsetPending) == 124, "phaseOffsetPending moved: schema says register 62");
 static_assert(offsetof(elsStop_t, bootCommand) == 128, "bootCommand moved: schema says register 64");
 static_assert(offsetof(elsStop_t, bootSeq) == 130, "bootSeq moved: schema says register 65");
-static_assert(offsetof(elsStop_t, calMeasured) == 132, "calMeasured moved: schema says register 66");
-static_assert(offsetof(elsStop_t, calCeilingSteps) == 144, "calCeilingSteps moved: schema says register 72");
-static_assert(offsetof(elsStop_t, calMotionThreshCounts) == 148, "calMotionThreshCounts moved: schema says register 74");
-static_assert(offsetof(elsStop_t, executionCyclesPeak) == 152, "executionCyclesPeak moved: schema says register 76");
-static_assert(offsetof(elsStop_t, diagSchema) == 156, "diagSchema moved: schema says register 78");
-static_assert(offsetof(elsStop_t, diagBucketTicks) == 158, "diagBucketTicks moved: schema says register 79");
-static_assert(offsetof(elsStop_t, diagBucketCount) == 160, "diagBucketCount moved: schema says register 80");
-static_assert(offsetof(elsStop_t, diagSettleTicks) == 164, "diagSettleTicks moved: schema says register 82");
-static_assert(offsetof(elsStop_t, diagNetCounts) == 168, "diagNetCounts moved: schema says register 84");
-static_assert(offsetof(elsStop_t, diagTrace) == 172, "diagTrace moved: schema says register 86");
-static_assert(offsetof(elsStop_t, diagCaptureTicks) == 272, "diagCaptureTicks moved: schema says register 136");
-static_assert(offsetof(elsStop_t, diagEndReason) == 274, "diagEndReason moved: schema says register 137");
-static_assert(offsetof(elsStop_t, diagReserved) == 276, "diagReserved moved: schema says register 138");
-static_assert(sizeof(elsStop_t) == 284, "elsStop_t is not 142 registers");
+static_assert(offsetof(elsStop_t, clearRefSeq) == 132, "clearRefSeq moved: schema says register 66");
+static_assert(offsetof(elsStop_t, command) == 134, "command moved: schema says register 67");
+static_assert(offsetof(elsStop_t, commandResult) == 136, "commandResult moved: schema says register 68");
+static_assert(offsetof(elsStop_t, calBasisSteps) == 138, "calBasisSteps moved: schema says register 69");
+static_assert(offsetof(elsStop_t, calMeasured) == 140, "calMeasured moved: schema says register 70");
+static_assert(offsetof(elsStop_t, calCeilingSteps) == 152, "calCeilingSteps moved: schema says register 76");
+static_assert(offsetof(elsStop_t, calMotionThreshCounts) == 156, "calMotionThreshCounts moved: schema says register 78");
+static_assert(offsetof(elsStop_t, executionCyclesPeak) == 160, "executionCyclesPeak moved: schema says register 80");
+static_assert(offsetof(elsStop_t, diagSchema) == 164, "diagSchema moved: schema says register 82");
+static_assert(offsetof(elsStop_t, diagBucketTicks) == 166, "diagBucketTicks moved: schema says register 83");
+static_assert(offsetof(elsStop_t, diagBucketCount) == 168, "diagBucketCount moved: schema says register 84");
+static_assert(offsetof(elsStop_t, clearRefCommand) == 170, "clearRefCommand moved: schema says register 85");
+static_assert(offsetof(elsStop_t, diagSettleTicks) == 172, "diagSettleTicks moved: schema says register 86");
+static_assert(offsetof(elsStop_t, diagNetCounts) == 176, "diagNetCounts moved: schema says register 88");
+static_assert(offsetof(elsStop_t, diagTrace) == 180, "diagTrace moved: schema says register 90");
+static_assert(offsetof(elsStop_t, diagCaptureTicks) == 280, "diagCaptureTicks moved: schema says register 140");
+static_assert(offsetof(elsStop_t, diagEndReason) == 282, "diagEndReason moved: schema says register 141");
+static_assert(offsetof(elsStop_t, diagReserved) == 284, "diagReserved moved: schema says register 142");
+static_assert(sizeof(elsStop_t) == 292, "elsStop_t is not 146 registers");
 static_assert(ELS_STOP_HOT_REG_COUNT <= 75, "hot group exceeds its FC3 request budget");
 static_assert(ELS_STOP_COLD_REG_COUNT <= 125, "cold group exceeds its FC3 request budget");
 
@@ -670,6 +726,6 @@ static_assert(ELS_STOP_COLD_REG_COUNT <= 125, "cold group exceeds its FC3 reques
   static_assert(sizeof(((rampsSharedData_t *)0)->scales) == 4 * sizeof(input_t), "scales is not 4 x input_t"); \
   static_assert(offsetof(rampsSharedData_t, fastData) == 148, "fastData is not at register 74 of rampsSharedData_t"); \
   static_assert(offsetof(rampsSharedData_t, elsStop) == 208, "elsStop is not at register 104 of rampsSharedData_t"); \
-  static_assert(sizeof(rampsSharedData_t) == 492, "rampsSharedData_t is not 246 registers")
+  static_assert(sizeof(rampsSharedData_t) == 500, "rampsSharedData_t is not 250 registers")
 
 #endif /* RAMPS_GENERATED_H */

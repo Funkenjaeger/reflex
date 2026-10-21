@@ -98,6 +98,7 @@ from pathlib import Path
 
 from kivy.logger import Logger
 
+from reflex.utils import release_version
 from reflex.utils.image_requirement import MINIMUM_IMAGE_RELEASE
 
 log = Logger.getChild(__name__)
@@ -279,6 +280,10 @@ class Release:
     prerelease: bool
     firmware_url: str
     firmware_name: str
+    #: Where the release was listed: "public" (GitHub) or "home" (the optional
+    #: private source, :mod:`reflex.utils.release_source`). Decides where the
+    #: tag is fetched from and whether the download carries credentials.
+    source: str = "public"
 
     @property
     def version(self) -> str:
@@ -287,8 +292,14 @@ class Release:
 
 
 def select_releases(payload, *, allow_prerelease: bool,
-                    limit: int = RELEASE_LIST_LIMIT) -> list[Release]:
+                    limit: int = RELEASE_LIST_LIMIT,
+                    source: str = "public") -> list[Release]:
     """Installable releases from the GitHub API payload, newest first.
+
+    The home source's API (a Forgejo/Gitea forge) answers in the same shape --
+    ``tag_name``, ``draft``, ``prerelease``, ``assets[].name`` and
+    ``assets[].browser_download_url`` -- so the same filters apply to it, and
+    ``source`` records where each release came from.
 
     THREE FILTERS, and each one drops something that would otherwise be
     offered and could not be installed:
@@ -323,6 +334,7 @@ def select_releases(payload, *, allow_prerelease: bool,
             prerelease=bool(item.get("prerelease")),
             firmware_url=asset["browser_download_url"],
             firmware_name=asset["name"],
+            source=source,
         ))
         if len(out) >= limit:
             break
@@ -372,9 +384,9 @@ def parse_identity(text: str) -> Identity:
     m = _IDENTITY_RE.search(text)
     if not m:
         raise UpdateRefused(
-            "Could not read the controller's identity window. The board did "
-            "not answer in a form this UI recognises, so its firmware version "
-            "is UNKNOWN -- refusing rather than guessing.\n"
+            "Could not read the identity window of the controller. The board "
+            "did not answer in a form this UI recognizes, so its firmware "
+            "version is UNKNOWN. The update is refused.\n"
             f"Output was: {text.strip()[:400]}")
     return Identity(stage=m.group("stage"), build_rev=m.group("rev"),
                     app_protocol=int(m.group("protocol")))
@@ -400,7 +412,7 @@ def parse_image_info(text: str) -> ImageInfo:
     if not m:
         raise UpdateRefused(
             "The downloaded firmware image did not describe itself in a form "
-            "this UI recognises; refusing to flash it.\n"
+            "this UI recognizes. The image is not flashed.\n"
             f"Output was: {text.strip()[:400]}")
     return ImageInfo(rev=m.group("rev"), length=int(m.group("len")))
 
@@ -433,12 +445,12 @@ def parse_protocol_version(map_source: str) -> int:
     m = _PROTOCOL_RE.search(map_source)
     if not m:
         raise UpdateRefused(
-            "Could not read PROTOCOL_VERSION as a plain number from the target "
-            "release's ui/reflex/utils/els_stop_map.py. Without it there is "
-            "nothing to check the firmware against, so the update is refused "
-            "and nothing has been changed. The machine is safe to keep using "
-            "on the version it is running; update from the command line "
-            "instead -- see the Installing page.")
+            "Could not read PROTOCOL_VERSION as a plain number from "
+            "ui/reflex/utils/els_stop_map.py in the target release. Without "
+            "it, the firmware cannot be checked, so the update is refused. "
+            "Nothing has been changed. The machine is safe to use on its "
+            "current version. To update, use the command line. See the "
+            "Installing page.")
     return int(m.group(1))
 
 
@@ -568,9 +580,9 @@ def resolve_checkout(start: Path | None = None) -> Path:
         raise UpdateRefused(
             f"This UI is not running from a reflex monorepo git checkout "
             f"({root} is missing {', '.join(missing)}). In-app update needs "
-            f"one for both halves: the git tag for the UI and fw/scripts for "
-            f"the firmware. Update from the command line instead -- see the "
-            f"Installing page.")
+            f"this checkout for both halves: the git tag for the UI, and "
+            f"fw/scripts for the firmware. Update from the command line. See "
+            f"the Installing page.")
     return root
 
 
@@ -624,9 +636,9 @@ def find_uv(env_path: str | None = None) -> str:
         if os.access(candidate, os.X_OK):
             return candidate
     raise UpdateRefused(
-        "uv was not found, and the UI half of an update cannot be installed "
-        "without it. Install uv (or put it on the service's PATH) and try "
-        "again -- nothing has been changed.")
+        "uv was not found. The UI half of an update cannot be installed "
+        "without it. Nothing has been changed. Install uv, or put it on the "
+        "PATH of the service. Then try again.")
 
 
 def manifest_path_for(checkout: Path) -> Path:
@@ -672,6 +684,89 @@ def last_flashed_rev(manifest: Path) -> str | None:
             tag = record.get("tag")
             return f"{rev} ({tag})" if tag else str(rev)
     return None
+
+
+def flash_records(manifest: Path) -> list[dict]:
+    """Every usable record in the flash manifest, oldest first: the JSON
+    objects that name a ``rev``. Torn or foreign lines are skipped, as in
+    :func:`last_flashed_rev`; no manifest is an empty list."""
+    try:
+        lines = Path(manifest).read_text().splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and record.get("rev"):
+            out.append(record)
+    return out
+
+
+def tag_rev(checkout: Path, tag: str, runner=None) -> str | None:
+    """The 7-hex rev of the commit ``tag`` names in the checkout, or ``None``.
+
+    A release image carries exactly that rev: the release workflow refuses an
+    image that does not name the release commit cleanly
+    (``fw/scripts/release_identity.py``). The tag is local on a machine the
+    updater installed, because preflight fetched it."""
+    runner = runner or subprocess_runner
+    try:
+        rc, out = runner(["git", "rev-parse", "--short=7", f"{tag}^{{commit}}"],
+                         cwd=checkout, timeout=30, emit=None)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    rev = out.strip()
+    return rev if rc == 0 and rev else None
+
+
+def _same_rev(a: str, b: str) -> bool:
+    """Revs compared on their first 7 hex digits: the identity window holds
+    28 bits, and ``git rev-parse --short`` may print more."""
+    return a[:7] == b[:7]
+
+
+def firmware_reinstall_reason(manifest: Path, tag: str,
+                              tag_rev: str | None = None) -> str | None:
+    """Why the controller is not running ``tag``'s release firmware, as a
+    sentence for the Update screen, or ``None`` when it is or when nothing
+    was recorded.
+
+    For the case the full update cannot reach: the UI already IS ``tag``, so
+    the screen offers no install, while the firmware under it is something
+    else -- a diagnostic build flashed by ``flash.sh``, or another release's
+    image. Read from the flash manifest, not the board: the identity window
+    needs the serial port the running UI holds. The reinstall itself reads the
+    board before and after it flashes.
+
+    The release image's rev is the newest ``release`` record for ``tag``, else
+    ``tag_rev`` (the tag's commit in the checkout). A diagnostic build of the
+    release commit carries the same rev, so the variant is checked first.
+    """
+    records = flash_records(manifest)
+    if not records:
+        return None
+    last = records[-1]
+    rev = str(last["rev"]) + ("-dirty" if last.get("dirty") else "")
+    if last.get("variant") == "diagnostic":
+        return (f"The controller runs diagnostic firmware (rev {rev}), not the "
+                f"{tag} firmware.")
+    if (last.get("variant") == "release" and last.get("tag")
+            and release_version.same_release(str(last["tag"]), tag)):
+        return None
+    expected = next((str(r["rev"]) for r in reversed(records)
+                     if r.get("variant") == "release" and r.get("tag")
+                     and release_version.same_release(str(r["tag"]), tag)),
+                    tag_rev)
+    if expected:
+        if _same_rev(str(last["rev"]), expected) and not last.get("dirty"):
+            return None
+        return (f"The controller runs firmware rev {rev}, not the {tag} "
+                f"firmware (rev {expected[:7]}).")
+    return (f"The controller runs firmware rev {rev}, which is not recorded "
+            f"as the {tag} firmware.")
 
 
 # --------------------------------------------------------------------------
@@ -749,16 +844,34 @@ def verify_firmware_half(identity: Identity, target_protocol: int,
 # Default I/O bindings
 # --------------------------------------------------------------------------
 
-def subprocess_runner(argv, cwd=None, timeout=None, emit=None):
+def sync_filesystems() -> None:
+    """Flush every filesystem's dirty pages to the card.
+
+    An install writes a new checkout and venv, and both halves write the flash
+    manifest. The operator's next move after "done" may be the power switch,
+    which can lose a manifest record, leave the UI log ending in NUL bytes,
+    and make the Update screen misread which firmware the board runs. os.sync() exists only on POSIX systems; elsewhere there is
+    nothing to do. (Tested by name, not by hasattr: test_update_screen_wired
+    pins where the quoted word sync may appear in this module.)"""
+    if os.name == "posix":
+        os.sync()
+
+
+def subprocess_runner(argv, cwd=None, timeout=None, emit=None, env=None):
     """Run a command, streaming its output to ``emit``. Returns (rc, output).
 
     Combined stdout+stderr, because everything run here is a tool whose
     progress narration and its errors are equally worth showing the operator
     on a machine with no terminal.
+
+    ``env`` is ADDED to this process's environment, never a replacement: the
+    home source's fetch passes its credential this way (``GIT_CONFIG_*``) so
+    that it is never part of the command line.
     """
     p = subprocess.Popen([str(a) for a in argv], cwd=str(cwd) if cwd else None,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         text=True, bufsize=1)
+                         text=True, bufsize=1,
+                         env={**os.environ, **env} if env else None)
     lines = []
     assert p.stdout is not None
     for line in p.stdout:
@@ -770,14 +883,34 @@ def subprocess_runner(argv, cwd=None, timeout=None, emit=None):
     return p.returncode, "\n".join(lines)
 
 
-def urllib_download(url: str, dest: Path) -> Path:
-    with urllib.request.urlopen(url, timeout=60) as r, open(dest, "wb") as f:
+def _request(url: str, headers: dict | None):
+    """A request whose headers are NOT replayed on a redirect. urllib copies
+    ordinary headers onto the redirected request whatever its host, which
+    would hand the home source's credential to wherever a redirect points; an
+    unredirected header stays with the URL it was meant for, and a redirect
+    then fails loudly instead."""
+    req = urllib.request.Request(url)
+    for key, value in (headers or {}).items():
+        req.add_unredirected_header(key, value)
+    return req
+
+
+def _snapshot_settings(reason: str) -> Path:
+    """The default pre-update snapshot: the commissioning bundle, written to
+    the ledger's snapshots directory. Imported here, not at module level, so
+    the updater stays importable (and testable) without the app's config."""
+    from reflex.utils import commissioning_bundle
+    return commissioning_bundle.snapshot(reason)
+
+
+def urllib_download(url: str, dest: Path, headers: dict | None = None) -> Path:
+    with urllib.request.urlopen(_request(url, headers), timeout=60) as r, open(dest, "wb") as f:
         shutil.copyfileobj(r, f)
     return dest
 
 
-def urllib_fetch_json(url: str):
-    with urllib.request.urlopen(url, timeout=30) as r:
+def urllib_fetch_json(url: str, headers: dict | None = None):
+    with urllib.request.urlopen(_request(url, headers), timeout=30) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
@@ -845,7 +978,8 @@ class Prepared:
     image_path: Path
     image: ImageInfo
     target_protocol: int
-    uv: str
+    #: None for a firmware-only reinstall, which never syncs the venv.
+    uv: str | None = None
     #: Where the checkout was before the update: the commit, and the branch
     #: when it was on one (elspi runs `integration`). What _undo_ui_half puts
     #: back. None when git could not say, which disables the undo's checkout.
@@ -866,8 +1000,14 @@ class UpdateSession:
                  emit=None, uv_finder=find_uv, service: str = SERVICE_NAME,
                  python: str | None = None, restart=None,
                  manifest: Path | None = None,
-                 elspi_release_path: Path | None = None):
+                 elspi_release_path: Path | None = None,
+                 home_source=None, snapshot=None, sync=sync_filesystems):
         self.checkout = Path(checkout)
+        #: The optional private release source (release_source.HomeSource),
+        #: or None, in which case nothing below differs from a machine that
+        #: has never heard of one.
+        self.home_source = home_source
+        self._snapshot = snapshot or _snapshot_settings
         self._manifest = manifest
         self._elspi_release_path = elspi_release_path or ELSPI_RELEASE_PATH
         #: The controller's identity just before the flash, kept so a failed
@@ -884,6 +1024,7 @@ class UpdateSession:
         self.service = service
         self.python = python or sys.executable
         self._restart = restart or self._systemctl_restart
+        self._sync = sync
 
     # -- helpers ----------------------------------------------------------
 
@@ -891,15 +1032,25 @@ class UpdateSession:
         self._emit(line)
         log.info(f"update: {line}")
 
-    def _run(self, argv, cwd=None, timeout=None, what="", quiet=False):
+    def sync_to_card(self):
+        """Make what this update wrote survive a power cut, before it says it
+        is done (sync_filesystems)."""
+        self.emit("Writing the changes to the SD card.")
+        self._sync()
+
+    def _run(self, argv, cwd=None, timeout=None, what="", quiet=False, env=None):
         """``quiet`` suppresses the live echo, not the capture.
 
         For commands whose OUTPUT is data rather than progress -- ``git show``
         of a source file being the one that matters, since streaming it would
         dump the whole of els_stop_map.py into the operator's status box.
+
+        ``env`` is passed to the runner only when given, so a runner that
+        predates it still serves every public-source command.
         """
+        extra = {"env": env} if env else {}
         rc, out = self._runner(argv, cwd=cwd, timeout=timeout,
-                               emit=None if quiet else self._emit)
+                               emit=None if quiet else self._emit, **extra)
         if rc != 0:
             refused = UpdateRefused(
                 f"{what or ' '.join(str(a) for a in argv)} failed (exit {rc}).\n"
@@ -946,7 +1097,50 @@ class UpdateSession:
         seen = {r.tag for r in out}
         out += [r for r in select_releases(payload, allow_prerelease=False)
                 if r.tag not in seen]
-        return out
+        if self.home_source is None:
+            return out
+        return self._with_home_releases(out)
+
+    def _with_home_releases(self, public: list[Release]) -> list[Release]:
+        """The public catalogue plus the home source's releases, newest first
+        by version. The home source failing (no route, refused token) costs
+        only its own entries: the public list is still returned, and the
+        status box says why the home entries are missing. A tag listed by
+        both keeps its PUBLIC entry, which needs no credential."""
+        home = self.home_source
+        try:
+            payload = self._fetch_json(home.releases_url,
+                                       headers=home.auth_headers_for(home.releases_url))
+            found = select_releases(payload, allow_prerelease=True, source="home")
+        except Exception as e:      # noqa: BLE001 - any failure: public only
+            self.emit(f"Integration builds could not be listed ({e}). "
+                      f"Only public releases are shown.")
+            return public
+        seen = {r.tag for r in public}
+        merged = public + [r for r in found if r.tag not in seen]
+        return sorted(merged, key=lambda r: release_version.precedence_key(r.tag),
+                      reverse=True)
+
+    def _home(self):
+        if self.home_source is None:
+            raise UpdateRefused(
+                "This is an integration build, but no integration build source "
+                "is configured on this machine. Nothing has been changed.")
+        return self.home_source
+
+    def _fetch_home_tag(self, release: Release):
+        """Fetch exactly the one tag being installed from the home source.
+
+        Only that tag: the home repository carries every branch and work in
+        progress, none of which belongs in the machine's checkout. The
+        credential travels in the environment (HomeSource.git_env), so the
+        command line names only the URL and the refspec."""
+        home = self._home()
+        ref = f"refs/tags/{release.tag}"
+        self.emit(f"Fetching {release.tag} from the integration build source.")
+        self._run(["git", "fetch", "--no-tags", home.git_url, f"+{ref}:{ref}"],
+                  cwd=self.checkout, timeout=300, what="git fetch (integration build)",
+                  env=home.git_env())
 
     # -- 1. preflight ------------------------------------------------------
 
@@ -996,9 +1190,12 @@ class UpdateSession:
                 f"{release.tag} could fail halfway or discard work. Nothing "
                 f"has been changed.\n{dirty[:400]}")
 
-        self.emit(f"Fetching tags from {GITHUB_FETCH_URL}.")
-        self._run(["git", "fetch", "--tags", "--force", GITHUB_FETCH_URL],
-                  cwd=self.checkout, timeout=300, what="git fetch")
+        if release.source == "home":
+            self._fetch_home_tag(release)
+        else:
+            self.emit(f"Fetching tags from {GITHUB_FETCH_URL}.")
+            self._run(["git", "fetch", "--tags", "--force", GITHUB_FETCH_URL],
+                      cwd=self.checkout, timeout=300, what="git fetch")
         self._run(["git", "rev-parse", "--verify", f"{release.tag}^{{commit}}"],
                   cwd=self.checkout, what=f"resolving tag {release.tag}")
 
@@ -1013,24 +1210,7 @@ class UpdateSession:
         self.emit(f"{release.tag} UI expects register protocol version "
                   f"{target_protocol} (this UI: {self.current_protocol}).")
 
-        self.workdir.mkdir(parents=True, exist_ok=True)
-        image_path = self.workdir / release.firmware_name
-        self.emit(f"Downloading {release.firmware_name}.")
-        self._download(release.firmware_url, image_path)
-
-        # The authoritative validator, not a reimplementation: reflex_image.py
-        # mirrors blImageValidate() in the bootloader, so an image this rejects
-        # is one the board would reject too -- found here, before the erase.
-        rc, out = self._runner([self.python, self._reflex_image, "info", image_path],
-                               cwd=None, timeout=60, emit=self._emit)
-        if rc != 0:
-            raise UpdateRefused(
-                f"The {release.tag} firmware asset is not a slotted "
-                f"application image, so it cannot be flashed over Modbus. "
-                f"This release cannot be installed from the machine; update "
-                f"from the command line instead.\n{out.strip()[:400]}")
-        image = parse_image_info(out)
-        self.emit(f"Firmware image: rev {image.rev}, {image.length} bytes.")
+        image_path, image = self._fetch_image(release)
 
         # Where the checkout is NOW, so a UI half that fails after the flash
         # can be undone (_undo_ui_half). A branch is recorded as well as the
@@ -1048,6 +1228,46 @@ class UpdateSession:
         return Prepared(release=release, image_path=image_path, image=image,
                         target_protocol=target_protocol, uv=uv,
                         previous_rev=previous_rev, previous_branch=previous_branch)
+
+    def _fetch_image(self, release: Release) -> tuple[Path, ImageInfo]:
+        """Download the release's firmware image and validate it, changing
+        nothing on the board. Shared by preflight and prepare_firmware."""
+        self.workdir.mkdir(parents=True, exist_ok=True)
+        image_path = self.workdir / release.firmware_name
+        self.emit(f"Downloading {release.firmware_name}.")
+        if release.source == "home":
+            self._download(release.firmware_url, image_path,
+                           headers=self._home().auth_headers_for(release.firmware_url))
+        else:
+            self._download(release.firmware_url, image_path)
+
+        # The authoritative validator, not a reimplementation: reflex_image.py
+        # mirrors blImageValidate() in the bootloader, so an image this rejects
+        # is one the board would reject too -- found here, before the erase.
+        rc, out = self._runner([self.python, self._reflex_image, "info", image_path],
+                               cwd=None, timeout=60, emit=self._emit)
+        if rc != 0:
+            raise UpdateRefused(
+                f"The {release.tag} firmware asset is not a slotted "
+                f"application image, so it cannot be flashed over Modbus. "
+                f"This release cannot be installed from the machine; update "
+                f"from the command line instead.\n{out.strip()[:400]}")
+        image = parse_image_info(out)
+        self.emit(f"Firmware image: rev {image.rev}, {image.length} bytes.")
+        return image_path, image
+
+    def prepare_firmware(self, release: Release) -> Prepared:
+        """Preflight for a firmware-only reinstall: the image, and nothing of
+        the UI half. No git, no uv, no venv check: the checkout and the
+        running UI stay as they are.
+
+        The target protocol is THIS UI's. The UI that will run over the
+        flashed firmware is the one running now, so that is the number the
+        gate must compare the firmware against."""
+        self.emit(f"Preparing the {release.tag} firmware.")
+        image_path, image = self._fetch_image(release)
+        return Prepared(release=release, image_path=image_path, image=image,
+                        target_protocol=self.current_protocol)
 
     # -- 2. flash, then THE GATE ------------------------------------------
 
@@ -1146,8 +1366,8 @@ class UpdateSession:
                     f"reboot into its bootloader because an ELS job is "
                     f"engaged. Nothing changed: the controller is confirmed "
                     f"running its previous firmware ({before.build_rev}), and "
-                    f"the UI was not changed. Disengage ELS and install again "
-                    f"-- Install offers to disengage it for you.\n{failed}") from failed
+                    f"the UI was not changed. Disengage ELS and install again. "
+                    f"Install offers to disengage it for you.\n{failed}") from failed
             raise UpdateRefused(
                 f"The firmware transfer FAILED and nothing changed: the "
                 f"controller is confirmed running its previous firmware "
@@ -1329,6 +1549,9 @@ class UpdateSession:
         self.emit("Syncing the Python environment (this can take a while).")
         self._run([prepared.uv, "sync", "--frozen"],
                   cwd=self.checkout / "ui", timeout=3600, what="uv sync")
+        # Before the restart and before either message below says the update
+        # is installed: the checkout, the venv and the manifest are on the card.
+        self.sync_to_card()
 
         self.emit(f"Restarting {self.service}. The UI will come back on "
                   f"{prepared.release.tag}.")
@@ -1337,9 +1560,9 @@ class UpdateSession:
         except ServiceRestartFailed as e:
             self.emit(
                 f"The UI could not restart itself: {e}\n"
-                f"The update IS installed -- controller firmware and UI are both "
-                f"{prepared.release.tag} -- but this screen is still the old UI. "
-                f"Tap Exit Application: the UI comes back on "
+                f"The update IS installed. The controller firmware and the UI "
+                f"are both {prepared.release.tag}, but this screen is still the "
+                f"old UI. Press Exit application. The UI then comes back on "
                 f"{prepared.release.tag} by itself.")
             return False
         return True
@@ -1377,6 +1600,26 @@ class UpdateSession:
 
     # -- the whole thing ---------------------------------------------------
 
+    def _snapshot_before(self, release: Release):
+        """A copy of the settings as they are before anything changes.
+
+        WHY: an OLDER release rewrites each settings file from the properties
+        IT knows, so settings a newer release added are dropped the first time
+        it saves them (SavingDispatcher.save_settings). Going back is rare and
+        that loss is accepted; this copy is what restores a setting by hand if
+        it mattered. It is the commissioning bundle the Backup screen exports,
+        written beside the startup and change snapshots.
+
+        A failed snapshot does not stop the update: it is a convenience for a
+        rare case, and the operator is told it is missing."""
+        try:
+            path = self._snapshot(f"pre-update-{release.tag}")
+        except Exception as e:      # noqa: BLE001 - never blocks the update
+            self.emit(f"The settings snapshot before the update could not be "
+                      f"written ({e}). The update continues without it.")
+            return
+        self.emit(f"Settings saved before the update: {path}")
+
     def run(self, release: Release, *, pause_link=None, resume_link=None):
         """Preflight, flash, gate, install. Raises :class:`UpdateRefused`.
 
@@ -1403,6 +1646,7 @@ class UpdateSession:
         feed against a mismatched protocol (app.on_servo_enable_pressed).
         """
         prepared = self.preflight(release)
+        self._snapshot_before(release)
         if pause_link:
             pause_link()
         try:
@@ -1421,3 +1665,31 @@ class UpdateSession:
             finally:
                 if resume_link:
                     resume_link()
+
+    def reinstall_firmware(self, release: Release, *, pause_link=None,
+                           resume_link=None) -> FirmwareVerdict:
+        """Flash ``release``'s firmware under the UI that is running now, and
+        nothing else. Raises :class:`UpdateRefused`.
+
+        For a UI that already IS ``release`` over firmware that is not its
+        image (a diagnostic build, another release's image): the full update
+        offers nothing there. The flash is the same :meth:`flash_firmware` the
+        full update runs -- the identity read before it, the refusal of an
+        already mismatched machine, the gate against this UI's protocol, and
+        the rollback on a mismatch -- after the same settings snapshot. There
+        is no UI half: no checkout, no ``uv sync``, no restart. The link is
+        handed back on every path, success included, because this UI goes on
+        running.
+        """
+        prepared = self.prepare_firmware(release)
+        self._snapshot_before(release)
+        if pause_link:
+            pause_link()
+        try:
+            verdict = self.flash_firmware(prepared)
+            # The screen reports the reinstall done when this returns.
+            self.sync_to_card()
+            return verdict
+        finally:
+            if resume_link:
+                resume_link()

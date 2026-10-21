@@ -5,11 +5,11 @@
  * The identity window (els_identity.h) lives OUTSIDE that struct at a fixed
  * base, and the bootloader's control window likewise. This resolver is the
  * single place both stages decide whether a request's address range is
- * served, and from where -- the app's Modbus.c and the bootloader's own
- * slave call the same function, so they cannot disagree about a gap.
+ * served, and from where -- both stages' slaves are the same core
+ * (modbus_rtu/mb_rtu.c), which calls it, so they cannot disagree about a gap.
  *
  * Header-only and dependency-free on purpose: it is compiled into a
- * FreeRTOS firmware, a bare-metal bootloader, and native tests.
+ * bare-metal application, a bare-metal bootloader, and native tests.
  *
  * A range is served only if it lies WHOLLY inside one region. A range that
  * straddles the main map and a window, or falls in the gap between them,

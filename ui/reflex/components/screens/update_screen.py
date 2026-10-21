@@ -35,7 +35,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
 
 from reflex.components.widgets import facelift_chrome  # noqa: F401 -- defines <SetupButton>/<ThemedLabel>
-from reflex.utils import release_version, updater
+from reflex.utils import release_source, release_version, updater
 from reflex.utils.devices import ELS_PROTOCOL_VERSION
 from reflex.utils.kv_loader import load_kv
 
@@ -59,17 +59,35 @@ class UpdateScreen(Screen):
     current_release = StringProperty(release_version.installed_tag())
     enable_update_button = BooleanProperty(False)
     allow_experimental = BooleanProperty(False)
+    # "Offer integration builds": the home source's dev builds. Shown only when
+    # home_available, i.e. this machine has a source configured
+    # (reflex/utils/release_source.py); elsewhere the row has no height.
+    allow_integration = BooleanProperty(False)
+    home_available = BooleanProperty(False)
     busy = BooleanProperty(False)
     status = StringProperty("")
     protocol_version = NumericProperty(ELS_PROTOCOL_VERSION)
+    # Why the controller is not running the installed release's firmware
+    # (updater.firmware_reinstall_reason), or "" when it is or nothing was
+    # recorded. Non-empty makes the installed release installable again, as
+    # a firmware-only reinstall.
+    firmware_mismatch = StringProperty("")
+    # The selected release is the installed UI and firmware_mismatch is set:
+    # the button reads "Reinstall firmware" and flashes the firmware alone.
+    firmware_only = BooleanProperty(False)
 
     def __init__(self, **kv):
         super().__init__(**kv)
         self._catalogue: dict[str, updater.Release] = {}
+        self._home_source = None
         self.status = ""
         # True while a "Disengage and Install" waits for the controller to
         # report the ELS job released (see _await_firmware_release).
         self._releasing_els = False
+        # Whether the install in progress is a firmware-only reinstall. Taken
+        # when Install is pressed, so a firmware check landing while a dialog
+        # is open cannot turn one kind of install into the other.
+        self._firmware_only_install = False
 
     def on_pre_enter(self, *args):
         """Fetch on entry rather than at construction.
@@ -82,9 +100,15 @@ class UpdateScreen(Screen):
         The pre-release toggle is restored first, from ``Device-0.yaml``
         (2026-09-19: it used to reset to off on every visit).
         """
+        # Read on every entry, not cached from start-up: provisioning can add
+        # or remove the file, and a local read costs nothing.
+        self._home_source = release_source.load_home_source()
+        self.home_available = self._home_source is not None
         device = self._device()
         if device is not None:
             self.allow_experimental = bool(device.offer_prereleases)
+            self.allow_integration = (self.home_available and
+                                      bool(getattr(device, "offer_integration_builds", False)))
         if not self.busy and not self._catalogue:
             self.schedule_refresh_releases()
 
@@ -114,7 +138,9 @@ class UpdateScreen(Screen):
             lambda dt: asyncio.ensure_future(self.refresh_releases()))
 
     async def refresh_releases(self):
-        self.update_status("Fetching releases from GitHub.")
+        self.update_status("Fetching releases from GitHub"
+                           + (" and the integration build source." if self._home_source
+                              else "."))
         try:
             found = await asyncio.get_running_loop().run_in_executor(
                 None, self._fetch_releases)
@@ -123,6 +149,28 @@ class UpdateScreen(Screen):
             return
         self._catalogue = {r.tag: r for r in found}
         self._set_releases()
+        await self.check_firmware()
+
+    async def check_firmware(self):
+        """Set firmware_mismatch from the flash manifest, off the Kivy thread
+        (it runs git for the tag's rev). A failure here offers no reinstall."""
+        try:
+            reason = await asyncio.get_running_loop().run_in_executor(
+                None, self._running_firmware_reason)
+        except Exception as e:      # noqa: BLE001 - offer nothing, say why in the log
+            log.info(f"firmware check: no answer ({e})")
+            reason = None
+        self.firmware_mismatch = reason or ""
+        if reason:
+            self.update_status(
+                f"{reason} Press Reinstall firmware to flash the "
+                f"{self.current_release} firmware. This UI stays as it is.")
+
+    def _running_firmware_reason(self):
+        checkout = updater.resolve_checkout()
+        return updater.firmware_reinstall_reason(
+            updater.manifest_path_for(checkout), self.current_release,
+            tag_rev=updater.tag_rev(checkout, self.current_release))
 
     def _fetch_releases(self):
         """Finals AND pre-releases, whatever the toggle says: the toggle then
@@ -141,11 +189,25 @@ class UpdateScreen(Screen):
         pre-release TAGS, which the same lockstep workflow builds and which
         carry both halves.
         """
-        tags = [tag for tag, r in self._catalogue.items()
-                if self.allow_experimental or not r.prerelease]
+        tags = [tag for tag, r in self._catalogue.items() if self._offered(r)]
         self.releases = tags
         if self.selected_release not in tags:
             self.selected_release = tags[0] if tags else ""
+
+    def _offered(self, release) -> bool:
+        """Whether the toggles offer ``release``. A home-source release is an
+        integration build and is offered by its own toggle only, whatever
+        "Offer pre-releases" says; public ones follow that toggle as before."""
+        if release.source == "home":
+            return self.allow_integration and self.home_available
+        return self.allow_experimental or not release.prerelease
+
+    def on_allow_integration(self, instance, value):
+        self._set_releases()
+        device = self._device()
+        if (device is not None and self.home_available
+                and getattr(device, "offer_integration_builds", None) != value):
+            device.offer_integration_builds = value
 
     def on_allow_experimental(self, instance, value):
         self._set_releases()
@@ -157,8 +219,12 @@ class UpdateScreen(Screen):
         # Canonically, not as strings: until 2026-09-25 current_release was the
         # package spelling (v1.2.0rc7) and never equalled a pre-release tag
         # (v1.2.0-rc.7), so the installed pre-release was always installable.
-        self.enable_update_button = (bool(value) and
-                                     not release_version.same_release(value, self.current_release))
+        installed = bool(value) and release_version.same_release(value, self.current_release)
+        self.firmware_only = installed and bool(self.firmware_mismatch)
+        self.enable_update_button = bool(value) and (not installed or self.firmware_only)
+
+    def on_firmware_mismatch(self, instance, value):
+        self.on_selected_release(self, self.selected_release)
 
     # ------------------------------------------------------------------
     # install
@@ -176,6 +242,7 @@ class UpdateScreen(Screen):
             current_protocol=ELS_PROTOCOL_VERSION,
             workdir=Path(tempfile.gettempdir()) / "reflex-update",
             emit=self.update_status,
+            home_source=self._home_source,
         )
 
     @staticmethod
@@ -203,7 +270,14 @@ class UpdateScreen(Screen):
         if release is None:
             self.update_status("No release selected.")
             return
-        if release.prerelease:
+        self._firmware_only_install = self.firmware_only
+        if self._firmware_only_install:
+            # The release is already installed, so there is no pre-release
+            # question to ask. The ELS question still applies: the flash
+            # reboots the controller all the same.
+            self._install_unless_engaged(release)
+            return
+        if release.prerelease or release.source == "home":
             self._confirm_prerelease(release)
         else:
             self._install_unless_engaged(release)
@@ -247,19 +321,27 @@ class UpdateScreen(Screen):
         spindle, and refusing on it is correct, so the dialog says that."""
         from reflex.fsms.ui_controller import DISENGAGE_REFUSED_SYNC
         refusal = uic.disengage_refusal()
+        if self._firmware_only_install:
+            doing = f"Reinstalling the {release.tag} firmware"
+            action = f"reinstall the {release.tag} firmware"
+            button = "Reinstall firmware"
+        else:
+            doing, action = f"Installing {release.tag}", f"install {release.tag}"
+            button = "Install selected release"
         lead = (f"An ELS job is engaged.\n\n"
-                f"Installing {release.tag} reboots the controller, which ends "
-                f"the ELS job, so it has to be disengaged first.")
+                f"{doing} reboots the controller, which ends "
+                f"the ELS job. ELS must be disengaged first.")
         if refusal is None:
-            text = f"{lead}\n\nDisengage ELS and install {release.tag}?"
+            text = (f"{lead}\n\nPress Disengage and Install to disengage "
+                    f"ELS and {action}.")
         else:
             if refusal == DISENGAGE_REFUSED_SYNC:
-                reason = "The spindle is turning. Stop the spindle"
+                reason = "The spindle is turning. Stop the spindle."
             else:
                 reason = refusal
-            text = (f"{lead} It cannot be disengaged right now:\n\n"
-                    f"{reason}.\n\n"
-                    f"Then tap Install Selected Release again.")
+            text = (f"{lead} It cannot be disengaged now:\n\n"
+                    f"{reason}\n\n"
+                    f"Then press {button} again.")
         content = BoxLayout(orientation="vertical", spacing=10, padding=10)
         content.add_widget(Factory.ThemedLabel(
             text=text, halign="left", valign="top", text_size=(None, None)))
@@ -299,7 +381,7 @@ class UpdateScreen(Screen):
         refusal = uic.disengage()
         if refusal is not None:
             self.update_status(
-                f"Update not started: ELS was not disengaged. {refusal}.")
+                f"Update not started: ELS was not disengaged. {refusal}")
             return
         self.update_status("ELS disengaged. Waiting for the controller to "
                            "confirm the ELS job is released.")
@@ -316,10 +398,10 @@ class UpdateScreen(Screen):
         if not released:
             self.update_status(
                 f"Update not started: the controller did not confirm the ELS "
-                f"job released within {ELS_RELEASE_TIMEOUT_S:.0f} s of "
-                f"disengaging, so it would refuse to reboot. ELS is disengaged "
-                f"here; the controller firmware and this UI are unchanged. "
-                f"Check the controller connection and try again.")
+                f"job released within {ELS_RELEASE_TIMEOUT_S:.0f} s of the "
+                f"disengage, so it would refuse to reboot. ELS is disengaged "
+                f"here. The controller firmware and this UI did not change. "
+                f"Examine the controller connection. Then try again.")
             log.error("update not started: firmware elsStop.enable not seen "
                       "cleared after disengage")
             self.on_selected_release(self, self.selected_release)
@@ -376,13 +458,16 @@ class UpdateScreen(Screen):
         was allowed to come back is that it cannot produce one.
         """
         content = BoxLayout(orientation="vertical", spacing=10, padding=10)
+        integration = release.source == "home"
+        what = ("an integration build: not a public release, and not yet tested "
+                "outside the bench" if integration else "a pre-release")
         # Themed: a stock Label is white, 1.38:1 on the light popup.
         content.add_widget(Factory.ThemedLabel(
             text=(
-                f"{release.tag} is a pre-release.\n\n"
-                "- It may be unstable or incomplete\n"
-                "- Both the controller firmware and this UI will be updated\n"
-                "- The machine must not be powered off during the update"
+                f"{release.tag} is {what}.\n\n"
+                "- It can be unstable or incomplete\n"
+                "- The update replaces the controller firmware and this UI\n"
+                "- Do not power off the machine during the update"
             ),
             halign="left", valign="top", text_size=(None, None),
         ))
@@ -390,12 +475,13 @@ class UpdateScreen(Screen):
         buttons = BoxLayout(orientation="horizontal", spacing=10,
                             size_hint_y=None, height=60)
         btn_cancel = Factory.SetupButton(text="Cancel", font_size=22)
-        btn_confirm = Factory.SetupButton(text="Install Anyway", font_size=22)
+        btn_confirm = Factory.SetupButton(text="Install anyway", font_size=22)
         buttons.add_widget(btn_cancel)
         buttons.add_widget(btn_confirm)
         content.add_widget(buttons)
 
-        popup = Popup(title="Pre-release", content=content,
+        popup = Popup(title="Integration build" if integration else "Pre-release",
+                      content=content,
                       size_hint=(0.7, 0.5), auto_dismiss=False)
         btn_cancel.bind(on_release=popup.dismiss)
         btn_confirm.bind(on_release=lambda _: (popup.dismiss(),
@@ -428,9 +514,12 @@ class UpdateScreen(Screen):
         and only between commands. An executor gets the real output as the
         tools print it.
         """
+        if self._firmware_only_install:
+            await self._perform_reinstall(release)
+            return
         self.update_status(
             f"Updating {self.current_release} -> {release.tag}. "
-            "Both the controller firmware and this UI will be replaced.")
+            "The update replaces the controller firmware and this UI.")
         try:
             restarting = await asyncio.get_running_loop().run_in_executor(
                 None, self._install_blocking, release)
@@ -445,11 +534,35 @@ class UpdateScreen(Screen):
                 self.update_status("Update applied. Restarting.")
             else:
                 self.update_status(
-                    f"Update applied, but the UI did not restart. Tap Exit "
+                    f"Update applied, but the UI did not restart. Press Exit "
                     f"Application to start {release.tag}.")
         finally:
             self.busy = False
             self.on_selected_release(self, self.selected_release)
+
+    async def _perform_reinstall(self, release):
+        """perform_install for a firmware-only reinstall: the same executor,
+        refusals and status box, then a fresh firmware check, so the button
+        goes back to disabled once the release firmware is on the board."""
+        self.update_status(
+            f"Reinstalling the {release.tag} firmware. This UI stays as it is.")
+        try:
+            await asyncio.get_running_loop().run_in_executor(
+                None, self._reinstall_blocking, release)
+        except updater.UpdateRefused as e:
+            self.update_status(str(e))
+            log.error(f"firmware reinstall refused: {e}")
+        except Exception as e:
+            self.update_status(f"Reinstall failed: {e}")
+            log.exception("firmware reinstall failed")
+        else:
+            self.update_status(
+                f"Firmware reinstalled. The controller runs the {release.tag} firmware.")
+        finally:
+            self.busy = False
+            self._firmware_only_install = False
+        await self.check_firmware()
+        self.on_selected_release(self, self.selected_release)
 
     def _on_kivy_thread(self, fn, what: str):
         """Run ``fn`` on the Kivy thread and wait for it.
@@ -485,10 +598,21 @@ class UpdateScreen(Screen):
         from reflex.app import MainApp
         board = getattr(MainApp.get_running_app(), "board", None)
         session = self._session()
-        return session.run(
-            release,
-            pause_link=(lambda: self._on_kivy_thread(
-                board.pause_polling, "release the serial port")) if board else None,
-            resume_link=(lambda: self._on_kivy_thread(
-                board.resume_polling, "reclaim the serial port")) if board else None,
-        )
+        return session.run(release, **self._link_handlers(board))
+
+    def _reinstall_blocking(self, release):
+        from reflex.app import MainApp
+        board = getattr(MainApp.get_running_app(), "board", None)
+        return self._session().reinstall_firmware(release, **self._link_handlers(board))
+
+    def _link_handlers(self, board) -> dict:
+        """pause_link/resume_link for the session: the board's own polling
+        switch, run on the Kivy thread (_on_kivy_thread)."""
+        if board is None:
+            return {"pause_link": None, "resume_link": None}
+        return {
+            "pause_link": lambda: self._on_kivy_thread(
+                board.pause_polling, "release the serial port"),
+            "resume_link": lambda: self._on_kivy_thread(
+                board.resume_polling, "reclaim the serial port"),
+        }

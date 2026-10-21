@@ -125,8 +125,65 @@ typedef enum {
   ELS_CAL_MEASURE,  /* reverse, count steps until Z moves: that count IS the lash */
   ELS_CAL_RESEAT,   /* final unmeasured seat, cutting direction */
   ELS_CAL_DONE,
-  ELS_CAL_FAILED
+  ELS_CAL_FAILED,
+  ELS_CAL_WAIT_DRIVE /* request taken, no step commanded until the drive has
+                      * been enabled for ELS_CAL_ENA_SETTLE_MS. Last in the
+                      * list so the values above keep their numbers. */
 } elsCalPhase_t;
+
+/* How long ENA must have been asserted, without a break, before a calibration
+ * commands its first step. Inferred, not measured: nobody has yet put a scope
+ * on ENA and the leadscrew.
+ *
+ * The closed-loop drive appears to ignore STEP for about a second after it is
+ * enabled. Every clean calibration recording on file shows the SEAT leg
+ * sending 706 to 894 steps over 1.0 to 1.2 s before Z first moves, against a
+ * lash of about 395 steps, and ENA went on 0 to 100 ms after those steps
+ * started (servoEnableTask's period). So the window is at most ~1.2 s from
+ * the ENA edge, and a rig that drops every pulse for 880 ms after the edge
+ * reproduces the failed legs of 2026-10-19 exactly. 1500 ms covers the
+ * longest observation with 300 ms to spare, and costs one and a half seconds
+ * per calibration started from a disabled drive; a drive already enabled that
+ * long starts at once. servoEnableTask decides it on its 100 ms tick, and the
+ * edge it measures from is on that tick too, so the wait is 1500 ms, not
+ * 1500 rounded up.
+ *
+ * THE JOLT. The drive also turns the leadscrew a few steps on its own when it
+ * is enabled (2 to 5 Z counts, 100 to 134 ms after the edge). With the wait,
+ * that lands long before SEAT arms, and SEAT's motion test cannot count it:
+ * the slip accumulator is reset at the tick the leg arms, on the first pulse
+ * in the new direction, and is not ticked before then. */
+#define ELS_CAL_ENA_SETTLE_MS 1500u
+
+/* ENA as servoEnableTask last drove it, and since when. The task owns the pin
+ * and is the only writer; `settled` is its answer to the ISR, which reads
+ * nothing else from here. */
+typedef struct {
+  uint32_t          onSinceMs;  /* HAL tick of the last off -> on edge */
+  uint16_t          on;         /* 1 = ENA asserted (drive enabled) */
+  volatile uint16_t settled;    /* 1 once `on` has held for the settle time */
+} elsEnaSettle_t;
+
+/* One servoEnableTask tick: `on` is the level just driven onto ENA. Sticky
+ * once settled, so a HAL tick that wraps under a drive held on for 49 days
+ * cannot unsettle it. Any tick with ENA off clears it, and the next edge
+ * starts the count again. */
+static inline void elsEnaSettleTick(elsEnaSettle_t *e, bool on,
+                                    uint32_t nowMs, uint32_t settleMs)
+{
+  if (!on) {
+    e->on      = 0u;
+    e->settled = 0u;
+    return;
+  }
+  if (!e->on) {
+    e->on        = 1u;
+    e->onSinceMs = nowMs;
+  }
+  if (!e->settled && (uint32_t)(nowMs - e->onSinceMs) >= settleMs) {
+    e->settled = 1u;
+  }
+}
 
 typedef struct {
   uint16_t phase;                      /* elsCalPhase_t */
@@ -323,6 +380,20 @@ static inline int32_t elsTakeupConfirmThreshold(int32_t commandedSteps,
   return (thresh > motionThreshCounts) ? thresh : motionThreshCounts;
 }
 
+/* Take a request: the run exists from here (the machine mode reads CAL, sync
+ * is gated, the abort conditions apply) but commands nothing until the caller
+ * sees the drive settled and calls elsCalStart(). driveSign holds the cutting
+ * direction until then. */
+static inline void elsCalRequest(elsCalCtx_t *ctx, int32_t cuttingDir)
+{
+  ctx->phase     = ELS_CAL_WAIT_DRIVE;
+  ctx->cycle     = 0;
+  ctx->driveSign = (cuttingDir >= 0) ? 1 : -1;
+  ctx->armed     = 0;
+  ctx->result    = ELS_CAL_OK;
+  for (int32_t i = 0; i < ELS_CAL_CYCLES; i++) ctx->measured[i] = 0;
+}
+
 /* Begin a run. cuttingDir is the direction a cut feeds the leadscrew; the run
  * ENDS seated in that direction so the machine is left with lash loaded on the
  * same side a pass starts from, rather than in an unknown state. */
@@ -364,6 +435,9 @@ static inline elsCalAction_t elsCalTick(elsCalCtx_t *ctx,
     case ELS_CAL_FAILED:
       act.finished = (ctx->phase != ELS_CAL_IDLE);
       return act;
+
+    case ELS_CAL_WAIT_DRIVE:
+      return act;                     /* hold: nothing commanded yet */
 
     case ELS_CAL_SEAT:
     case ELS_CAL_MEASURE:
@@ -423,8 +497,8 @@ static inline elsCalAction_t elsCalTick(elsCalCtx_t *ctx,
        * lash actually being crossed, and the resulting calMeasured[] value
        * (a distance with NOTHING to do with the true mechanical lash --
        * purely an artifact of when the leadscrew happened to have turned to
-       * by the time someone bumped the carriage) feeds directly into
-       * elsTakeupConfirmThreshold(), which is the standard the take-up gate
+       * by the time someone bumped the carriage) becomes, on a successful
+       * run, the calBasisSteps that elsTakeupConfirmThreshold() derives from, which is the standard the take-up gate
        * is judged against on every real cut thereafter. Poisoning this poisons
        * that. elsSlipConfirmed() is the same primitive the take-up gate uses
        * (els_slip.h) -- built once there, reused here rather than rebuilt --

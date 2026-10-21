@@ -1,5 +1,5 @@
 <ElsSettingsPopup>:
-    title: "ELS Threading Settings"
+    title: "Advanced ELS settings"
     size_hint_x: 0.8
     size_hint_y: None
     height: 450
@@ -18,14 +18,14 @@
             DropDownItem:
                 id: thread_type_dropdown
                 height: 60
-                name: "Thread Type"
+                name: "Thread type"
                 help_file: "els_thread_pitch.md"
                 options: root.get_thread_types()
                 value: root.bar.thread_profile_type
                 on_value: root.on_thread_type_selected(self.value)
 
             BooleanItem:
-                name: "Inner Thread"
+                name: "Inner thread"
                 help_file: "els_inner_thread.md"
                 value: root.bar.inner_thread
                 on_value: root.bar.inner_thread = self.value
@@ -41,7 +41,7 @@
                 on_value: root.bar.enable_safe_dia = self.value
 
             NumberItem:
-                name: "Backlash takeup (mm)"
+                name: "Backlash take-up (mm)"
                 help_file: "els_backlash_takeup.md"
                 value: root.backlash_mm
                 on_value: root.backlash_mm = self.value
@@ -100,3 +100,46 @@
                 help_file: "els_overshoot_correction.md"
                 value: root.overshoot_margin_counts
                 on_value: root.overshoot_margin_counts = self.value
+
+            # This machine's table: measured here, stored as a machine setting
+            # (reflex/fsms/els_overshoot_table.py). Empty by default.
+            ButtonItem:
+                name: "Overshoot table"
+                value: "Measure"
+                help_file: "els_overshoot_measure.md"
+                on_release: root.open_overshoot_survey()
+
+            # ── Gearbox and the coupling check (default: log only) ──
+            # The table: empty for no gearbox (the default), else
+            # name=factor entries, reference first (reflex/fsms/els_gear.py).
+            StringItem:
+                name: "Gearbox table"
+                help_file: "els_gearbox.md"
+                value: app.servo.gearbox_table
+                on_value: root.commit_gear_table(self)
+
+            # Measures one position's factor with guided air passes; the typed
+            # row above is unchanged and stays the way to set a table.
+            ButtonItem:
+                name: "Measure gearbox factor"
+                value: "Measure"
+                help_file: "els_gearbox.md"
+                on_release: root.open_gear_survey()
+
+            # The owner's own position names. Absent with no gearbox: the
+            # row collapses to nothing rather than offering a position.
+            DropDownItem:
+                height: 60 if root.has_gearbox else 0
+                opacity: 1 if root.has_gearbox else 0
+                disabled: not root.has_gearbox
+                name: "Gearbox position"
+                help_file: "els_gearbox.md"
+                options: root.gear_names
+                value: app.servo.gearbox_engaged
+                on_value: root.select_gear(self)
+
+            BooleanItem:
+                name: "Coupling check acts (off = log only)"
+                help_file: "els_gearbox.md"
+                value: app.els.els_ratio_check
+                on_value: app.els.els_ratio_check = self.value

@@ -33,7 +33,7 @@ from reflex.fsms.els_overshoot import (
     ABOVE_RANGE_NOTICE,
     DEFAULT_MARGIN_COUNTS,
     ELS_STOP_OFFSET_MAX,
-    OVERSHOOT_TABLE,
+    DEVELOPMENT_LATHE_TABLE,
     OffsetHold,
     OffsetWriteLimiter,
     StopOffsetCorrector,
@@ -56,13 +56,13 @@ def test_shipped_table_is_the_decided_envelope():
     1640, 1692, 2500, 2507, 3567) to the STREAM rate of the same same-speed
     sets, because the live input is now measured that way; the overshoot
     column is unchanged."""
-    assert OVERSHOOT_TABLE == ((0, 0), (280, 1), (583, 3), (1185, 9), (1600, 12),
+    assert DEVELOPMENT_LATHE_TABLE == ((0, 0), (280, 1), (583, 3), (1185, 9), (1600, 12),
                                (1679, 17), (2430, 29), (2469, 32), (3529, 43))
     assert DEFAULT_MARGIN_COUNTS == 1
 
 
 def test_table_is_monotonic_and_validated():
-    for (r0, v0), (r1, v1) in zip(OVERSHOOT_TABLE, OVERSHOOT_TABLE[1:]):
+    for (r0, v0), (r1, v1) in zip(DEVELOPMENT_LATHE_TABLE, DEVELOPMENT_LATHE_TABLE[1:]):
         assert r1 > r0 and v1 >= v0
     with pytest.raises(ValueError):
         eo._validate(((0, 0), (100, 5), (90, 6)))
@@ -82,7 +82,7 @@ def test_offset_ceiling_matches_the_firmware():
 
 # ─── predicted() ─────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("rate,value", OVERSHOOT_TABLE)
+@pytest.mark.parametrize("rate,value", DEVELOPMENT_LATHE_TABLE)
 def test_prediction_is_exact_at_every_table_point(rate, value):
     p = predicted(rate)
     assert p.counts == pytest.approx(value)
@@ -152,7 +152,7 @@ def test_sign_offset_exceeds_prediction_everywhere():
     dense sweep (including above range), with the shipped margin, the offset
     must strictly exceed the prediction. An offset scaled to ~90% of the
     prediction -- the superseded first draft -- fails this."""
-    for rate, _ in OVERSHOOT_TABLE:
+    for rate, _ in DEVELOPMENT_LATHE_TABLE:
         assert offset(rate) > predicted(rate).counts, f"rate {rate}"
     for rate in range(0, 6000, 7):
         assert offset(rate) > predicted(rate).counts, f"rate {rate}"
@@ -365,12 +365,17 @@ class _Hal:
     def __init__(self, board):
         self.tick = _Tick(board)
         self.writes = []
+        # What the controller answers. The write is still RECORDED when this
+        # is False -- it was attempted, it just was not acknowledged.
+        self.acknowledge = True
 
     def set_stop_offset(self, counts):
         self.writes.append(("stopOffset", counts))
+        return self.acknowledge
 
     def set_stop_position(self, counts):          # must never be called
         self.writes.append(("stopPosition", counts))
+        return True
 
 
 #: Ticks at 30 Hz, and the ticks after which the rate window first spans
@@ -397,6 +402,7 @@ def _rig(enabled=True, margin=1, **snap):
         enabled=lambda: settings["enabled"],
         margin=lambda: settings["margin"],
         notify=notices.append,
+        table=lambda: settings.get("table", DEVELOPMENT_LATHE_TABLE),
         limiter=OffsetWriteLimiter(clock=clk),
     )
     return SimpleNamespace(cor=cor, hal=hal, board=board, clk=clk,
@@ -594,16 +600,27 @@ def test_reset_re_sends_after_a_reconnect():
 
 
 def test_an_unacknowledged_write_is_forgotten():
+    """The verdict is the WRITE's own answer now, not the link object's.
+
+    It used to be read off connection_manager.connected, which only ever meant
+    "the last exchange worked" -- so a tick scan succeeding between the write
+    and the check could report a failed write as fine. The corrector must
+    forget a write the controller did not acknowledge, so the next good tick
+    re-sends instead of its limiter believing a value the firmware never got.
+    """
     r = _rig()
-    r.board.connection_manager.connected = False  # the write helper dropped the link
+    r.hal.acknowledge = False
     _ticks(r, FILL, rate=1170)
     assert r.cor.offset_in_effect is None
-    r.board.connection_manager.connected = True
+    r.hal.acknowledge = True
     _ticks(r, 1, rate=1170)
     assert r.cor.offset_in_effect == 10
 
 
 def test_above_range_posts_one_notice_per_pass():
+    """CHANGED 2026-10-20: the second pass runs 2 s, not 1 s. The notice now
+    waits for ABOVE_RANGE_NOTICE_AFTER_S of continuous above-range rate, and
+    1 s of ticks leaves only ~0.7 s of it once the window has filled."""
     r = _rig()
     _ticks(r, 60, rate=5010)
     assert r.notices == [ABOVE_RANGE_NOTICE.format(top=3529)]
@@ -611,8 +628,103 @@ def test_above_range_posts_one_notice_per_pass():
     assert r.hal.writes == [("stopOffset", 44)]
     # stop fires, carriage held at the shoulder, then the next pass
     _ticks(r, 10, rate=0, active=1)
-    _ticks(r, 30, rate=5010, active=0)
+    _ticks(r, 60, rate=5010, active=0)
     assert len(r.notices) == 2, "a new pass earns its own notice"
+
+
+#: A table whose top is the 2026-10-20 sweep's: 2319 counts/s, 22 counts of
+#: coast, so the top offset is 23 at the rig's 1-count margin.
+TOP_2319_TABLE = ((0, 0), (1185, 9), (2319, 22))
+
+
+def _above_flags(r, n, rate=None):
+    """_ticks one at a time, returning whether each tick's rate was above
+    the table, as the corrector saw it (None before the window has a rate)."""
+    flags = []
+    for i in range(n):
+        _ticks(r, 1, rate=rate if i == 0 else None)
+        c = r.cor.last_correction
+        flags.append(None if c is None else c.above_range)
+    return flags
+
+
+def _longest_true_run(flags):
+    best = run = 0
+    for f in flags:
+        run = run + 1 if f else 0
+        best = max(best, run)
+    return best
+
+
+def test_a_brief_excursion_above_the_table_posts_no_notice():
+    """The 2026-10-20 thread pass: steady at ~1850 counts/s, but the sync
+    catch-up right after Cut pushed the window rate just past the table's
+    2319 for well under a second. The stop fired 2.3 s later inside the table
+    and landed short like the others; the yellow banner read as a fault.
+    Here: 1860 counts/s, 0.9 s at 2370, back to 1860."""
+    r = _rig()
+    r.settings["table"] = TOP_2319_TABLE
+    flags = _above_flags(r, 60, rate=1860)
+    flags += _above_flags(r, 27, rate=2370)
+    flags += _above_flags(r, 60, rate=1860)
+    assert any(flags), "the excursion must reach past the table to test anything"
+    assert _longest_true_run(flags) * DT < eo.ABOVE_RANGE_NOTICE_AFTER_S
+    assert r.notices == []
+
+
+def test_a_brief_excursion_still_raises_the_offset_to_the_top_value():
+    """Only the notice waits. The correction takes every above-range tick at
+    once: a bigger offset lands shorter, the safe side."""
+    r = _rig()
+    r.settings["table"] = TOP_2319_TABLE
+    _ticks(r, 60, rate=1860)
+    assert _offsets(r) == [18]
+    _ticks(r, 27, rate=2370)
+    assert _offsets(r)[-1] == 23 == correction(2370, 1, TOP_2319_TABLE).offset
+    assert r.notices == []
+
+
+def test_a_sustained_rate_above_the_table_posts_one_notice_after_the_hold():
+    """Held past the top for more than ABOVE_RANGE_NOTICE_AFTER_S: one
+    notice, posted when the stretch reaches that length and not before."""
+    r = _rig()
+    r.settings["table"] = TOP_2319_TABLE
+    flags = _above_flags(r, 60, rate=1860)
+    assert not any(flags)
+    flags = _above_flags(r, 90, rate=2400)
+    first = flags.index(True)
+    assert r.notices == [ABOVE_RANGE_NOTICE.format(top=2319)]
+    # Replay the same pass up to the tick one short of the hold (k ticks
+    # after the first above-range one, k * DT < the hold), then two more:
+    # the clock is a running float sum, so exactly 1.0 s may land either side.
+    k = round(eo.ABOVE_RANGE_NOTICE_AFTER_S / DT) - 1
+    r2 = _rig()
+    r2.settings["table"] = TOP_2319_TABLE
+    _ticks(r2, 60, rate=1860)
+    _ticks(r2, first + k + 1, rate=2400)
+    assert r2.notices == [], "not yet: above the table for less than the hold"
+    _ticks(r2, 2)
+    assert len(r2.notices) == 1
+
+
+def test_the_notice_hold_restarts_when_the_rate_comes_back_under_the_top():
+    """Continuous means continuous: two stretches above the table, each
+    shorter than the hold, with the rate back inside it between them."""
+    r = _rig()
+    r.settings["table"] = TOP_2319_TABLE
+    flags = _above_flags(r, 60, rate=1860)
+    for _ in range(2):
+        flags += _above_flags(r, 33, rate=2400)
+        flags += _above_flags(r, 20, rate=1860)
+    run = _longest_true_run(flags)
+    assert run * DT < eo.ABOVE_RANGE_NOTICE_AFTER_S
+    assert sum(1 for f in flags if f) * DT > eo.ABOVE_RANGE_NOTICE_AFTER_S, (
+        "together the stretches are longer than the hold")
+    assert r.notices == []
+
+
+def test_the_notice_hold_is_the_offset_fall_hold():
+    assert eo.ABOVE_RANGE_NOTICE_AFTER_S == eo.FALL_HOLD_S == 1.0
 
 
 def test_held_at_the_shoulder_the_offset_is_held():
@@ -692,17 +804,18 @@ class _Recording(dict):
 
 
 def test_hal_set_stop_offset_writes_only_stopOffset():
-    from reflex.fsms.els_stop_hal import ElsStopHal
+    from reflex.fsms.els_stop_registers import ElsStopRegisters
     els = _Recording()
     board = SimpleNamespace(connected=True, device={"elsStop": els},
                             els_stop_values={"enable": 1, "active": 0,
                                              "scaleIndex": 1},
                             fast_data_values={"scaleCurrent": [0, 0, 0, 0]},
                             connection_manager=SimpleNamespace(connected=True))
-    hal = ElsStopHal(board)
+    hal = ElsStopRegisters(board)
     clk = _Clock()
     cor = StopOffsetCorrector(hal, board, enabled=lambda: True, margin=lambda: 1,
                               notify=lambda _m: None,
+                              table=lambda: DEVELOPMENT_LATHE_TABLE,
                               limiter=OffsetWriteLimiter(clock=clk))
     for i in range(FILL):
         board.fast_data_values = {"scaleCurrent": [0, 39 * i, 0, 0]}   # 1170 counts/s
@@ -713,9 +826,9 @@ def test_hal_set_stop_offset_writes_only_stopOffset():
 
 
 def test_hal_set_stop_offset_is_silent_when_disconnected():
-    from reflex.fsms.els_stop_hal import ElsStopHal
+    from reflex.fsms.els_stop_registers import ElsStopRegisters
     els = _Recording()
-    hal = ElsStopHal(SimpleNamespace(connected=False, device={"elsStop": els}))
+    hal = ElsStopRegisters(SimpleNamespace(connected=False, device={"elsStop": els}))
     hal.set_stop_offset(12)
     assert els.assignments == []
 
@@ -758,10 +871,178 @@ def test_controller_polls_the_corrector_and_the_recorder_files_its_offset():
     tick(1)
     assert rec.assignments == [("stopOffset", 0)]
 
+    # With the setting on and NO table stored, nothing is corrected
+    # (decided 2026-10-11: the table is a machine setting, empty by default).
+    from fractions import Fraction
+    from reflex.fsms import els_overshoot_table as tbl
+    binding = tbl.Binding(Fraction(1, 200), Fraction(127, 64000), "")
+    ctrl._els_fsm.overshoot_binding = lambda: binding
     els.els_overshoot_correction = True
     els.els_overshoot_margin_counts = 1
+    for k, v in tbl.persisted(tbl.from_counts(DEVELOPMENT_LATHE_TABLE, binding,
+                                              tbl.SOURCE_MIGRATED)).items():
+        setattr(els, k, v)
     for i in range(2, 2 + FILL):
         tick(i)
     assert rec.assignments[-1] == ("stopOffset", 44)
     assert all(k == "stopOffset" for k, _ in rec.assignments)
     assert ctrl._flight_recorder._stop_offset() == 44
+
+
+def test_controller_migrates_the_built_in_table_on_the_first_tick():
+    """D1a end to end through ElsUiController: a machine whose settings were
+    read with the correction ON and no table, at the development lathe's
+    geometry, gets the built-in table as its own on the first tick, keeps the
+    correction on, and corrects the very next approach as before the upgrade."""
+    import os
+    os.environ.setdefault("KIVY_WINDOW", "mock")
+    os.environ.setdefault("KIVY_GL_BACKEND", "mock")
+    from fractions import Fraction
+    from reflex.fsms import els_overshoot_table as tbl
+    from reflex.fsms.els_overshoot_guard import MIGRATED_NOTICE
+    from reflex.fsms.ui_controller import ElsUiController
+    from tests.fsms.test_ui_controller import (_make_collaborators, _make_x_axis,
+                                               _make_z_axis, _pump)
+    board, els = _make_collaborators(z_axis=_make_z_axis(), x_axis=_make_x_axis())
+    # The settings as read at startup: the pre-1.2.2 shape.
+    els.els_overshoot_correction = True
+    els.els_overshoot_margin_counts = 1
+    for k in ("table", "mm_per_count", "mm_per_step", "gearbox", "source"):
+        setattr(els, f"els_overshoot_{k}", "")
+    ctrl = ElsUiController(els=els, board=board)
+    _pump()
+    dev = tbl.Binding(Fraction(1, 200), Fraction(127, 64000), "")
+    ctrl._els_fsm.overshoot_binding = lambda: dev
+    rec = _Recording()
+    board.device = {"elsStop": rec}
+    board.connected = True
+    board.els_stop_values = {"enable": 1, "active": 0, "scaleIndex": 1}
+    clk = _Clock(1e9)
+    ctrl.stop_offset_corrector.limiter._clock = clk
+    for i in range(FILL):
+        # 2400 counts/s, inside the table: an above-range warning would pre-empt
+        # the migration notice on the strip.
+        board.fast_data_values = {"scaleCurrent": [0, 80 * i, 0, 0]}
+        ctrl._poll_stop_offset()
+        clk.t += DT
+    assert els.els_overshoot_source == tbl.SOURCE_MIGRATED
+    assert els.els_overshoot_table.endswith("17.645:0.215")
+    assert els.els_overshoot_correction is True
+    assert ctrl.notice_text == MIGRATED_NOTICE
+    # ceil(17 + 12 x 721/751) + 1, as before the upgrade.
+    assert rec.assignments[-1] == ("stopOffset", 30)
+
+
+
+class _CueOwner:
+    """Only what the cue and result wiring touch, so these tests build no
+    ElsUiController: a full controller subscribes to the global FSM event bus
+    and outlives its test, which lets one test's alarm land in another's."""
+
+    def __init__(self):
+        from reflex.fsms.ui_controller import ElsUiController as C
+        self.measure_cue = ""
+        self._set_measure_cue = C._set_measure_cue.__get__(self)
+        self._on_domain_state_changed = C._on_domain_state_changed.__get__(self)
+        self._open_overshoot_result = C._open_overshoot_result.__get__(self)
+
+    def _sync_engaged(self, _state):
+        pass
+
+
+def _pump_clock():
+    from kivy.clock import Clock
+    for _ in range(3):
+        Clock.tick()
+
+
+def test_the_measurement_cue_stays_until_the_next_pass_starts():
+    """First run on the development lathe, 2026-10-11: the cue cleared only on
+    a timeout, so the operator waited for it after every pass, and a
+    distracted operator would lose it. It is the ELS bar strip now, and the
+    next pass is what clears it."""
+    c = _CueOwner()
+    c._set_measure_cue("Pass 1/12: coast 3 counts. Proceed with the next pass.")
+    assert c.measure_cue.startswith("Pass 1/12")
+    c._on_domain_state_changed("stopped")
+    _pump_clock()
+    assert c.measure_cue.startswith("Pass 1/12"), "only a pass start clears it"
+    c._on_domain_state_changed("cutting")
+    _pump_clock()
+    assert c.measure_cue == ""
+
+
+def test_a_finished_sweep_opens_the_result_window(monkeypatch):
+    """First run on the development lathe, 2026-10-11: at the end of the sweep
+    the app opens the window itself."""
+    from reflex.components.home import els_overshoot_popup as pop
+    opened = []
+
+    class FakePopup:
+        def open(self):
+            opened.append(True)
+
+    monkeypatch.setattr(pop, "OvershootSurveyPopup", FakePopup)
+    _CueOwner()._open_overshoot_result()
+    assert opened == [True]
+
+
+def test_the_controller_wires_the_guard_to_the_cue_and_the_result():
+    """The guard's two callbacks reach the controller: read off its source,
+    so no controller has to be built (see _CueOwner)."""
+    import inspect
+    from reflex.fsms.ui_controller import ElsUiController
+    src = inspect.getsource(ElsUiController.__init__)
+    assert "cue=self._set_measure_cue" in src
+    assert "self._open_overshoot_result()" in src
+
+
+
+class _OutcomeOwner:
+    """What _poll_stop_outcome and the strip tap touch, without a full
+    ElsUiController (see _CueOwner)."""
+
+    def __init__(self, rpm=342.0, sweep=True):
+        from types import SimpleNamespace
+        from reflex.fsms.ui_controller import ElsUiController as C
+        self.feed_name, self.feed_unit = "0.020", "in/rev"
+        self.calls = []
+        self.opened = []
+        self._board = SimpleNamespace(formats=SimpleNamespace(factor=1))
+        self._stop_outcome = SimpleNamespace(poll=lambda: "an outcome")
+        self._els = SimpleNamespace(get_spindle_speed=rpm)
+        self._overshoot = SimpleNamespace(
+            on_outcome=lambda o, f, s=None: self.calls.append((o, f, s)),
+            sweep_running=sweep)
+        self._poll_stop_outcome = C._poll_stop_outcome.__get__(self)
+        self._stop_setting = C._stop_setting.__get__(self)
+        self.measure_cue_tapped = C.measure_cue_tapped.__get__(self)
+
+    def _open_overshoot_result(self):
+        self.opened.append(True)
+
+
+def test_each_stop_goes_to_the_guard_with_the_feed_and_the_rpm():
+    from reflex.fsms.els_overshoot_survey import Setting
+    c = _OutcomeOwner(rpm=lambda: -342.0)
+    c._poll_stop_outcome()
+    assert c.calls == [("an outcome", 1.0, Setting("0.020", "in/rev", -342.0))]
+
+
+def test_an_unreadable_rpm_still_labels_the_stop_with_the_feed():
+    def broken():
+        raise AttributeError("no spindle axis")
+    c = _OutcomeOwner(rpm=broken)
+    c._poll_stop_outcome()
+    assert c.calls[0][2].feed == "0.020" and c.calls[0][2].rpm is None
+
+
+def test_a_tap_on_the_strip_opens_the_measure_window_only_during_a_sweep():
+    c = _OutcomeOwner(sweep=True)
+    assert c.measure_cue_tapped() is True
+    _pump_clock()
+    assert c.opened == [True]
+    c = _OutcomeOwner(sweep=False)
+    assert c.measure_cue_tapped() is False
+    _pump_clock()
+    assert c.opened == []

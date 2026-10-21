@@ -216,6 +216,26 @@
           chip_color: app.theme.accent if root.controller.thread_ref_latched else app.theme.text_dim
           lit: root.controller.is_threading
 
+        # ── Active gearbox position: read-only, left of centre ────────────────
+        # Same source as the ELS settings dropdown (the servo's gearbox_engaged,
+        # via root.gear_text). Lives in the gutter that already exists, clear of
+        # the reference chip, so the bar's height budget is untouched. Its LEFT
+        # edge is fixed, so a longer name (up to 3 characters, els_gear.py)
+        # grows away from the chip; test_els_advbar measures the chip's widest
+        # text in every theme's mono face against this offset. Hidden with no
+        # gearbox (gear_text is then empty).
+        Label:
+          id: label_gear
+          text: root.gear_text
+          opacity: 1 if root.gear_text else 0
+          size_hint: None, None
+          size: self.texture_size
+          x: status_gutter.x + dp(130)
+          y: status_gutter.y + root.gutter_inset + (status_gutter.height - root.gutter_inset - self.height) / 2.0
+          font_name: app.theme.font_mono
+          font_size: dp(12)
+          color: app.theme.text_dim
+
         # ── Thread-phase offset chip: pinned RIGHT, only while an offset is set ─
         # A nonzero elsStop.phaseOffsetSteps means the machine is cutting at a
         # DELIBERATE phase shift and stays that way for the whole job; an
@@ -473,7 +493,7 @@
       orientation: 'vertical'
       size_hint_x: 1
       size_hint_y: None
-      height: (status_gutter.height if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (status_gutter.height if root.controller.takeup_warning else 0)
+      height: (status_gutter.height if (root.controller.reframe_confirm_pending or root.controller.targets_reframed_warn) else 0) + (status_gutter.height if root.controller.takeup_warning else 0) + (status_gutter.height if root.controller.ratio_warning else 0) + (status_gutter.height if root.controller.measure_cue else 0) + (status_gutter.height if root.controller.alarm_strip else 0)
       pos_hint: {'x': 0, 'top': 1}
 
 
@@ -544,6 +564,102 @@
             size: self.size
         Label:
           text: root.controller.takeup_warning
+          text_size: self.size
+          halign: 'center'
+          valign: 'middle'
+          font_name: app.theme.font_bold
+          font_size: dp(13)
+          color: app.theme.text
+
+      # ── Coupling-ratio notice ────────────────────────────────────────────────
+      #    Shown when the coupling-ratio check (fsms/els_ratio.py) aborted the
+      #    pass -- only when that check is switched on. RED: the half nut opened
+      #    or the carriage rate fits no gearbox position. YELLOW: the lever is in
+      #    another known position, which the next Cut or Retract adopts. Same
+      #    65-character text contract as the take-up strip above.
+      #    Also YELLOW, whether or not that check is on: the thread reference
+      #    was cleared (sync off, a gear adoption, a disengage, or by the
+      #    firmware), shown until the next latch (controller.REF_CLEARED_STRIP).
+      BoxLayout:
+        id: ratio_notice
+        orientation: 'horizontal'
+        size_hint_y: None
+        spacing: dp(8)
+        padding: dp(8), 0
+        height: status_gutter.height if root.controller.ratio_warning else 0
+        opacity: 1 if self.height else 0
+        disabled: not self.height
+        canvas.before:
+          Color:
+            rgba: (1, 0.72, 0.16, 0.28) if root.controller.ratio_warning_yellow else (0.85, 0.16, 0.16, 0.30)
+          Rectangle:
+            pos: self.pos
+            size: self.size
+        Label:
+          text: root.controller.ratio_warning
+          text_size: self.size
+          halign: 'center'
+          valign: 'middle'
+          font_name: app.theme.font_bold
+          font_size: dp(13)
+          color: app.theme.text
+
+      # ── Overshoot measurement cue ──────────────────────────────────────────
+      #    The next step of a Detect or Sweep (fsms/els_overshoot_survey.py),
+      #    driven by controller.measure_cue. Shown until the next pass starts,
+      #    not on a timer; accent tint, because it is guidance, not a warning.
+      #    Same text budget as the strips above (CUE_BUDGET_PX in
+      #    els_overshoot_survey.py). While a sweep runs, a tap opens the
+      #    Measure window with the tally, but only while the strip lies over
+      #    the status gutter (els_advbar.MeasureCueStrip).
+      MeasureCueStrip:
+        id: measure_cue
+        gutter: status_gutter
+        controller: root.controller
+        orientation: 'horizontal'
+        size_hint_y: None
+        spacing: dp(8)
+        padding: dp(8), 0
+        height: status_gutter.height if root.controller.measure_cue else 0
+        opacity: 1 if self.height else 0
+        disabled: not self.height
+        canvas.before:
+          Color:
+            rgba: app.theme.accent_bg
+          Rectangle:
+            pos: self.pos
+            size: self.size
+        Label:
+          text: root.controller.measure_cue
+          text_size: self.size
+          halign: 'center'
+          valign: 'middle'
+          font_name: app.theme.font_bold
+          font_size: dp(13)
+          color: app.theme.text
+
+      # ── ELS alarm strip ──────────────────────────────────────────────────────
+      #    Shown whenever the ELS is in alarm, wizard or not (label_instruction
+      #    above is wizard-gated). Text is the alarm reason plus the way out
+      #    (Disengage), driven by controller.alarm_strip; same 65-character
+      #    text contract and red as the coupling-ratio strip above.
+      BoxLayout:
+        id: alarm_notice
+        orientation: 'horizontal'
+        size_hint_y: None
+        spacing: dp(8)
+        padding: dp(8), 0
+        height: status_gutter.height if root.controller.alarm_strip else 0
+        opacity: 1 if self.height else 0
+        disabled: not self.height
+        canvas.before:
+          Color:
+            rgba: (0.85, 0.16, 0.16, 0.30)
+          Rectangle:
+            pos: self.pos
+            size: self.size
+        Label:
+          text: root.controller.alarm_strip
           text_size: self.size
           halign: 'center'
           valign: 'middle'

@@ -1,6 +1,6 @@
 from kivy.logger import Logger
 from kivy.properties import BooleanProperty, ObjectProperty, StringProperty
-from kivy.uix.screenmanager import Screen
+from kivy.uix.screenmanager import Screen, ScreenManagerException
 
 from reflex.utils.kv_loader import load_kv
 
@@ -39,6 +39,32 @@ class ElsSetupScreen(Screen):
         from reflex.app import MainApp
         self.app: MainApp = MainApp.get_running_app()
         super().__init__(**kv)
+
+    def open_els_settings(self):
+        """Open the ELS settings popup from Setup: the same popup the advanced
+        ELS bar's settings button opens, on the same bar.
+
+        The popup's bar is the home screen's one ElsAdvancedBar, reached
+        through the screen manager, and the popup is opened by that bar's own
+        open_settings, so every control behaves as it does from the home
+        screen and edits the one live state. Building a bar here instead would
+        be a second copy of its persisted settings. With no home screen to
+        reach (never the case in the running app) nothing opens.
+        """
+        bar = self._els_advanced_bar()
+        if bar is None:
+            log.warning("ELS settings: no home screen advanced bar to open them on")
+            return
+        bar.open_settings()
+
+    def _els_advanced_bar(self):
+        manager = getattr(self.app, "manager", None)
+        try:
+            home = manager.get_screen("home") if manager is not None else None
+        except ScreenManagerException:
+            return None
+        getter = getattr(home, "els_advanced_bar", None)
+        return getter() if callable(getter) else None
 
     def on_pre_enter(self, *args):
         axis_names = [ax.axis_name for ax in self.app.axes]

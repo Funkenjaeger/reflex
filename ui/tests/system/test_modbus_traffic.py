@@ -266,6 +266,17 @@ def test_round_trips_per_tick_idle_and_cut_start(harness, capsys):
     # fastData (1) + elsStop hot (1), and the peak tick adds the diagnostic
     # capture that is deliberately still read live (2).
     #
+    # The merged tick read -- fastData and the elsStop hot group are adjacent
+    # registers, read as ONE 86-register request (devices.Global.read_tick):
+    #
+    #   idle connected      2.00 -> 1.00
+    #   cut-start, steady   2.00 -> 1.00
+    #   cut-start, PEAK     4.00 -> 3.00
+    #
+    # These are predicted from the code, one request fewer per tick in every
+    # scenario, with nothing else on the tick path changed; the peak tick
+    # keeps the two-request whole-block diagnostic capture.
+    #
     # THIS IS THE MEASUREMENT THE SPLIT WAS FOR, taken under the cut-start
     # scenario with every poller running -- the condition that lost comms on six
     # of six cuts on 2026-08-23. Requests, not bytes, are what time out when the
@@ -280,12 +291,12 @@ def test_round_trips_per_tick_idle_and_cut_start(harness, capsys):
     # legitimately adds a block read (another struct getting its own snapshot)
     # will trip these too, and should -- that is a decision worth re-blessing
     # rather than absorbing silently.
-    assert idle_per_tick <= 2.5, (
+    assert idle_per_tick <= 1.5, (
         f"idle traffic regressed to {idle_per_tick:.2f} round-trips/tick"
     )
-    assert cut_per_tick <= 2.5, (
+    assert cut_per_tick <= 1.5, (
         f"cut-start traffic regressed to {cut_per_tick:.2f} round-trips/tick"
     )
-    assert peak_per_tick <= 5.0, (
+    assert peak_per_tick <= 4.0, (
         f"peak-tick traffic regressed to {peak_per_tick:.2f} round-trips"
     )

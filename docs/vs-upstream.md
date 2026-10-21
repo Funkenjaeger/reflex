@@ -76,14 +76,14 @@ link with no programmer and no power cycle, and swaps the backup image back
 after three watchdog strikes; the ST-Link is needed only for virgin boards,
 option bytes and disaster recovery. A fixed **identity window** tells a client
 which program and which build is answering.
-([ADR](https://github.com/Funkenjaeger/reflex/blob/integration/decisions/els-modbus-register-map.md))
+([decision](design/decisions.md#one-register-map-for-bootloader-and-application))
 
 ## 8. One repository, one version
 
 `fw/` and `ui/` share one repository with **full history preserved on both
 sides**, and release together on one version number, which makes the contract
 test in §5 possible.
-([ADR](https://github.com/Funkenjaeger/reflex/blob/integration/decisions/repo-structure-monorepo.md))
+([decision](design/decisions.md#one-repository-for-firmware-and-ui))
 
 ---
 

@@ -38,13 +38,14 @@ def test_at_rest_modes_adopt_disabled_and_tear_down(mode):
         state='disabled', teardown=True, announce=False)
 
 
-def test_held_adopts_stopped_and_does_not_tear_down():
-    """HELD: active == 1 IS the hold, so the standard teardown would release
-    the carriage and disarm the stop protecting it. Hands off the registers;
-    the session adopts 'stopped' so the UI is truthful about the hold. This is
-    the cell the state-keyed reconcile can never reach after a restart."""
+def test_held_tears_down_like_today():
+    """HELD: a fresh session tears the hold down, as the state-keyed
+    reconcile always has (decided 2026-10-17). Adopting 'stopped' would keep
+    an armed stop this session has no record of, and the feed guard trusts
+    the firmware enable bit (tests/system/test_warm_firmware.py). Keeping the
+    hold waits until a session can read the stop target back."""
     assert adopt_plan(MODE_HELD) == AdoptPlan(
-        state='stopped', teardown=False, announce=False)
+        state='disabled', teardown=True, announce=False)
 
 
 @pytest.mark.parametrize("mode", [MODE_FEEDING, MODE_MOVING, MODE_TAKEUP, MODE_CAL])

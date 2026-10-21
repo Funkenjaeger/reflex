@@ -58,10 +58,9 @@ int main() {
      * is the one place that writes it, and this pins that it does.
      *
      * NOT COVERED HERE, and declared rather than implied: whether the CALL SITE
-     * in servoEnableTask actually runs. The emulator does not execute the
-     * FreeRTOS tasks (it mirrors this call in its own ISR thread instead), so
-     * no automated test reaches that line. It is verified by reading
-     * elsStop.machineMode off the real machine after a flash. */
+     * in servoEnableTask actually runs. The emulator-backed system suite
+     * reaches it (the emulator's superloop thread runs the real job); on the
+     * machine it is verified by reading elsStop.machineMode after a flash. */
     {
         std::memset(&s, 0, sizeof(s));
         s.elsStop.machineMode = 0xBEEF;          /* poison, so a no-op write shows */

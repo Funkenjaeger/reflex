@@ -17,8 +17,8 @@ THE SIGN, WHICH IS THE WHOLE POINT. The carriage settles at
 so it lands SHORT of the target only if offset > overshoot. An offset scaled
 BELOW the prediction lands PAST the target, into the shoulder. An earlier draft
 of the decision record proposed applying "~90%" of the prediction; that lands
-10% of the coast past the target and is superseded (decisions/
-els-stop-overshoot-compensation.md, 2026-09-18). Nothing here ever scales the
+10% of the coast past the target and is superseded (docs/design/
+decisions.md). Nothing here ever scales the
 prediction below 100%, and test_els_overshoot pins offset > predicted at every
 table point.
 
@@ -46,9 +46,19 @@ import math
 import time
 from collections import deque
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Callable, Deque, Optional, Sequence, Tuple
 
-# ── The shipped table ────────────────────────────────────────────────────
+# ── The development lathe's table ────────────────────────────────────────
+# NOT WHAT RUNS. Since 1.2.2 the table is a machine setting, stored in mm and
+# mm/s and bound to what it was measured under (els_overshoot_table.py), and
+# StopOffsetCorrector has no default table: a machine with none stored gets
+# no correction. This table stays in the code for two jobs only: the one-time
+# migration of the development lathe, which ran with it switched on before the
+# table could be stored (DEVELOPMENT_LATHE_MM_PER_COUNT and _MM_PER_STEP below
+# are the geometry that migration requires), and as the known-good data the
+# pure functions below are tested against.
+#
 # (|Z rate| in counts/s, worst overshoot in counts). Z rate is the STREAM rate:
 # the Z scale POSITION delta over a short window divided by the time it took.
 # The live corrector measures its input the same way (ZRateWindow), so the
@@ -78,23 +88,24 @@ from typing import Callable, Deque, Optional, Sequence, Tuple
 # overshoots by exactly zero.
 #
 # BOUND TO THIS MACHINE: elspi's Z scale at 5 um/count (200 counts/mm) -- the
-# table is in counts -- its CL86T drive and the drive's own settings, and the
-# gearing between motor and carriage (the lathe's A/B/C gearbox position and
-# the leadscrew). The overshoot is the drive carrying the carriage on after the
-# trigger: ~v*Td (a delay; the same carriage distance at any gearing if Td is a
-# time) plus a ramp ~v^2/2a whose deceleration is in MOTOR terms, so gearing
-# changes it (about half the total at the top of the table). Change any of
-# those and this table is wrong -- RE-MEASURE before relying on it again.
+# table is in counts -- and its CL86T drive and the drive's own settings.
+# Change either and this table is wrong -- RE-MEASURE before relying on it.
+#
+# The lathe's A/B/C gearbox position does NOT need its own table. Measured in
+# all three positions at matched carriage speed, the overshoot agrees within
+# 1-2 counts up to ~1700 counts/s; above that position B (leadscrew twice as
+# fast as in A) runs up to ~5 counts higher, still inside this envelope, and
+# every correction landed short. That is not what a delay-plus-ramp model with
+# the ramp in motor terms predicts (it puts B LOWER), so treat
+# the envelope as measured, not derived. The correction keys on the measured
+# Z rate, so it needs no knowledge of the gearing.
 #
 # NOT a binding, although an earlier version of this comment (and the docs)
 # said so: the ServoBar maxSpeed / acceleration settings. They shape only steps
 # still queued, and the firmware has none queued at the trigger
 # (stopTriggerStepsToGo was 0 on every recorded stop), so nothing it sends
-# after the stop fires exists for them to shape. Measuring the overshoot in
-# all three gearbox positions gates the elspi hardware-verification checklist
-# item 8 (2026-09-26). Only if the gearing turns out to matter does the table
-# also need the engaged position at runtime: sensorless gearing detection.
-OVERSHOOT_TABLE: Tuple[Tuple[int, int], ...] = (
+# after the stop fires exists for them to shape.
+DEVELOPMENT_LATHE_TABLE: Tuple[Tuple[int, int], ...] = (
     (0, 0),
     (280, 1),       # snapshot 300
     (583, 3),       # snapshot 596
@@ -105,6 +116,13 @@ OVERSHOOT_TABLE: Tuple[Tuple[int, int], ...] = (
     (2469, 32),     # snapshot 2507
     (3529, 43),     # snapshot 3567
 )
+
+#: The geometry DEVELOPMENT_LATHE_TABLE was measured under: a 5 um Z scale,
+#: and an 8 TPI leadscrew at 1600 steps per revolution (3.175 mm / 1600) in
+#: the gearbox's reference position. The migration stores the table only on a
+#: machine that matches both exactly.
+DEVELOPMENT_LATHE_MM_PER_COUNT = Fraction(1, 200)
+DEVELOPMENT_LATHE_MM_PER_STEP = Fraction(127, 64000)
 
 #: Counts added on top of the rounded-up envelope.
 DEFAULT_MARGIN_COUNTS = 1
@@ -148,9 +166,22 @@ RATE_MAX_GAP_S = 0.3
 #: that a real slow-down is followed within a second or two.
 FALL_HOLD_S = 1.0
 
+#: The above-range notice waits until the live rate has stayed past the
+#: table's top point this long, continuously. The correction does not wait:
+#: the offset rises to the top value on the first above-range tick. Only the
+#: notice does, because a short excursion is not what the stop approaches
+#: at. On 2026-10-20 a thread pass at a steady ~1850 counts/s, against a top
+#: point of 2319, ran its window rate to 2366 for well under a second in the
+#: sync catch-up just after Cut; the stop fired 2.3 s later inside the table
+#: and landed short like every other pass, but the notice had already shown
+#: and read as a fault. The same length as FALL_HOLD_S, for the same reason
+#: in the other direction: a rate is the new steady state only once it has
+#: held for a second.
+ABOVE_RANGE_NOTICE_AFTER_S = FALL_HOLD_S
+
 #: Operator notice when the live rate is past the table's top point.
-ABOVE_RANGE_NOTICE = ("Z rate above the calibrated range ({top} counts/s); "
-                      "correction held at its top value")
+ABOVE_RANGE_NOTICE = ("Z rate is above the calibrated range ({top} counts/s). "
+                      "Correction is held at its top value.")
 
 
 def _validate(table: Sequence[Tuple[int, int]]) -> None:
@@ -163,7 +194,7 @@ def _validate(table: Sequence[Tuple[int, int]]) -> None:
             raise ValueError(f"table must be an envelope (non-decreasing): {v0} -> {v1}")
 
 
-_validate(OVERSHOOT_TABLE)
+_validate(DEVELOPMENT_LATHE_TABLE)
 
 
 @dataclass(frozen=True)
@@ -172,7 +203,7 @@ class Prediction:
     above_range: bool    # |rate| was past the top table point; counts is HELD
 
 
-def predicted(rate: float, table: Sequence[Tuple[int, int]] = OVERSHOOT_TABLE) -> Prediction:
+def predicted(rate: float, table: Sequence[Tuple[int, int]] = DEVELOPMENT_LATHE_TABLE) -> Prediction:
     """Predicted coast at a Z rate, by linear interpolation over |rate|.
 
     Below the lowest nonzero point it interpolates toward (0, 0), which is a
@@ -196,7 +227,7 @@ class Correction:
 
 
 def correction(rate: float, margin: int = DEFAULT_MARGIN_COUNTS,
-               table: Sequence[Tuple[int, int]] = OVERSHOOT_TABLE) -> Correction:
+               table: Sequence[Tuple[int, int]] = DEVELOPMENT_LATHE_TABLE) -> Correction:
     """offset = ceil(predicted(rate)) + margin, clamped to [0, ELS_STOP_OFFSET_MAX].
 
     The margin is floored at 0: a negative margin would put the offset below
@@ -273,7 +304,7 @@ class ZRateWindow:
     """Live Z rate from successive Z POSITIONS: the position delta across the
     newest ~RATE_WINDOW_S of samples over the time it spans (counts/s, signed).
 
-    The same method as the table's key (see OVERSHOOT_TABLE), and it replaces
+    The same method as the table's key (see DEVELOPMENT_LATHE_TABLE), and it replaces
     the single-tick `speed` register, whose wander made the offset dither.
     rate() is None until the samples span RATE_MIN_SPAN_S. clear() forgets
     everything; add() clears by itself across a gap of RATE_MAX_GAP_S.
@@ -364,7 +395,7 @@ class OffsetHold:
 
 class StopOffsetCorrector:
     """Per-tick glue: Z positions -> rate window -> offset -> hold -> limiter
-    -> ElsStopHal.
+    -> ElsStopRegisters.
 
     Duck-typed so it stays Kivy-free and testable: `hal` needs
     set_stop_offset(int) and `.tick` (TickReads: enable(), active(),
@@ -373,14 +404,19 @@ class StopOffsetCorrector:
     `enabled()` and `margin()` read the operator settings; `notify(message)`
     posts an operator notice. Time is the limiter's clock.
 
+    `table()` returns the table in effect, in COUNTS (see
+    els_overshoot_table.StoredTable.in_counts), or None when this machine
+    has no usable one. There is no default: None means no correction, and
+    the stop fires at stopPosition exactly as with the setting off.
+
     NEVER writes stopPosition. It is the exact target and this class has no
     business with it; the correction lives entirely in stopOffset.
     """
 
     def __init__(self, hal, board, enabled: Callable[[], bool],
                  margin: Callable[[], int], notify: Callable[[str], object],
+                 table: Callable[[], Optional[Sequence[Tuple[float, float]]]],
                  limiter: Optional[OffsetWriteLimiter] = None,
-                 table: Sequence[Tuple[int, int]] = OVERSHOOT_TABLE,
                  window: Optional[ZRateWindow] = None,
                  hold: Optional[OffsetHold] = None):
         self._hal = hal
@@ -393,6 +429,8 @@ class StopOffsetCorrector:
         self.window = window or ZRateWindow()
         self.hold = hold or OffsetHold()
         self._notified_this_pass = False
+        # Start of the current continuous above-range stretch, or None.
+        self._above_since: Optional[float] = None
         self._was_active: Optional[bool] = None
         self._scale_index: Optional[int] = None
         self.last_rate: Optional[float] = None
@@ -410,6 +448,7 @@ class StopOffsetCorrector:
         self.window.clear()
         self._was_active = None
         self._notified_this_pass = False
+        self._above_since = None
 
     def _sample(self, now: float, active: bool) -> None:
         """File this tick's Z position into the rate window.
@@ -441,8 +480,10 @@ class StopOffsetCorrector:
         active = bool(self._hal.tick.active())
         self._sample(now, active)
         armed = self._hal.tick.enable()
-        if not self._enabled() or not armed:
+        table = self._table() if self._enabled() else None
+        if not table or not armed:
             self._notified_this_pass = False
+            self._above_since = None
             self.hold.reset()
             return self._write(self.limiter.force_zero(now))
         if active:
@@ -463,30 +504,46 @@ class StopOffsetCorrector:
             # low stretch in the hold ends here: nothing measured while held
             # says the next pass is slower.
             self._notified_this_pass = False
+            self._above_since = None
             self.hold.interrupt()
             if self.limiter.last_written is not None:
                 return None
         rate = self.window.rate()
         self.last_rate = rate
         if rate is None:
+            # The window started over: whatever stretch was above the table
+            # is no longer known to be continuous.
+            self._above_since = None
             return None
-        c = correction(rate, self._margin(), self._table)
+        c = correction(rate, self._margin(), table)
         self.last_correction = c
-        if c.above_range and not self._notified_this_pass:
-            self._notified_this_pass = True
-            self._notify(ABOVE_RANGE_NOTICE.format(top=self._table[-1][0]))
+        self._note_above_range(c.above_range, now, table)
         target = self.hold.update(c.offset, now)
         return self._write(self.limiter.update(target, now))
+
+    def _note_above_range(self, above: bool, now: float,
+                          table: Sequence[Tuple[float, float]]) -> None:
+        """Post the above-range notice once per pass, and only after the rate
+        has stayed past the top point for ABOVE_RANGE_NOTICE_AFTER_S."""
+        if not above:
+            self._above_since = None
+            return
+        if self._above_since is None:
+            self._above_since = now
+        if (not self._notified_this_pass
+                and now - self._above_since >= ABOVE_RANGE_NOTICE_AFTER_S):
+            self._notified_this_pass = True
+            self._notify(ABOVE_RANGE_NOTICE.format(top=round(float(table[-1][0]))))
 
     def _write(self, value: Optional[int]) -> Optional[int]:
         if value is None:
             return None
-        self._hal.set_stop_offset(value)
-        cm = getattr(self._board, "connection_manager", None)
-        if cm is not None and not getattr(cm, "connected", True):
-            # The write was not acknowledged (the write helpers drop the link
-            # on a failed exchange). Forget it, so the next good tick re-sends
+        if not self._hal.set_stop_offset(value):
+            # Not acknowledged. Forget it, so the next good tick re-sends
             # instead of the limiter believing a value the firmware never got.
+            # The answer is the write's own now: reading connection_manager
+            # afterwards could be overwritten by a tick scan on the owner
+            # thread between the write and the check.
             self.limiter.reset()
             return None
         return value

@@ -558,6 +558,18 @@ ACTIVE_CONFIG_BUTTON = {
 Adding a new state is: add it to `STATES`/`TRANSITIONS`, add a row to the
 relevant policy table. No widget code changes.
 
+## In this application
+
+The generic HAL pattern above is a description of the idea, not of where this
+codebase draws the line. Here the hardware seam is `PortOwner`
+(`reflex/utils/port_owner.py`): every Modbus exchange goes through it, and the
+invariants (FIFO order, unsplit batches, per-write acknowledgement) live there.
+`reflex/fsms/els_stop_registers.py` is a domain facade over one register block
+(elsStop), giving the ELS state machines verbs in their own vocabulary. The
+servo, axis and input dispatchers write through `PortOwner` directly, by
+design; there are no per-device typed facades. The layering is FSM, register
+facade, `PortOwner`, firmware registers.
+
 ## Communication Rules
 
 The two FSMs share the event bus but never reference each other directly.

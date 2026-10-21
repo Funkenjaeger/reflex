@@ -58,6 +58,7 @@ BL_REV = 0x0B1C0DE
 IMAGE_LEN = 45172         # the image that failed: 226 chunks, the last 172 bytes
 PROTOCOL = 11
 BOOT_REG = 168
+ENABLE_REG = 104          # elsStop.enable, read before the reboot request
 
 failures = 0
 failed_labels: list[str] = []
@@ -159,6 +160,11 @@ class Lathe:
         self.boot_command = 0
         self.boot_seq = 7
         self.boot_consume_at = None
+        # What a read of elsStop.enable answers. None: the truth, `engaged`.
+        # 0 with `engaged` set: the job was engaged between the flasher's read
+        # and its reboot request, so the firmware's own refusal is what stops
+        # it. "exc": the read is refused (exception 2).
+        self.enable_reads = None
 
     # -- wire ------------------------------------------------------------------
     def handle(self, frame: bytes) -> bytes:
@@ -238,6 +244,10 @@ class Lathe:
             count = struct.unpack(">H", frame[4:6])[0]
             if reg == 2048:
                 vals = self.identity()[:count]
+            elif self.stage == 2 and reg == ENABLE_REG and count == 1:
+                if self.enable_reads == "exc":
+                    return self._exc(fc)
+                vals = [int(self.engaged) if self.enable_reads is None else self.enable_reads]
             elif self.stage == 2 and BOOT_REG <= reg and reg + count <= BOOT_REG + 2:
                 vals = [self.boot_command, self.boot_seq][reg - BOOT_REG:reg - BOOT_REG + count]
             elif self.stage == 1 and self.diag is not None and reg == 2420 and count <= len(self.diag):
@@ -1050,13 +1060,44 @@ def bootloader_traffic(board):
 
 
 def s_engaged(mf, image, tmp):
-    """2026-09-25 08:32 on the lathe: the reboot into the bootloader was
-    REFUSED because an ELS job was engaged, and the flasher waited its 10 s
-    and said only "timed out ... stage=application". It must say the
-    controller refused, why, and what to do -- early, and before any byte
-    goes to a bootloader."""
+    """2026-10-17 on the lathe: a bench procedure stopped the UI with the stop
+    and retract cycle still armed, and its revert was refused. elsStop.enable
+    is read BEFORE the reboot request: with a job engaged the flasher refuses
+    there, sends no request at all, and tells the operator to disengage at the
+    touchscreen, in words that fit a stopped UI as well as the Update screen."""
     r = scenario(mf, image, tmp, "engaged", lambda b: setattr(b, "engaged", True))
     tag = "engaged"
+    msg = r.exit_msg or ""
+    check(r.rc not in (0, None) and msg.startswith(mf.BOOT_REFUSED_ELS),
+          f"{tag}: fails naming the refusal, in the words the Update screen matches ({msg[:160]})")
+    check("elsStop.enable reads 1" in msg and "43ac7c5" in msg,
+          f"{tag}: names the evidence and the application still running")
+    check("Press Disengage at the touchscreen" in msg and "start it, disengage, and stop it again" in msg
+          and "try again" in msg,
+          f"{tag}: says what to do, with the UI running or stopped")
+    check("nothing was written" in msg, f"{tag}: says nothing was written")
+    check([k for _, k, _, _ in r.board.log if k == "boot"] == [] and r.board.boot_command == 0,
+          f"{tag}: the reboot request was never sent")
+    check(r.elapsed < 1.0, f"{tag}: refuses at once ({r.elapsed:.1f}s)")
+    check(bootloader_traffic(r.board) == [] and r.board.commands() == [],
+          f"{tag}: nothing sent to a bootloader ({bootloader_traffic(r.board)[:5]})")
+    check(r.board.stage == 2 and r.board.run_rev == OLD_REV and r.board.boot_seq == 7,
+          f"{tag}: the board is still on its old application, bootSeq unmoved")
+    check(r.records == [], f"{tag}: nothing recorded in the manifest")
+
+
+def s_engaged_race(mf, image, tmp):
+    """2026-09-25 08:32 on the lathe: the reboot into the bootloader was
+    REFUSED because an ELS job was engaged, and the flasher waited its 10 s
+    and said only "timed out ... stage=application". Here elsStop.enable read
+    0 and the job was engaged before the request landed, so the firmware's own
+    refusal is what stops it. The flasher must say the controller refused,
+    why, and what to do -- early, and before any byte goes to a bootloader."""
+    def setup(b):
+        b.engaged = True
+        b.enable_reads = 0
+    r = scenario(mf, image, tmp, "engagedrace", setup)
+    tag = "engaged-race"
     msg = r.exit_msg or ""
     check(r.rc not in (0, None) and msg.startswith(mf.BOOT_REFUSED_ELS),
           f"{tag}: fails naming the refusal ({msg[:160]})")
@@ -1074,6 +1115,18 @@ def s_engaged(mf, image, tmp):
     check(r.records == [], f"{tag}: nothing recorded in the manifest")
 
 
+def s_enable_unreadable(mf, image, tmp):
+    """The elsStop.enable read is advisory. When it is refused, the flash goes
+    ahead and leaves the decision to the firmware: an idle board flashes as it
+    always did."""
+    r = scenario(mf, image, tmp, "enableexc", lambda b: setattr(b, "enable_reads", "exc"))
+    tag = "enable-unreadable"
+    check(r.rc == 0 and "VERDICT: OK -- application 8483d77 is running" in r.out,
+          f"{tag}: the flash still succeeds (rc {r.rc}; {r.exit_msg})")
+    check("elsStop.enable at register 104 unreadable" in r.out,
+          f"{tag}: says the early check was skipped")
+
+
 def s_engaged_unacked(mf, image, tmp):
     """Same refusal, but the reboot request's REPLY was lost. Without the ack
     the flasher cannot tell "consumed and refused" from "never arrived", so it
@@ -1081,6 +1134,7 @@ def s_engaged_unacked(mf, image, tmp):
     traffic."""
     def setup(b):
         b.engaged = True
+        b.enable_reads = 0          # past the early read; see s_engaged_race
         b.faults.append(mute_boot_request)
     r = scenario(mf, image, tmp, "engagedunacked", setup)
     tag = "engaged-unacked"
@@ -1092,7 +1146,8 @@ def s_engaged_unacked(mf, image, tmp):
 
 
 SCENARIOS = {
-    "engaged": s_engaged, "engagedunacked": s_engaged_unacked,
+    "engaged": s_engaged, "engagedrace": s_engaged_race, "engagedunacked": s_engaged_unacked,
+    "enableexc": s_enable_unreadable,
     "silent60": s_silent_then_answers, "diag": s_diag_in_failure,
     "probe": s_link_probe, "inject": s_inject,
     "jumpreply": s_jump_reply_lost,

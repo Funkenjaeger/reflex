@@ -1,5 +1,7 @@
 /*
- * HAL UART shim for emulator.
+ * HAL UART shim for emulator: the handle type only. The application drives
+ * USART1 through its own transport (Core/Inc/mb_app_hw.h), which the emulator
+ * implements in src/mb_hw_emu.cpp, so no HAL UART function is called.
  */
 #ifndef __STM32F4xx_HAL_UART_H
 #define __STM32F4xx_HAL_UART_H
@@ -10,12 +12,6 @@
 
 #ifdef __cplusplus
 extern "C" {
-#endif
-
-/* The real HAL provides this macro to clear the USART overrun flag; the firmware
- * overrun-recovery path (UARTCallback.c) uses it. No-op it for the emulator. */
-#ifndef __HAL_UART_CLEAR_OREFLAG
-#define __HAL_UART_CLEAR_OREFLAG(__HANDLE__) ((void)(__HANDLE__))
 #endif
 
 /* UART State */
@@ -50,24 +46,6 @@ typedef struct {
     volatile uint32_t RxState;
     volatile uint32_t ErrorCode;
 } UART_HandleTypeDef;
-
-/* Function prototypes */
-HAL_StatusTypeDef HAL_UART_Receive_IT(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size);
-HAL_StatusTypeDef HAL_UART_Transmit_IT(UART_HandleTypeDef *huart, const uint8_t *pData, uint16_t Size);
-HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, const uint8_t *pData, uint16_t Size);
-HAL_StatusTypeDef HAL_UARTEx_ReceiveToIdle_DMA(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size);
-HAL_StatusTypeDef HAL_UART_DMAStop(UART_HandleTypeDef *huart);
-HAL_StatusTypeDef HAL_UART_AbortReceive_IT(UART_HandleTypeDef *huart);
-uint32_t HAL_UART_GetState(UART_HandleTypeDef *huart);
-void HAL_UART_IRQHandler(UART_HandleTypeDef *huart);
-HAL_StatusTypeDef HAL_HalfDuplex_EnableTransmitter(UART_HandleTypeDef *huart);
-HAL_StatusTypeDef HAL_HalfDuplex_EnableReceiver(UART_HandleTypeDef *huart);
-
-/* Callbacks (implemented in firmware UARTCallback.c) */
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart);
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart);
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size);
 
 #ifdef __cplusplus
 }

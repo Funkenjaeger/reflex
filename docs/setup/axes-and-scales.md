@@ -27,7 +27,7 @@ These are roles, not names. Calling an axis `Z` does not make the ELS use it —
 the roles are a separate setting, and until they are assigned the ELS refuses
 anything that needs them:
 
-> No ELS Z axis assigned — map it in ELS settings
+> Saddle axis (Z) is not set. Set it in Setup > ELS.
 
 ## The fourth axis named `?`
 
@@ -65,7 +65,7 @@ A long travel makes the error obvious — over half an inch, a 5% error is
     take-up that moves the carriage the wrong way, which the controller catches
     and calls out specifically:
 
-    > Cut aborted — WRONG-way motion. Check the Z scale direction.
+    > Carriage moved the WRONG way. Examine the Z scale direction.
 
     Better to find it here with a dial indicator than at the first pass.
 

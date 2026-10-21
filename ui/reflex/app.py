@@ -201,9 +201,9 @@ class MainApp(App):
             log.warning(f"Sync Enable refused: {self.board.protocol_message}")
             CustomPopup(
                 title="Firmware / UI mismatch",
-                message=(f"{self.board.protocol_message}\n\nThe feed will not "
-                         f"engage until the firmware and the UI match. "
-                         f"Setup > Update."),
+                message=(f"{self.board.protocol_message}\n\nThe feed stays "
+                         f"off until the firmware and the UI match. Install "
+                         f"a matching release in Setup > Update."),
                 button_text="OK",
                 popup_size_hint=[0.7, 0.6],
             ).open()
@@ -216,13 +216,13 @@ class MainApp(App):
         # Refused: no armed stop. Confirm to override.
         from reflex.components.popups.custom_popup import CustomPopup
         CustomPopup(
-            title="No ELS Stop Armed",
+            title="No ELS stop armed",
             # Cause-specific: "no stop set", "not engaged", and "set but not
             # armed (Z at/past it)" are different operator problems with
             # different remedies, and the old one-size text claimed the first
             # in all three cases (round-2 finding, 2026-08-17).
             message=self.els_uic.unarmed_stop_message(),
-            button_text="Enable Feed",
+            button_text="Enable feed",
             cancel_text="Cancel",
             confirm_callback=lambda: self.els_uic.request_feed_enable(confirmed=True),
         ).open()
@@ -311,6 +311,11 @@ class MainApp(App):
             background_texture=lambda _i, v: setattr(self._bg_rect, "texture", v)
         )
         self.board = Board(formats=self.formats, offset_provider=self)
+        # THE RUNNING APP IS THE ONLY CALLER. Every test and the system
+        # harness keep driving Board.update() on their own thread, which
+        # is still a whole cycle, so the suite stays deterministic while
+        # the real UI stops blocking on the serial port.
+        self.board.start_io_thread()
 
         # Load beep sound
         sound_path = os.path.join(os.path.dirname(__file__), "sounds", "snap.wav")

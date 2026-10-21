@@ -17,7 +17,14 @@ from fractions import Fraction
 
 import pytest
 
-pytestmark = pytest.mark.system
+from reflex.fsms import els_overshoot_table as tbl
+from reflex.fsms.els_overshoot import DEVELOPMENT_LATHE_TABLE
+
+# timing: these assert on the WRITE RATE the limiter allows over a real
+# interval (writes per second against t1 - t0). Under `-n auto` this one
+# failed its budget once on 2026-10-04 and passed alone and in four runs
+# since -- a starved box, not the code.
+pytestmark = [pytest.mark.system, pytest.mark.timing]
 
 
 @pytest.mark.parametrize(
@@ -31,6 +38,14 @@ def test_correction_on_fires_early_by_the_offset_it_wrote(harness):
     h.commission_geometry()
     h.set_feed(Fraction(254, 160))        # ~0.79 mm/s at EMU_RPM=30
 
+    # The table is a machine setting (1.2.2): store the development lathe's,
+    # bound to THIS machine's live settings, before switching it on. With no
+    # table stored the correction refuses to turn on.
+    binding = h.els_fsm.overshoot_binding()
+    assert binding is not None, "geometry not provisioned"
+    for k, v in tbl.persisted(tbl.from_counts(
+            DEVELOPMENT_LATHE_TABLE, binding, "measured for the test")).items():
+        setattr(h.els, k, v)
     h.els.els_overshoot_correction = True
     h.els.els_overshoot_margin_counts = 1
 
@@ -41,7 +56,11 @@ def test_correction_on_fires_early_by_the_offset_it_wrote(harness):
 
     def counting(counts):
         writes.append((time.monotonic(), int(counts)))
-        original(counts)
+        # RETURN the acknowledgement: set_stop_offset answers whether the
+        # controller took the write, and the corrector forgets one it did not.
+        # A wrapper that swallows the answer makes every write look refused,
+        # which turns the rate limiter off and floods the link.
+        return original(counts)
 
     hal.set_stop_offset = counting
 
@@ -86,3 +105,18 @@ def test_correction_on_fires_early_by_the_offset_it_wrote(harness):
     assert len(in_pass) <= budget, (
         f"{len(in_pass)} stopOffset writes in {t1 - t0:.1f} s exceeds the "
         f"limiter's budget of {budget}: {in_pass}")
+
+    # The landing is measured and kept for the Measure window; a short
+    # landing shows nothing on screen (a readout on every stop was a
+    # distraction in normal use). The emulator's carriage stops where the
+    # trigger fires (no drive lag), so a corrected stop lands short by about
+    # the offset.
+    guard = h.controller.overshoot
+    kept = h.wait_until(lambda: guard.last_landing.startswith("Stop landed"),
+                        timeout_s=5)
+    assert kept, f"no landing kept; last_landing is {guard.last_landing!r}"
+    assert guard.last_landing.endswith(" short."), guard.last_landing
+    assert not h.controller.notice_text.startswith("Stop landed"), (
+        f"a short landing was put on screen: {h.controller.notice_text!r}")
+    assert h.els.els_overshoot_correction is True, (
+        "a stop that landed short turned the correction off")

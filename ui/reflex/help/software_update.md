@@ -1,74 +1,97 @@
-Software Update
+Software update
 ===============
 
 Install a release from the machine. A Reflex release is **one version covering
-both halves** — the firmware on the controller and this UI — so installing one
-replaces both, or it replaces neither.
+both halves**: the firmware on the controller and this UI. An install replaces
+both halves or neither.
 
 ## Fields
 
-### Currently Installed Release
-The version running now. Read-only.
+### Currently installed release
+The version that runs now. Read-only.
 
-### Controller Firmware
+### Controller firmware
 What the controller reports: its register protocol version, and whether that
-matches this UI. During an update it reads *link released for update*, which
-means the DRO is stopped on purpose rather than because something broke.
+version matches this UI. During an update it reads *link released for update*.
+This means the update stopped the DRO on purpose. Nothing is broken.
 
-### Refresh Available Releases
-Fetches the release list from GitHub. Needs an internet connection. Releases
-published before the field bootloader existed carry no firmware image and are
-not offered — they cannot supply both halves.
+### Refresh available releases
+Gets the release list from GitHub. An internet connection is necessary.
+Releases published before the field bootloader existed have no firmware image.
+They cannot supply both halves, so the list does not offer them.
 
-### Offer Pre-releases (experimental)
-When enabled, release candidates appear in the list alongside final releases.
+### Offer pre-releases (experimental)
+When this is on, release candidates appear in the list with the final releases.
 
 - **OFF (default):** final releases only.
 - **ON:** adds release candidates. They are built the same way and carry both
-  halves; they are simply less tested, and you are asked to confirm.
+  halves. They have less testing, so the screen asks you to confirm.
 
-There is no longer a "dev" entry. It tracked a branch, and no firmware image is
-built for a branch — so it could only ever have updated half the machine.
+There is no longer a "dev" entry. It followed a branch, and no firmware image
+is built for a branch. So it could only update half the machine.
 
-### Available Releases
-Pick the version to install.
+### Offer integration builds (bench only)
+This row appears only on a machine set up with an integration build source.
+When this is on, integration builds (`vX.Y.Z-rc.N.dev.M`, a build on the way
+to release candidate N) appear in the list. They are built the same way and
+carry both halves. They have no testing beyond the bench, so the screen asks
+you to confirm.
 
-### Install Selected Release
-Runs the whole update. The service restarts itself at the end.
+Before each update, the settings are saved to the commissioning snapshots. An
+older release does not know the settings that a newer release added. It sets
+them to their defaults the first time it saves. Use the snapshot to recover one.
 
-If an ELS job is engaged, you are asked first: updating reboots the
-controller, which ends the job, so it has to be disengaged. **Disengage and
-Install** does that and starts the update once the controller confirms the
-job is released. If the spindle is turning, or a cycle is running, it says so
-instead — stop it, then tap Install again.
+### Available releases
+Select the version to install.
+
+### Install selected release
+Runs the full update. At the end, the service restarts itself.
+
+If an ELS job is engaged, the screen asks you first. The update reboots the
+controller, which ends the job, so the job must be disengaged. **Disengage and
+Install** disengages it. The update starts when the controller confirms that
+the job is released. If the spindle turns or a cycle runs, the screen tells
+you. Stop it, then press Install selected release again.
+
+### Reinstall firmware
+The install button reads **Reinstall firmware** when you select the release
+that is already installed, but the controller runs other firmware, such as
+a diagnostic build or another release's firmware. The status area says what the controller runs. The
+screen reads this from the flash record that each firmware flash writes. When
+nothing is recorded, the button is not offered.
+
+Reinstall firmware flashes the selected release's firmware only. This UI does
+not change and does not restart. It uses the same steps 2 and 3 below, and the
+settings are saved first, as for an update. If an ELS job is engaged, the
+screen asks you first, the same as for an install.
 
 ## What happens when you press Install
 
-1. **Checks it can finish, changing nothing.** Clean checkout, `uv` present,
-   the tag fetched, the firmware image downloaded and validated. Anything
-   missing stops it here.
-2. **Flashes the controller** — about thirteen seconds, over the same RS-485
-   link this UI normally uses. The DRO stops for the duration because the
-   flasher needs that port. **Do not power the machine off while it is
+1. **Checks that it can finish, and changes nothing.** It checks for a clean
+   checkout, `uv` present, the tag fetched, and the firmware image downloaded
+   and validated. If one is missing, the update stops here.
+2. **Flashes the controller.** This takes about thirteen seconds, over the same
+   RS-485 link this UI usually uses. The flasher needs that port, so the DRO
+   stops during the flash. **Do not turn off the machine power while it is
    flashing.**
-3. **Asks the new firmware what it speaks.** If its register protocol version
-   is not what the new UI expects, the update **stops there**: the previous
-   firmware is put back and confirmed running, and the UI half is not
-   installed. There is no way past this: a UI and firmware that disagree about
-   the register layout read every register after the point of divergence as
-   plausible nonsense.
+3. **Asks the new firmware for its register protocol version.** If the version
+   is not what the new UI expects, the update **stops there**. The update puts
+   the previous firmware back and confirms it runs. It does not install the UI
+   half. You cannot bypass this step. If the UI and firmware disagree about the
+   register layout, each register after the first difference reads as a value
+   that looks correct but is wrong.
 4. **Installs the UI half** and restarts.
 
 ## Notes
 
 - The controller needs the Modbus field bootloader for step 2. A board flashed
-  only over SWD does not have it, and the update will say so and stop.
-- If the update refuses, nothing is left half-done — the status area names what
-  stopped it, and says so when it has put the previous firmware back. Only if
-  that restore itself fails does it say the controller is left on the new
-  firmware under the old UI, and what to do.
-- If the controller cannot be reached after a failed transfer, the status area
-  says to turn the machine off, wait 10 seconds and turn it on — tested on the
-  lathe: the controller comes back on its previous firmware.
-- The status area is the log. It is worth reading before leaving the screen.
-- Updating from the command line is still supported; see the Installing page.
+  only over SWD does not have it. The update tells you this and stops.
+- If the update refuses, nothing is left half-done. The status area names what
+  stopped it. It also tells you when it put the previous firmware back. If that
+  restore fails, the status area says the controller stays on the new firmware
+  with the old UI. It also tells you what to do.
+- After a failed transfer, the controller can be unreachable. The status area
+  then tells you to turn the machine off, wait 10 seconds and turn it on. This
+  was tested on the lathe: the controller comes back on its previous firmware.
+- The status area is the log. Read it before you leave the screen.
+- Updates from the command line are still supported. See the Installing page.

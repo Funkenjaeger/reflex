@@ -3,8 +3,11 @@
 Getting Reflex onto the Raspberry Pi at the machine, from a blank SD card to a
 UI that boots on its own.
 
-!!! warning "Manual install"
-    There is no installer yet. Every step below is a command you run.
+A prebuilt SD-card image exists: [elspi](https://github.com/Funkenjaeger/elspi)
+bakes the OS, the Reflex environment and its systemd service together. Flash
+that image instead and skip straight to Step 6 below to flash the controller
+firmware; Steps 1-5 here are for installing Reflex by hand onto a plain OSPI
+image.
 
 Budget an hour or so, most of which is the Pi compiling dependencies.
 
@@ -64,7 +67,7 @@ What you should find on a freshly written image:
 Everything from here on is run **on the Pi**, over SSH. You need three things
 first, and none of them are Reflex-specific:
 
-- The Pi on your network. Ethernet needs nothing. For WiFi, the easiest
+- The Pi on your network. Ethernet needs nothing. For Wifi, the easiest
   route is to set it when you write the card — Raspberry Pi Imager's advanced
   options will preseed the network, the hostname and SSH into the image.
 - SSH enabled. If it is not, an empty file named `ssh` in the boot
@@ -226,6 +229,9 @@ the bootloader once the board is confirmed working are in
     recognizes or an erased sector 0 — anything else, the bootloader included,
     is a refusal.
     Use `provision.sh` for a new board and `modbus-flash.py` thereafter.
+
+    Advanced: `fw/README.md` documents the `--force-legacy` override
+    (beginner-path scoping here is deliberate).
 
 !!! danger "Power-cycle the controller afterwards"
     A reset alone does not reliably start the new firmware on this board.

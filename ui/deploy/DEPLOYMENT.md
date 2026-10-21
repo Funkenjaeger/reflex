@@ -17,9 +17,9 @@ systemd, replacing rcp as the boot application.
 > (the unit, the venv, the config directory, rollback) is the same procedure,
 > in more detail than an operator needs.
 
-> A future task tracks scripting this (bash or, preferably, an Ansible playbook) —
-> see `todo.md`. The companion files in this directory are the source of truth for
-> that automation:
+> Scripting this procedure (bash or, preferably, an Ansible playbook) is not done
+> yet. The companion files in this directory are the source of truth for that
+> automation:
 > - [`start.sh`](start.sh) — launch wrapper (Kivy env + venv activate + run)
 > - [`reflex-ui.service`](reflex-ui.service) — systemd unit
 

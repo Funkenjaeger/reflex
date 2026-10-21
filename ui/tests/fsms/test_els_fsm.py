@@ -167,13 +167,18 @@ def test_disable_transitions_back_to_disabled(domain):
     assert domain.state == "disabled"
 
 
-def test_on_enter_disabled_writes_set_enable_false():
+def test_on_enter_disabled_writes_disengage():
+    """protocolVersion 13: the disengage is ONE command, DISENGAGE, and the
+    firmware does the ordered teardown. The command path itself (ack,
+    timeout, refusal, reconnect) is tests/fsms/test_els_command.py."""
     hal = MagicMock()
     fsm = _build_fsm(hal=hal)
     fsm.enable()    # disabled → stopped
+    hal.reset_mock()
     fsm.disable()   # stopped → disabled (fires on_enter_disabled)
-    # The last set_enable(False) call should come from on_enter_disabled.
-    hal.set_enable.assert_called_with(False)
+    hal.request_disengage.assert_called_once_with()
+    hal.stop_sync.assert_not_called()
+    hal.set_enable.assert_not_called()
 
 
 # ─── stopped re-arm: hysteresis driven by mode flags ───────────────────────
@@ -387,12 +392,18 @@ def test_on_enter_cutting_arms_and_writes_thread_geometry():
     hal.reset_mock()   # focus on cutting writes only
     fsm.cut()
     assert fsm.state == "cutting"
-    hal.set_scale_index.assert_called_with(z_inp.inputIndex)
-    hal.set_backlash_steps.assert_called_once_with(42)
+    # The arming writes are ONE BATCH now, so the assertion is on the numbers
+    # it carries rather than on which setter was called. stopPosition and
+    # enable are in there too, by construction -- see ElsStopRegisters.arming_batch.
+    armed = hal.arm.call_args.kwargs
+    assert armed["scale_index"] == z_inp.inputIndex
+    assert armed["backlash_steps"] == 42
+    # Thread geometry comes from spindle/servo ratios; verify it is carried
+    # and is a real pitch, not the turning zero.
+    assert armed["thread_pitch_steps"] != 0.0
+    assert armed["z_counts_per_pitch"] != 0.0
+    # The release stays in on_enter_cutting, after the batch is acknowledged.
     hal.set_active.assert_called_once_with(False)
-    # Thread geometry comes from spindle/servo ratios; just verify writes happened.
-    assert hal.set_thread_pitch_steps.called
-    assert hal.set_z_counts_per_pitch.called
 
 
 def test_on_enter_cutting_in_turning_keeps_backlash_and_signed_polarity():
@@ -415,10 +426,11 @@ def test_on_enter_cutting_in_turning_keeps_backlash_and_signed_polarity():
     hal.reset_mock()
     fsm.cut()
     assert fsm.state == "cutting"
-    hal.set_thread_pitch_steps.assert_called_once_with(0.0)
-    (zcpp,), _ = hal.set_z_counts_per_pitch.call_args
-    assert zcpp < 0, "the Z polarity sign must reach the firmware in turning"
-    hal.set_backlash_steps.assert_called_once_with(42)
+    armed = hal.arm.call_args.kwargs
+    assert armed["thread_pitch_steps"] == 0.0
+    assert armed["z_counts_per_pitch"] < 0, \
+        "the Z polarity sign must reach the firmware in turning"
+    assert armed["backlash_steps"] == 42
     hal.set_active.assert_called_once_with(False)
 
 
@@ -850,16 +862,21 @@ def test_arm_idle_stop_teaches_turning_geometry_in_turning_mode():
     fsm.push_thread_geometry.assert_not_called()
 
 
-def test_reconcile_reteaches_the_calibration_legs():
-    """A real record is pushed back; the take-up gate keeps its derived
-    threshold across power cycles instead of falling to the 2-count floor."""
+def test_reconcile_reteaches_the_calibration_basis():
+    """A real record is pushed back as the take-up gate's basis
+    (calBasisSteps, protocolVersion 13): the mean of the stored legs, by the
+    firmware's own rule (elsCalMeanValid: integer mean, every leg positive),
+    so the gate keeps the threshold it had across a power cycle instead of
+    falling to the 2-count floor. calMeasured is the firmware's result
+    register and is never written."""
     hal = MagicMock()
     fsm = _build_fsm(hal=hal)
     fsm.els.els_cal_measured_legs = [365, 373, 366]
 
     fsm.reconcile_firmware_on_connect()
 
-    hal.set_cal_measured.assert_called_once_with([365, 373, 366])
+    hal.set_cal_basis.assert_called_once_with(368)      # 1104 // 3
+    hal.set_cal_measured.assert_not_called()
 
 
 def test_reconcile_never_teaches_zero_legs():
@@ -872,7 +889,7 @@ def test_reconcile_never_teaches_zero_legs():
 
     fsm.reconcile_firmware_on_connect()
 
-    hal.set_cal_measured.assert_not_called()
+    hal.set_cal_basis.assert_not_called()
 
 
 def test_reconcile_never_teaches_partial_legs():
@@ -884,7 +901,7 @@ def test_reconcile_never_teaches_partial_legs():
 
     fsm.reconcile_firmware_on_connect()
 
-    hal.set_cal_measured.assert_not_called()
+    hal.set_cal_basis.assert_not_called()
 
 
 def test_reconcile_repushes_every_axis_sync_ratio():
@@ -916,7 +933,57 @@ def test_reconcile_reteaching_happens_in_every_state():
 
     fsm.reconcile_firmware_on_connect()
 
-    hal.set_cal_measured.assert_called_once()
+    hal.set_cal_basis.assert_called_once_with(101)
     axis.push_sync_ratio.assert_called_once()
     # and the state policy still ran
     hal.set_enable.assert_called_once_with(False)
+
+
+# ─── The taught basis is in the log ─────────────────────────────────────
+# A feed pass's take-up threshold is the floor with or without a basis (a
+# feed has no thread geometry), so a pass cannot show whether the basis was
+# re-taught after a power cycle. The teach says so itself, once per write.
+
+def _basis_lines(caplog):
+    return [r.getMessage() for r in caplog.records
+            if "calibration basis" in r.getMessage()]
+
+
+def test_reconcile_logs_the_basis_it_teaches(caplog):
+    import logging
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.els.els_cal_measured_legs = [365, 373, 366]
+    with caplog.at_level(logging.INFO):
+        fsm.reconcile_firmware_on_connect()
+    hal.set_cal_basis.assert_called_once_with(368)
+    lines = _basis_lines(caplog)
+    assert len(lines) == 1, lines
+    assert "368 steps" in lines[0] and "connect" in lines[0]
+    assert caplog.records[-1].levelno >= logging.INFO
+
+
+def test_reconcile_logs_that_there_is_no_basis_to_teach(caplog):
+    import logging
+    hal = MagicMock()
+    fsm = _build_fsm(hal=hal)
+    fsm.els.els_cal_measured_legs = [0, 0, 0]
+    with caplog.at_level(logging.INFO):
+        fsm.reconcile_firmware_on_connect()
+    hal.set_cal_basis.assert_not_called()
+    lines = _basis_lines(caplog)
+    assert len(lines) == 1, lines
+    assert "no accepted calibration" in lines[0] and "connect" in lines[0]
+
+
+def test_a_gear_change_logs_the_basis_in_the_new_gear(caplog):
+    import logging
+    from tests.fsms.test_els_gear import _fsm_with_table_servo
+    fsm, _axis = _fsm_with_table_servo("A=1, B=2", "A", legs=(484, 484, 484))
+    with caplog.at_level(logging.INFO):
+        fsm.adopt_gear("B")
+    fsm.hal.set_cal_basis.assert_called_once_with(242)
+    lines = _basis_lines(caplog)
+    assert len(lines) == 1, lines
+    assert "242 steps" in lines[0] and "gear B" in lines[0]
+    assert "gear change" in lines[0]

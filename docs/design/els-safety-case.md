@@ -8,8 +8,8 @@ injection.
 !!! info "Provenance"
     Citations are file and line as of `bd10c92` plus `7f2191d`, `eedc4da`,
     `a0068d2` and `308b920`. Where a fact could not be confirmed by reading
-    code it is marked **UNVERIFIED** rather than asserted; see
-    [Open questions](#open-questions).
+    code, it is called out under [Open questions](#open-questions) instead of
+    being asserted.
 
 ---
 
@@ -97,9 +97,10 @@ which may not exist in the hardware: step/dir come directly from STM32 pins.
 
 **UI death.** Should stop the feed; a live cut with no supervisor is the worst
 cell in the table. Firmware does not time out a feed when the UI stops
-polling, and Guard #25 above is UI-*initiated* (it fires on a failed write
-ack), so it cannot fire when the UI has died. The firmware's take-up gates run
-independently of UI liveness, but only at take-up.
+polling, and the modbus-loss escalation above (`els_fsm.py:271-276`) is
+UI-*initiated* (it fires on a failed write ack), so it cannot fire when the UI
+has died. The firmware's take-up gates run independently of UI liveness, but
+only at take-up.
 
 **Leadscrew turned while the drive is off.** Should invalidate the thread
 reference and does not (see [Open questions](#open-questions)). It is the only
@@ -122,7 +123,7 @@ unprotected.
 | 4 | Jog-mode (`servoMode==2`) take-up refusal | `:1273-1307` |
 | 5 | Calibration request refusal (enabled / wrong mode / bad config) | `:644-676` |
 | 6 | Calibration abort on condition change mid-run | `:681-691` |
-| 7 | **Enable falling-edge teardown** — cancels pending take-up and all commanded motion so nothing survives the edge as banked debt | `:792-832` |
+| 7 | **Enable falling-edge teardown** — cancels pending take-up and all commanded motion so nothing survives the edge as banked debt. It also runs on `DISENGAGE`'s request when `enable` is already 0 ([command channel](els-command-channel.md)) | `:792-832` |
 | 8 | `ELS_REQUIRE_QUIESCENCE` AND-gate | `:907-1035` |
 | 9 | Hysteresis re-latch guard | `:1159-1178` |
 

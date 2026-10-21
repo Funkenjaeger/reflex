@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from reflex.utils.communication import (
-    ConnectionManager, read_float, read_long, read_unsigned,
+    ConnectionManager, read_float, read_long, read_signed, read_unsigned,
 )
 
 
@@ -52,6 +52,11 @@ READERS = [
     pytest.param(read_float, 1.5, id="read_float"),
     pytest.param(read_long, 7, id="read_long"),
     pytest.param(read_unsigned, 42, id="read_unsigned"),
+    # The int16 reader was the one helper left out of the counter. No
+    # decision-bearing live read uses it today (the int16 registers are written,
+    # or read through refresh() snapshots), so the gap was latent; it is listed
+    # here so that a future guarded read of an int16 field is not blind.
+    pytest.param(read_signed, 42, id="read_signed"),
 ]
 
 

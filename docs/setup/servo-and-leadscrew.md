@@ -13,6 +13,11 @@ Three numbers that together convert **a distance** into **leadscrew steps**:
 - the **servo steps per revolution** — including any microstepping;
 - the **gearing** between the servo and the leadscrew, if they are not direct.
 
+If the gearing is a gearbox with more than one position, set these numbers
+for one of its positions, the reference, and see
+[A gearbox between servo and leadscrew](#a-gearbox-between-servo-and-leadscrew)
+below.
+
 ## Why a mistake here hides
 
 The DRO reads from the **scales**, which are independent of all three. So a
@@ -44,6 +49,33 @@ backlash take-up, the phase correction, and the retract.
 
 That last one is the only feature that will tell you the geometry is wrong. The
 others will simply be wrong by the same factor, silently.
+
+## A gearbox between servo and leadscrew
+
+Most lathes need nothing here: the default is **no gearbox**, and the screens
+then never mention one.
+
+If a lever or gearbox between the servo and the leadscrew changes how far the
+carriage moves per motor step, enter it in **Advanced ELS settings → Gearbox table**,
+the reference position first, as `name=factor` entries:
+
+    A=1, B=2, C=1/2
+
+That is the development lathe's gearbox, used as the example in these docs.
+
+- 2 to 4 positions, names of your choosing, 1 to 3 characters each, with no
+  spaces, commas or `=`.
+- The first position is the **reference**: the servo settings above are for
+  it, its factor is 1, and backlash calibration runs only there.
+- Each other factor is the carriage travel per motor step relative to the
+  reference, as a decimal or a fraction, between 1/8 and 8, and any two at
+  least 1.2 times apart.
+
+To measure a factor instead of typing it from the gear plate, see
+[Measuring the gearbox factor](../guide/measuring-gearbox-factor.md).
+
+Then set **Gearbox position** to the position the lever is in. The coupling
+check can catch a lever moved since; see the setting's help.
 
 ---
 

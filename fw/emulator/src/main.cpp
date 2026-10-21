@@ -28,7 +28,6 @@ extern "C" {
 
 /* Firmware externs */
 extern TIM_HandleTypeDef htim1, htim2, htim3, htim4, htim9, htim11;
-extern UART_HandleTypeDef huart1;
 extern void emu_update_timer_counters(void);
 }
 
@@ -289,6 +288,11 @@ static void runElsScenario(LathePhysics *physics, rampsHandler_t *rampsData,
  *   z jog <-1|0|1>      -> physics->jogCarriage(dir)
  *   halfnut open        -> physics->setHalfNutEngaged(false)
  *   halfnut close       -> physics->setHalfNutEngaged(true)
+ *   spindle rpm <rpm>   -> physics->setTargetRPM(rpm)
+ *
+ * spindle rpm is the operator's spindle switch. EMU_RPM only sets it at
+ * launch, so without this a test could not stop motion the way the operator
+ * does, from outside the UI, mid-session.
  *
  * WHY THE Z AND HALFNUT COMMANDS EXIST
  * ------------------------------------
@@ -301,7 +305,7 @@ static void runElsScenario(LathePhysics *physics, rampsHandler_t *rampsData,
  *
  * Its absence is why the 2026-08-08 take-up gate defect shipped with passing
  * tests. A fixture that cannot express a failure produces tests that agree with
- * the code and are wrong together. See reflex-fw/todo.md.
+ * the code and are wrong together.
  *
  * The z branch adds NO new coupling logic: LathePhysics::moveCarriageTo() /
  * jogCarriage() already refuse to move the carriage while the half-nut is
@@ -336,6 +340,19 @@ static void stdinCommandThreadFunc(LathePhysics *physics) {
                 emu_log_event("stdin cmd: malformed 'halfnut' verb '%s' "
                               "(want open|close) (line: \"%s\")",
                               verb.c_str(), line.c_str());
+            }
+            continue;
+        }
+
+        if (noun == "spindle") {
+            double rpm;
+            if (verb == "rpm" && (iss >> rpm)) {
+                physics->setTargetRPM(rpm);
+                emu_log_event("stdin cmd: spindle rpm %.1f", rpm);
+            } else {
+                emu_log_event("stdin cmd: malformed 'spindle' command "
+                              "(want rpm <value>) (line: \"%s\")",
+                              line.c_str());
             }
             continue;
         }
@@ -468,6 +485,20 @@ static void runPhysicsServer(LathePhysics *physics, rampsHandler_t *rampsData,
 }
 
 /*
+ * Superloop thread: the firmware's main loop (Core/Src/main.c), calling
+ * RampsPoll -- the Modbus slave and the 100 ms / 50 ms jobs -- against the
+ * HAL tick the ISR thread advances. On the chip the ISR preempts this loop;
+ * here the two run on separate threads, so a job can also run in the middle
+ * of an ISR pass, which the chip never does.
+ */
+static void superloopThreadFunc(rampsHandler_t *rampsData) {
+    while (g_running.load()) {
+        RampsPoll(rampsData);
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+}
+
+/*
  * ISR thread: ticks the physics model and calls the firmware's
  * SynchroRefreshTimerIsr at the configured rate.
  */
@@ -519,40 +550,6 @@ static void isrThreadFunc(LathePhysics *physics, rampsHandler_t *rampsData, int 
             HAL_IncTick();
         }
 
-        /* Mirror servoEnableTask's machine-mode publication, ~100 ms.
-         *
-         * The emulator does not run the FreeRTOS tasks -- it reimplements the
-         * parts it needs, right here. Without this line elsStop.machineMode
-         * would read 0 (ELS_MMODE_OFF) forever in the emulator, so every
-         * emulator-backed test would exercise a rung-2 census against a dead
-         * register and report it as healthy. That is the same shape as the
-         * defect this register exists to fix, one level down. */
-        static int mode_divider = 0;
-        mode_divider++;
-        if (mode_divider >= rate_hz / 10) {
-            mode_divider = 0;
-            elsPublishMachineMode(&rampsData->shared,
-                                  (uint16_t)(rampsData->elsCal.phase != ELS_CAL_IDLE));
-        }
-
-        /* Mirror updateSpeedTask's spindle-period refresh, ~20 ms.
-         *
-         * SAME REASON AS THE LINE ABOVE, and the consequence is sharper here.
-         * On hardware the period is computed off the ISR by updateSpeedTask;
-         * without this mirror the cache would stay 0 in the emulator forever,
-         * applyPhaseCorrection would be handed 0 on every pass, and 0 means
-         * DO NOT REDUCE. Every emulator-backed test would then quietly
-         * exercise the pre-04dd1f9 unreduced path while reporting green on the
-         * reduced one -- a test suite that stops testing the feature and says
-         * nothing. Calls the same header function the task does, so there is
-         * one implementation, not two. */
-        static int period_divider = 0;
-        period_divider++;
-        if (period_divider >= rate_hz / 50) {
-            period_divider = 0;
-            elsRefreshSpindlePeriod(&rampsData->shared);
-        }
-
         /* Sleep until next tick */
         std::this_thread::sleep_until(next_tick);
     }
@@ -595,10 +592,6 @@ int main(int argc, char *argv[]) {
     memset(&emu_hw, 0, sizeof(emu_hw));
     pthread_mutex_init(&emu_hw.mutex, nullptr);
 
-    /* Set TC flag so Modbus sendTxBuffer busy-wait completes immediately */
-    extern USART_TypeDef emu_usart1;
-    emu_usart1.SR = USART_SR_TC;
-
     /* Initialize physics model */
     LathePhysics physics(cfg);
 
@@ -614,9 +607,8 @@ int main(int argc, char *argv[]) {
         ramps_timer_handles[i] = htims[i];
     }
 
-    /* Set synchro timer and UART handles */
+    /* Set the synchro timer handle */
     rampsData.synchroRefreshTimer = &htim9;
-    rampsData.modbusUart = &huart1;
 
     /* Apply config defaults to servo */
     rampsData.shared.servo.maxSpeed = (float)cfg.servo_max_speed;
@@ -632,7 +624,7 @@ int main(int argc, char *argv[]) {
     Transport transport(cfg);
     transport.start();
 
-    /* Initialize the firmware (Modbus, tasks, etc.) */
+    /* Initialize the firmware (encoders, Modbus, the superloop's schedule) */
     printf("Starting firmware initialization...\n");
     RampsStart(&rampsData);
     printf("Firmware initialized.\n");
@@ -649,7 +641,7 @@ int main(int argc, char *argv[]) {
      */
 
     /* Initialize servoCycles to avoid division by zero on first ISR tick.
-     * On real hardware updateSpeedTask() sets this within 50ms of boot,
+     * On real hardware the updateSpeedTask job sets this 50 ms after boot,
      * but the emulator's ISR thread starts immediately.
      * Formula from updateSpeedTask: clock_freq / maxSpeed
      * clock_freq = 100MHz / (Prescaler+1) / (Period+1) = 100000
@@ -670,6 +662,7 @@ int main(int argc, char *argv[]) {
 
     /* Start ISR thread */
     std::thread isrThread(isrThreadFunc, &physics, &rampsData, cfg.isr_rate_hz);
+    std::thread loopThread(superloopThreadFunc, &rampsData);
 
     emu_log_event("Emulator started");
 
@@ -690,6 +683,7 @@ int main(int argc, char *argv[]) {
     /* Shutdown */
     g_running.store(false);
     if (isrThread.joinable()) isrThread.join();
+    if (loopThread.joinable()) loopThread.join();
     transport.stop();
 
     printf("Emulator stopped.\n");

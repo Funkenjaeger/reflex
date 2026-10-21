@@ -1,15 +1,15 @@
-Position Tolerance (mm)
+Position tolerance (mm)
 =======================
 
-The acceptable position error threshold, in millimeters. When the
-current position is within this distance of a target, the DRO
-considers the axis to be "at position."
+The acceptable position error, in millimeters. When the current
+position is within this distance of a target, the DRO treats the axis
+as "at position."
 
 ## How It Works
 
-During a servo goto operation, the position indicator changes
-color (or shows a confirmation) when the actual position is within
-the tolerance of the commanded target.
+This applies during a servo goto operation. When the actual position
+is within the tolerance of the commanded target, the position
+indicator changes color (or shows a confirmation).
 
 ## Typical Values
 
@@ -22,8 +22,9 @@ the tolerance of the commanded target.
 
 ## Notes
 
-- Value is always in millimeters regardless of the display unit
-- Accepts decimal values
-- Setting too tight a tolerance may cause the indicator to never
-  show "at position" due to encoder noise
-- Setting too loose loses the benefit of position verification
+- The value is always in millimeters, whatever the display unit
+- The field accepts decimal values
+- If the tolerance is too tight, encoder noise can prevent the
+  indicator from ever showing "at position"
+- If the tolerance is too loose, you lose the benefit of position
+  verification

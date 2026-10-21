@@ -8,19 +8,19 @@ emulator-backed system suite has no servo dynamics, no Modbus timing and no
 metal, and has looked green while something real was wrong. Emulator green is
 evidence, never verification.
 
-**Do NOT commit directly to `dev-staging`.** It is one step from a dev release
-and everything on it is supposed to be hardware-verified.
+**Do NOT commit directly to `dev`.** Release candidates are cut from it, and
+everything on it is supposed to be hardware-verified.
 
 - Work on a **feature branch**, or on **`integration`** when several changes are
   in flight and separate branches would just be overhead.
-- Merging `integration` or a feature branch into `dev-staging` happens **only after
-  the maintainer has verified on hardware**. The maintainer does that merge, or
+- A commit is hardware-verified when an integration build (`vX.Y.Z-rc.N.dev.M`) made
+  from it has been installed and run on the machine. Merging `integration` into
+  `dev` happens **only after that**; the maintainer does that merge, or
   explicitly asks for it.
-- Merging `dev-staging` into `dev`, and `dev` into `main`, is **the maintainer's
-  alone**. Never do these.
+- Merging `dev` into `main` is **the maintainer's alone**. Never do it.
 
 **The one exception**, for changes that cannot affect machine behavior and so
-need no hardware run: documentation, help files, `todo.md`, and tests. Anything
+need no hardware run: documentation, help files, and tests. Anything
 that changes what gets written to a firmware register (HAL, FSM, dispatchers,
 `devices.py`) is NOT clerical, however small it looks.
 
@@ -29,17 +29,21 @@ firmware's `Ramps.h` are one contract, and they must land together.
 
 If unsure whether a change qualifies, it does not. Put it on a branch and ask.
 
-**Never push without being asked.** `origin` fans out to BOTH the canonical
-remote and your mirror, so any push writes two remotes at once.
+**Never push without being asked.** `origin` is the canonical remote. This
+public repository receives only `dev`, `main` and release tags, each by a
+deliberate push: never `integration`, a feature branch or a `.dev` tag.
 
-## Todo Tracking
+## Work tracking
 
-Add anything that should be tracked to `todo.md` in the project root: deferred work,
-TODOs found in code or documentation, bugs or improvements found while debugging,
-deployment or configuration tasks that need documentation, and any action item that
-won't be completed in the current session.
+**The work queue is not kept in this repo.** The maintainer keeps it outside,
+so there is no in-repo file to append an item to. Raise deferred work, a bug
+found while debugging, or a deployment or configuration task that needs
+documenting by telling the maintainer in your reply.
 
-Do NOT leave TODO comments in code, documentation, or bash snippets. Route them to `todo.md` instead.
+Do NOT leave TODO comments in code, documentation, or bash snippets. If
+something is worth writing down in the source, write the fact itself — what is
+untested, what the constraint is, why the code is shaped this way — as a normal
+comment that stands on its own, not as a pointer to a queue.
 
 ## Platform and protocol
 
@@ -102,6 +106,34 @@ values (UI commissioning *and* the emulator's own physics patched to match);
   `KIVY_WINDOW=mock`) for the whole suite, so tests run headless without `xvfb-run`.
 - Test files go in `tests/`, mirroring the `reflex/` structure.
 
+### How to run the suite: `scripts/run_tests.py`
+
+`python scripts/run_tests.py` (add `--system` for the emulator-backed suite) is
+what CI runs and what you should run. It does three things a bare `pytest`
+does not:
+
+- **The bulk runs under `-n auto`.** The system suite goes from about 9m30 to
+  about 1m45 this way, which is why CI uses it.
+- **Tests marked `timing` run afterwards, serially, on their own.** They assert
+  on wall-clock behaviour — a write rate over a real interval, a travel
+  distance in a fixed window — and under `-n auto` beside sixty emulator
+  processes they measure a starved box instead of the code. Mark a new test
+  `timing` if it asserts on elapsed time or a rate, and say in a comment what
+  the evidence is.
+- **A failure is retried ALONE before it counts.** Serial, no xdist, only the
+  tests that failed. If it survives that, it is real.
+
+**A test that passes only on the retry is not a pass.** The runner names it on
+stderr and as a CI annotation, and the run still goes green — that is what
+makes it a net rather than a gate. Chase it: with the Modbus I/O on its own
+thread, a test that fails in the suite and passes alone is a race until shown
+otherwise. Do not mark it `timing` to quieten it unless it really does assert
+on wall-clock behaviour.
+
+`release.yml` deliberately still calls `pytest` directly: every command it runs
+must also appear in estate/reflex-ci's `alpha/build.sh`, and the two are kept
+in step by the release builder's drift check.
+
 ### System tests (emulator-backed) — opt-in
 
 `tests/system/` drives the UI's FSM/dispatcher stack against the firmware emulator (the
@@ -110,10 +142,14 @@ across ELS mode and machine-wiring polarity.
 
 - **Opt-in and excluded by default.** They carry the `system` marker and `pyproject.toml` sets
   `addopts = "-m 'not system'"`, so a plain `uv run pytest` skips them (and never builds/launches
-  the emulator). Run them explicitly:
+  the emulator). Run them explicitly, in parallel:
   ```bash
-  uv run pytest -m system tests/system/
+  uv run pytest -m system -n auto tests/system/
   ```
+  Each test starts its own emulator on its own PTY with its own temporary HOME, so they run in
+  parallel under pytest-xdist: about 70-100 s with 8-12 workers, against about 11 minutes one at a
+  time (measured 2026-10-03). They are real-time against the emulator's clock, so if one ever turns
+  out to be timing-sensitive under load, mark it to run alone rather than giving up `-n`.
 - **WSL/Linux only.** The emulator's Modbus link is a PTY (`/dev/pts/N`); native Windows can't open
   it, and the venv is a WSL venv. Run from a WSL shell.
 - **Requires the fw/ emulator.** The in-repo `../fw` is the default; set `REFLEX_FW_DIR` only to point at a different checkout.
@@ -171,7 +207,7 @@ deleted and never reissued.
 Read [kivy-fsm-design-pattern.md](kivy-fsm-design-pattern.md) before adding or
 refactoring `transitions`-based FSMs, dispatchers that mediate between widgets and
 hardware, or multi-step operator flows. It defines the layered architecture
-(UI → Controller → FSM → HAL), event bus conventions, the declarative state-to-UI
+(UI → Controller → FSM → register facade → PortOwner → firmware registers), event bus conventions, the declarative state-to-UI
 policy table, and anti-patterns to avoid.
 
 ## Build and Run
@@ -304,8 +340,7 @@ Every UI component follows this structure:
 - **Versioning:** ONE version for the whole monorepo: the repo-root `VERSION`
   file, mirrored into `ui/pyproject.toml`'s `version` by the release workflow.
   Both halves carry the same version even when only one changed: `v1.4.0` names
-  a known-good firmware + UI pair (`decisions/repo-structure-monorepo.md`, at the
-  repo root). Do not bump either by hand.
+  a known-good firmware + UI pair (`docs/design/decisions.md`). Do not bump either by hand.
 
 - **CI/CD:**
   - `fw.yml` / `ui.yml` / `system.yml`, the test suites, run on **every**

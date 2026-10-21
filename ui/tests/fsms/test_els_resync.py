@@ -67,7 +67,7 @@ class FakeHal:
         self.read_failures = 0
         # When set, every read below answers 0 AND counts itself -- exactly
         # what production does behind a failed frame or a dropped link
-        # (communication.py returns 0 and increments; ElsStopHal._no_link does
+        # (communication.py returns 0 and increments; ElsStopRegisters._no_link does
         # the same when there is no link at all). Modelled at the moment of the
         # read rather than as a counter bumped beforehand, because the guard
         # samples its baseline at the top of the poll: a fake that incremented

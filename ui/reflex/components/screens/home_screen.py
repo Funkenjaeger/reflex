@@ -55,7 +55,20 @@ class HomePage(Screen):
         self._keyboard.bind(on_key_down=self._on_keyboard_down)
         self.app.bind(current_mode=self.change_mode)
         self.app.bind(axes=self._on_axes_changed)
-        self.change_mode(self, self.next_mode)
+        # STARTUP IS NOT A MODE SWITCH. The first layout goes up now, with no
+        # speed gate and no teardown: what happens to the machine at connect
+        # belongs to the connect-time reconcile (fsms/els_fsm.py), which may
+        # leave firmware work running on purpose. Routing this through
+        # change_mode() would hide Sync Enable while the servo moves and turn
+        # sync off once it stops.
+        self._show_layout(self.next_mode)
+
+    def els_advanced_bar(self):
+        """The one ElsAdvancedBar: the ELS layout's, built with the screen
+        whatever mode is showing. Setup's ELS settings entry opens the popup
+        on it (els_setup_screen.py), so both entry points edit one state."""
+        from reflex.app import MODE_ELS   # deferred: reflex.app imports screens
+        return self.mode_layouts[MODE_ELS].els_adv_bar
 
     def _on_axes_changed(self, instance, value):
         """Rebuild axis bars in all mode layouts when the axes list changes."""
@@ -63,6 +76,9 @@ class HomePage(Screen):
             layout.rebuild_axes()
 
     def change_mode(self, instance, value):
+        """An operator mode switch (app.current_mode changed): wait for the
+        servo to stop, tear motion down, then swap layouts. Not called at
+        construction; see __init__."""
         self.next_mode = value
         if self.app.servo.servoMode != 0:
             self.app.servo.jogSpeed = 0
@@ -81,18 +97,21 @@ class HomePage(Screen):
         # dispatchers/els.py firing as a side effect -- teardown inherited
         # from binding order in another module, the exact shape the FSM paths
         # were purged of (see the SYNC OFF FIRST comments in fsms/els_fsm.py
-        # and els_stop_hal.stop_sync for the firmware re-assert race this
+        # and els_stop_registers.stop_sync for the firmware re-assert race this
         # guards against). A mode switch must kill every motion source even
         # if that binding is gone or servoMode is already 0 (a same-value
         # write fires no binding at all).
         self.app.els_uic.hal.stop_sync()
         self.app.servo.servoMode = 0
 
-        # Swap the entire mode layout
+        self._show_layout(self.next_mode)
+
+    def _show_layout(self, mode):
+        """Swap the entire mode layout. Touches no register."""
         if self.current_layout is not None:
             self.bars_container.remove_widget(self.current_layout)
 
-        self.current_layout = self.mode_layouts.get(self.next_mode)
+        self.current_layout = self.mode_layouts.get(mode)
         if self.current_layout is not None:
             self.bars_container.add_widget(self.current_layout)
 

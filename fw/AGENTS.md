@@ -7,44 +7,45 @@ the maintainer runs that, not on demand.** The emulator and the test suite have
 repeatedly looked green while something real was wrong — no servo dynamics, no
 Modbus timing, no metal. Emulator green is evidence, never verification.
 
-**Do NOT commit directly to `dev-staging`.** It is one step from a dev release
-and everything on it is supposed to be hardware-verified.
+**Do NOT commit directly to `dev`.** Release candidates are cut from it, and
+everything on it is supposed to be hardware-verified.
 
 - Work on a **feature branch**, or on **`integration`** when several changes are
   in flight and separate branches would just be overhead.
-- `integration` / feature branch → `dev-staging` is merged **only after the maintainer
-  has verified on hardware**. The maintainer does that merge, or explicitly asks for it.
-- `dev-staging` → `dev` and `dev` → `main` are **the maintainer's alone**. Never do these.
+- A commit is hardware-verified when an integration build (`vX.Y.Z-rc.N.dev.M`) made
+  from it has been installed and run on the machine. Merging `integration` into
+  `dev` happens **only after that**; the maintainer does that merge, or
+  explicitly asks for it.
+- Merging `dev` into `main` is **the maintainer's alone**. Never do it.
 
 **The one exception**, for changes that cannot affect machine behavior and so
-need no hardware run: documentation, comments, `todo.md`, tests, and
+need no hardware run: documentation, comments, tests, and
 emulator-only code. Anything touching `Core/` is NOT clerical, however small it
 looks or however well tested — `Core/Src/Ramps.c` is the ISR that moves the
 machine.
 
 If unsure whether a change qualifies, it does not. Put it on a branch and ask.
 
-**Never push without being asked.** `origin` fans out to BOTH the canonical
-remote and your mirror, so any push writes two remotes at once. Git
-only *fetches* from the canonical remote, so there is no tracking ref for
-the mirror and `--force-with-lease` cannot protect it — a force-push needs an
-explicit `--force-with-lease=<branch>:<expected-sha>` aimed at the mirror URL
-directly, or it fails with "stale info" after the canonical remote has already
-moved.
+**Never push without being asked.** `origin` is the canonical remote. This
+public repository receives only `dev`, `main` and release tags, each by a
+deliberate push: never `integration`, a feature branch or a `.dev` tag.
 
-Record hardware-verification points in `todo.md` so the next session knows what
-has been proven on metal.
+What has and has not been proven on metal is recorded where a claim belongs: in
+the header or test that makes it. A constant nobody has measured says so in its
+own comment; a feature the emulator covers but hardware does not says so in the
+test that covers it. Do not create a separate ledger of verification points.
 
-## Todo Tracking
+## Work tracking
 
-When you encounter a task, follow-up item, or piece of work that should be tracked, add it to `todo.md` in the project root. This applies to:
-- Deferred work discovered during development
-- `TODO`/`FIXME` comments that appear in code or documentation
-- Bugs or improvements identified during debugging
-- Hardware workarounds that should be removed on a future board revision
-- Any action item that won't be completed in the current session
+**The work queue is not kept in this repo.** The maintainer keeps it outside,
+so there is no in-repo file to append an item to. Raise a deferred item, a bug
+found while debugging, or a hardware workaround that a future board revision
+should remove by telling the maintainer in your reply.
 
-Do NOT leave `TODO`/`FIXME` comments in code, documentation, or bash snippets — always route them to `todo.md` instead.
+Do NOT leave `TODO`/`FIXME` comments in code, documentation, or bash snippets.
+If something is worth writing down in the source, write the fact itself — what
+is unmeasured, what the constraint is, why the code is shaped this way — as a
+normal comment that stands on its own, not as a pointer to a queue.
 
 ## What this firmware is
 
@@ -81,12 +82,13 @@ After any changes to `Core/Src/Ramps.c`, `Core/Inc/Ramps.h`, or other firmware s
 ### Key files
 - `Core/Src/Ramps.c` — core motion control (ISR, indexing, jog, ELS)
 - `Core/Inc/Ramps.h` — shared data structs, Modbus-mapped
-- `Core/Src/Modbus.c` — Modbus RTU slave (addr 17)
+- `Core/Src/mb_app.c` — Modbus RTU slave (addr 17): the shared core in `modbus_rtu/`, bound by `Core/mb_port/mb_rtu_port.h`
+- `Core/Src/mb_app_hw.c` — its USART1 transport, DMA both ways
 - `Core/Src/Scales.c` — encoder timer init
 
 ### Concurrency
 - TIM9 ISR (`SynchroRefreshTimerIsr`) handles all motion control at 20 µs ticks (50 kHz; rate and derived tick constants in `Core/Inc/els_isr_rate.h`)
-- FreeRTOS tasks handle Modbus, speed updates, motor enable
+- A superloop (`RampsPoll`, no RTOS) services Modbus and runs the speed-update, motor-enable and LED jobs
 - `rampsSharedData_t` is the shared state, memory-mapped to Modbus registers
 
 ### Servo modes

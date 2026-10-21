@@ -1,12 +1,18 @@
+from reflex.utils.base_device import write_confirmed
 import collections
 import time
 
 from fractions import Fraction
 
 from kivy.logger import Logger
-from kivy.properties import StringProperty, NumericProperty, BooleanProperty
+from kivy.properties import (
+    BooleanProperty, NumericProperty, ObjectProperty, StringProperty,
+)
 
 from reflex.dispatchers.saving_dispatcher import SavingDispatcher
+from reflex.fsms.els_gear import (
+    NO_GEARBOX, GearTable, GearTableError, drive_position_of,
+)
 from reflex.utils.ctype_calc import uint32_subtract_to_int32
 from reflex.utils.notices import NOTICE_WARNING
 from reflex.utils.operator_notice import notify_operator
@@ -40,7 +46,32 @@ class ServoDispatcher(SavingDispatcher):
     elsMode = BooleanProperty(False)
     leadScrewPitch = NumericProperty(0.25)
     leadScrewPitchIn = BooleanProperty(True)
-    leadScrewPitchSteps = BooleanProperty(800)
+    leadScrewPitchSteps = NumericProperty(800)
+    #: The gearbox between servo and leadscrew, in its text form
+    #: (reflex/fsms/els_gear.py): "" for none (the default), else e.g.
+    #: "A=1, B=2, C=1/2", reference first. Persisted here, beside the
+    #: position, so the settings snapshot and the commissioning ledger carry
+    #: it. Set through ElsUiController.set_gear_table, which validates it;
+    #: a stored text that does not parse runs as no gearbox, and says so in
+    #: the log.
+    gearbox_table = StringProperty("")
+    #: The lever position the controller believes is engaged. Lead Screw
+    #: Pitch Steps is the REFERENCE position's; this scales the derived
+    #: mm-per-step. Persisted, because the lever stays where it was across a
+    #: restart. A name not in the table reads as the reference; with no
+    #: gearbox it is ignored.
+    gearbox_position = StringProperty("")
+    #: Not persisted: the position being measured by the gearbox
+    #: measurement (els_gear_survey.py), "" otherwise. While set, the ratio
+    #: is derived for it instead of gearbox_position, because the lever is
+    #: in it for every pass of the measurement. Never saved, so a restart
+    #: mid-measurement is back in the stored position.
+    gearbox_measuring = StringProperty("")
+    #: Derived, not persisted: the parsed gearbox_table.
+    gear_table = ObjectProperty(NO_GEARBOX)
+    #: Derived, not persisted: the position in effect (gearbox_position
+    #: resolved against the table; "" with no gearbox). What the screens show.
+    gearbox_engaged = StringProperty("")
     reverse = BooleanProperty(False)
 
     position = NumericProperty(0)
@@ -64,12 +95,15 @@ class ServoDispatcher(SavingDispatcher):
         "disableControls",
         "speed",
         "stepsToGo",
+        "gearbox_engaged",
+        "gearbox_measuring",
     ]
 
     def __init__(self, board, formats, **kv):
         self.board = board
         self.formats = formats
         super().__init__(**kv)
+        self._load_gear_table()
         self.configure_lead_screw_ratio(self, None)
 
         # Board event bindings
@@ -92,6 +126,10 @@ class ServoDispatcher(SavingDispatcher):
         self.bind(leadScrewPitch=self.configure_lead_screw_ratio)
         self.bind(leadScrewPitchIn=self.configure_lead_screw_ratio)
         self.bind(leadScrewPitchSteps=self.configure_lead_screw_ratio)
+        self.bind(gearbox_table=self._on_gearbox_table)
+        self.bind(gearbox_position=self._sync_gearbox_engaged)
+        self.bind(gearbox_position=self.configure_lead_screw_ratio)
+        self.bind(gearbox_measuring=self.configure_lead_screw_ratio)
         self.bind(reverse=self._on_reverse_changed)
 
         # Private variables that don't need dispatchers etc
@@ -112,6 +150,25 @@ class ServoDispatcher(SavingDispatcher):
         self._divergence_polls = 0
         self.servoMode = 0
 
+    def _load_gear_table(self) -> None:
+        """Parse gearbox_table into gear_table. Never raises: a stored text
+        that does not parse (a hand edit) runs as no gearbox, logged, rather
+        than taking the app down at load."""
+        try:
+            self.gear_table = GearTable.parse(self.gearbox_table)
+        except GearTableError as e:
+            log.error(f"gearbox_table {self.gearbox_table!r} is not a valid "
+                      f"gearbox table ({e}); running with no gearbox")
+            self.gear_table = NO_GEARBOX
+        self._sync_gearbox_engaged()
+
+    def _sync_gearbox_engaged(self, *_args) -> None:
+        self.gearbox_engaged = self.gear_table.resolve(self.gearbox_position)
+
+    def _on_gearbox_table(self, *_args) -> None:
+        self._load_gear_table()
+        self.configure_lead_screw_ratio(self, None)
+
     def configure_lead_screw_ratio(self, instance, value):
         if self.elsMode is True:
             leadScrewPitch = Fraction(self.leadScrewPitch)
@@ -119,7 +176,13 @@ class ServoDispatcher(SavingDispatcher):
             if self.leadScrewPitchIn is True:
                 leadScrewPitch = leadScrewPitch * Fraction(254, 10)
 
-            leadScrewRatio = leadScrewPitch * Fraction(1, self.leadScrewPitchSteps)
+            # mm of carriage per motor step in the ENGAGED gear: the reference
+            # gear's pitch/steps times the lever's factor (1 with no gearbox).
+            # Every consumer of ratioNum/Den (sync ratio, thread geometry,
+            # retract, cut margin) then sees the real travel per step without
+            # knowing about gears.
+            leadScrewRatio = (leadScrewPitch * Fraction(1, self.leadScrewPitchSteps)
+                              * self.gear_table.factor(drive_position_of(self)))
             self.ratioNum = leadScrewRatio.numerator
             self.ratioDen = leadScrewRatio.denominator
 
@@ -233,8 +296,8 @@ class ServoDispatcher(SavingDispatcher):
 
     # The exact words the operator sees. A constant so the test asserts on the
     # string that ships rather than on a paraphrase of it.
-    DIVERGENCE_NOTICE = ("Controller did not stop when asked — the carriage "
-                         "may still be driven")
+    DIVERGENCE_NOTICE = ("Controller did not stop the servo. Carriage can "
+                         "still move.")
 
     def _check_servo_mode_divergence(self, observed):
         """Watchdog: did the machine keep feeding after we said stop?
@@ -411,8 +474,20 @@ class ServoDispatcher(SavingDispatcher):
             log.error(f"Unable to write servoDir: {e}")
 
     def on_servoMode(self, instance, value):
-        self.board.device['fastData']['servoMode'] = self.servoMode
         if not self.servoMode_from_firmware:
+            # Only a UI-originated change is written to the firmware. A value
+            # mirrored from a readback came FROM the firmware; writing it back
+            # turns an observation into a command, and once the read it came
+            # from is stale (a write queued behind it, a UI stop landing first)
+            # that command re-asserts a mode nobody asked for. Same rule as the
+            # syncEnable binding in dispatchers/els.py.
+            # CONFIRMED, and the answer kept: stop_feed() is a safety stop
+            # at disengage and the disengage log must be able to say whether
+            # the feed-off actually landed. Reading connection_manager.connected
+            # afterwards used to serve for that and no longer can -- a tick
+            # scan on the owner thread can set it True over a failed write.
+            self.last_mode_write_acknowledged = write_confirmed(
+                self.board.device['fastData'], 'servoMode', self.servoMode)
             # Remember what WE asked for. Only UI-originated changes count as
             # commands; a value mirrored back from the firmware is an
             # observation, and recording it here would make the watchdog below
@@ -436,12 +511,49 @@ class ServoDispatcher(SavingDispatcher):
         else:
             self.servoMode = 1
 
-    def stop_feed(self):
+    # Whether the firmware acknowledged the last UI-originated servoMode
+    # write. None = no such write yet. A class attribute so a dispatcher that
+    # has never written one still answers.
+    last_mode_write_acknowledged = None
+
+    def stop_feed(self) -> bool:
         """Force the sync feed off (servoMode=0), idempotent. Used as a safety
         stop when ELS disengages so a running spindle-synced feed doesn't keep
-        driving the carriage with no ELS stop to arrest it."""
+        driving the carriage with no ELS stop to arrest it.
+
+        Returns whether the firmware acknowledged the feed-off write. Already
+        off is True: there was nothing to acknowledge, and reporting a failure
+        for a write nobody made would cry wolf on every idle disengage.
+        """
+        if self.servoMode == 0:
+            return True
+        self.last_mode_write_acknowledged = None
+        self.servoMode = 0
+        # Set by on_servoMode, which the assignment above fires synchronously.
+        # None means the handler did not write (a firmware-mirrored change),
+        # which cannot happen here because this is UI-originated.
+        return self.last_mode_write_acknowledged is not False
+
+    def adopt_feed_off(self) -> None:
+        """The firmware turned the feed off ON OUR COMMAND (an acknowledged
+        DISENGAGE, els_command.py): record it as commanded, and mirror it.
+
+        Writes nothing. The firmware already set servoMode 0 and cleared every
+        syncEnable; this only brings the UI's side into line, so the
+        divergence watchdog below compares against 0 from here on. Left at the
+        last UI-originated value (1), the watchdog could never report the
+        firmware switching the feed back on after the disengage, which is the
+        one event it exists to catch. The mirror is flagged as observed so the
+        servoMode -> syncEnable binding (dispatchers/els.py) writes nothing
+        either.
+        """
+        self._commanded_servo_mode = 0
         if self.servoMode != 0:
-            self.servoMode = 0
+            self.servoMode_from_firmware = True
+            try:
+                self.servoMode = 0
+            finally:
+                self.servoMode_from_firmware = False
 
     def set_current_position(self, value):
         ratio = Fraction(self.ratioNum, self.ratioDen)

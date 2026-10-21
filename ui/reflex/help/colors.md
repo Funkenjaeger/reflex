@@ -1,37 +1,37 @@
 Color Settings
 ==============
 
-Customize the colors used throughout the DRO interface. Tap any
-color swatch to open the color picker.
+These settings set the colors of the DRO interface. Press a color
+swatch to open the Color picker.
 
 ## Color Roles
 
-### Home Screen Digits
+### Home screen digits
 The color of the position readout numbers on the home screen.
-Choose a color with high contrast against the dark background
-for readability in workshop lighting.
+Choose a color with high contrast against the dark background.
+Then the digits are easy to read in workshop lighting.
 
-### Accept Color
-Used for confirmation buttons and positive actions (e.g., "Apply",
-"OK", "Go To"). Typically green.
+### Accept color
+The color of confirmation buttons and positive actions (for example,
+"Apply" and "OK"). Typically green.
 
-### Cancel Color
-Used for cancel/back buttons and destructive actions (e.g.,
-"Cancel", "Remove"). Typically red.
+### Cancel color
+The color of cancel and back buttons and of destructive actions (for
+example, "Cancel"). Typically red.
 
-### Indicators On Color
-The color of status indicators when active/enabled (e.g., sync
-active, servo enabled). Should be bright and attention-grabbing.
+### Indicators on color
+The color of status indicators when they are active or enabled (for
+example, sync active or servo enabled). Use a bright color that
+attracts attention.
 
-### Indicators Off Color
-The color of status indicators when inactive/disabled. Should be
-dim or muted to contrast with the "on" state.
+### Indicators off color
+The color of status indicators when they are inactive or disabled.
+Use a dim or muted color that contrasts with the "on" state.
 
 ## Tips
 
-- Use high-contrast colors for the home screen digits — bright
-  colors on the dark background are easier to read at a distance
-- Keep accept/cancel colors consistent with common conventions
-  (green = go, red = stop) to avoid confusion
-- Test your color choices under the same lighting conditions as
-  your workshop
+- Use high-contrast colors for the home screen digits. Bright colors
+  on the dark background are easier to read at a distance
+- Use the common colors for accept and cancel (green = go,
+  red = stop). This prevents confusion
+- Test your color choices in the same lighting as your workshop

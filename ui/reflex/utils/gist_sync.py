@@ -566,7 +566,7 @@ def sync_now(doc: dict | None = None, *, transport=None) -> str | None:
         last_error = str(e)
         return None
     except Exception as e:
-        last_error = "Gist sync failed -- will retry at the next change."
+        last_error = "Gist sync failed. It will retry at the next change."
         log.error(f"gist sync failed (will retry at the next change): {e}")
         return None
 

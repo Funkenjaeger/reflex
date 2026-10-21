@@ -414,3 +414,86 @@ class TestModeWatchSchema:
         recorded = json.loads(
             (tmp_path / "takeup_settle.jsonl").read_text().splitlines()[-1])
         assert recorded["net_counts"] == 2
+
+
+class TestIsrGapSchema:
+    """Schema 8 peak-holds the ISR's tick-to-tick gap. Its diagEndReason is
+    the host's reset request, not an end reason, so a line must be recorded
+    whatever end_reason says, and it carries the decoded window."""
+
+    @staticmethod
+    def _capture(seq=1):
+        from reflex.fsms import els_diag as d
+        trace = [0] * 50
+        trace[d.ISR_GAP_W_MIN] = 1800
+        for i, n in enumerate((70000, 12, 3, 1)):
+            trace[d.ISR_GAP_W_OVER + 2 * i] = n & 0xFFFF
+            trace[d.ISR_GAP_W_OVER + 2 * i + 1] = n >> 16
+        for i, v in enumerate((2100, 2500, 3000, 4000)):
+            trace[d.ISR_GAP_W_THRESH + i] = v
+        trace[d.ISR_GAP_W_NOMINAL] = 2000
+        trace[d.ISR_GAP_W_WORST_TICK] = 4242
+        trace[d.ISR_GAP_W_WORST_PREV] = 1999
+        trace[d.ISR_GAP_W_WORST_MMODE] = 6
+        trace[d.ISR_GAP_W_WORST_SERVO] = 1
+        trace[d.ISR_GAP_W_WORST_ENABLE] = 1
+        trace[d.ISR_GAP_W_WORST_TAKEUP] = 1
+        trace[d.ISR_GAP_W_WINDOW] = 2
+        # The register is int16: a word >= 0x8000 arrives negative.
+        trace = [v - 0x10000 if v >= 0x8000 else v for v in trace]
+        return {
+            "schema": 8, "seq": seq, "bucket_ticks": 0, "bucket_count": 24,
+            "settle_ticks": 4100, "net_counts": -1,   # 0xFFFFFFFF ticks
+            "capture_ticks": 1500, "end_reason": 0, "trace": trace,
+            "reserved": [0, 0, 0, 0],
+        }
+
+    def test_recognised_and_recorded_with_end_reason_zero(self, hal, board, tmp_path):
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_ISR_GAP
+        hal.read_diag_schema.return_value = ELS_DIAG_SCHEMA_ISR_GAP
+        hal.read_diag_seq.return_value = 0
+        r = rec(hal, board, tmp_path)
+        r.poll()
+        assert r.enabled is True and r.schema == ELS_DIAG_SCHEMA_ISR_GAP
+        hal.read_diag_seq.return_value = 1
+        hal.read_diag_capture.return_value = self._capture(seq=1)
+        r.poll()
+        assert r.captures_written == 1
+
+    def test_line_carries_the_decoded_window(self, hal, board, tmp_path):
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_ISR_GAP
+        hal.read_diag_schema.return_value = ELS_DIAG_SCHEMA_ISR_GAP
+        hal.read_diag_seq.return_value = 0
+        r = rec(hal, board, tmp_path)
+        r.poll()
+        hal.read_diag_seq.return_value = 1
+        hal.read_diag_capture.return_value = self._capture(seq=1)
+        r.poll()
+        line = json.loads((tmp_path / "takeup_settle.jsonl").read_text().splitlines()[-1])
+        g = line["isr_gap"]
+        assert g["worst_gap_cycles"] == 4100
+        assert g["ticks"] == 0xFFFFFFFF
+        assert g["over_counts"] == [70000, 12, 3, 1]
+        assert g["thresholds_cycles"] == [2100, 2500, 3000, 4000]
+        assert g["min_gap_cycles"] == 1800 and g["nominal_cycles"] == 2000
+        assert g["isr_peak_cycles"] == 1500 and g["window"] == 2
+        assert g["worst"] == {"tick": 4242, "prev_tick_cycles": 1999,
+                              "machine_mode": 6, "servo_mode": 1, "enable": 1,
+                              "active": 0, "takeup_pending": 1}
+        # The raw block stays on the line too, so a decoder fix can re-read it.
+        assert line["trace"] == self._capture()["trace"]
+
+    def test_recorder_never_writes_the_reset_register(self, hal, board, tmp_path):
+        """The reset belongs to the bench reader. A UI that cleared the window
+        would erase the very session it is recording."""
+        from reflex.utils.devices import ELS_DIAG_SCHEMA_ISR_GAP
+        hal.read_diag_schema.return_value = ELS_DIAG_SCHEMA_ISR_GAP
+        hal.read_diag_seq.return_value = 0
+        r = rec(hal, board, tmp_path)
+        r.poll()
+        hal.read_diag_seq.return_value = 1
+        hal.read_diag_capture.return_value = self._capture(seq=1)
+        r.poll()
+        called = {c[0] for c in hal.method_calls}
+        assert called <= {"read_diag_schema", "read_diag_seq",
+                          "read_diag_capture", "tick.diag_seq"}, called

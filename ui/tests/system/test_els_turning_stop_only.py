@@ -32,9 +32,9 @@ def test_turning_stop_only_reaches_stop_z(harness):
 
     # Stop target on the cutting side (els_forward=True => cut_dir=-1 => cut moves
     # in the -scaledPosition direction). With commissioned geometry the span is
-    # real mm: it must clear the ~3.49 mm safety margin, but stay well inside the
-    # 5 mm of physical -Z travel the reference machine has from its Z=0 start
-    # (lathe.toml min_position_mm=-5) or the carriage pins on the travel limit
+    # real mm: it must clear the ~7 mm safety margin, but stay well inside the
+    # 20 mm of physical -Z travel the reference machine has from its Z=0 start
+    # (lathe.toml min_position_mm=-20) or the carriage pins on the travel limit
     # before reaching stop_z.
     z_start = h.z_scaled_position()
     margin = h.safety_margin()

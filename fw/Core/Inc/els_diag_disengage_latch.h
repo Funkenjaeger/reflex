@@ -73,7 +73,7 @@ static inline void elsDiagInit(elsDiagCtx_t *ctx, elsStop_t *stop) {
   ctx->captureTick       = 0;
 }
 
-/* The ISR-side entry points are no-ops: this probe watches a FreeRTOS task, not
+/* The ISR-side entry points are no-ops: this probe watches a superloop job, not
  * the tick. Every probe implements the whole contract so Ramps.c never learns
  * which one it is calling. */
 static inline void elsDiagArm(elsDiagCtx_t *ctx, elsStop_t *stop) {
@@ -128,6 +128,11 @@ static inline void elsDiagTaskTick(elsDiagCtx_t *ctx, rampsSharedData_t *shared,
 static inline int32_t elsDiagExtraDwell(const elsDiagCtx_t *ctx) {
   (void)ctx;
   return 0;
+}
+
+/* ISR-tail hook (every tick, schema 8+) -- not this probe's concern. */
+static inline void elsDiagTickTail(elsDiagCtx_t *ctx, rampsSharedData_t *shared) {
+  (void)ctx; (void)shared;
 }
 
 #endif /* ELS_DIAG_DISENGAGE_LATCH_H */

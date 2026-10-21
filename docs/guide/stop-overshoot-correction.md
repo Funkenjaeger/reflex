@@ -1,10 +1,10 @@
 # Stop overshoot correction
 
 !!! warning "Experimental, and off by default"
-    This has been measured and tested on one machine only, the development
-    lathe, and there is no calibration wizard yet. On any other lathe, leave it
-    off, or turn it on knowing that the correction may be the wrong size for
-    your machine. Check it as described below before you trust it.
+    The correction has been accepted on metal on one machine, the development
+    lathe. The measurement that makes a table for any other machine is new and
+    has not yet been run on hardware. Check every table at a shoulder, as
+    described below, before you trust it.
 
 ## What it corrects
 
@@ -29,62 +29,117 @@ firmware to fire the stop **early**, by the overshoot measured for that speed
 plus a small margin. The carriage comes to rest just **short** of Stop Z instead
 of just past it. Your Stop Z itself never changes.
 
+The overshoot at each speed comes from **this machine's overshoot table**. A
+machine has none until it is measured, and with no table the correction cannot
+turn on.
+
 ## Where to find it
 
 Tap the **gear** on the advanced ELS bar, under the mode selector, to open
-**ELS Threading Settings**. The two settings are at the bottom, under
-**Advanced**:
+**Advanced ELS settings**, or open it from **Setup → ELS → Advanced ELS
+Settings**. The settings are at the bottom, under **Advanced**:
 
 | Setting | What it does |
 |---|---|
-| **Stop overshoot correction** | On or off. **Default: off.** |
+| **Stop overshoot correction** | On or off. **Default: off.** It cannot turn on without a table. |
 | **Overshoot margin (Z counts)** | Extra counts of early stop on top of the measured overshoot. **Default: 1**, the value it was sized for. Larger values stop further short. 0 aims at the worst overshoot measured, with nothing to spare. |
+| **Overshoot table → Measure** | Measures the table, or tells you whether this machine needs one. |
 
-## Is it the right size for your machine?
+## Measuring the table
 
-The correction is a table measured on the development lathe, with:
+The step-by-step walkthrough is [Measuring the stop overshoot](measuring-stop-overshoot.md).
 
-- a Z scale of 5 µm per count (the table is kept in encoder counts);
-- that lathe's servo drive and the drive's own settings;
-- that lathe's gearing between the motor and the carriage: the gearbox
-  position and the leadscrew.
+The measurement is a set of air passes that you cut to the stop with the ELS
+bar, as usual, in **Feed** mode. The correction is held off while it runs, so
+every stop shows the whole coast. After each stop the status strip shows the
+result and the next step.
 
-The overshoot is the drive carrying the carriage on after the stop fires: a
-few milliseconds at full speed, then a slow-down. The slow-down is set by the
-drive and by the gearing, so either one can change the size of the overshoot.
-The **Maximum Speed** and **Acceleration** settings in **Setup → Servo** do not
-enter into it: by the time the overshoot happens, the controller has already
-stopped sending steps.
+- **Detect** is one pass at a medium feed. It answers *yes* (the carriage
+  coasted more than 2 counts), *no* (2 counts or less, at that feed), or
+  *unknown*. It never reports a zero overshoot with confidence: a slow feed or a
+  stop with steps still queued gives *unknown*.
+- **Sweep** is 3 passes at each of 4 carriage speeds, about five minutes, in
+  any order. Use speeds from your slowest turning feed to faster than your
+  fastest: the fastest becomes the top of the table. The sweep refuses to make
+  a table when the 3 passes at one speed coast more than 3 counts apart,
+  because the correction relies on the coast repeating.
 
-If your machine differs in any of the three, the table does not describe it,
-and the correction can be too small. If you change the gearbox position, the
-drive's settings or the Z scale on a machine where it was working, turn it off
-until you have checked it again.
+When the sweep is complete, open **Measure** again and press **Save**. Saving
+does not turn the correction on.
+
+The table keeps, for each speed, the **worst** coast of its 3 passes, and
+the correction adds the margin to that. Between standstill and the slowest speed
+it is a straight line, which over-estimates the coast there: the safe side.
+
+## What the table is bound to
+
+A table is correct only for the setup it was measured with, and it records
+that setup:
+
+- the Z scale resolution;
+- the leadscrew: **Lead screw pitch** and **Lead screw pitch steps**;
+- the **Gearbox table**.
+
+Change any of them and the table is **stale**: the correction goes to off with
+a notice naming the change, and the table is kept, so putting the setting back
+makes it usable again. The check runs all the time, so after a restart the table
+applies only if its setup still matches.
+
+The gearbox **position** is not part of it: on the development lathe the
+overshoot was measured in all three positions and one table covers them. On
+another lathe, measure again after a gearbox change, or check it at a shoulder.
+
+Some changes cannot be seen from the settings: a different servo drive, the
+drive's own settings, or a different controller board. Measure the table again
+after any of them. The **Maximum Speed** and **Acceleration** settings in
+**Setup → Servo** do not enter into it: by the time the overshoot happens, the
+controller has already stopped sending steps.
+
+## After each corrected stop
+
+A stop that lands short, the normal case, shows nothing on screen. **Measure**
+shows where the last corrected stop landed, in counts and in display units:
+
+> Last corrected stop: landed 2 counts (0.010 mm) short.
+
+The two should agree with your DRO. If they do not, check the Z scale settings.
+
+**A corrected stop that lands more than 1 count past Stop Z turns the
+correction off**, with a notice. Past means further in the direction the
+carriage was traveling. One count is allowed because the trigger and the
+settled reading are each a whole count. This catches what no setting reveals:
+a drive retuned, a worn drivetrain, a board that behaves differently.
 
 ## Checking it on your lathe
 
 Do this at each feed you intend to use, because the overshoot grows with speed.
 
 1. **Air first.** Keep the tool clear of the work. Set a Stop Z, engage, and
-   [feed to it](feeding-to-a-shoulder.md) with the correction **off**. When the
-   carriage has settled, compare the Z DRO with Stop Z. The difference is your
-   overshoot.
-2. **Turn it on** and make a few more passes at the same feed. The Z DRO should
-   settle **at Stop Z or a hair short** of it, never past. In real cuts to a
-   shoulder on the development lathe, 9 stops out of 9 landed 1 to 4 counts
-   (5 to 20 µm) short.
-3. **Then cut a real shoulder** and check it.
-
-**If any stop lands past Stop Z, turn it off.** Past means further in the
-direction the carriage was travelling.
+   [feed to it](feeding-to-a-shoulder.md) with the correction **on**. Read
+   where it landed in the status strip and on the Z DRO. It should settle
+   **at Stop Z or a hair short** of it, never past. In real cuts to a shoulder
+   on the development lathe, 9 stops out of 9 landed 1 to 4 counts (5 to 20 µm)
+   short.
+2. **Then cut a real shoulder** and check it.
 
 ## Faster than it was measured
 
-The table stops at about 3,500 counts per second of Z travel, roughly 40 in/min
-on a 5 µm scale. Faster than that, the correction holds at its largest value
-and says so once per pass:
+The table stops at the fastest speed of its sweep: on the development lathe about
+3,500 counts per second of Z travel, roughly 40 in/min on a 5 µm scale. Faster
+than that, the correction holds at its largest value. When the carriage stays
+that fast for a full second, it also says so, once per pass:
 
-> Z rate above the calibrated range (3529 counts/s); correction held at its top value
+> Z rate is above the calibrated range (3529 counts/s). Correction is held at its top value.
 
 The carriage can then overshoot further than the correction allows for, so
-check those stops by eye.
+check those stops by eye. A shorter burst of speed, such as the carriage
+catching up to the spindle just after **Cut**, raises the correction to its
+largest value without the notice.
+
+## Upgrading from 1.2.2-rc.2 or earlier
+
+Until then the table was the development lathe's, built into the software. A
+machine that had the correction **on** keeps that table as its own setting on the
+first start, if its Z scale is 200 counts/mm and its leadscrew is 8 TPI at 1600
+steps per revolution, and a notice says so once. On any other machine the
+correction goes to off with a notice: measure the table.

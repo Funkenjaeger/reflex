@@ -4,6 +4,7 @@ from kivy.properties import (
     BooleanProperty,
     StringProperty,
     AliasProperty,
+    ObjectProperty,
 )
 from kivy.uix.boxlayout import BoxLayout
 
@@ -61,6 +62,12 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
     # With the two split, kv owns what the bar needs and the layout owns whether
     # it gets it, and neither silently overwrites the other.
     natural_height = NumericProperty(128)
+
+    # Read-only "Gear <name>" for the status gutter, mirrored from the servo's
+    # gearbox_engaged (the same source the ELS settings dropdown shows), so a
+    # gear adopted by the coupling check shows up here too. Empty with no
+    # gearbox, and the label is hidden: nothing on this screen implies one.
+    gear_text = StringProperty("")
 
     # How far the status gutter's recessed band is inset from its own bottom
     # edge, i.e. where the hairline divider sits. ONE NUMBER, FOUR USES: the
@@ -229,6 +236,7 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         "stop_z_text",
         "major_diameter_text",
         "minor_diameter_text",
+        "gear_text",
         "position",
         "x", "y",
         "minimum_width",
@@ -266,10 +274,21 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
             # threading and X is still at depth).
             self._sync_is_threading()
             self.els_bar.bind(mode_name=lambda *_: self._sync_is_threading())
+            # The feed on the bar, which labels each overshoot sweep group.
+            self._sync_feed()
+            self.els_bar.bind(feed_name=lambda *_: self._sync_feed(),
+                              mode_name=lambda *_: self._sync_feed())
+        servo = getattr(self.app, "servo", None)
+        if servo is not None and hasattr(servo, "bind"):
+            self._sync_gear_text(servo, servo.gearbox_engaged)
+            servo.bind(gearbox_engaged=self._sync_gear_text)
         self.controller.is_inner = self.inner_thread
         self.bind(inner_thread=lambda *_: setattr(self.controller, "is_inner", self.inner_thread))
 
     # ── Mode-flag mirroring (widget persistence → controller) ────────────────
+
+    def _sync_gear_text(self, instance, value):
+        self.gear_text = f"Gear {value}" if value else ""
 
     def _sync_wizard_to_controller(self, instance, value):
         self.controller.wizard_enabled = value
@@ -289,6 +308,11 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         from reflex import feeds
         self.controller.is_threading = feeds.is_threading_table(
             self.els_bar.mode_name or "")
+
+    def _sync_feed(self):
+        from reflex import feeds
+        self.controller.feed_name = self.els_bar.feed_name or ""
+        self.controller.feed_unit = feeds.feed_unit(self.els_bar.mode_name or "")
 
     # ── Engage / disengage (delegates to controller) ─────────────────────────
 
@@ -352,18 +376,18 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         """
         if which in ("stop_z", "start_z"):
             axis = self.app.els.get_z_axis()
-            axis_label = "Saddle (Z)"
+            axis_label = "Saddle axis (Z)"
         else:
             axis = self.app.els.get_x_axis()
-            axis_label = "Cross-slide (X)"
+            axis_label = "Cross slide axis (X)"
         if axis is None:
             # Same guard as the keypad-entry paths — and the same FEEDBACK.
             # Silently returning here left a long-press indistinguishable from
             # a dead button when the axis wasn't mapped in ELS settings.
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
-                title="Axis Not Configured",
-                message=f"{axis_label} axis is not set in ELS settings.",
+                title="Axis not configured",
+                message=f"{axis_label} is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
             return
@@ -389,15 +413,15 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         if z_axis is None:
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
-                title="Axis Not Configured",
-                message="Saddle (Z) axis is not set in ELS settings.",
+                title="Axis not configured",
+                message="Saddle axis (Z) is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
             return
 
         is_metric = self.app.formats.current_format == "MM"
         keypad = Keypad(
-            title="Enter Stop Z Position (" + ("mm" if is_metric else "in") + ")"
+            title="Enter stop Z position (" + ("mm" if is_metric else "in") + ")"
         )
         keypad.integer = False
 
@@ -433,15 +457,15 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         if z_axis is None:
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
-                title="Axis Not Configured",
-                message="Saddle (Z) axis is not set in ELS settings.",
+                title="Axis not configured",
+                message="Saddle axis (Z) is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
             return
 
         is_metric = self.app.formats.current_format == "MM"
         keypad = Keypad(
-            title="Enter Start Z Position (" + ("mm" if is_metric else "in") + ")"
+            title="Enter start Z position (" + ("mm" if is_metric else "in") + ")"
         )
         keypad.integer = False
 
@@ -474,8 +498,8 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
         if self.app.els.get_x_axis() is None:
             from reflex.components.popups.custom_popup import CustomPopup
             CustomPopup(
-                title="Axis Not Configured",
-                message="Cross-slide (X) axis is not set in ELS settings.",
+                title="Axis not configured",
+                message="Cross slide axis (X) is not set. Set it in Setup > ELS.",
                 button_text="OK",
             ).open()
             return
@@ -516,3 +540,31 @@ class ElsAdvancedBar(BoxLayout, SavingDispatcher):
                 inp.unbind(encoderCurrent=self._on_encoder_update)
             self._bound_scale.unbind(formattedPosition=self._on_format_update)
             self._bound_scale = None
+
+
+class MeasureCueStrip(BoxLayout):
+    """The overshoot measurement's cue strip (els_advbar.kv). While a sweep
+    runs, a tap on it opens the Measure window with the tally
+    (ElsUiController.measure_cue_tapped).
+
+    Only while it lies over the status gutter, which holds nothing that takes
+    a tap. With another strip up above it in the notice overlay it lies over
+    the control row instead, and a tap there is the button's, so it is passed
+    on. Collapsed (no cue) it is disabled and takes nothing."""
+
+    #: The status gutter, set in the kv.
+    gutter = ObjectProperty(None, allownone=True)
+    #: The ElsUiController, set in the kv.
+    controller = ObjectProperty(None, allownone=True)
+
+    def over_gutter(self) -> bool:
+        g = self.gutter
+        return (g is not None and self.height > 0
+                and self.y >= g.y - 1 and self.top <= g.top + 1)
+
+    def on_touch_down(self, touch):
+        if (not self.disabled and self.collide_point(*touch.pos)
+                and self.over_gutter() and self.controller is not None
+                and self.controller.measure_cue_tapped()):
+            return True
+        return super().on_touch_down(touch)

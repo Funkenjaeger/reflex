@@ -21,12 +21,12 @@ in one frame. Window.screenshot() inserts a counter into the filename, so each
 shot is captured to a scratch name and moved onto the exact one asked for.
 
 WHERE THE HARDWARE BOUNDARY IS STUBBED, AND ONLY THERE.
-  * Wizard: a stub standing in for ElsStopHal, plus the two encoder-count
+  * Wizard: a stub standing in for ElsStopRegisters, plus the two encoder-count
     callables ThreadResync already takes injected ("so this class can be driven
     in tests without a running app" -- its own docstring). The ThreadResync
     policy, the tolerance, every state transition and every message above that
     line are production.
-  * Phase offset: four read/write methods shadowed on the REAL ElsStopHal
+  * Phase offset: four read/write methods shadowed on the REAL ElsStopRegisters
     instance (read_phase_offset_steps / _seq, read_enable, request_phase_offset)
     and board.connected forced. ElsFsm.apply_phase_offset then runs for real --
     the AT_PITCH, NEGATIVE and NO_JOB refusals in this set are all produced by
@@ -344,7 +344,7 @@ def section_strip():
 
 # ── A. the settings popup, the entry point for both features ─────────
 def section_settings():
-    print("\n########## A. ELS Threading Settings popup ##########")
+    print("\n########## A. Advanced ELS Settings popup ##########")
     from reflex.components.home.els_settings_popup import ElsSettingsPopup
 
     pop = ElsSettingsPopup(bar=adv_bar())
@@ -371,7 +371,7 @@ def section_settings():
 class StubLatchHal:
     """The hardware boundary for ThreadResync, and nothing above it.
 
-    Every method here is one ElsStopHal exposes; the wizard's policy, its
+    Every method here is one ElsStopRegisters exposes; the wizard's policy, its
     tolerance, its state machine and all six of its messages are production.
     """
 
@@ -412,7 +412,7 @@ class StubLatchHal:
     # silently stale ever since.
     #
     # THE CONTRACT THIS RESTORES: this stub stands in for the hardware boundary
-    # and must cover every ElsStopHal method the exercised code path touches.
+    # and must cover every ElsStopRegisters method the exercised code path touches.
     # Production grew these two; the stub did not follow. There is no check
     # that keeps them in step, which is why it went unnoticed.
     #

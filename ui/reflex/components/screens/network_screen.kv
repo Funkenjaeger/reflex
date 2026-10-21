@@ -8,11 +8,11 @@
 
 <NetworkScreen>:
   BoxLayout:
-    title: "Network Settings"
+    title: "Network settings"
     orientation: "vertical"
     padding: 10
     ScreenHeader:
-      text: "Network Settings"
+      text: "Network settings"
 
     ScrollView:
       do_scroll_x: False
@@ -24,19 +24,19 @@
         size_hint_y: None
 
         TitleItem:
-          name: "Network Interface"
+          name: "Network interface"
         BooleanItem:
           name: "Enable Wifi"
           value: root.wifi_enabled
           help_file: "enable_wifi.md"
           on_value: root.wifi_enabled = self.value
         DropDownItem:
-          name: "Network Interface"
+          name: "Network interface"
           options: root.devices
           help_file: "network_connection.md"
           value: root.devices[0] if len(root.devices) > 0 else ""
         StringItem:
-          name: "Hardware Address"
+          name: "Hardware address"
           disabled: True
           help_file: "network_connection.md"
           value: root.hwaddr
@@ -47,7 +47,7 @@
           value: root.state
 
         TitleItem:
-          name: "Connection Properties"
+          name: "Connection properties"
         ButtonItem:
           name: "Network"
           value: root.connection if root.connection is not None else ""
@@ -55,7 +55,7 @@
           help_file: "network_connection.md"
           on_release: Factory.SsidPopup(callback=root.select_network, selected_network=root.connection).open()
         StringItem:
-          name: "Wifi Password"
+          name: "Wifi password"
           value: root.password
           disabled: root.lock
           help_file: "network_connection.md"
@@ -68,30 +68,30 @@
           on_release: root.apply()
 
         TitleItem:
-          name: "IP Properties"
+          name: "IP properties"
         StringItem:
-          name: "IP Address"
+          name: "IP address"
           value: root.address
           disabled: True
           on_value: root.address = self.value
         StringItem:
-          name: "DNS Server"
+          name: "DNS server"
           value: root.dns
           disabled: True
           on_value: root.dns = self.value
         StringItem:
-          name: "Default Gateway"
+          name: "Default gateway"
           value: root.gateway
           disabled: True
           on_value: root.gateway = self.value
 
         TitleItem:
-          name: "Error Reporting"
+          name: "Error reporting"
         BooleanItem:
-          name: "Disable Error Reporting"
-          value: app.formats.disable_error_reporting
+          name: "Error reporting"
+          value: not app.formats.disable_error_reporting
           help_file: "error_reporting.md"
-          on_value: app.formats.disable_error_reporting = self.value
+          on_value: app.formats.disable_error_reporting = not self.value
 
         TitleItem:
           name: "Status"

@@ -54,10 +54,14 @@ void HAL_GPIO_TogglePin(GPIO_TypeDef *p, uint16_t pin) { (void)p; (void)pin; }
 HAL_StatusTypeDef HAL_TIM_Base_Start_IT(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
 HAL_StatusTypeDef HAL_TIM_Encoder_Start(TIM_HandleTypeDef *h, uint32_t ch) { (void)h; (void)ch; return HAL_OK; }
 HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
-void ModbusInit(modbusHandler_t *m)  { (void)m; }
-void ModbusStart(modbusHandler_t *m) { (void)m; }
-osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
-osThreadId_t osThreadNew(osThreadFunc_t f, void *a, const osThreadAttr_t *at) { (void)f; (void)a; (void)at; return nullptr; }
+/* Records what RampsStart hands the Modbus slave (case 8). */
+static uint16_t       *mbRegs;
+static uint16_t        mbNregs;
+static const uint16_t *mbIdentity;
+void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { mbRegs = r; mbNregs = n; mbIdentity = id; }
+int mbAppService(void) { return 0; }
+uint16_t mbAppReplies(void) { return 0; }
+uint32_t HAL_GetTick(void) { return 0; }
 
 extern uint16_t servoCycles;
 extern uint16_t servoCyclesCounter;
@@ -110,15 +114,22 @@ int main() {
      * the reorder costs two registers of alignment padding the old field order
      * did not need. Confirmed against the compiler, and a deliberate wrong
      * value (490) was checked to fail. */
+    /* protocolVersion 13 kept the pair where it was. The hot group did not
+     * grow (commandSeq took the slot clearRefSeq left), and the four new cold
+     * uint16s (clearRefSeq, command, commandResult, calBasisSteps) sit AFTER
+     * bootSeq. The struct grew by those four registers: 492 -> 500 bytes,
+     * with no alignment pad added. */
     check(offsetof(rampsSharedData_t, elsStop.bootCommand) == 336, "bootCommand at byte 336 = register 168");
     check(offsetof(rampsSharedData_t, elsStop.bootSeq) == 338, "bootSeq at byte 338 = register 169");
-    check(sizeof(rampsSharedData_t) == 492,
-          "rampsSharedData_t is 492 bytes (140 register of fields + 2 of alignment)");
+    check(sizeof(rampsSharedData_t) == 500,
+          "rampsSharedData_t is 500 bytes (144 registers of fields + 2 of alignment)");
     /* protocolVersion 11 (2026-09-18) filled two alignment pads with
      * stopOffset / stopTriggerOffset: bootCommand, bootSeq and the 492-byte
      * size above are deliberately UNCHANGED, which is why they are asserted
-     * with the same numbers and only the version moved. */
-    check(ELS_PROTOCOL_VERSION == 11, "ELS_PROTOCOL_VERSION is 11");
+     * with the same numbers and only the version moved. protocolVersion 12
+     * filled the last two pads with clearRefSeq / clearRefCommand, the same
+     * way and with the same result. */
+    check(ELS_PROTOCOL_VERSION == 13, "ELS_PROTOCOL_VERSION is 13");
     /* The no-phantom-register property, asserted against whatever ends the
      * struct TODAY. An implicit trailing pad would make a register reflex-ui
      * cannot mirror, and the contract test would report a size mismatch it
@@ -180,13 +191,14 @@ int main() {
     RampsStart(&data);
     check(data.shared.elsStop.protocolVersion == ELS_PROTOCOL_VERSION, "8 RampsStart publishes ELS_PROTOCOL_VERSION");
     check(data.shared.elsStop.bootCommand == 0 && data.shared.elsStop.bootSeq == 0, "8 RampsStart zeroes bootCommand/bootSeq");
-    check(RampsModbusData.windowCount == 1 && RampsModbusData.windows[0].base == ELS_ID_BASE &&
-          RampsModbusData.windows[0].size == ELS_ID_SIZE && RampsModbusData.windows[0].readOnly == 1,
-          "8 RampsStart registers the identity window, read-only, at ELS_ID_BASE");
-    check(RampsModbusData.windows[0].regs[ELS_ID_MAGIC_OFF] == ELS_ID_MAGIC &&
-          RampsModbusData.windows[0].regs[ELS_ID_STAGE_OFF] == ELS_ID_STAGE_APP &&
-          RampsModbusData.windows[0].regs[ELS_ID_APP_PROTOCOL_OFF] == ELS_PROTOCOL_VERSION,
-          "8 ...and it carries magic, stage 2 and the protocol version");
+    check(mbRegs == (uint16_t *)&data.shared &&
+          mbNregs == sizeof(rampsSharedData_t) / sizeof(uint16_t),
+          "8 RampsStart hands the Modbus slave the whole shared struct as registers");
+    check(mbIdentity != nullptr &&
+          mbIdentity[ELS_ID_MAGIC_OFF] == ELS_ID_MAGIC &&
+          mbIdentity[ELS_ID_STAGE_OFF] == ELS_ID_STAGE_APP &&
+          mbIdentity[ELS_ID_APP_PROTOCOL_OFF] == ELS_PROTOCOL_VERSION,
+          "8 ...and the identity window, carrying magic, stage 2 and the protocol version");
 
     printf("%s\n", failures ? "FAILURES" : "all passed");
     return failures ? 1 : 0;

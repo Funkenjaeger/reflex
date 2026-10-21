@@ -49,7 +49,13 @@ PTY_PATH_RE = re.compile(r"Modbus serial: (/dev/pts/\d+)")
 # under emulator/src and emulator/CMakeLists.txt) -- checked for staleness
 # so the fixture rebuilds when firmware code changes underneath the tests,
 # not just when the binary is missing outright.
-_FW_SRC_NAMES = ("Ramps.c", "Modbus.c", "Scales.c", "UARTCallback.c")
+_FW_SRC_NAMES = ("Ramps.c", "Scales.c", "mb_app.c")
+# ...and the ones outside Core/Src, relative to the firmware tree: the Modbus
+# RTU core, the app's port of it, and the receive-ring arithmetic it shares
+# with the bootloader.
+_FW_OTHER_SRCS = ("modbus_rtu/mb_rtu.c", "modbus_rtu/mb_rtu.h",
+                  "Core/mb_port/mb_rtu_port.h",
+                  "bootloader/core/bl_rxring.c", "bootloader/core/bl_rxring.h")
 
 
 def _reflex_fw_sha() -> str:
@@ -102,6 +108,11 @@ def _emulator_sources_newer_than(mtime: float) -> bool:
         if path.is_file():
             candidates.append(path)
 
+    for rel in _FW_OTHER_SRCS:
+        path = REFLEX_FW_DIR / rel
+        if path.is_file():
+            candidates.append(path)
+
     fw_inc_dir = REFLEX_FW_DIR / "Core" / "Inc"
     if fw_inc_dir.is_dir():
         candidates.extend(fw_inc_dir.rglob("*"))
@@ -130,16 +141,28 @@ def emulator_binary():
         )
 
     # (The reflex-fw SHA is surfaced via pytest_report_header for run provenance.)
-    needs_build = not EMULATOR_BIN.exists()
-    if not needs_build:
-        try:
-            needs_build = _emulator_sources_newer_than(EMULATOR_BIN.stat().st_mtime)
-        except OSError:
-            needs_build = True
+    #
+    # ONE BUILD AT A TIME. Under pytest-xdist (`-n auto`) every worker runs
+    # this session fixture, so on a fresh checkout or after a firmware change
+    # they would all run cmake in the same build directory at once. An
+    # exclusive lock serializes them; the staleness check is repeated inside
+    # it, so the workers that waited find the binary current and skip. The
+    # system tests are Linux/WSL-only (PTY transport), so fcntl is available.
+    import fcntl
+    build_dir = EMULATOR_DIR / "build"
+    build_dir.mkdir(exist_ok=True)
+    with open(build_dir / ".system-tests-build.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        needs_build = not EMULATOR_BIN.exists()
+        if not needs_build:
+            try:
+                needs_build = _emulator_sources_newer_than(EMULATOR_BIN.stat().st_mtime)
+            except OSError:
+                needs_build = True
 
-    if needs_build:
-        subprocess.run(["cmake", "-B", "build"], cwd=EMULATOR_DIR, check=True)
-        subprocess.run(["cmake", "--build", "build"], cwd=EMULATOR_DIR, check=True)
+        if needs_build:
+            subprocess.run(["cmake", "-B", "build"], cwd=EMULATOR_DIR, check=True)
+            subprocess.run(["cmake", "--build", "build"], cwd=EMULATOR_DIR, check=True)
     return EMULATOR_BIN
 
 
@@ -266,6 +289,27 @@ def harness(emulator_process, tmp_path, monkeypatch):
     proc, pty_path = emulator_process
     h = SystemHarness(pty_path, proc=proc)
     h.connect()
+    yield h
+    h.disconnect()
+
+
+@pytest.fixture
+def threaded_harness(emulator_process, tmp_path, monkeypatch):
+    """A connected SystemHarness with the Modbus scan on the port owner's
+    thread, as the running app has it.
+
+    Deliberately NOT the default: the rest of the system suite relies on one
+    pump() being exactly one tick, and the synchronous seam is what gives it
+    that. This fixture exists for the handful of cases whose whole subject is
+    the threading -- see tests/system/test_els_threaded_io.py.
+    """
+    from tests.system.harness import SystemHarness
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    proc, pty_path = emulator_process
+    h = SystemHarness(pty_path, proc=proc)
+    h.connect(threaded=True)
     yield h
     h.disconnect()
 

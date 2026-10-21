@@ -33,7 +33,7 @@ BENCH DIAGNOSTICS (read-only, or one deliberately damaged READ; never a write):
         burst (that READ twice back to back, no inter-frame gap). Nothing it
         sends can reach a write or a command register.
 
-THE SEQUENCE (see decisions/els-modbus-register-map.md):
+THE SEQUENCE (see docs/design/decisions.md):
   1. read the identity window at 2048 FIRST, ALWAYS; refuse on any idMagic
      mismatch -- nothing else is known to be safe to read;
   2. if idStage == 2 (application): write bootCommand = 1 and wait for
@@ -139,13 +139,21 @@ STATE_NAMES = {0: "IDLE", 1: "BACKUP", 2: "COPY", 3: "TRIAL", 4: "REVERT", 5: "R
 # 11 (2026-09-18) keeps 168: stopOffset and stopTriggerOffset were placed in two
 # of protocolVersion 10's alignment pads, so no group grew and nothing moved.
 # Listed separately for the whitelist reason above; genregs --check verifies it.
-APP_BOOT_COMMAND_REG = {8: 232, 9: 232, 10: 168, 11: 168}
+# 13 keeps 168: the hot group did not grow (commandSeq took the slot clearRefSeq
+# left), and the new cold registers sit after bootSeq.
+APP_BOOT_COMMAND_REG = {8: 232, 9: 232, 10: 168, 11: 168, 12: 168, 13: 168}
 # bootSeq, the firmware's ack of an ACCEPTED boot command, is the uint16 right
 # behind bootCommand in every layout above (Ramps.h: the two were appended as a
 # pair in protocolVersion 8 and moved together in 10). A table of its own, not
 # "bootCommand + 1", for the whitelist reason above; genregs --check verifies
 # it against registers/offsets.json exactly as it does APP_BOOT_COMMAND_REG.
-APP_BOOT_SEQ_REG = {8: 233, 9: 233, 10: 169, 11: 169}
+APP_BOOT_SEQ_REG = {8: 233, 9: 233, 10: 169, 11: 169, 12: 169, 13: 169}
+# elsStop.enable, read BEFORE the reboot request (see _refuse_if_els_engaged).
+# Offset 0 of elsStop, absolute 104, under every layout listed; 8 and 9 are
+# left out because their elsStop map was never checked for it, and an unlisted
+# layout only skips the early read. genregs --check verifies the entry for the
+# current protocolVersion against registers/offsets.json.
+APP_ELS_ENABLE_REG = {10: 104, 11: 104, 12: 104, 13: 104}
 BOOT_CMD_BOOTLOADER = 1
 # How many polls must see the refusal signature (bootCommand 0, bootSeq
 # unmoved, idStage still the application) before the flasher believes it. Two,
@@ -763,6 +771,7 @@ def enter_bootloader(bus: Rtu, ident: Identity, dry_run: bool) -> Identity:
     if dry_run:
         print(f"  dry-run: would write bootCommand=1 at register {reg} and wait for the bootloader")
         return ident
+    _refuse_if_els_engaged(bus, ident)
     # bootSeq BEFORE the request: the baseline a refusal is recognised by.
     seq_reg = APP_BOOT_SEQ_REG.get(ident.app_protocol)
     seq_before = None
@@ -792,6 +801,41 @@ def enter_bootloader(bus: Rtu, ident: Identity, dry_run: bool) -> Identity:
 # not start; change both together.
 BOOT_REFUSED_ELS = ("REFUSED: the controller would not reboot into its bootloader "
                     "because an ELS job is engaged")
+
+
+def _refuse_if_els_engaged(bus: Rtu, ident: Identity) -> None:
+    """Refuse the reboot request before sending it when an ELS job is engaged.
+
+    WHY (2026-10-17, the lathe): a bench procedure stopped the UI with the stop
+    and retract cycle still armed, and its revert to the release image was
+    refused, then the fallback flash too. The refusal watch below named the
+    cause, but only after the request had gone out, and its advice pointed at
+    the Update screen, which a stopped UI does not have. Reading
+    elsStop.enable first refuses with nothing written, in words that fit both
+    an in-app update and a bench run.
+
+    Advisory, not the gate: the firmware's own refusal still stands behind it.
+    A layout APP_ELS_ENABLE_REG does not list, or a read that fails, skips the
+    check and leaves the decision to the firmware, which the watch reports.
+    It never writes: disengaging ends the operator's job, so it is done at the
+    touchscreen, where the job and its stop are in view."""
+    reg = APP_ELS_ENABLE_REG.get(ident.app_protocol)
+    if reg is None:
+        return
+    try:
+        enable = bus.read(reg, 1)[0]
+    except ModbusError as e:
+        print(f"  (elsStop.enable at register {reg} unreadable: {e}; "
+              f"the firmware's own refusal still applies)")
+        return
+    if enable:
+        raise SystemExit(
+            f"{BOOT_REFUSED_ELS}.\n"
+            f"  elsStop.enable reads {enable} on application {ident.rev_str}; the firmware"
+            f" refuses to reboot while it is set. Checked before the reboot request: nothing"
+            f" was written and the bootloader was never entered.\n"
+            f"  Press Disengage at the touchscreen, then try again. If the UI is stopped for a"
+            f" bench procedure, start it, disengage, and stop it again first.")
 
 
 def _boot_refusal_watch(bus: Rtu, boot_reg: int, seq_reg: int, seq_before: int):

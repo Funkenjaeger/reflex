@@ -2,6 +2,8 @@
   "note": "protocolVersion -> sha256 of the register layout that version means (tools/genregs.py layout_fingerprint). PINNED BY HAND with `genregs.py --pin`, never rewritten by a plain regenerate; `genregs.py --check` fails if the current layout does not match the pin for the current protocol_version.",
   "protocol_versions": {
     "10": "0ba8d421953337bf50a50f2e509ca7f2a6fec494904001ff809f24b68bcea412",
-    "11": "fe436e46ed83b54e124e0949d9965d9af1f60bacb409cf801b9ad08d46270131"
+    "11": "fe436e46ed83b54e124e0949d9965d9af1f60bacb409cf801b9ad08d46270131",
+    "12": "211d24ff34d52120dea03e448bda8dc1be2dcde93b4ebe86bcbe99033a5f789e",
+    "13": "33a78f5fd4ff8d76bf48d21a4ce976362e0ecd65e40c98b02b5b07182f69f944"
   }
 }

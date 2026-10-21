@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """identity_window_pty_test.py -- the identity window END TO END.
 
-Launches the real lathe-emulator (real Modbus.c with the window resolver,
-real Ramps.c publishing rampsIdentityWindow) in serve mode on a PTY, then
-drives it with the real host client, scripts/modbus-flash.py, imported as a
-module. Asserts:
+Launches the real lathe-emulator (the real Modbus slave, mb_app.c, with the
+window resolver, real Ramps.c publishing rampsIdentityWindow) in serve mode on
+a PTY, then drives it with the real host client, scripts/modbus-flash.py,
+imported as a module. Asserts:
 
   1. `--identity` reads magic 0x454C, stage 2 (application), window version
      1, the git rev the build recorded in reflex_build_rev.h, and
@@ -120,6 +120,11 @@ def main(argv):
         check(tail == [0, 0], "bootCommand/bootSeq read as 0 at the client's register index")
         check(mf.APP_BOOT_SEQ_REG.get(ident.app_protocol) == boot_reg + 1,
               "the client's bootSeq register is the one behind bootCommand")
+        # elsStop.enable, which the client reads before a reboot request: an
+        # idle board has no job engaged, so it must read 0 there.
+        enable_reg = mf.APP_ELS_ENABLE_REG.get(ident.app_protocol)
+        check(enable_reg is not None and bus.read(enable_reg, 1) == [0],
+              "elsStop.enable reads 0 at the client's register index")
 
         # Where the struct ENDS. This number is now READ FROM THE GENERATED MAP
         # rather than written here.

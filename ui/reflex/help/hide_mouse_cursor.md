@@ -1,1 +1,1 @@
-Hide the mouse cursor. Enable this when running on a Raspberry Pi with a touchscreen to prevent the cursor from appearing on screen.
+This setting hides the mouse cursor. Turn it on when you run on a Raspberry Pi with a touchscreen. Then the cursor does not appear on the screen.

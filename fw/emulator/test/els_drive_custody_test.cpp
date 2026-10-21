@@ -44,6 +44,13 @@
  * latchSeq ack, host reads the missing edge as the refusal) rather than being
  * accepted and silently wiped by the invariant a moment later.
  *
+ * Cases 8 and 9 cover the host clear (clearRefCommand, protocolVersion 12):
+ * the other way a reference stops being valid, with custody KEPT. A gearbox
+ * lever moved under a held leadscrew invalidates the datum without the drive
+ * ever dropping, so the host clears it explicitly. It must do exactly what
+ * the custody rule does to the reference and offset, and must touch neither
+ * the drive nor the job.
+ *
  * Same external-stub strategy and fixture geometry as
  * els_manual_latch_test.cpp.
  */
@@ -85,13 +92,11 @@ HAL_StatusTypeDef HAL_TIM_Encoder_Start(TIM_HandleTypeDef *h, uint32_t ch) {
 }
 HAL_StatusTypeDef initScaleTimer(TIM_HandleTypeDef *h) { (void)h; return HAL_OK; }
 
-void ModbusInit(modbusHandler_t *m)  { (void)m; }
-void ModbusStart(modbusHandler_t *m) { (void)m; }
+void mbAppInit(uint16_t *r, uint16_t n, const uint16_t *id) { (void)r; (void)n; (void)id; }
+int mbAppService(void) { return 0; }
+uint16_t mbAppReplies(void) { return 0; }
+uint32_t HAL_GetTick(void) { return 0; }
 
-osStatus_t osDelay(uint32_t ticks) { (void)ticks; return osOK; }
-osThreadId_t osThreadNew(osThreadFunc_t f, void *arg, const osThreadAttr_t *a) {
-    (void)f; (void)arg; (void)a; return nullptr;
-}
 
 extern uint16_t servoCycles;
 extern uint16_t servoCyclesCounter;
@@ -333,6 +338,68 @@ int main() {
               "reference latched");
         check(rig.data.shared.elsStop.latchSeq == (uint16_t)(seqBefore + 1),
               "and acked exactly once");
+    }
+
+    /* ---------------- 8. HOST CLEAR, CUSTODY KEPT ---------------------- */
+    /* MUTATION: drop the clearRefCommand block in Ramps.c -> the reference
+     * and offset survive and the ack never comes. */
+    printf("\n-- 8. the host clear drops the reference and nothing else --\n");
+    {
+        Rig rig;
+        rig.init();
+        rig.armJob();
+        rig.latchReference();
+        rig.data.shared.elsStop.phaseOffsetSteps = 250;
+        check(rig.data.shared.elsStop.referenceLatched == 1,
+              "precondition: a reference is latched with the drive on");
+
+        uint16_t seqBefore = rig.data.shared.elsStop.clearRefSeq;
+        rig.data.shared.elsStop.clearRefCommand = 1;
+        rig.step(Z_CLEAR);
+
+        check(rig.data.shared.elsStop.referenceLatched == 0,
+              "reference cleared");
+        check(rig.data.shared.elsStop.phaseOffsetSteps == 0,
+              "offset cleared with it");
+        check(rig.data.shared.elsStop.clearRefCommand == 0,
+              "command consumed in one pass");
+        check(rig.data.shared.elsStop.clearRefSeq == (uint16_t)(seqBefore + 1),
+              "and acked exactly once");
+        check(rig.data.shared.fastData.servoMode == 1,
+              "servoMode unchanged: the drive keeps custody");
+        check(rig.data.shared.elsStop.enable == 1,
+              "enable unchanged: the job stays armed");
+        check(rig.data.shared.scales[0].syncEnable == 1,
+              "sync unchanged");
+
+        for (int i = 0; i < 5; i++) rig.step(Z_CLEAR);
+        check(rig.data.shared.elsStop.referenceLatched == 0,
+              "and it stays clear: nothing re-latches before a trigger");
+    }
+
+    /* ---------------- 9. RE-LATCH AFTER A HOST CLEAR ------------------- */
+    /* What makes clearing at a gear adoption safe: the first stop trigger
+     * after the clear latches a fresh reference, as on a new job. */
+    printf("\n-- 9. the next stop trigger latches a fresh reference --\n");
+    {
+        Rig rig;
+        rig.init();
+        rig.armJob();
+        rig.latchReference();
+        int32_t oldLatchedSpindle = rig.data.shared.elsStop.latchedSpindle;
+
+        rig.data.shared.elsStop.clearRefCommand = 1;
+        rig.step(Z_CLEAR);
+        check(rig.data.shared.elsStop.referenceLatched == 0,
+              "precondition: cleared");
+
+        for (int i = 0; i < 4; i++) rig.step(Z_STOP_POS - 10);   /* past the stop */
+        check(rig.data.shared.elsStop.active == 1,
+              "the stop fired");
+        check(rig.data.shared.elsStop.referenceLatched == 1,
+              "and latched a fresh reference");
+        check(rig.data.shared.elsStop.latchedSpindle != oldLatchedSpindle,
+              "at the new trigger, not the old datum");
     }
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",

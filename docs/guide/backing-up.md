@@ -27,8 +27,8 @@ single file, and restoring from either goes through the same confirmation.
    *"Exported `reflex-commissioning-<name>-<time>.yaml` to the USB stick."*
 
 Each export is a new file named with the time, so exporting again never
-overwrites an older backup. With no stick in, it says *"No USB stick found --
-insert one and try again."*
+overwrites an older backup. With no stick in, it says *"No USB stick found. Insert
+one. Then try again."*
 
 ### Import
 
@@ -45,8 +45,8 @@ insert one and try again."*
    Leave the settings alone during the countdown.
 
 !!! warning "If it says it could not restart by itself"
-    The status line then reads *"Could not restart by itself: restart the
-    machine to load them."* Restart the machine straight away, before you
+    The status line then reads *"The app could not restart by itself.
+    Restart the machine to load them."* Restart the machine straight away, before you
     change anything. The running app still holds the settings it started
     with: change any setting first, and the whole group that setting belongs
     to is written back over what you just restored.
@@ -88,7 +88,7 @@ background, to the **same** gist, so the gist's revision history on GitHub is
 your machine's history. **Sync now** pushes a copy immediately.
 
 A sync that fails is not retried in a loop. The status line says
-*"Gist sync failed -- will retry at the next change."*, and the machine keeps
+*"Gist sync failed. It will retry at the next change."*, and the machine keeps
 working either way.
 
 ### Sign-in expired

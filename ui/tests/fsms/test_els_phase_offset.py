@@ -51,7 +51,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from reflex.fsms.els_fsm import ElsFsm
-from reflex.fsms.els_stop_hal import ElsStopHal
+from reflex.fsms.els_stop_registers import ElsStopRegisters
 
 # Reuse the production-shaped mocks rather than growing a second set. The
 # comment on _make_els in that module records what a drifted mock already cost
@@ -370,7 +370,7 @@ def _recording_hal():
     board = MagicMock()
     board.connected = True
     board.device.__getitem__.side_effect = lambda key: block
-    return ElsStopHal(board), writes
+    return ElsStopRegisters(board), writes
 
 
 def test_pending_is_written_before_the_command():
