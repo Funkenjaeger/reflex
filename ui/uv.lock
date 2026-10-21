@@ -1201,7 +1201,7 @@ wheels = [
 
 [[package]]
 name = "reflex"
-version = "1.2.2rc5"
+version = "1.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
