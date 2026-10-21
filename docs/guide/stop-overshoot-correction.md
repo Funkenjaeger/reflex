@@ -126,12 +126,15 @@ Do this at each feed you intend to use, because the overshoot grows with speed.
 
 The table stops at the fastest speed of its sweep: on the development lathe about
 3,500 counts per second of Z travel, roughly 40 in/min on a 5 µm scale. Faster
-than that, the correction holds at its largest value and says so once per pass:
+than that, the correction holds at its largest value. When the carriage stays
+that fast for a full second, it also says so, once per pass:
 
 > Z rate is above the calibrated range (3529 counts/s). Correction is held at its top value.
 
 The carriage can then overshoot further than the correction allows for, so
-check those stops by eye.
+check those stops by eye. A shorter burst of speed, such as the carriage
+catching up to the spindle just after **Cut**, raises the correction to its
+largest value without the notice.
 
 ## Upgrading from 1.2.2-rc.2 or earlier
 
